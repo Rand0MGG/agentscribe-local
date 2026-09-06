@@ -39,6 +39,11 @@ class Settings:
     offline: bool = False
     phrase_seconds: float = 4.0
     threshold: float = 0.008
+    backend: str = "whisper-live"
+    service_url: str = "http://127.0.0.1:8765"
+    qwen_model: str = "Qwen/Qwen3-ASR-0.6B"
+    update_seconds: float = 1.0
+    endpoint_seconds: float = 1.0
 
 
 @dataclass
@@ -57,6 +62,9 @@ class Caption:
     language: str
     translation: str = ""
     error: str = ""
+    final: bool = True
+    revision: int = 1
+    stable_source: str = ""
 
 
 def offer_latest(queue: Queue, item) -> bool:
@@ -136,7 +144,7 @@ def srt_time(seconds: float) -> str:
 
 def export_srt(captions: list[Caption]) -> str:
     rows = []
-    for index, caption in enumerate(captions, 1):
+    for index, caption in enumerate((c for c in captions if c.final and c.source.strip()), 1):
         text = caption.source.strip()
         if caption.translation:
             text += "\n" + caption.translation.strip()

@@ -58,10 +58,12 @@ def execute(**kwargs):
 def test_source_then_translation_and_flush_on_stop():
     captions, errors = execute()
     assert not errors
-    assert len(captions) == 2
+    assert len(captions) == 3
     assert captions[0].source == "Hello"
     assert captions[0].translation == ""
-    assert captions[1].translation == "你好"
+    assert not captions[0].final
+    assert captions[1].final
+    assert captions[2].translation == "你好"
     assert captions[0].id == captions[1].id
     assert captions[1].end == 0.8
 
@@ -123,7 +125,7 @@ def test_no_translation_mode_does_not_load_translator():
     assert session.wait(3000)
     app.processEvents()
     assert not loaded
-    assert len(captions) == 1
+    assert len(captions) == 2
     assert captions[0].source == "Hello"
 
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "linguaflow-local"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local live speech recognition and translation for Windows and macOS"
 requires-python = ">=3.10,<3.14"
 dependencies = [
@@ -29,6 +29,10 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 110
+extend-exclude = ["linguaflow/vendor"]
+
+[tool.setuptools.package-data]
+"linguaflow.vendor" = ["LICENSE.whisper-streaming"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I"]

@@ -1,4 +1,5 @@
 .venv/
+.venv-qwen/
 __pycache__/
 *.pyc
 .pytest_cache/

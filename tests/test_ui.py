@@ -9,8 +9,18 @@ def test_fatal_error_survives_late_status_and_finish():
 from types import SimpleNamespace
 from PySide6.QtWidgets import QApplication
 from linguaflow.app import Window
+from linguaflow.core import Caption
 app = QApplication([])
 w = Window(discover=False)
+w.on_caption(Caption(1, 0, 1, '错字', 'zh', final=False))
+w.on_caption(Caption(1, 0, 2, '正确原文', 'zh', final=False, revision=2))
+assert w.cards[1].source.text() == '正确原文'
+assert '后文可修正' in w.cards[1].meta.text()
+w.on_caption(Caption(1, 0, 1, '过期结果', 'zh', final=False))
+assert w.cards[1].source.text() == '正确原文'
+w.on_caption(Caption(1, 0, 2, '', 'zh', final=True, revision=3))
+assert not w.captions
+assert w.model_manager.tabs.count() == 3
 w.session = SimpleNamespace(deleteLater=lambda: None)
 w.on_failure('GPU 运行库缺失: cublas64_12.dll')
 w.on_status('音频队列已满')

@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 from .audio import list_devices
 from .core import LANGUAGES, Settings, export_srt
 from .engine import Session
+from .management import ModelManager
 
 STYLE = """
 QWidget { background: #10151d; color: #e5edf8; font-family: 'Microsoft YaHei UI', 'PingFang SC', sans-serif; font-size: 13px; }
@@ -80,7 +81,8 @@ class Overlay(QWidget):
 
     def update_caption(self, caption, translating=True):
         self.source.setText(caption.source)
-        self.target.setText(caption.translation or caption.error or ("翻译中…" if translating else ""))
+        self.target.setText(caption.translation or caption.error or
+                            ("原文修订中…" if not caption.final else "翻译中…" if translating else ""))
 
 
 class CaptionCard(QFrame):
@@ -105,9 +107,14 @@ class CaptionCard(QFrame):
         self.update_caption(caption)
 
     def update_caption(self, caption):
+        self.source.setText(caption.source)
+        state = "已定稿" if caption.final else "听写中 · 后文可修正原文"
+        self.meta.setText(f"{int(caption.start) // 60:02}:{int(caption.start) % 60:02}  ·  {caption.language.upper()}  ·  {state}")
         self.target.setText(
             caption.translation
-            or (f"⚠ {caption.error}" if caption.error else ("翻译中…" if self.translating else "仅转写"))
+            or (f"⚠ {caption.error}" if caption.error else
+                ("原文确认后翻译" if not caption.final and self.translating else
+                 "翻译中…" if self.translating else "仅转写"))
         )
 
 
@@ -170,9 +177,8 @@ class Window(QMainWindow):
         form.addRow("原文语言", self.source)
         form.addRow("翻译为", self.target)
         form_outer.addLayout(form)
-        form_outer.addWidget(label("02 / 本地模型", "section"))
-        models = QFormLayout()
-        models.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+        self.model_manager = ModelManager(self)
+        models = self.model_manager.whisper_form
         self.asr = QComboBox()
         self.asr.setEditable(True)
         self.asr.setMinimumContentsLength(18)
@@ -188,6 +194,7 @@ class Window(QMainWindow):
         if sys.platform != "darwin":
             self.compute.addItem("NVIDIA GPU · INT8 / FP16", "cuda")
         models.addRow("识别计算设备", self.compute)
+        models = self.model_manager.translation_form
         self.translation = QComboBox()
         self.translation.setEditable(True)
         self.translation.setMinimumContentsLength(18)
@@ -200,11 +207,11 @@ class Window(QMainWindow):
         self.translate = QCheckBox("同时显示翻译")
         self.translate.setChecked(True)
         self.offline = QCheckBox("严格离线 · 只使用已下载模型")
-        models.addRow(self.translate)
-        models.addRow(self.offline)
+        form_outer.addWidget(self.translate)
+        self.model_manager.advanced_form.addRow(self.offline)
         models.addRow(
             label(
-                "首次启动会下载所选模型，音频和字幕只在本机处理。\n8GB 显存建议 small / medium + 600M 翻译模型。",
+                "建议先在这里下载模型，再启用严格离线。音频和字幕只在本机处理。",
                 "muted",
             )
         )
@@ -212,15 +219,22 @@ class Window(QMainWindow):
         self.phrase.setRange(2, 10)
         self.phrase.setValue(4)
         self.phrase.setSuffix(" 秒")
-        models.addRow("最长语音分段", self.phrase)
+        self.phrase.hide()  # retained only to read older preferences
         self.threshold = QDoubleSpinBox()
         self.threshold.setDecimals(3)
         self.threshold.setRange(0.001, 0.100)
         self.threshold.setSingleStep(0.001)
         self.threshold.setValue(0.008)
         self.threshold.setToolTip("安静说话被漏掉时降低；噪声导致频繁识别时提高。")
-        models.addRow("声音检测阈值", self.threshold)
-        form_outer.addLayout(models)
+        self.threshold.hide()
+        self.model_manager.finish_setup(self)
+        form_outer.addWidget(label("02 / 聆听引擎", "section"))
+        self.model_summary = label("", "muted")
+        form_outer.addWidget(self.model_summary)
+        manage = QPushButton("模型管理 · 下载与设置")
+        manage.clicked.connect(self.manage_models)
+        form_outer.addWidget(manage)
+        form_outer.addWidget(label("原文先出现，并随后文修正。\n停顿后定稿，再显示译文。", "muted"))
         form_outer.addStretch()
         settings_scroll = QScrollArea()
         settings_scroll.setWidgetResizable(True)
@@ -250,7 +264,7 @@ class Window(QMainWindow):
         self.feed_layout.setContentsMargins(0, 10, 0, 0)
         self.feed_layout.setSpacing(12)
         self.empty = label(
-            "让对话跨越语言\n\n选择音频来源和模型，点击“开始聆听”。\n识别出的原文先显示，译文随后补全。",
+            "让对话跨越语言\n\n① 在模型管理中准备识别模型\n② 选择音频来源和语言\n③ 开始聆听，原文会持续修订，定稿后翻译",
             "muted",
         )
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -290,6 +304,7 @@ class Window(QMainWindow):
         bottom.addWidget(self.stop_button)
         layout.addLayout(bottom)
         self.restore()
+        self.update_model_summary()
         self.activity_timer = QTimer(self)
         self.activity_timer.timeout.connect(self.update_activity)
         self.activity_timer.start(1000)
@@ -310,6 +325,26 @@ class Window(QMainWindow):
         self.translate.setChecked(self.prefs.value("translate", True, type=bool))
         self.phrase.setValue(self.prefs.value("phrase", 4, type=int))
         self.threshold.setValue(self.prefs.value("threshold", 0.008, type=float))
+        manager = self.model_manager
+        index = manager.backend.findData(self.prefs.value("backend", "whisper-live"))
+        manager.backend.setCurrentIndex(max(0, index))
+        manager.qwen_model.setCurrentText(self.prefs.value("qwen_model", "Qwen/Qwen3-ASR-0.6B"))
+        manager.service_url.setText(self.prefs.value("service_url", "http://127.0.0.1:8765"))
+        for key in ["update_seconds", "endpoint_seconds"]:
+            getattr(manager, key).setValue(self.prefs.value(key, 1.0, type=float))
+
+    def manage_models(self):
+        self.model_manager.exec()
+        self.save()
+        self.update_model_summary()
+
+    def update_model_summary(self):
+        manager = self.model_manager
+        if manager.backend.currentData() == "whisper-live":
+            text = f"Whisper · {self.asr.currentText()}\n近实时回听修订 · {self.compute.currentText()}"
+        else:
+            text = f"{manager.qwen_model.currentText()}\n流式接口 · 需本机服务就绪"
+        self.model_summary.setText(text)
 
     def save(self):
         for key, combo in [
@@ -324,6 +359,12 @@ class Window(QMainWindow):
         self.prefs.setValue("translate", self.translate.isChecked())
         self.prefs.setValue("phrase", self.phrase.value())
         self.prefs.setValue("threshold", self.threshold.value())
+        manager = self.model_manager
+        self.prefs.setValue("backend", manager.backend.currentData())
+        self.prefs.setValue("qwen_model", manager.qwen_model.currentText())
+        self.prefs.setValue("service_url", manager.service_url.text().strip())
+        for key in ["update_seconds", "endpoint_seconds"]:
+            self.prefs.setValue(key, getattr(manager, key).value())
 
     def choose_model(self, combo):
         path = QFileDialog.getExistingDirectory(self, "选择完整模型目录")
@@ -351,7 +392,8 @@ class Window(QMainWindow):
         if self.device.currentData() is None:
             QMessageBox.warning(self, "没有音频来源", "请连接录音设备并刷新列表。")
             return
-        if not self.asr.currentText().strip() or not self.translation.currentText().strip():
+        if ((self.model_manager.backend.currentData() == "whisper-live" and not self.asr.currentText().strip())
+                or (self.translate.isChecked() and not self.translation.currentText().strip())):
             QMessageBox.warning(self, "模型为空", "请选择模型名称或本地模型目录。")
             return
         if self.captions:
@@ -385,6 +427,11 @@ class Window(QMainWindow):
             offline=self.offline.isChecked(),
             phrase_seconds=self.phrase.value(),
             threshold=self.threshold.value(),
+            backend=self.model_manager.backend.currentData(),
+            service_url=self.model_manager.service_url.text().strip(),
+            qwen_model=self.model_manager.qwen_model.currentText(),
+            update_seconds=self.model_manager.update_seconds.value(),
+            endpoint_seconds=self.model_manager.endpoint_seconds.value(),
         )
         self.save()
         self.settings_panel.setEnabled(False)
@@ -456,7 +503,7 @@ class Window(QMainWindow):
     def on_finished(self):
         if self.translate.isChecked():
             for caption in list(self.captions.values()):
-                if not caption.translation and not caption.error:
+                if caption.final and not caption.translation and not caption.error:
                     self.on_caption(replace(caption, error="会话已结束，此条翻译未完成"))
         self.session.deleteLater()
         self.session = None
@@ -464,7 +511,7 @@ class Window(QMainWindow):
         self.start_button.setEnabled(True)
         self.start_button.setText("开始聆听")
         self.stop_button.setEnabled(False)
-        self.export_button.setEnabled(bool(self.captions))
+        self.export_button.setEnabled(any(c.final and c.source for c in self.captions.values()))
         self.meter.setValue(0)
         self.status.setText(self.last_error or f"会话已结束 · {len(self.captions)} 条字幕 · 模型已释放")
         self.on_stage("会话", "失败，详见诊断" if self.last_error else "已结束")
@@ -472,6 +519,22 @@ class Window(QMainWindow):
             self.close()
 
     def on_caption(self, caption):
+        previous = self.captions.get(caption.id)
+        if previous and (caption.revision < previous.revision or (previous.final and not caption.final)):
+            return
+        if not caption.source:
+            self.captions.pop(caption.id, None)
+            card = self.cards.pop(caption.id, None)
+            if card:
+                self.feed_layout.removeWidget(card)
+                card.deleteLater()
+            self.empty.setVisible(not self.captions)
+            if self.captions:
+                self.overlay.update_caption(self.captions[max(self.captions)], self.translate.isChecked())
+            else:
+                self.overlay.source.setText("等待语音…")
+                self.overlay.target.setText("")
+            return
         self.empty.hide()
         self.captions[caption.id] = caption
         if caption.id in self.cards:
@@ -500,7 +563,7 @@ class Window(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, "导出双语字幕", "字幕.srt", "SubRip 字幕 (*.srt)")
         if path:
             try:
-                captions = [self.captions[k] for k in sorted(self.captions)]
+                captions = [self.captions[k] for k in sorted(self.captions) if self.captions[k].final and self.captions[k].source]
                 Path(path).write_text(export_srt(captions), encoding="utf-8-sig")
                 self.status.setText(f"已导出 {len(captions)} 条字幕：{path}")
             except OSError as exc:

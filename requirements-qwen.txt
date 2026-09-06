@@ -1,0 +1,4 @@
+# Separate Linux/WSL environment only. Do not install into desktop .venv.
+qwen-asr[vllm]
+silero-vad>=6,<7
+onnxruntime>=1.20,<2

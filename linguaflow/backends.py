@@ -49,6 +49,26 @@ class WhisperRecognizer:
         )
         return [(s.start, s.end, s.text.strip()) for s in segments if s.text.strip()], info.language
 
+    def recognize_words(self, samples, prompt=""):
+        # Whole rolling window, with word boundaries and no amplitude/VAD removal.
+        segments, info = self.model.transcribe(
+            samples, language=self.source, beam_size=5, word_timestamps=True,
+            vad_filter=False, initial_prompt=prompt or None,
+            condition_on_previous_text=True, temperature=0.0,
+        )
+        words = []
+        for segment in segments:
+            if segment.no_speech_prob > 0.8 and segment.avg_logprob < -0.5:
+                continue
+            words.extend((w.start, w.end, w.word) for w in (segment.words or []))
+        return words, info.language
+
+    def endpoint(self, samples, seconds):
+        from faster_whisper.vad import VadOptions, get_speech_timestamps
+        tail = samples[-16000 * 8:]
+        speech = get_speech_timestamps(tail, VadOptions(min_silence_duration_ms=500, speech_pad_ms=0))
+        return (len(tail) - speech[-1]["end"]) / 16000 >= seconds if speech else len(tail) >= seconds * 16000
+
 
 class NllbTranslator:
     """CPU-only translation preserves VRAM for ASR; NLLB-family models only."""

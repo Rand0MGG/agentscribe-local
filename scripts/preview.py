@@ -68,8 +68,15 @@ if len(sys.argv) > 1:
     window.status.setText("真实回环验收结果回放 · 固定英文测试音频 · 非正在录音")
     output = "docs/verified-preview.png"
 window.export_button.setEnabled(True)
+if len(sys.argv) == 1:
+    window.on_caption(Caption(4, 11, 13, "The next sentence can change as more audio arrives.", "en", final=False))
 app.processEvents()
 app.processEvents()
 Path("docs").mkdir(exist_ok=True)
 window.grab().save(output)
+if len(sys.argv) == 1:
+    window.model_manager.show()
+    app.processEvents()
+    window.model_manager.grab().save("docs/models-preview.png")
+    window.model_manager.close()
 window.close()
