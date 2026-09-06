@@ -1,0 +1,9 @@
+1
+00:00:00,300 --> 00:00:02,340
+Hello, welcome to our meeting.
+你好,欢迎来到我们的会议.
+
+2
+00:00:02,920 --> 00:00:05,240
+Today we are discussing a new project.
+今天我们讨论一个新项目.

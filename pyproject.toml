@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "linguaflow-local"
+version = "0.1.0"
+description = "Local live speech recognition and translation for Windows and macOS"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+  "PySide6>=6.7,<7", "numpy>=1.26,<3", "scipy>=1.12,<2",
+  "SoundCard>=0.4.3,<0.5", "faster-whisper>=1.1,<2",
+  "transformers>=4.45,<5", "torch>=2.6,<3",
+  "sentencepiece>=0.2,<0.3", "safetensors>=0.4", "hf_xet>=1.1,<2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "ruff>=0.9"]
+gpu = ["nvidia-cublas-cu12>=12.4,<13; sys_platform == 'win32'", "nvidia-cudnn-cu12>=9,<10; sys_platform == 'win32'"]
+
+[project.scripts]
+linguaflow = "linguaflow.app:main"
+
+[tool.setuptools.packages.find]
+include = ["linguaflow*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
