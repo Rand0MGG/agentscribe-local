@@ -18,6 +18,19 @@ def has_weights(path):
     return False
 
 
+def resolve_qwen_cached(model):
+    """Listening never hides a multi-gigabyte Qwen download behind startup."""
+    from huggingface_hub import snapshot_download
+    try:
+        path = Path(model) if Path(model).is_dir() else Path(snapshot_download(model, local_files_only=True))
+        if has_weights(path) and all((path / name).is_file() for name in
+                                     ("config.json", "tokenizer_config.json")):
+            return str(path.resolve())
+    except OSError:
+        pass
+    raise ValueError(f"Qwen 模型未下载完整：{model}。请打开模型管理 → 识别模型 → 下载 / 检查 Qwen 模型，完成后再聆听。")
+
+
 def resolve_translation(model, offline, report):
     from huggingface_hub import HfApi, snapshot_download
 
@@ -36,4 +49,4 @@ def resolve_translation(model, offline, report):
     safe = any(f.endswith(".safetensors") for f in files)
     patterns = ["*.json", "*.model", "*.txt", "*.safetensors" if safe else "*.bin"]
     report("正在下载翻译模型（单份权重），下载进度见终端；下载完成后自动加载")
-    return snapshot_download(model, allow_patterns=patterns)
+    return snapshot_download(model, allow_patterns=patterns, max_workers=1)

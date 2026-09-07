@@ -8,7 +8,6 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
-    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -20,7 +19,6 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
-    QSpinBox,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -28,8 +26,8 @@ from PySide6.QtWidgets import (
 
 from .audio import list_devices
 from .core import LANGUAGES, Settings, export_srt
-from .engine import Session
 from .management import ModelManager
+from .wlk_session import Session
 
 STYLE = """
 QWidget { background: #10151d; color: #e5edf8; font-family: 'Microsoft YaHei UI', 'PingFang SC', sans-serif; font-size: 13px; }
@@ -185,22 +183,25 @@ class Window(QMainWindow):
         self.asr.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.asr.addItems(["tiny", "base", "small", "medium", "large-v3", "turbo"])
         self.asr.setCurrentText("small")
-        models.addRow("识别模型 · faster-whisper", self.asr)
+        models.addRow("识别模型 · Whisper", self.asr)
         choose_asr = QPushButton("选择识别模型目录…")
         choose_asr.clicked.connect(lambda: self.choose_model(self.asr))
         models.addRow(choose_asr)
+        choose_checkpoint = QPushButton("选择 Whisper .pt 文件…")
+        choose_checkpoint.clicked.connect(self.choose_checkpoint)
+        models.addRow(choose_checkpoint)
         self.compute = QComboBox()
-        self.compute.addItem("CPU · INT8（通用）", "cpu")
+        self.compute.addItem("CPU（通用）", "cpu")
         if sys.platform != "darwin":
-            self.compute.addItem("NVIDIA GPU · INT8 / FP16", "cuda")
-        models.addRow("识别计算设备", self.compute)
+            self.compute.addItem("NVIDIA GPU · 半精度", "cuda")
+        self.model_manager.asr_form.addRow("识别计算设备", self.compute)
         models = self.model_manager.translation_form
         self.translation = QComboBox()
         self.translation.setEditable(True)
         self.translation.setMinimumContentsLength(18)
         self.translation.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.translation.addItems(["facebook/nllb-200-distilled-600M", "facebook/nllb-200-distilled-1.3B"])
-        models.addRow("翻译模型 · NLLB / CPU", self.translation)
+        models.addRow("翻译模型 · NLLB", self.translation)
         choose_translation = QPushButton("选择翻译模型目录…")
         choose_translation.clicked.connect(lambda: self.choose_model(self.translation))
         models.addRow(choose_translation)
@@ -215,18 +216,6 @@ class Window(QMainWindow):
                 "muted",
             )
         )
-        self.phrase = QSpinBox()
-        self.phrase.setRange(2, 10)
-        self.phrase.setValue(4)
-        self.phrase.setSuffix(" 秒")
-        self.phrase.hide()  # retained only to read older preferences
-        self.threshold = QDoubleSpinBox()
-        self.threshold.setDecimals(3)
-        self.threshold.setRange(0.001, 0.100)
-        self.threshold.setSingleStep(0.001)
-        self.threshold.setValue(0.008)
-        self.threshold.setToolTip("安静说话被漏掉时降低；噪声导致频繁识别时提高。")
-        self.threshold.hide()
         self.model_manager.finish_setup(self)
         form_outer.addWidget(label("02 / 聆听引擎", "section"))
         self.model_summary = label("", "muted")
@@ -234,7 +223,7 @@ class Window(QMainWindow):
         manage = QPushButton("模型管理 · 下载与设置")
         manage.clicked.connect(self.manage_models)
         form_outer.addWidget(manage)
-        form_outer.addWidget(label("原文先出现，并随后文修正。\n停顿后定稿，再显示译文。", "muted"))
+        form_outer.addWidget(label("原文先出现，并随后文修正。\n确认短句后，逐句显示译文。", "muted"))
         form_outer.addStretch()
         settings_scroll = QScrollArea()
         settings_scroll.setWidgetResizable(True)
@@ -319,19 +308,21 @@ class Window(QMainWindow):
         for key, combo in [("source", self.source), ("target", self.target), ("compute", self.compute)]:
             value = self.prefs.value(key)
             index = combo.findText(str(value))
+            if key == "compute" and "NVIDIA" in str(value):
+                index = combo.findData("cuda")
             if index >= 0:
                 combo.setCurrentIndex(index)
         self.offline.setChecked(self.prefs.value("offline", False, type=bool))
         self.translate.setChecked(self.prefs.value("translate", True, type=bool))
-        self.phrase.setValue(self.prefs.value("phrase", 4, type=int))
-        self.threshold.setValue(self.prefs.value("threshold", 0.008, type=float))
         manager = self.model_manager
-        index = manager.backend.findData(self.prefs.value("backend", "whisper-live"))
+        backend = self.prefs.value("backend", "wlk-whisper")
+        backend = {"whisper-live": "wlk-whisper", "qwen-stream": "qwen3-streaming"}.get(backend, backend)
+        index = manager.backend.findData(backend)
         manager.backend.setCurrentIndex(max(0, index))
         manager.qwen_model.setCurrentText(self.prefs.value("qwen_model", "Qwen/Qwen3-ASR-0.6B"))
-        manager.service_url.setText(self.prefs.value("service_url", "http://127.0.0.1:8765"))
+        manager.translation_device.setCurrentIndex(max(0, manager.translation_device.findData(self.prefs.value("translation_device", self.compute.currentData()))))
         for key in ["update_seconds", "endpoint_seconds"]:
-            getattr(manager, key).setValue(self.prefs.value(key, 1.0, type=float))
+            getattr(manager, key).setValue(self.prefs.value(key, 0.5 if key == "endpoint_seconds" else 1.0, type=float))
 
     def manage_models(self):
         self.model_manager.exec()
@@ -340,10 +331,10 @@ class Window(QMainWindow):
 
     def update_model_summary(self):
         manager = self.model_manager
-        if manager.backend.currentData() == "whisper-live":
-            text = f"Whisper · {self.asr.currentText()}\n近实时回听修订 · {self.compute.currentText()}"
+        if manager.backend.currentData() == "wlk-whisper":
+            text = f"WhisperLiveKit · {self.asr.currentText()}\nAlignAtt · {self.compute.currentText()}"
         else:
-            text = f"{manager.qwen_model.currentText()}\n流式接口 · 需本机服务就绪"
+            text = f"WhisperLiveKit · {manager.qwen_model.currentText()}\nQwen 窗口式流式 · {self.compute.currentText()}"
         self.model_summary.setText(text)
 
     def save(self):
@@ -357,12 +348,10 @@ class Window(QMainWindow):
             self.prefs.setValue(key, combo.currentText())
         self.prefs.setValue("offline", self.offline.isChecked())
         self.prefs.setValue("translate", self.translate.isChecked())
-        self.prefs.setValue("phrase", self.phrase.value())
-        self.prefs.setValue("threshold", self.threshold.value())
         manager = self.model_manager
         self.prefs.setValue("backend", manager.backend.currentData())
         self.prefs.setValue("qwen_model", manager.qwen_model.currentText())
-        self.prefs.setValue("service_url", manager.service_url.text().strip())
+        self.prefs.setValue("translation_device", manager.translation_device.currentData())
         for key in ["update_seconds", "endpoint_seconds"]:
             self.prefs.setValue(key, getattr(manager, key).value())
 
@@ -370,6 +359,11 @@ class Window(QMainWindow):
         path = QFileDialog.getExistingDirectory(self, "选择完整模型目录")
         if path:
             combo.setCurrentText(path)
+
+    def choose_checkpoint(self):
+        path, _ = QFileDialog.getOpenFileName(self, "选择 Whisper 权重", "", "Whisper (*.pt)")
+        if path:
+            self.asr.setCurrentText(path)
 
     def refresh_devices(self):
         previous = self.device.currentData()
@@ -392,7 +386,17 @@ class Window(QMainWindow):
         if self.device.currentData() is None:
             QMessageBox.warning(self, "没有音频来源", "请连接录音设备并刷新列表。")
             return
-        if ((self.model_manager.backend.currentData() == "whisper-live" and not self.asr.currentText().strip())
+        if self.model_manager.backend.currentData() == "qwen3-streaming" and self.source.currentData()[0] is None:
+            QMessageBox.warning(self, "请选择原文语言", "Qwen 流式模式需要明确原文语言，例如 English 或简体中文。")
+            return
+        if self.model_manager.backend.currentData() == "qwen3-streaming":
+            from .model_cache import resolve_qwen_cached
+            try:
+                resolve_qwen_cached(self.model_manager.qwen_model.currentText().strip())
+            except ValueError as exc:
+                QMessageBox.warning(self, "模型尚未准备好", str(exc))
+                return
+        if ((self.model_manager.backend.currentData() == "wlk-whisper" and not self.asr.currentText().strip())
                 or (self.translate.isChecked() and not self.translation.currentText().strip())):
             QMessageBox.warning(self, "模型为空", "请选择模型名称或本地模型目录。")
             return
@@ -411,6 +415,7 @@ class Window(QMainWindow):
         }
         self.on_stage("会话", "启动中")
         self.diagnostics.clear()
+        self.on_status("正在启动本地推理环境…可点击停止取消加载。")
         self.empty.setText("正在准备模型和验证推理环境…\n准备好后自动开始录音，加载进度显示在下方。")
         device_id, loopback = self.device.currentData()
         source, source_nllb = self.source.currentData()
@@ -425,10 +430,8 @@ class Window(QMainWindow):
             target=self.target.currentData(),
             translate=self.translate.isChecked(),
             offline=self.offline.isChecked(),
-            phrase_seconds=self.phrase.value(),
-            threshold=self.threshold.value(),
             backend=self.model_manager.backend.currentData(),
-            service_url=self.model_manager.service_url.text().strip(),
+            translation_device=self.model_manager.translation_device.currentData(),
             qwen_model=self.model_manager.qwen_model.currentText(),
             update_seconds=self.model_manager.update_seconds.value(),
             endpoint_seconds=self.model_manager.endpoint_seconds.value(),
@@ -473,6 +476,8 @@ class Window(QMainWindow):
             return
         self.start_button.setText("聆听中")
         self.on_stage("会话", "聆听中")
+        self.on_status("识别已就绪，正在聆听；翻译模型独立加载。" if self.translate.isChecked()
+                       else "识别已就绪，正在聆听。")
         self.empty.setText("识别已就绪，正在等待语音…\n若有音量但没有原文，请打开诊断记录查看每段识别结果。")
 
     def clear_captions(self):

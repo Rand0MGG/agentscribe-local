@@ -1,11 +1,15 @@
-# Third-party source
+# Third-party dependencies
 
-`linguaflow/vendor/hypothesis_buffer.py` contains the `HypothesisBuffer` class extracted from UFAL Whisper-Streaming `whisper_online.py`.
+LinguaFlow 0.3 consumes the full WhisperLiveKit pipeline as a pinned dependency. The old extracted HypothesisBuffer and custom streaming wrapper have been removed.
 
-- Repository: https://github.com/ufal/whisper_streaming
-- Pinned commit: `6da90b44b7e50d79695e68166d2a2c7609c75abb`
-- License: MIT, preserved in `linguaflow/vendor/LICENSE.whisper-streaming` and included in package data.
-- Extraction adds only standalone imports/logger setup. Reproduce using `scripts/vendor_whisper_streaming.py`.
-- LinguaFlow's surrounding rolling-window, caption revision, journal, UI and translation orchestration are local integration code. Upstream benchmark numbers do not apply to this implementation.
+- WhisperLiveKit: https://github.com/QuentinFuxa/WhisperLiveKit
+  - Commit: 94a2ac6f1b7a4a54b9dd1218039ee09bc78ccb7e
+  - Apache-2.0. Its own distribution retains upstream research implementation notices.
+- Qwen3-ASR-causal package: https://github.com/QuentinFuxa/Qwen3-ASR-causal
+  - Commit: 89752586ca978d72773732422b81bf03eea2e5e2
+  - Apache-2.0. LinguaFlow selects its windowed backend, not the English-only causal checkpoint.
+- Qwen3-ASR: https://github.com/QwenLM/Qwen3-ASR — Apache-2.0.
+- NLLB weights: https://huggingface.co/facebook/nllb-200-distilled-600M — CC-BY-NC-4.0.
+- nagisa/DyNet remain installed dependencies; the Windows Unicode-path compatibility layer copies the installed package temporarily without changing its implementation or license files.
 
-Qwen3-ASR is an optional separately installed dependency; the local bridge calls its public streaming API. No Qwen model weights are distributed in this repository. Model licenses remain separate from application code licenses.
+No model weights are distributed in this repository. Dependency and model licenses remain separate from application code. Upstream benchmark figures do not constitute LinguaFlow performance measurements.

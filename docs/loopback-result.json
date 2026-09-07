@@ -1,41 +1,45 @@
 {
   "fixture": "hello.wav",
   "events": [
-    "正在加载识别模型；首次使用可能需要下载…",
-    "检查 GPU 运行库…",
-    "加载识别模型 large-v3 · cuda；首次下载进度见终端",
-    "识别模型已加载，正在预热验证推理；尚未录音…",
-    "初始化翻译运行库；完成后开始录音…",
-    "识别已就绪，开始聆听；原文会先显示",
-    "正在加载翻译模型（CPU）；原文识别继续运行…",
+    "正在加载 WhisperLiveKit / whisper",
+    "E:\\codex_project\\翻译\\.venv-wlk\\Lib\\site-packages\\whisperlivekit\\whisper\\timing.py:42: UserWarning: Failed to launch Triton kernels, likely due to missing CUDA toolkit; falling back to a slower median kernel implementation...",
+    "warnings.warn(",
+    "E:\\codex_project\\翻译\\.venv-wlk\\Lib\\site-packages\\whisperlivekit\\whisper\\timing.py:42: UserWarning: Failed to launch Triton kernels, likely due to missing CUDA toolkit; falling back to a slower median kernel implementation...",
+    "warnings.warn(",
+    "E:\\codex_project\\翻译\\.venv-wlk\\Lib\\site-packages\\whisperlivekit\\whisper\\timing.py:42: UserWarning: Failed to launch Triton kernels, likely due to missing CUDA toolkit; falling back to a slower median kernel implementation...",
+    "warnings.warn(",
     "翻译模型：使用已下载缓存，不下载第二份权重",
-    "翻译权重已就绪，正在加载到 CPU 内存…",
-    "翻译模型已就绪",
-    "正在识别 2.6 秒音频 · 等待 0 段",
-    "识别完成 · 0.5 秒 · 1 条原文",
-    "译文已更新 · 翻译耗时 2.0 秒",
-    "正在识别 2.9 秒音频 · 等待 0 段",
-    "识别完成 · 0.3 秒 · 1 条原文",
-    "译文已更新 · 翻译耗时 1.2 秒"
+    "翻译权重已就绪，正在加载到 CUDA…",
+    "E:\\codex_project\\翻译\\.venv-wlk\\Lib\\site-packages\\whisperlivekit\\whisper\\timing.py:42: UserWarning: Failed to launch Triton kernels, likely due to missing CUDA toolkit; falling back to a slower median kernel implementation...",
+    "warnings.warn(",
+    "翻译等待 3.0s · 推理 0.2s · 待处理 1 条",
+    "翻译等待 1.0s · 推理 0.2s · 待处理 0 条",
+    "本次 PyTorch 显存分配峰值 5.65 GiB（不含驱动等额外占用）"
   ],
   "captions": [
     {
       "id": 1,
-      "start": 0.3,
-      "end": 2.34,
+      "start": 0.76,
+      "end": 3.44,
       "source": "Hello, welcome to our meeting.",
       "language": "en",
       "translation": "你好,欢迎来到我们的会议.",
-      "error": ""
+      "error": "",
+      "final": true,
+      "revision": 4,
+      "stable_source": ""
     },
     {
       "id": 2,
-      "start": 2.92,
-      "end": 5.24,
+      "start": 3.42,
+      "end": 5.48,
       "source": "Today we are discussing a new project.",
       "language": "en",
       "translation": "今天我们讨论一个新项目.",
-      "error": ""
+      "error": "",
+      "final": true,
+      "revision": 3,
+      "stable_source": ""
     }
   ]
 }

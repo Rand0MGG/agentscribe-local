@@ -20,7 +20,10 @@ w.on_caption(Caption(1, 0, 1, '过期结果', 'zh', final=False))
 assert w.cards[1].source.text() == '正确原文'
 w.on_caption(Caption(1, 0, 2, '', 'zh', final=True, revision=3))
 assert not w.captions
-assert w.model_manager.tabs.count() == 3
+assert w.model_manager.tabs.count() == 4
+assert w.model_manager.tabs.tabText(3) == '运行环境'
+w.model_manager.backend.setCurrentIndex(w.model_manager.backend.findData('qwen3-streaming'))
+assert 'Qwen' in w.model_manager.behavior_hint.text()
 w.session = SimpleNamespace(deleteLater=lambda: None)
 w.on_failure('GPU 运行库缺失: cublas64_12.dll')
 w.on_status('音频队列已满')

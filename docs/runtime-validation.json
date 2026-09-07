@@ -1,0 +1,50 @@
+{
+  "hardware": "NVIDIA RTX 5070 Ti, 16303 MiB, driver 595.79",
+  "torch": "2.11.0+cu128",
+  "fixture": "tests/fixtures/continuous-en.wav",
+  "reference": "tests/fixtures/continuous-en.txt",
+  "fixture_sha256": "6566ffbc089c693a54cc0f6438fbc0ab9bad49868989cfe50956645c9f7514c2",
+  "runs": {
+    "qwen3-asr-0.6b": {
+      "reference_words": 256,
+      "recognized_words": 256,
+      "word_edits": 1,
+      "wer": 0.00390625,
+      "final_captions": 29,
+      "translated_captions": 29,
+      "max_processing_backlog_seconds": 2.9,
+      "max_commit_wait_seconds": 6.3,
+      "max_translation_wait_seconds": 0.6869999999980791,
+      "max_translation_inference_seconds": 0.6090000000003783,
+      "finished": true,
+      "memory_report": [
+        "本次 PyTorch 显存分配峰值 4.12 GiB（不含驱动等额外占用）"
+      ]
+    },
+    "whisper-large-v3": {
+      "reference_words": 256,
+      "recognized_words": 256,
+      "word_edits": 0,
+      "wer": 0.0,
+      "final_captions": 19,
+      "translated_captions": 19,
+      "max_processing_backlog_seconds": 2.1,
+      "max_commit_wait_seconds": 3.1,
+      "max_translation_wait_seconds": 3.735000000000582,
+      "max_translation_inference_seconds": 0.8129999999982829,
+      "finished": true,
+      "memory_report": [
+        "本次 PyTorch 显存分配峰值 10.56 GiB（不含驱动等额外占用）"
+      ]
+    }
+  },
+  "runtime_source_sha256": {
+    "linguaflow\\wlk_worker.py": "964a17a6891b9aabe4a9856b22538ac49e7ed48e85683c091d59851326ea6925",
+    "linguaflow\\wlk_session.py": "07123ce12227a91fd8fb7505107a97e621bd13591ee64a5c958d7d570baa094c",
+    "linguaflow\\wlk_captions.py": "eb9e3a902c82b37db962db850cf9fb86fef99ca0a7a986b9f4d008ee7dfcf3af",
+    "linguaflow\\backends.py": "3c25832af9bfd01687688f6d4d439c2cdf8c0843af75bc337c2c0b3d9752f87a",
+    "linguaflow\\core.py": "fc1cc50fbd0baa53c8d6b4e911529508e0ac5038e522cb9ba0ef57ad0c527d92",
+    "linguaflow\\model_cache.py": "35be03a1a1c6292076820bef4a105e326de79e2e5ce803b44f42e7a67f362383",
+    "linguaflow\\runtime_compat.py": "a3d84907686a8a5d92281c600a4aae973aa0b526d144d53e5c54e7345d9ba63b"
+  }
+}

@@ -1,51 +1,44 @@
-# 验证记录
+# 0.3 集成验证记录（2026-09-07）
 
-## 0.2 原文修订改版（2026-09-06）
+环境：Windows、Python 3.12、RTX 5070 Ti 16303 MiB、驱动 595.79。
+推理环境：PyTorch 2.11.0+cu128，WhisperLiveKit 及 Qwen 适配的提交见 requirements-runtime.txt。
 
-- 29 项功能回归通过，Ruff 与 compileall 通过。
-- 新覆盖：同一原文行跨版本纠错、草稿撤回、稳定前缀定稿保留尾部、轻声音频与积压完整保留、仅定稿进入翻译、文件型服务能力拒绝、Qwen 会话协议替身。
-- 主界面与模型管理已离屏渲染并检查。截图为示例字幕，非实际识别结果。
-- 按用户要求，未再对旧方案做效果基准，也未对新方案声称质量验收通过。Qwen 真实权重与服务没有在本机安装、运行；8GB 显存、macOS 与实际长时间录音效果仍未验证。
-- 以下记录属于 0.1 历史链路，其真实音频结果不能用作 0.2 的质量证明。
+## 已取得的真实运行证据
 
----
+| 测试 | 结果 | 证据文件（本机 .work，未上传） |
+| --- | --- | --- |
+| Qwen 0.6B + NLLB 1.3B / CUDA，79.484 秒重复语音 | 12 次完整原文、12 段译文；上游 RTF 0.28 | qwen-long-smoke.json/.log |
+| Qwen 0.6B，无额外静音的 67.484 秒语音，短句映射阶段 | 12 次完整原文，36 条字幕及译文 | qwen-continuous-segmented.json/.log |
+| Qwen 真实 Qt Session，严格离线 | 完整原文、GPU 译文、SRT；PyTorch 分配峰值约 4.08 GiB | qwen-final-session.log、qwen3-streaming-session.json/.srt |
+| Whisper large-v3 真实 Qt Session，严格离线 | 完整词序列、GPU 译文、SRT；PyTorch 分配峰值约 9.85 GiB | whisper-session.log、wlk-whisper-session.json/.srt |
+| Whisper large-v3，101.176 秒不重复英文语音，加 1 秒结尾静音 | 256 个参考词与输出词一致，归一化 WER 0%；全部短段有译文，峰值约 10.54 GiB | whisper-narrative.json/.stdout.log |
 
-日期：2026-09-06。环境：Windows，Python 3.12.8。
+固定语音由 Windows Microsoft David Desktop 合成。短音频为 tests/fixtures/hello.wav；长音频与参考文本为 continuous-en.wav/.txt。词比较忽略大小写和标点；这些是合成英文回归素材，不是一般准确率基准，也不证明口音、噪声、中文或真实会议效果。
 
-## 已完成
+上述运行记录来自整合过程中的对应代码状态。随后调整过短字幕长度、模型缓存解析和兼容代码，因此最终版本完整复测仍待完成，不能将表格等同于最终版本验收。
 
-- 21 项自动化测试通过：分段静音/预滚动/连续边界、队列上限、SRT、独立翻译更新、停止加载、
-  仅转写、模型失败、录音失败、设备断开、立体声重采样。
-- Ruff 静态检查通过。
-- 完整依赖安装成功，`pip check` 无冲突；faster-whisper、Transformers 模型类及 PyTorch 均导入成功。
-- 桌面启动检查成功，Qt 事件循环正常执行并发现 5 个音频设备。
-- 实际 Qt 窗口离屏渲染，并人工检查 `preview.png`；截图内容是明确标注的示例字幕。
-- 本机 Windows 设备发现成功，列出 4 个系统回环设备和 1 个麦克风。
-- 实际 WASAPI 回环采集 5 个 100ms 音频块，经重采样均为 1600 个单声道样本。
-  该检查只验证采集形状和停止，不保存音频，不代表语音识别成功。
+## 未通过的场景及保留的限制
 
-## 本次修复后的真实模型验收
+- Whisper large-v3 反复播放同一句话 12 次的严格完整性检查失败。原版上游跨批次重复保护会重置解码段；一次缩小保护范围的实验导致后半段提交停滞，已撤回该实验。保留上游原始保护，没有声称此问题已修好。
+- 101 秒不重复素材的零词错误结果出现在上述实验分支期间，该素材未触发重复保护；撤回实验后的最终版本仍应重跑，不用这一结果掩盖重复内容失败。
+- Windows 上游对齐代码提示缺少 Triton，使用备用 median kernel；GPU 识别仍实际运行。没有隐藏该提示，也未把它当作所有问题的解释。
+- 早期字幕适配曾把带句号的整行过早锁定，导致漏掉后续词；现已改为对上游已确认词生成短段，草稿继续修订。迟到的独立标点不会单独送去翻译。短问候会与后续文本合并，以提供更多翻译上下文。
+- 未在实体 Mac、实体 8GB 显卡、Qwen 1.7B 或所有支持语言上验收。Mac 当前桌面入口仅提供 CPU，不宣称已启用 MLX/Metal。
+- 当前 Whisper CPU 模式不支持同进程 CUDA 翻译，会明确报错；Whisper CUDA + CUDA 翻译以及 CUDA + CPU 翻译均由配置表达，前者已实际运行。
 
-- 已补齐虚拟环境内的 cuBLAS 12.9、cuDNN 9.25 和 hf_xet，并通过 CUDA 预热。
-- 用户缓存的 large-v3 / CUDA INT8-FP16 + NLLB 1.3B / CPU，完全离线运行。
-- 固定英文合成音频 `tests/fixtures/hello.wav`，直接调用模型：识别 0.469 秒，翻译 2.875 秒。
-- 实际 Windows 默认播放设备回环 → 分段 → Session → Qt 字幕信号 → SRT 链路：
-  两条原文完整，译文非空；识别分别约 0.5、0.3 秒，翻译约 2.0、1.2 秒。
-- 原文为 “Hello, welcome to our meeting.” 和 “Today we are discussing a new project.”。
-  对应译文为 “你好,欢迎来到我们的会议.” 和 “今天我们讨论一个新项目.”。
-- 最终这次回环测试未出现音频断续警告；前一轮的断续与丢词已通过初始化顺序及缓冲修复。
-- 真实输出保存在 `loopback-result.json`、`loopback-result.srt`。
-  `verified-preview.png` 为这次验收记录在真实 Qt 界面中的回放，非持续录音截图。
+## 后续验收命令
 
-上述是单段合成音频的实测，耗时不含模型加载和等待语音分段，不能视为普遍端到端延迟。
+```powershell
+.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider
+.venv\Scripts\python.exe -m ruff check linguaflow scripts tests
+.venv-wlk\Scripts\python.exe -m pip check
+.venv\Scripts\python.exe scripts/smoke_session.py --backend qwen3-streaming
+.venv\Scripts\python.exe scripts/smoke_session.py --backend wlk-whisper --model large-v3
+.venv\Scripts\python.exe scripts/smoke_wlk.py --backend qwen3-streaming --translate --audio tests/fixtures/continuous-en.wav --reference tests/fixtures/continuous-en.txt --output .work/qwen-narrative.json
+.venv\Scripts\python.exe scripts/smoke_wlk.py --backend wlk-whisper --model large-v3 --translate --audio tests/fixtures/continuous-en.wav --reference tests/fixtures/continuous-en.txt --output .work/whisper-narrative-final.json
+```
 
-## 尚未验证
+长素材预设验收门槛 WER ≤ 5%，全部定稿段有译文且无错误；重复短素材的检查仍要求完整重复次数，不降低门槛将失败改成通过。
+新 Qwen 长素材测试被自动审批因账户额度拒绝，未启动该进程。需要额度恢复后继续，并完成真实系统回环及最终代码/文档核对。此记录不表示目标已经完成。
 
-- 长对话、多语言、噪声环境的识别准确度和翻译质量。
-- 8GB 显卡上的显存峰值、长时间运行及端到端延迟；本机显卡是 16GB RTX 5070 Ti。
-- macOS 实机、麦克风权限、BlackHole 路由、Apple Silicon CPU 性能。
-- 安装包、签名、Intel Mac 的依赖兼容性。
-
-验收建议：固定英语输入和中文输出，播放一段已知英文录音，核对原文和译文；
-连续运行 10 分钟，观察是否出现跳过提示。随后分别验证停止、换模型、离线启动、导出，
-并在目标 8GB 设备上记录显存和延迟。使用 `scripts/smoke_models.py` 可以独立核验模型适配器。
+最近静态检查：Ruff 通过；不依赖临时目录 fixture 的 12 项回归通过。此前整合阶段完整 18 项回归曾通过；最终全套重跑受沙箱临时目录访问权限影响，不能将其记为最终通过。CPU/GPU 安装修复已改为精确指定 PyTorch 构建后缀，避免已有 CPU 包被错误判断为满足 GPU 安装要求；该安装切换仍待实际复核。

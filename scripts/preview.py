@@ -64,7 +64,7 @@ if len(sys.argv) > 1:
         window.on_caption(Caption(**item))
     window.diagnostics.setPlainText("\n".join(result["events"]))
     window.diagnostics.show()
-    window.pipeline.setText("音频：回环通过   /   识别：GPU 通过   /   翻译：CPU 通过   /   会话：已结束")
+    window.pipeline.setText("音频：回环通过   /   识别：GPU 通过   /   翻译：GPU 通过   /   会话：已结束")
     window.status.setText("真实回环验收结果回放 · 固定英文测试音频 · 非正在录音")
     output = "docs/verified-preview.png"
 window.export_button.setEnabled(True)

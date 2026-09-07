@@ -1,10 +1,11 @@
 """Windows opt-in acceptance test: play a supplied WAV and capture default output.
 
 Uses real audio capture, segmentation, models, Qt signal delivery and SRT export.
-Does not record audio to disk. Run with a known test WAV and other playback paused.
+The Session uses a temporary PCM journal. Run with a known test WAV and other playback paused.
 """
 
 import json
+import re
 import sys
 import wave
 from pathlib import Path
@@ -17,7 +18,7 @@ import soundcard as sc
 from PySide6.QtCore import QCoreApplication, QTimer
 
 from linguaflow.core import Settings, export_srt
-from linguaflow.engine import Session
+from linguaflow.wlk_session import Session
 
 
 def main():
@@ -34,7 +35,7 @@ def main():
         source="en",
         source_nllb="eng_Latn",
         offline=True,
-        threshold=0.003,
+        translation_device="cuda",
     )
     session = Session(settings)
     captions, errors, events = {}, [], []
@@ -60,9 +61,12 @@ def main():
     app.exec()
     session.wait()
     winsound.PlaySound(None, 0)
-    if errors or not captions or not any(c.translation for c in captions.values()):
-        raise RuntimeError(f"Loopback test failed: {errors}, captions={len(captions)}")
-    result = {"fixture": path.name, "events": events, "captions": [vars(c) for c in captions.values()]}
+    finals = [c for c in captions.values() if c.final and c.source]
+    source = " ".join(re.findall(r"\w+", " ".join(c.source for c in finals).lower()))
+    expected = "hello welcome to our meeting today we are discussing a new project"
+    if errors or not finals or source != expected or not all(c.translation and not c.error for c in finals):
+        raise RuntimeError(f"Loopback test failed: {errors}, source={source!r}, captions={[vars(c) for c in finals]}")
+    result = {"fixture": path.name, "events": events, "captions": [vars(c) for c in finals]}
     Path("docs/loopback-result.json").write_text(
         json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
     )

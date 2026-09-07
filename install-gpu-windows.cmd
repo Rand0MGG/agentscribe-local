@@ -5,10 +5,10 @@ if not exist ".venv\Scripts\python.exe" (
   pause
   exit /b 1
 )
-".venv\Scripts\python.exe" -m pip install -e ".[gpu]"
+".venv\Scripts\python.exe" scripts\install_runtime.py
 if errorlevel 1 (
   echo Installation failed. See the error above.
 ) else (
-  echo GPU libraries installed. Restart LinguaFlow.
+  echo WhisperLiveKit and Qwen GPU runtime installed. Restart LinguaFlow.
 )
 pause

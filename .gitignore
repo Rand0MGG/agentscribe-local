@@ -1,4 +1,6 @@
 .venv/
+.venv-wlk/
+.work/
 .venv-qwen/
 __pycache__/
 *.pyc
