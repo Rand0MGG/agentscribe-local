@@ -2,6 +2,8 @@ import json
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 from linguaflow.model_cache import has_weights, resolve_translation
 
 
@@ -45,10 +47,10 @@ def test_download_selects_one_weight_format(monkeypatch):
     assert resolve_translation("test/model", False, lambda s: None) == "downloaded"
     assert "*.safetensors" in calls[-1]["allow_patterns"]
     assert "*.bin" not in calls[-1]["allow_patterns"]
+
+
 def test_incomplete_qwen_is_rejected_before_listening(tmp_path):
-    import pytest
     from linguaflow.model_cache import resolve_qwen_cached
     (tmp_path / "model-00001-of-00002.safetensors").write_bytes(b"partial")
     with pytest.raises(ValueError, match="模型未下载完整"):
         resolve_qwen_cached(str(tmp_path))
-

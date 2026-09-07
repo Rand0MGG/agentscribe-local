@@ -4,7 +4,7 @@ Windows / macOS 桌面应用：麦克风或系统声音 → 本地原文字幕 �
 0.3 使用完整 WhisperLiveKit 音频处理链路，提供 Whisper / AlignAtt 和 Qwen3-ASR 两个本地后端。
 Qt 界面与模型运行环境隔离；应用自行启动、停止推理进程，不需要 WSL、端口或手动服务。
 
-当前为整合开发版本，最终复测尚未完成；已通过项目及已知失败场景见 [验证记录](docs/VALIDATION.md)。
+当前版本已完成 WhisperLiveKit / Qwen3-ASR 本地流式链路和桌面回归验收；已通过项目及适用范围见 [验证记录](docs/VALIDATION.md)。
 
 ![界面示例](docs/preview.png)
 
@@ -53,7 +53,7 @@ python3.12 -m venv .venv
 - Whisper 使用 WhisperLiveKit 的 AlignAtt 解码器：支持 tiny/base/small/medium/large-v3/turbo、原始 `.pt` 文件或兼容 Hugging Face 目录。**旧 faster-whisper/CTranslate2 目录不能直接用于此解码器。** 在模型管理中重新准备对应格式。
 - Qwen 使用 `Qwen/Qwen3-ASR-0.6B` 或 `1.7B` 的窗口式流式适配，限制重编码窗口，运行于本地 PyTorch。没有启用社区英语专用 causal 权重。Qwen 词时间戳是估计值，不适合精密对齐。
 - NLLB 支持 600M/1.3B 及兼容目录，可独立选择 CPU 或 CUDA FP16；翻译失败保留原文。
-- 当前 Whisper CPU 识别须配合 CPU 翻译；使用 CUDA 翻译时请同时选择 CUDA Whisper。Qwen 的设备设置由其独立后端处理。
+- Whisper 识别与 NLLB 翻译可以独立选择 CPU 或 CUDA；共用 GPU 时请留出两套模型的显存。Qwen 的设备设置由其独立后端处理。
 - 8GB 显存优先尝试 Whisper small 或 Qwen 0.6B，加 NLLB 600M。16GB 可使用 large-v3，但总占用受窗口、运行库及其他程序影响，软件没有强制显存配额。
 - 模型管理中的更新间隔是调度参数，不表示模型只计算该时长；上游流式后端负责窗口推进。停顿阈值控制话语边界，不是唯一提交依据。
 
@@ -78,3 +78,5 @@ NLLB 权重遵循 [CC-BY-NC-4.0](https://huggingface.co/facebook/nllb-200-distil
 实际运行证据及适用范围见 [VALIDATION](docs/VALIDATION.md)。设计见 [STREAMING_DESIGN](docs/STREAMING_DESIGN.md)，依赖来源见 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md)。
 
 音频临时缓冲约 230MB/小时，会话结束删除。没有云端 API、语音合成或独立安装包；不声称达到商业软件所有场景的准确率。
+
+项目目录说明见 [PROJECT_STRUCTURE](docs/PROJECT_STRUCTURE.md)。

@@ -30,29 +30,34 @@ from .management import ModelManager
 from .wlk_session import Session
 
 STYLE = """
-QWidget { background: #10151d; color: #e5edf8; font-family: 'Microsoft YaHei UI', 'PingFang SC', sans-serif; font-size: 13px; }
-QLabel#title { font-size: 28px; font-weight: 700; }
+QWidget { background: #0d1117; color: #e6edf3; font-family: 'Microsoft YaHei UI', 'PingFang SC', sans-serif; font-size: 13px; }
+QLabel#title { font-size: 30px; font-weight: 700; letter-spacing: 0.5px; }
 QLabel#muted { color: #94a5bd; }
-QLabel#section { color: #7ee0c3; font-size: 12px; font-weight: 700; }
-QFrame#panel { background: #171f2b; border: 1px solid #2a3647; border-radius: 12px; }
+QLabel#section { color: #8b949e; font-size: 11px; font-weight: 700; letter-spacing: 1px; }
+QLabel#eyebrow { color: #79c0ff; font-size: 12px; font-weight: 600; }
+QFrame#panel { background: #161b22; border: 1px solid #30363d; border-radius: 10px; }
 QFrame#panel QLabel { background: transparent; }
-QComboBox, QSpinBox, QDoubleSpinBox { background: #1f2a3a; border: 1px solid #35455b;
-    padding: 9px; border-radius: 6px; min-height: 18px; }
-QComboBox QAbstractItemView { background: #1f2a3a; selection-background-color: #365b69; }
-QPushButton { background: #263549; border: 1px solid #35455b; border-radius: 7px; padding: 10px 17px; }
-QPushButton:hover { background: #344860; }
-QPushButton#primary { background: #69dfbd; color: #0d2823; font-weight: 700; border: none; }
-QPushButton:disabled { color: #66758a; background: #1c2532; }
-QProgressBar { background: #263549; border: none; border-radius: 3px; max-height: 6px; }
-QProgressBar::chunk { background: #69dfbd; border-radius: 3px; }
-QScrollArea { border: none; }
-QScrollBar:vertical { background: #10151d; width: 8px; margin: 0; }
-QScrollBar::handle:vertical { background: #35455b; min-height: 28px; border-radius: 4px; }
+QComboBox, QSpinBox, QDoubleSpinBox { background: #21262d; border: 1px solid #30363d;
+    padding: 9px 10px; border-radius: 6px; min-height: 18px; }
+QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover { border-color: #58a6ff; }
+QComboBox QAbstractItemView { background: #161b22; selection-background-color: #1f6feb; }
+QPushButton { background: #21262d; border: 1px solid #30363d; border-radius: 6px; padding: 9px 14px; color: #e6edf3; }
+QPushButton:hover { background: #30363d; border-color: #8b949e; }
+QPushButton#primary { background: #238636; color: #ffffff; font-weight: 700; border: 1px solid #2ea043; padding: 11px 23px; }
+QPushButton#primary:hover { background: #2ea043; }
+QPushButton#secondary { background: #1f6feb; color: white; border-color: #388bfd; }
+QPushButton:disabled { color: #6e7681; background: #161b22; border-color: #21262d; }
+QProgressBar { background: #21262d; border: none; border-radius: 3px; max-height: 5px; }
+QProgressBar::chunk { background: #2ea043; border-radius: 3px; }
+QScrollArea { border: none; background: transparent; }
+QScrollBar:vertical { background: #0d1117; width: 8px; margin: 0; }
+QScrollBar::handle:vertical { background: #30363d; min-height: 28px; border-radius: 4px; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
 QSplitter::handle { background: #10151d; width: 16px; }
 QCheckBox { spacing: 8px; padding: 4px 0; }
-QToolTip { background: #263549; color: white; border: 1px solid #526681; }
+QPlainTextEdit { background: #0d1117; border: 1px solid #21262d; border-radius: 6px; padding: 6px; }
+QToolTip { background: #161b22; color: white; border: 1px solid #8b949e; }
 """
 
 
@@ -63,6 +68,18 @@ def label(text, name=None):
     if name:
         widget.setObjectName(name)
     return widget
+
+
+def panel(title, subtitle=None):
+    frame = QFrame()
+    frame.setObjectName("panel")
+    layout = QVBoxLayout(frame)
+    layout.setContentsMargins(16, 14, 16, 14)
+    layout.setSpacing(9)
+    layout.addWidget(label(title, "section"))
+    if subtitle:
+        layout.addWidget(label(subtitle, "muted"))
+    return frame, layout
 
 
 class Overlay(QWidget):
@@ -140,17 +157,18 @@ class Window(QMainWindow):
         header = QHBoxLayout()
         heading = QVBoxLayout()
         heading.addWidget(label("LinguaFlow", "title"))
-        heading.addWidget(label("听见世界，用你的语言。", "muted"))
+        heading.addWidget(label("本地实时字幕工作台  ·  音频留在你的设备上", "muted"))
         header.addLayout(heading)
         header.addStretch()
-        header.addWidget(label("●  LOCAL FIRST", "section"))
+        header.addWidget(label("●  LOCAL FIRST", "eyebrow"))
         layout.addLayout(header)
         split = QSplitter()
         layout.addWidget(split, 1)
         self.settings_panel = QWidget()
+        self.settings_panel.setObjectName("settingsPanel")
         form_outer = QVBoxLayout(self.settings_panel)
         form_outer.setContentsMargins(0, 0, 12, 0)
-        form_outer.addWidget(label("01 / 音频与语言", "section"))
+        form_outer.addWidget(label("工作区配置", "section"))
         form = QFormLayout()
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
         form.setSpacing(10)
@@ -217,10 +235,11 @@ class Window(QMainWindow):
             )
         )
         self.model_manager.finish_setup(self)
-        form_outer.addWidget(label("02 / 聆听引擎", "section"))
+        form_outer.addWidget(label("当前引擎", "section"))
         self.model_summary = label("", "muted")
         form_outer.addWidget(self.model_summary)
-        manage = QPushButton("模型管理 · 下载与设置")
+        manage = QPushButton("打开模型管理")
+        manage.setObjectName("secondary")
         manage.clicked.connect(self.manage_models)
         form_outer.addWidget(manage)
         form_outer.addWidget(label("原文先出现，并随后文修正。\n确认短句后，逐句显示译文。", "muted"))
@@ -233,11 +252,20 @@ class Window(QMainWindow):
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(4, 0, 0, 0)
         toolbar = QHBoxLayout()
-        toolbar.addWidget(label("实时双语字幕", "section"))
+        toolbar.addWidget(label("实时双语字幕", "title"))
+        toolbar.addWidget(label("LIVE", "eyebrow"))
         toolbar.addStretch()
         diagnostics_button = QPushButton("诊断记录")
         diagnostics_button.setCheckable(True)
         toolbar.addWidget(diagnostics_button)
+        clear_button = QPushButton("清空")
+        clear_button.setToolTip("清除当前字幕，不影响模型和设置")
+        clear_button.clicked.connect(self.clear_captions)
+        toolbar.addWidget(clear_button)
+        copy_button = QPushButton("复制最新")
+        copy_button.setToolTip("复制最新一条原文和译文")
+        copy_button.clicked.connect(self.copy_latest)
+        toolbar.addWidget(copy_button)
         overlay_button = QPushButton("悬浮字幕")
         overlay_button.clicked.connect(self.toggle_overlay)
         toolbar.addWidget(overlay_button)
@@ -563,6 +591,14 @@ class Window(QMainWindow):
 
     def toggle_overlay(self):
         self.overlay.setVisible(not self.overlay.isVisible())
+
+    def copy_latest(self):
+        if not self.captions:
+            self.status.setText("还没有可复制的字幕")
+            return
+        caption = self.captions[max(self.captions)]
+        QApplication.clipboard().setText("\n".join(x for x in (caption.source, caption.translation) if x))
+        self.status.setText("已复制最新字幕")
 
     def export(self):
         path, _ = QFileDialog.getSaveFileName(self, "导出双语字幕", "字幕.srt", "SubRip 字幕 (*.srt)")
