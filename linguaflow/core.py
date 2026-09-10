@@ -1,6 +1,6 @@
 """Session settings, captions and subtitle export (independent of Qt/models)."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 SAMPLE_RATE = 16000
 # UI label, Whisper code, NLLB language token
@@ -36,8 +36,15 @@ class Settings:
     backend: str = "wlk-whisper"
     qwen_model: str = "Qwen/Qwen3-ASR-0.6B"
     update_seconds: float = 1.0
+    draft_seconds: float = 0.5
     endpoint_seconds: float = 0.5
     translation_device: str = "cpu"
+    input_sample_rate: int = 16000
+    audio_processing: dict = field(default_factory=dict)
+    semantic_mode: str = "auto"
+    semantic_device: str = "cpu"
+    semantic_lookahead: float = 3.0
+    caption_max_seconds: float = 12.0
 
 
 @dataclass
@@ -52,6 +59,8 @@ class Caption:
     final: bool = True
     revision: int = 1
     stable_source: str = ""
+    ready: bool = False
+    boundary_reason: str = ""
 
 
 def srt_time(seconds: float) -> str:

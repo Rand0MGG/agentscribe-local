@@ -9,6 +9,16 @@ import tempfile
 from pathlib import Path
 
 
+def configure_vad_pause(processor, seconds):
+    """Apply the UI pause to Silero itself, not only WLK line segmentation."""
+    import math
+    seconds = float(seconds)
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise ValueError("语音停顿阈值必须是有限正数")
+    if processor.vac is not None:
+        processor.vac.min_silence_samples = round(processor.sample_rate * seconds)
+
+
 def prepare_qwen_dependencies():
     # Qwen imports its optional Japanese aligner even for streaming English.
     # DyNet's model loader cannot open Unicode Windows paths. Keep the real

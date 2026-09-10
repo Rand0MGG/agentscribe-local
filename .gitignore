@@ -23,3 +23,5 @@ pytest-cache-files-*/
 .DS_Store
 Thumbs.db
 !docs/loopback-result.srt
+media/test.m4a
+media/test.txt

@@ -9,7 +9,8 @@ from linguaflow.audio import capture
 from linguaflow.core import Settings
 
 
-def test_stereo_capture_downmixes_resamples_and_stops(monkeypatch):
+@pytest.mark.parametrize("rate, frames", [(16000, 1600), (48000, 4800)])
+def test_stereo_capture_downmixes_resamples_and_stops(monkeypatch, rate, frames):
     class Recorder:
         def __enter__(self):
             return self
@@ -30,9 +31,9 @@ def test_stereo_capture_downmixes_resamples_and_stops(monkeypatch):
         blocks.append(block)
         stop.set()
 
-    capture(Settings("test", loopback=True), stop, on_block)
+    capture(Settings("test", loopback=True, input_sample_rate=rate), stop, on_block)
     assert len(blocks) == 1
-    assert blocks[0].shape == (1600,)
+    assert blocks[0].shape == (frames,)
     assert blocks[0].dtype == np.float32
     assert float(blocks[0][20:-20].mean()) == pytest.approx(0.3, abs=0.001)
 

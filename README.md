@@ -1,8 +1,10 @@
-# LinguaFlow · 本地同声字幕
+# AgentScribe · Agent 协作开发的本地语音工作台
 
 Windows / macOS 桌面应用：麦克风或系统声音 → 本地原文字幕 → 本地翻译。
-0.3 使用完整 WhisperLiveKit 音频处理链路，提供 Whisper / AlignAtt 和 Qwen3-ASR 两个本地后端。
+v0.4.0 源码预览版，原名 LinguaFlow。使用完整 WhisperLiveKit 音频处理链路，提供 Whisper / AlignAtt 和 Qwen3-ASR 两个本地后端。
 Qt 界面与模型运行环境隔离；应用自行启动、停止推理进程，不需要 WSL、端口或手动服务。
+
+本版新增音频实验室、可修订的上下文分句、真实草稿与纠错提示，并修复 Qwen 停顿检测参数未生效的问题。详见 [版本说明](docs/RELEASE_v0.4.0.md) 和 [课堂录音验证](docs/CLASSROOM_VALIDATION.md)。当前提供源码及安装脚本，尚无独立 EXE/DMG 安装包。内部 `linguaflow` 模块名、旧启动命令和本地设置位置保留兼容。
 
 当前版本已完成 WhisperLiveKit / Qwen3-ASR 本地流式链路和桌面回归验收；已通过项目及适用范围见 [验证记录](docs/VALIDATION.md)。
 
@@ -42,11 +44,13 @@ python3.12 -m venv .venv
 
 1. 打开“模型管理”，选择 Whisper 或 Qwen、计算设备，下载模型。识别、翻译、聆听行为分别管理。
 2. 选择音频来源、原文语言和目标语言。Windows 的“系统声音”选择当前播放设备；Qwen 必须指定原文语言。
-3. 点击“开始聆听”。原文先显示，未确认尾部可修订；确认原文进入独立翻译队列。
+3. 点击“开始聆听”。原文先显示，暂定分段即可翻译；原文与译文随后文修订，稳定后再定稿。在“模型管理 → 字幕与延迟”准备 SaT 分句模型、选择 CPU/CUDA 并调整后文观察长度，详见 [语义分段](docs/SEMANTIC_SEGMENTATION.md)。
 4. “停止”会处理剩余音频和翻译，然后释放推理进程；关闭窗口会取消剩余任务。
 5. 可打开置顶字幕窗口，结束后导出双语 SRT。导出包含已确认字幕。
 
 ![模型管理](docs/models-preview.png)
+
+麦克风环境可先打开侧栏“音频实验室 · 增强与回听”，确认录音来源与输入电平，再用同一段样本比较预设和自定义处理。提供 WebRTC APM、WPE、DF3、响度/EQ/峰值保护；DF3 可选 CPU/CUDA。详见 [音频处理与故障恢复](docs/AUDIO_PROCESSING.md)。
 
 ## 模型与显存
 
@@ -77,6 +81,6 @@ NLLB 权重遵循 [CC-BY-NC-4.0](https://huggingface.co/facebook/nllb-200-distil
 
 实际运行证据及适用范围见 [VALIDATION](docs/VALIDATION.md)。设计见 [STREAMING_DESIGN](docs/STREAMING_DESIGN.md)，依赖来源见 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md)。
 
-音频临时缓冲约 230MB/小时，会话结束删除。没有云端 API、语音合成或独立安装包；不声称达到商业软件所有场景的准确率。
+音频临时缓冲约 690MB/小时（48 kHz float32），会话结束删除。没有云端 API、语音合成或独立安装包；不声称达到商业软件所有场景的准确率。
 
 项目目录说明见 [PROJECT_STRUCTURE](docs/PROJECT_STRUCTURE.md)。

@@ -1,5 +1,6 @@
 """Model preparation lives outside the listening flow."""
 import os
+import signal
 import subprocess
 import sys
 from collections import deque
@@ -27,6 +28,21 @@ class Preparation(QThread):
     def __init__(self, action, parent):
         super().__init__(parent)
         self.action = action
+        self.process = None
+        self.cancelled = False
+
+    def cancel(self):
+        self.cancelled = True
+        if self.process and self.process.poll() is None:
+            if sys.platform == "win32":
+                subprocess.Popen(["taskkill", "/PID", str(self.process.pid), "/T", "/F"],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 creationflags=subprocess.CREATE_NO_WINDOW)
+            else:
+                try:
+                    os.killpg(self.process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
 
     def run(self):
         try:
@@ -41,6 +57,7 @@ class ModelManager(QDialog):
         self.setWindowTitle("模型管理 · 准备一次，随后直接聆听")
         self.resize(660, 640)
         self.worker = None
+        self.close_requested = False
         layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
@@ -77,9 +94,43 @@ class ModelManager(QDialog):
         self.endpoint_seconds.setValue(0.5)
         self.endpoint_seconds.setSuffix(" 秒")
         self.advanced_form.addRow("音频合并间隔", self.update_seconds)
-        self.update_seconds.setToolTip("积累至少这段新音频后交给内核；不是识别窗口长度，也不是承诺的字幕刷新频率。")
-        self.advanced_form.addRow("停顿分段阈值", self.endpoint_seconds)
-        self.endpoint_seconds.setToolTip("检测到停顿后推进分段；连续语音中的文字确认由所选流式内核决定。")
+        self.update_seconds.setToolTip("请求识别前合并新音频的目标；当草稿刷新目标更短时优先采用草稿目标。不是上下文窗口长度，也不是承诺的字幕刷新频率。")
+        self.draft_seconds = QDoubleSpinBox()
+        self.draft_seconds.setRange(.25, 3.)
+        self.draft_seconds.setSingleStep(.25)
+        self.draft_seconds.setValue(.5)
+        self.draft_seconds.setSuffix(" 秒")
+        self.draft_seconds.setToolTip("更小值更早请求原文草稿，也会增加计算量。实际更新受模型速度限制，可能一次出现几个词；不使用假打字动画。草稿优先于较长的音频合并间隔。")
+        self.advanced_form.addRow("Qwen 原文草稿刷新目标", self.draft_seconds)
+        self.advanced_form.addRow("ASR 停顿检测（不直接定稿）", self.endpoint_seconds)
+        self.endpoint_seconds.setToolTip("Qwen：连续静音达到该时间后才结束语音段，保留犹豫和短停顿的上下文。Whisper 保留原有检测节奏，此值仅辅助上游分段。两者都不直接决定字幕定稿。")
+        classroom = QPushButton("课堂逐词草稿 · 保留短停顿")
+        classroom.clicked.connect(self.classroom_drafts)
+        self.advanced_form.addRow(classroom)
+        self.semantic_mode = QComboBox()
+        self.semantic_mode.addItem("SaT 上下文模型优先", "auto")
+        self.semantic_mode.addItem("上下文规则 · 不加载分句模型", "rules")
+        self.semantic_device = QComboBox()
+        self.semantic_device.addItem("CPU", "cpu")
+        if sys.platform != "darwin":
+            self.semantic_device.addItem("NVIDIA CUDA", "cuda")
+        self.advanced_form.addRow("分句策略", self.semantic_mode)
+        self.advanced_form.addRow("分句模型设备", self.semantic_device)
+        prepare_semantic = QPushButton("准备 / 检查 SaT 分句模型")
+        prepare_semantic.clicked.connect(lambda: self.prepare(lambda: self.run_preparation(
+            [sys.executable, "scripts/install_semantic.py"])))
+        self.advanced_form.addRow(prepare_semantic)
+        self.semantic_lookahead = QDoubleSpinBox()
+        self.semantic_lookahead.setRange(1, 12)
+        self.semantic_lookahead.setValue(3)
+        self.semantic_lookahead.setSuffix(" 秒后文")
+        self.caption_max_seconds = QDoubleSpinBox()
+        self.caption_max_seconds.setRange(6, 30)
+        self.caption_max_seconds.setValue(12)
+        self.caption_max_seconds.setSuffix(" 秒")
+        self.advanced_form.addRow("定稿前保留后文", self.semantic_lookahead)
+        self.advanced_form.addRow("显示分段参考长度", self.caption_max_seconds)
+        self.hint(self.advanced_form, "听写 → 暂定分段 → 定稿。暂定译文会跟随原文更新；达到显示长度只换段，不立即锁定。SaT 缺失时明确提示并使用规则，不阻止转写。")
         self.behavior_hint = QLabel()
         self.behavior_hint.setWordWrap(True)
         self.advanced_form.addRow(self.behavior_hint)
@@ -100,6 +151,10 @@ class ModelManager(QDialog):
         self.status = QLabel("下载只准备文件；开始聆听时才加载模型。")
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
+        self.cancel_button = QPushButton("取消准备")
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(self.cancel_preparation)
+        layout.addWidget(self.cancel_button)
         self.done_button = QPushButton("完成")
         self.done_button.clicked.connect(self.accept)
         layout.addWidget(self.done_button)
@@ -109,6 +164,11 @@ class ModelManager(QDialog):
         scroll.setWidgetResizable(True)
         scroll.setWidget(widget)
         self.tabs.addTab(scroll, title)
+
+    def classroom_drafts(self):
+        self.draft_seconds.setValue(.5)
+        self.endpoint_seconds.setValue(1.5)
+        self.status.setText("Qwen 课堂草稿：每 0.5 秒请求更新，停顿 1.5 秒才结束语音段；点击完成后用于下一次聆听。Whisper 保留原有节奏。")
 
     def hint(self, form, text):
         widget = QLabel(text)
@@ -161,6 +221,7 @@ class ModelManager(QDialog):
             return
         self.tabs.setEnabled(False)
         self.done_button.setEnabled(False)
+        self.cancel_button.setEnabled(True)
         self.status.setText("正在准备，请保留此窗口。下载进度见启动终端；已存在的权重会复用。")
         self.worker = Preparation(action, self)
         self.worker.result.connect(self.status.setText)
@@ -173,6 +234,15 @@ class ModelManager(QDialog):
         self.worker = None
         self.tabs.setEnabled(True)
         self.done_button.setEnabled(True)
+        self.cancel_button.setEnabled(False)
+        if self.close_requested:
+            self.close_requested = False
+            self.reject()
+
+    def cancel_preparation(self):
+        if self.worker:
+            self.worker.cancel()
+            self.status.setText("已请求取消；正在结束准备任务…")
 
     def prepare_whisper(self, model):
         def action():
@@ -186,7 +256,11 @@ class ModelManager(QDialog):
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               text=True, encoding="utf-8", errors="replace",
                               env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+                              start_new_session=sys.platform != "win32",
                               creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0) as process:
+            self.worker.process = process
+            if self.worker.cancelled:
+                self.worker.cancel()
             for line in process.stdout:
                 if line.strip():
                     tail.append(line.strip())
@@ -228,9 +302,14 @@ class ModelManager(QDialog):
     def reject(self):
         if self.worker is None:
             super().reject()
+        else:
+            self.close_requested = True
+            self.cancel_preparation()
 
     def closeEvent(self, event):
         if self.worker is not None:
+            self.close_requested = True
+            self.cancel_preparation()
             event.ignore()
         else:
             event.accept()

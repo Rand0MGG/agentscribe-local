@@ -1,4 +1,5 @@
 import os
+import json
 import sys
 import time
 from dataclasses import replace
@@ -263,7 +264,7 @@ class GlassTitleBar(QFrame):
         bar.setContentsMargins(13, 0, 0, 0)
         bar.setSpacing(8)
         bar.addWidget(label("▣", "muted"))
-        title = label("LinguaFlow · 本地同声字幕")
+        title = label("AgentScribe · 本地同声字幕")
         title.setWordWrap(False)
         bar.addWidget(title)
         bar.addStretch()
@@ -312,7 +313,7 @@ class Overlay(QWidget):
     def __init__(self):
         super().__init__(None, Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
         self.setObjectName("overlay")
-        self.setWindowTitle("LinguaFlow · 悬浮字幕")
+        self.setWindowTitle("AgentScribe · 悬浮字幕")
         self.resize(800, 180)
         layout = QVBoxLayout(self)
         self.source = label("等待语音…", "muted")
@@ -324,7 +325,8 @@ class Overlay(QWidget):
     def update_caption(self, caption, translating=True):
         self.source.setText(caption.source)
         self.target.setText(caption.translation or caption.error or
-                            ("原文修订中…" if not caption.final else "翻译中…" if translating else ""))
+                            ("翻译中 · 可修订…" if caption.ready and translating else
+                             "原文修订中…" if not caption.final else "翻译中…" if translating else ""))
 
 
 class CaptionCard(QFrame):
@@ -338,26 +340,45 @@ class CaptionCard(QFrame):
             "muted",
         )
         self.source = label(caption.source)
+        self.source.setTextFormat(Qt.TextFormat.PlainText)
         self.source.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.change = label("", "muted")
+        self.change.setTextFormat(Qt.TextFormat.PlainText)
+        self.change.hide()
+        self.change_timer = QTimer(self)
+        self.change_timer.setSingleShot(True)
+        self.change_timer.timeout.connect(self.change.hide)
+        self.last_source = ""
         self.target = label("")
         self.target.setStyleSheet("font-size: 18px; color: #dddddd;")
         self.target.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.meta)
         layout.addWidget(self.source)
+        layout.addWidget(self.change)
         layout.addWidget(self.target)
         self.translating = translating
         self.update_caption(caption)
 
     def update_caption(self, caption):
+        from .caption_changes import revision_note
+        note = revision_note(self.last_source, caption.source)
+        if note:
+            self.show_change(note)
+        self.last_source = caption.source
         self.source.setText(caption.source)
-        state = "已定稿" if caption.final else "听写中 · 后文可修正原文"
+        state = "已定稿" if caption.final else "暂定分段 · 原文与译文可修订" if caption.ready else "听写中 · 后文可修正原文"
         self.meta.setText(f"{int(caption.start) // 60:02}:{int(caption.start) % 60:02}  ·  {caption.language.upper()}  ·  {state}")
         self.target.setText(
             caption.translation
             or (f"⚠ {caption.error}" if caption.error else
-                ("原文确认后翻译" if not caption.final and self.translating else
+                ("等待表达边界；原文仍可修订" if not caption.final and not caption.ready and self.translating else
                  "翻译中…" if self.translating else "仅转写"))
         )
+
+    def show_change(self, note):
+        self.change.setText(note)
+        self.change.show()
+        self.change_timer.start(4000)
 
 
 class Window(QMainWindow):
@@ -368,7 +389,7 @@ class Window(QMainWindow):
         if sys.platform == "win32" and os.environ.get("QT_QPA_PLATFORM") != "offscreen":
             self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setWindowTitle("LinguaFlow · 本地同声字幕")
+        self.setWindowTitle("AgentScribe · 本地同声字幕")
         self.resize(1180, 800)
         self.setMinimumSize(900, 650)
         self.session = None
@@ -400,7 +421,7 @@ class Window(QMainWindow):
         sidebar_layout.setContentsMargins(18, 18, 14, 14)
         sidebar_layout.setSpacing(10)
         sidebar_header = QHBoxLayout()
-        sidebar_header.addWidget(label("LinguaFlow", "brand"))
+        sidebar_header.addWidget(label("AgentScribe", "brand"))
         sidebar_header.addStretch()
         sidebar_header.addWidget(label("●  本地", "pill"))
         sidebar_layout.addLayout(sidebar_header)
@@ -483,7 +504,13 @@ class Window(QMainWindow):
         manage.setObjectName("secondary")
         manage.clicked.connect(self.manage_models)
         form_outer.addWidget(manage)
-        form_outer.addWidget(label("原文先出现，并随后文修正。\n确认短句后，逐句显示译文。", "muted"))
+        audio_lab = QPushButton("音频实验室 · 增强与回听")
+        audio_lab.clicked.connect(self.manage_audio)
+        form_outer.addWidget(audio_lab)
+        self.audio_summary = label("音频：原声直通", "muted")
+        self.audio_summary.setWordWrap(True)
+        form_outer.addWidget(self.audio_summary)
+        form_outer.addWidget(label("原文先出现，并随后文修正。\n暂定分段即可翻译，稳定后定稿。", "muted"))
         form_outer.addStretch()
         settings_scroll = QScrollArea()
         settings_scroll.setWidgetResizable(True)
@@ -593,6 +620,12 @@ class Window(QMainWindow):
             QTimer.singleShot(0, self.refresh_devices)
 
     def restore(self):
+        from .audio_processing.config import AudioConfig
+        try:
+            self.audio_config = AudioConfig.from_dict(json.loads(self.prefs.value("audio_processing", "{}"))).to_dict()
+        except (ValueError, TypeError, AttributeError):
+            self.audio_config = AudioConfig().to_dict()
+        self.update_audio_summary()
         for key, combo in [("asr", self.asr), ("translation", self.translation)]:
             value = self.prefs.value(key)
             if value:
@@ -615,11 +648,39 @@ class Window(QMainWindow):
         manager.translation_device.setCurrentIndex(max(0, manager.translation_device.findData(self.prefs.value("translation_device", self.compute.currentData()))))
         for key in ["update_seconds", "endpoint_seconds"]:
             getattr(manager, key).setValue(self.prefs.value(key, 0.5 if key == "endpoint_seconds" else 1.0, type=float))
+        for key, default in [("semantic_lookahead", 3.), ("caption_max_seconds", 12.), ("draft_seconds", .5)]:
+            getattr(manager, key).setValue(self.prefs.value(key, default, type=float))
+        for key, default in [("semantic_mode", "auto"), ("semantic_device", "cpu")]:
+            combo = getattr(manager, key)
+            combo.setCurrentIndex(max(0, combo.findData(self.prefs.value(key, default))))
 
     def manage_models(self):
         self.model_manager.exec()
         self.save()
         self.update_model_summary()
+
+    def manage_audio(self):
+        from .audio_processing.lab import AudioLab
+        dialog = AudioLab(self.audio_config, self.device.currentData(), self, discover=True)
+        if dialog.exec():
+            self.audio_config = dialog.result_config
+            index = self.device.findData(dialog.device)
+            if index < 0 and dialog.device is not None:
+                self.device.addItem(dialog.source.currentText(), dialog.device)
+                index = self.device.count() - 1
+            if index >= 0:
+                self.device.setCurrentIndex(index)
+            self.save()
+            self.update_audio_summary()
+        dialog.deleteLater()
+
+    def update_audio_summary(self):
+        enabled = [name for key, name in [("apm", "APM"), ("highpass", "低频清理"),
+                                          ("wpe", "WPE"), ("deepfilter", "DF3"),
+                                          ("gain", "响度"), ("eq", "均衡"), ("limiter", "峰值保护")]
+                   if self.audio_config.get(key)]
+        self.audio_summary.setText("音频：" + (" / ".join(enabled) if enabled else "原声直通")
+                                   + (" · 输出增益已调整" if self.audio_config.get("output_db") else ""))
 
     def update_model_summary(self):
         manager = self.model_manager
@@ -630,6 +691,11 @@ class Window(QMainWindow):
         self.model_summary.setText(text)
 
     def save(self):
+        self.prefs.setValue("audio_processing", json.dumps(self.audio_config))
+        for key in ["semantic_lookahead", "caption_max_seconds", "draft_seconds"]:
+            self.prefs.setValue(key, getattr(self.model_manager, key).value())
+        for key in ["semantic_mode", "semantic_device"]:
+            self.prefs.setValue(key, getattr(self.model_manager, key).currentData())
         for key, combo in [
             ("asr", self.asr),
             ("translation", self.translation),
@@ -726,7 +792,14 @@ class Window(QMainWindow):
             translation_device=self.model_manager.translation_device.currentData(),
             qwen_model=self.model_manager.qwen_model.currentText(),
             update_seconds=self.model_manager.update_seconds.value(),
+            draft_seconds=self.model_manager.draft_seconds.value(),
             endpoint_seconds=self.model_manager.endpoint_seconds.value(),
+            input_sample_rate=48000,
+            audio_processing=self.audio_config,
+            semantic_mode=self.model_manager.semantic_mode.currentData(),
+            semantic_device=self.model_manager.semantic_device.currentData(),
+            semantic_lookahead=self.model_manager.semantic_lookahead.value(),
+            caption_max_seconds=self.model_manager.caption_max_seconds.value(),
         )
         self.save()
         self.settings_panel.setEnabled(False)
@@ -817,9 +890,15 @@ class Window(QMainWindow):
 
     def on_caption(self, caption):
         previous = self.captions.get(caption.id)
-        if previous and (caption.revision < previous.revision or (previous.final and not caption.final)):
+        if previous and (caption.revision < previous.revision or
+                         (caption.revision == previous.revision and caption.source != previous.source)):
             return
         if not caption.source:
+            if previous:
+                for other_id, other in self.captions.items():
+                    if other_id != caption.id and previous.source in other.source and other_id in self.cards:
+                        self.cards[other_id].show_change("已合并分段：" + previous.source[:100])
+                        break
             self.captions.pop(caption.id, None)
             card = self.cards.pop(caption.id, None)
             if card:
@@ -833,6 +912,9 @@ class Window(QMainWindow):
                 self.overlay.target.setText("")
             return
         self.empty.hide()
+        if (previous and previous.source == caption.source and previous.language == caption.language
+                and not caption.translation and not caption.error and (caption.ready or caption.final)):
+            caption = replace(caption, translation=previous.translation)
         self.captions[caption.id] = caption
         if caption.id in self.cards:
             self.cards[caption.id].update_caption(caption)

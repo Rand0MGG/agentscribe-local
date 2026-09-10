@@ -103,12 +103,23 @@ class Session(QThread):
             diagnostics_thread.start()
             workers.append(diagnostics_thread)
             send(asdict(self.settings))
-            journal = AudioJournal()
+            journal = AudioJournal(self.settings.input_sample_rate)
 
             def record():
+                silent_samples = 0
+                warned = False
                 def block(samples):
+                    nonlocal silent_samples, warned
                     journal.append(samples)
                     self.level.emit(float(np.sqrt(np.mean(samples * samples))))
+                    silent_samples = silent_samples + len(samples) if not np.any(samples) else 0
+                    if silent_samples >= self.settings.input_sample_rate * 3 and not warned:
+                        warned = True
+                        self.stage.emit("音频", "输入持续为零，请检查来源 / 静音")
+                        self.status.emit("连续 3 秒未采集到有效声音。请检查所选设备；系统声音来源需要正在播放音频。")
+                    elif warned and silent_samples == 0:
+                        warned = False
+                        self.stage.emit("音频", "已收到声音 · 连续采集")
                 try:
                     self.capture_fn(self.settings, self.stop_capture, block)
                 except Exception as exc:
@@ -120,7 +131,7 @@ class Session(QThread):
             def feed():
                 try:
                     while not self.abort.is_set():
-                        samples = journal.read(16000)
+                        samples = journal.read(self.settings.input_sample_rate)
                         if len(samples):
                             pcm = (np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes()
                             send({"type": "audio", "pcm": base64.b64encode(pcm).decode()})

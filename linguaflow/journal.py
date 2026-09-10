@@ -6,7 +6,8 @@ import numpy as np
 
 
 class AudioJournal:
-    def __init__(self):
+    def __init__(self, sample_rate=16000):
+        self.sample_rate = sample_rate
         self.file = tempfile.TemporaryFile(prefix="linguaflow-", suffix=".pcm")
         self.lock = Lock()
         self.written = 0
@@ -29,7 +30,7 @@ class AudioJournal:
     @property
     def pending_seconds(self):
         with self.lock:
-            return (self.written - self.read_position) / 64000
+            return (self.written - self.read_position) / (self.sample_rate * 4)
 
     def close(self):
         self.file.close()

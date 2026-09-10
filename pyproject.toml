@@ -3,8 +3,8 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "linguaflow-local"
-version = "0.3.0"
+name = "agentscribe-local"
+version = "0.4.0"
 description = "Local live speech recognition and translation for Windows and macOS"
 requires-python = ">=3.11,<3.14"
 dependencies = [
@@ -16,6 +16,7 @@ dependencies = [
 dev = ["pytest>=8,<10", "ruff>=0.9"]
 
 [project.scripts]
+agentscribe = "linguaflow.app:main"
 linguaflow = "linguaflow.app:main"
 
 [tool.setuptools.packages.find]

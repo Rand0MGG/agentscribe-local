@@ -43,6 +43,12 @@ def capture(settings, stop, on_block):
     with mic.recorder(samplerate=48000, blocksize=48000) as recorder:
         while not stop.is_set():
             data = recorder.record(numframes=4800)
+            data = np.asarray(data, dtype=np.float32)
+            if data.ndim != 2 or not data.shape[1] or not len(data):
+                raise RuntimeError("录音设备没有返回有效音频帧，请重新选择设备。")
+            if not np.isfinite(data).all():
+                raise RuntimeError("录音设备返回了无效采样，请重新连接设备。")
             mono = np.asarray(data, dtype=np.float32).mean(axis=1)
-            samples = resample_poly(mono, 1, 3).astype(np.float32)
+            samples = (mono if getattr(settings, "input_sample_rate", 16000) == 48000
+                       else resample_poly(mono, 1, 3).astype(np.float32))
             on_block(samples)
