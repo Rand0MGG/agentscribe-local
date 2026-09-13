@@ -27,14 +27,16 @@ class Session(QThread):
     startup_idle_timeout = 300
     status = Signal(str)
     caption = Signal(object)
+    model_result = Signal(object)
     level = Signal(float)
     failure = Signal(str)
     ready = Signal()
     stage = Signal(str, str)
 
-    def __init__(self, settings, parent=None, capture_fn=capture):
+    def __init__(self, settings, parent=None, capture_fn=capture, diagnostic=False):
         super().__init__(parent)
         self.settings = settings
+        self.diagnostic = diagnostic
         self.capture_fn = capture_fn
         self.stop_capture = Event()
         self.capture_done = Event()
@@ -68,7 +70,8 @@ class Session(QThread):
                 [str(python), "-u", "-m", "linguaflow.wlk_worker"],
                 cwd=str(Path(__file__).resolve().parents[1]), stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
-                env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+                env={**os.environ, "PYTHONIOENCODING": "utf-8",
+                     "LINGUAFLOW_TRACE_REVISIONS": "1" if self.diagnostic else "0"},
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
 
@@ -162,6 +165,8 @@ class Session(QThread):
                     self.stage.emit("音频", "连续采集")
                 elif kind == "caption":
                     self.caption.emit(Caption(**event["data"]))
+                elif kind == "model_result" and self.diagnostic:
+                    self.model_result.emit(event["data"])
                 elif kind == "metrics":
                     self.stage.emit("识别", f"计算延后 {event['compute_lag']:.1f}s · 待确认 {event['commit_lag']:.1f}s")
                 elif kind == "status":

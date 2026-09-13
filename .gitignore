@@ -25,3 +25,7 @@ Thumbs.db
 !docs/loopback-result.srt
 media/test.m4a
 media/test.txt
+media/MacWhinney/
+media/AMI/
+.playwright-cli/
+output/playwright/

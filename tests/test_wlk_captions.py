@@ -57,8 +57,7 @@ def test_unfinished_clause_can_be_abandoned_without_inventing_words():
     mapper = CaptionMapper("zh")
     original = "这个公式的前提是……我们先看右边这个图。"
     events = mapper.update({"lines": [line(original, end=6)]})
-    assert events[0].source == "这个公式的前提是……"
-    assert events[0].ready and not events[0].final
+    assert len(events) == 1 and not events[0].final
     assert ''.join(c.source for c in events) == original
 
 
@@ -67,7 +66,8 @@ def test_correction_merges_boundary_and_revises_same_id():
     first = mapper.update({"lines": [line("The value is five. Next detail.", end=5)]})
     changed = mapper.update({"lines": [line("The value is five. Actually it is six. Next detail.", end=7)]})
     assert changed[0].id == first[0].id and changed[0].revision > first[0].revision
-    assert changed[0].source == "The value is five. Actually it is six."
+    assert changed[0].source == "The value is five."
+    assert any(c.source == "Actually it is six." for c in changed)
     assert 'Next detail.' in text(mapper)
 
 
@@ -98,7 +98,7 @@ def test_fragment_tokens_are_not_rewritten_by_joining():
     front = Item(lines=[Item(text="学习知识", speaker=-1, tokens=tokens, detected_language="zh")], to_dict=lambda: {})
     mapper = CaptionMapper("zh")
     assert mapper.update(caption_snapshot(front))[0].source == "学习知识"
-    assert CaptionMapper().update({"lines": [line(".")]}) == []
+    assert CaptionMapper().update({"lines": [line(".")]})[0].source == "."
 
 
 def test_real_upstream_correction_can_reopen_committed_caption():
@@ -133,13 +133,14 @@ def test_growing_stream_preserves_all_text_across_many_commits():
     assert all(c.final for c in mapper.previous.values())
 
 
-def test_classroom_complements_stay_with_their_governing_phrase():
+def test_no_keyword_guesses_override_punctuation():
     for original in ["We will calculate. The average of x.",
                      "So this is a very. Useful property.",
                      "They will. The result is. A Gaussian distribution."]:
         mapper = CaptionMapper("en")
         events = mapper.update({"lines": [line(original, end=5)]})
-        assert len(events) == 1 and events[0].source == original
+        assert len(events) > 1
+        assert " ".join(c.source for c in events) == original
 
 
 def test_following_complement_rejoins_provisional_rows():
@@ -147,5 +148,22 @@ def test_following_complement_rejoins_provisional_rows():
     mapper.update({"lines": [line("It is useful in generative modeling.", end=3)]})
     original = "It is useful in generative modeling. Area. Because this is helpful."
     events = mapper.update({"lines": [line(original, end=6)]})
-    assert events[0].source.startswith("It is useful in generative modeling. Area.")
+    assert events[0].source == "It is useful in generative modeling."
     assert not events[0].final
+
+
+def test_display_break_uses_general_lookahead_not_twelve_seconds():
+    clock = [0.]
+    mapper = CaptionMapper('en', max_seconds=4, lookahead=3, clock=lambda: clock[0])
+    snapshot = {'lines': [line(' '.join('word'+str(i) for i in range(10)), end=10)]}
+    first = mapper.update(snapshot)
+    assert first[0].boundary_reason.startswith('显示换段') and not first[0].final
+    clock[0] = 1.
+    assert any(c.id == first[0].id and c.final for c in mapper.update(snapshot))
+
+
+def test_display_limit_does_not_split_inside_long_word():
+    original = 'a' * 300
+    mapper = CaptionMapper('en', max_seconds=1)
+    events = mapper.update({'lines': [line(original, end=10)]})
+    assert len(events) == 1 and events[0].source == original

@@ -35,6 +35,8 @@ class Settings:
     offline: bool = False
     backend: str = "wlk-whisper"
     qwen_model: str = "Qwen/Qwen3-ASR-0.6B"
+    qwen_mode: str = "fast"
+    qwen_window_seconds: float = 30.0
     update_seconds: float = 1.0
     draft_seconds: float = 0.5
     endpoint_seconds: float = 0.5

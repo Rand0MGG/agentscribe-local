@@ -57,6 +57,8 @@ class AudioConfig:
 
 PRESETS = {
     "原声直通 · 系统音频": AudioConfig(),
+    "课堂实测 · 纯算法": AudioConfig(wpe=True, wpe_mix=.25, output_db=6, limiter=True),
+    "课堂实测 · AI 降噪": AudioConfig(deepfilter=True, df_mix=.5, gain=True, limiter=True),
     "轻度降噪 · 普通麦克风": AudioConfig(apm=True, gain=True, limiter=True),
     "温和增强 · 嘈杂环境": AudioConfig(deepfilter=True, gain=True, limiter=True),
     "课堂远场 · 去混响": AudioConfig(wpe=True, deepfilter=True, gain=True, limiter=True),

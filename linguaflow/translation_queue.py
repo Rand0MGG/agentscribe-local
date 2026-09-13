@@ -3,6 +3,12 @@ import asyncio
 import time
 
 
+def translation_is_current(current, requested):
+    return bool(current is not None and current.revision == requested.revision
+                and current.source == requested.source and current.source
+                and (current.ready or current.final))
+
+
 class TranslationQueue:
     def __init__(self):
         self.queue = asyncio.Queue()

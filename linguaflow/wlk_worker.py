@@ -51,6 +51,7 @@ async def serve(settings, emit, read_message):
     from whisperlivekit.config import WhisperLiveKitConfig
 
     qwen = settings["backend"] == "qwen3-streaming"
+    accurate_qwen = qwen and settings.get("qwen_mode", "fast") == "accurate"
     # Request fresh hypotheses independently of semantic readiness. Upstream
     # still paces decoding against actual compute time; no audio is discarded.
     draft_seconds = max(0.25, min(3., float(settings.get("draft_seconds", .5))))
@@ -97,13 +98,26 @@ async def serve(settings, emit, read_message):
                 raise ValueError("离线 Whisper 权重不存在，请先在模型管理中下载。")
             config.model_path = str(checkpoint)
     emit({"type": "status", "text": "正在加载 WhisperLiveKit / " + config.backend})
-    if qwen:
+    if accurate_qwen:
+        # Reuse WLK capture, VAC, queues and events without loading a second ASR.
+        config.transcription = False
+        engine = TranscriptionEngine(config=config)
+    elif qwen:
         engine = TranscriptionEngine(config=config)
     else:
         from .runtime_compat import create_whisper_engine
         engine = create_whisper_engine(TranscriptionEngine, config, settings.get("asr_device", "cpu"))
     emit({"type": "status", "text": "识别模型已加载，正在创建流式解码任务…"})
     processor = AudioProcessor(transcription_engine=engine)
+    if accurate_qwen:
+        from .qwen_accurate import build_official_online
+        emit({"type": "status", "text": "加载 Qwen 官方原始编码器 · 准确优先；近期原文可整体修订…"})
+        processor.transcription = build_official_online(config.model_path,
+            settings.get("asr_device", "cpu"), settings.get("source"), draft_seconds,
+            settings.get("qwen_window_seconds", 30.))
+        processor.args.transcription = True
+        processor.transcription_queue = asyncio.Queue()
+        processor.sep = " "
     # WLK's pause_segmentation_seconds only marks presentation boundaries.
     # Its Silero iterator otherwise ends speech after just 100 ms, invoking
     # Qwen start_silence(), which flushes and resets the decoder. Configure
@@ -117,6 +131,17 @@ async def serve(settings, emit, read_message):
         processor.transcription.model.device = settings.get("asr_device", "cpu")
         from .runtime_compat import finalize_whisper_once
         finalize_whisper_once(processor.transcription)
+    revisions = None
+    revision_changed = asyncio.Event()
+    event_loop = asyncio.get_running_loop()
+    def revision_event(event):
+        if os.environ.get("LINGUAFLOW_TRACE_REVISIONS") == "1":
+            emit(event)
+        event_loop.call_soon_threadsafe(revision_changed.set)
+    if qwen and not accurate_qwen:
+        from .qwen_revisions import install_revision_bridge
+        revisions = install_revision_bridge(processor.transcription,
+            revision_event)
     results = await processor.create_tasks()
     from .wlk_captions import CaptionMapper, caption_snapshot
     predictor = None
@@ -128,11 +153,11 @@ async def serve(settings, emit, read_message):
             predictor = semantic.boundaries
             emit({"type": "status", "text": "SaT 上下文分句已启用；近期原文和译文可修订"})
         except Exception as exc:
-            emit({"type": "status", "text": "SaT 暂不可用，使用上下文规则；可在模型管理准备分句模型：" + str(exc)})
+            emit({"type": "status", "text": "SaT 暂不可用，使用标点与长度排版；可在模型管理准备分句模型：" + str(exc)})
     mapper = CaptionMapper(config.lan, predictor=predictor,
                            lookahead=settings.get("semantic_lookahead", 3.),
                            max_seconds=settings.get("caption_max_seconds", 12.))
-    from .translation_queue import TranslationQueue
+    from .translation_queue import TranslationQueue, translation_is_current
     translation_queue = TranslationQueue()
     caption_lock = asyncio.Lock()
     latest = {}
@@ -140,13 +165,15 @@ async def serve(settings, emit, read_message):
     async def publish(snapshot, done=False):
         async with caption_lock:
             try:
+                if revisions is not None:
+                    revisions.augment_snapshot(snapshot, config.lan)
                 captions = await asyncio.to_thread(mapper.update, snapshot, done=done)
             except Exception:
                 if mapper.policy.predictor is None:
                     raise
                 mapper.policy.predictor = None
                 mapper.policy.cache = None
-                emit({"type": "status", "text": "分句模型推理异常，已切换上下文规则；原文继续保留"})
+                emit({"type": "status", "text": "分句模型推理异常，已切换标点与长度排版；原文继续保留"})
                 captions = mapper.update(snapshot, done=done)
             for caption in captions:
                 emit({"type": "caption", "data": asdict(caption)})
@@ -174,7 +201,7 @@ async def serve(settings, emit, read_message):
                 return
             caption, queued_at = item
             current = mapper.previous.get(caption.id)
-            if current is None or current.revision != caption.revision:
+            if not translation_is_current(current, caption):
                 translation_queue.task_done()
                 continue
             started = time.monotonic()
@@ -195,7 +222,7 @@ async def serve(settings, emit, read_message):
                 caption = replace(caption, error=str(exc))
             async with caption_lock:
                 current = mapper.previous.get(caption.id)
-                if current is not None and current.source == caption.source and (current.ready or current.final):
+                if translation_is_current(current, caption):
                     emit({"type": "caption", "data": asdict(replace(current, translation=caption.translation, error=caption.error))})
             emit({"type": "translation_metrics", "pending": translation_queue.qsize(),
                   "wait_seconds": started - queued_at, "compute_seconds": time.monotonic() - started,
@@ -206,6 +233,8 @@ async def serve(settings, emit, read_message):
         async for snapshot in results:
             latest.clear()
             latest.update(caption_snapshot(snapshot))
+            if accurate_qwen:
+                processor.transcription.augment_snapshot(latest)
             if os.environ.get("LINGUAFLOW_TRACE_SNAPSHOTS") == "1":
                 emit({"type": "snapshot", "data": latest.copy()})
             await publish(latest)
@@ -214,11 +243,22 @@ async def serve(settings, emit, read_message):
             if snapshot.error:
                 raise RuntimeError(snapshot.error)
 
+    async def revision_output():
+        # WLK can suppress unchanged append-only responses after a correction.
+        # Wake from the authoritative store, independently of that formatter.
+        while True:
+            await revision_changed.wait()
+            revision_changed.clear()
+            await publish({})
+
+    revision_task = asyncio.create_task(revision_output()) if revisions is not None else None
     output_task = asyncio.create_task(output())
     def output_finished(task):
         if not task.cancelled() and task.exception():
             emit({"type": "error", "text": str(task.exception())})
     output_task.add_done_callback(output_finished)
+    if revision_task:
+        revision_task.add_done_callback(output_finished)
     translation_task = asyncio.create_task(translate())
     emit({"type": "ready", "backend": config.backend})
     try:
@@ -231,6 +271,9 @@ async def serve(settings, emit, read_message):
             if message["type"] == "audio":
                 await process_pcm(base64.b64decode(message["pcm"], validate=True))
         await output_task
+        if revision_task:
+            revision_task.cancel()
+            await asyncio.gather(revision_task, return_exceptions=True)
         await publish(latest, done=True)
         await translation_queue.join()
         translation_queue.put_nowait(None)
@@ -239,6 +282,9 @@ async def serve(settings, emit, read_message):
             emit({"type": "status", "text": f"本次 PyTorch 显存分配峰值 {torch.cuda.max_memory_allocated() / 1024**3:.2f} GiB（不含驱动等额外占用）"})
         emit({"type": "done"})
     finally:
+        if revision_task:
+            revision_task.cancel()
+            await asyncio.gather(revision_task, return_exceptions=True)
         output_task.cancel()
         translation_task.cancel()
         await processor.cleanup()

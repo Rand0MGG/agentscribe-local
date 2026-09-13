@@ -38,22 +38,7 @@ def separator(left, right):
 
 
 class BoundaryPolicy:
-    """SaT proposals with continuation guards and display-only length limits."""
-    incomplete = re.compile(r"(?:\b(?:because|although|if|when|unless|the|a|an|to|of|is|are|and|or|will|would|can|could|should|must|very|some|such|these|those|that|this|actually|calculate|estimate)|因为|如果|虽然|但是|所以说|前提是|也就是说|是指|比如|例如|的)\s*[.。,…:：]*\s*$", re.I)
-    restart = re.compile(r"我们先|我们来看|先看(?:这|那|右|左)|换个(?:例子|问题)|接下来|\blet['’]s\s+(?:look|consider)|\bnow\s+let", re.I)
-    correction = re.compile(r"\s*(?:不对|不是|我是说|应该是|\bactually\b|\bi mean\b|\brather\b)", re.I)
-
-    @staticmethod
-    def continuation(left, right):
-        # Inspect both sides: ASR punctuation is a proposal, not syntactic proof.
-        left = re.sub(r"[.!?。！？…]+$", "", left.strip()).strip()
-        right = right.lstrip()
-        return bool(
-            re.search(r"\b(?:based|depends|depending)\s*$", left, re.I) and re.match(r"(?:on|upon)\b", right, re.I)
-            or re.search(r"\b(?:density|distribution|modeling)\s*$", left, re.I) and re.match(r"(?:function|area)\b", right, re.I)
-            or re.search(r"\b(?:we|they|it|you|i)\s*$", left, re.I) and re.match(r"(?:will|would|can|are|is|still|need)\b", right, re.I)
-        )
-
+    """Display boundaries only; no lexical guesses about semantic completeness."""
     def __init__(self, predictor=None, max_seconds=12):
         self.predictor = predictor
         self.max_seconds = max_seconds
@@ -77,9 +62,6 @@ class BoundaryPolicy:
                     word = text[:match.end()].rstrip().split()[-1].lower()
                     if word not in {"mr.", "mrs.", "dr.", "prof.", "e.g.", "i.e."}:
                         proposals[match.end()] = "标点候选"
-            for match in self.restart.finditer(text):
-                if match.start() > 0:
-                    proposals[match.start()] = "话题转向"
             if re.search(r"[。！？.!?]$", text.strip()) and not text.rstrip().endswith("..."):
                 proposals[len(text)] = "句末候选"
             self.cache = (text, dict(proposals))
@@ -90,15 +72,9 @@ class BoundaryPolicy:
             part = text[previous:end]
             if not part.strip():
                 continue
-            if len(re.sub(r"[\W_]", "", part)) < 8 and proposals[end] != "话题转向":
+            if len(re.sub(r"[\W_]", "", part)) < 8:
                 continue  # Keep tiny acknowledgements with their following context.
             if end < len(text) and text[end-1].isascii() and text[end-1].isalnum() and text[end].isascii() and text[end].isalnum():
-                continue
-            if self.correction.match(text[end:]):
-                continue
-            if self.continuation(part, text[end:]):
-                continue
-            if self.incomplete.search(part) and proposals[end] != "话题转向":
                 continue
             boundaries.append((end, proposals[end]))
             previous = end
@@ -114,6 +90,9 @@ class BoundaryPolicy:
                         break
                 choices = [m.end() + start for m in re.finditer(r"[,，;；:：]\s*|\s+", text[start:limit])]
                 cut = choices[-1] if choices else limit
+                while (cut < end and text[cut-1].isascii() and text[cut-1].isalnum()
+                       and text[cut].isascii() and text[cut].isalnum()):
+                    cut += 1
                 if cut <= start or cut >= end:
                     break
                 result.append((cut, "显示换段 · 未判定句完"))
@@ -152,8 +131,18 @@ class CaptionMapper:
         stable_end = len(text)
         tail = snapshot.get("buffer_transcription", "").strip()
         if tail and not done:
-            text += separator(text, tail) + tail
-        if not text.strip(" .,!?。！？…"):
+            text += separator(text, tail)
+            tail_start = len(text)
+            text += tail
+            if snapshot.get("draft_span"):
+                draft = snapshot["draft_span"]
+                spans.append((tail_start, len(text), seconds(draft.get("start")),
+                              seconds(draft.get("end")), self.language))
+        if "revision_text" in snapshot:
+            text = snapshot["revision_text"]
+            stable_end = snapshot["stable_end"]
+            spans = snapshot["revision_spans"]
+        if not text.strip():
             text = ""
 
         def at(pos):
@@ -190,8 +179,6 @@ class CaptionMapper:
             stable = end <= stable_end or not text[stable_end:end].strip()
             following = text[end:stable_end].strip()
             contextual = len(following) >= 8 and at(stable_end) - at(end) >= self.lookahead
-            if reason.startswith("显示换段"):
-                contextual = contextual and at(stable_end) - at(end) >= max(12., self.lookahead * 2)
             final = done or (can_lock and stable and contextual and count >= 1 and now - since >= .8)
             if not final:
                 can_lock = False
@@ -204,8 +191,8 @@ class CaptionMapper:
                               stable_source=text[start:min(end, stable_end)].strip(),
                               ready=ready or final, boundary_reason=reason)
             old = self.previous.get(cid)
-            same = old and (old.source, old.final, old.end, old.ready, old.stable_source, old.boundary_reason) == (
-                caption.source, caption.final, caption.end, caption.ready, caption.stable_source, caption.boundary_reason)
+            same = old and (old.source, old.final, old.start, old.end, old.ready, old.stable_source, old.boundary_reason) == (
+                caption.source, caption.final, caption.start, caption.end, caption.ready, caption.stable_source, caption.boundary_reason)
             if not same:
                 caption.revision = old.revision + 1 if old else 1
                 self.previous[cid] = caption

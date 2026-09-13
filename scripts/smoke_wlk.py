@@ -23,6 +23,8 @@ def main():
     parser.add_argument("--backend", choices=["wlk-whisper", "qwen3-streaming"], default="wlk-whisper")
     parser.add_argument("--model", default="large-v3")
     parser.add_argument("--qwen-model", default="Qwen/Qwen3-ASR-0.6B")
+    parser.add_argument("--qwen-mode", choices=['fast', 'accurate'], default='fast')
+    parser.add_argument("--qwen-window-seconds", type=float, default=30.)
     parser.add_argument("--update-seconds", type=float, default=1.0)
     parser.add_argument("--draft-seconds", type=float, default=.5)
     parser.add_argument("--endpoint-seconds", type=float, default=.5)
@@ -44,6 +46,7 @@ def main():
     rate = 48000 if args.audio_preset else 16000
     settings = Settings("fixture", backend=args.backend, asr_model=args.model, asr_device="cuda",
                         qwen_model=args.qwen_model, update_seconds=args.update_seconds, draft_seconds=args.draft_seconds,
+                        qwen_mode=args.qwen_mode, qwen_window_seconds=args.qwen_window_seconds,
                         endpoint_seconds=args.endpoint_seconds,
                         input_sample_rate=rate, audio_processing=audio_config,
                         source="en", source_nllb="eng_Latn", translate=args.translate,
