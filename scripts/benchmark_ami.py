@@ -101,7 +101,7 @@ def run(args):
     write_json(destination/'reference.json', reference)
     write_json(destination/'settings.json', settings)
     sources = ['scripts/benchmark_ami.py', 'scripts/replay_streaming.py',
-               'linguaflow/ami_evaluation.py', 'linguaflow/evaluation.py', 'AMI_BENCHMARK.md']
+               'linguaflow/ami_evaluation.py', 'linguaflow/evaluation.py', 'docs/testing/AMI_BENCHMARK.md']
     for name in sources:
         target = destination/'source'/name
         target.parent.mkdir(parents=True, exist_ok=True)
