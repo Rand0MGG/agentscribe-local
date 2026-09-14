@@ -54,6 +54,7 @@ class Preparation(QThread):
 class ModelManager(QDialog):
     def __init__(self, parent):
         super().__init__(parent)
+        self.host = parent
         self.setWindowTitle("模型管理 · 准备一次，随后直接聆听")
         self.resize(660, 640)
         self.worker = None
@@ -222,6 +223,7 @@ class ModelManager(QDialog):
         self.tabs.setEnabled(False)
         self.done_button.setEnabled(False)
         self.cancel_button.setEnabled(True)
+        self.cancel_button.show()
         self.status.setText("正在准备，请保留此窗口。下载进度见启动终端；已存在的权重会复用。")
         self.worker = Preparation(action, self)
         self.worker.result.connect(self.status.setText)
@@ -235,6 +237,7 @@ class ModelManager(QDialog):
         self.tabs.setEnabled(True)
         self.done_button.setEnabled(True)
         self.cancel_button.setEnabled(False)
+        self.cancel_button.hide()
         if self.close_requested:
             self.close_requested = False
             self.reject()
@@ -271,7 +274,7 @@ class ModelManager(QDialog):
 
     def install_runtime(self):
         command = [sys.executable, "scripts/install_runtime.py"]
-        if (self.parent().compute.currentData() == "cpu"
+        if (self.host.compute.currentData() == "cpu"
                 and self.translation_device.currentData() == "cpu"):
             command.append("--cpu")
         self.prepare(lambda: self.run_preparation(command))

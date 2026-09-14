@@ -19,7 +19,8 @@ def execute(monkeypatch, tmp_path, program, capture, stopped=False, cancel_loadi
     monkeypatch.setattr(module.subprocess, "Popen", lambda command, **kw: original(
         [sys.executable, "-u", str(script)], **kw))
     app = QCoreApplication.instance() or QCoreApplication([])
-    session = Session(Settings("fixture", translate=False), capture_fn=capture)
+    session = Session(Settings("fixture", translate=False), capture_fn=capture,
+                      recording_path=tmp_path / "recording.wav")
     captions, failures = [], []
     session.caption.connect(captions.append)
     session.failure.connect(failures.append)
@@ -62,6 +63,11 @@ def test_captured_pcm_is_drained_before_process_stops(monkeypatch, tmp_path):
     captions, failures = execute(monkeypatch, tmp_path, PROGRAM, capture)
     assert not failures
     assert captions[0].source == str(13 * 1600 * 2)
+    import wave
+    with wave.open(str(tmp_path / "recording.wav")) as recording:
+        assert recording.getnframes() == 13 * 1600
+        assert recording.getframerate() == 16000
+        assert recording.getsampwidth() == 2
 
 
 def test_stop_before_ready_does_not_open_audio(monkeypatch, tmp_path):

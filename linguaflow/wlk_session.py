@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import time
+import wave
 from collections import deque
 from dataclasses import asdict
 from pathlib import Path
@@ -33,7 +34,7 @@ class Session(QThread):
     ready = Signal()
     stage = Signal(str, str)
 
-    def __init__(self, settings, parent=None, capture_fn=capture, diagnostic=False):
+    def __init__(self, settings, parent=None, capture_fn=capture, diagnostic=False, recording_path=None):
         super().__init__(parent)
         self.settings = settings
         self.diagnostic = diagnostic
@@ -44,6 +45,7 @@ class Session(QThread):
         self.process = None
         self.model_ready = Event()
         self.last_error = ""
+        self.recording_path = recording_path
 
     def stop(self, discard=False):
         self.stop_capture.set()
@@ -111,8 +113,11 @@ class Session(QThread):
             def record():
                 silent_samples = 0
                 warned = False
+                recording = None
                 def block(samples):
                     nonlocal silent_samples, warned
+                    if recording is not None:
+                        recording.writeframes((np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes())
                     journal.append(samples)
                     self.level.emit(float(np.sqrt(np.mean(samples * samples))))
                     silent_samples = silent_samples + len(samples) if not np.any(samples) else 0
@@ -124,10 +129,20 @@ class Session(QThread):
                         warned = False
                         self.stage.emit("音频", "已收到声音 · 连续采集")
                 try:
+                    if self.recording_path:
+                        recording = wave.open(str(self.recording_path), "wb")
+                        recording.setnchannels(1)
+                        recording.setsampwidth(2)
+                        recording.setframerate(self.settings.input_sample_rate)
                     self.capture_fn(self.settings, self.stop_capture, block)
                 except Exception as exc:
                     self.fail(f"录音失败：{exc}")
                 finally:
+                    if recording is not None:
+                        try:
+                            recording.close()
+                        except OSError as exc:
+                            self.fail(f"录音保存失败：{exc}")
                     self.capture_done.set()
                     self.stage.emit("音频", "已停止")
 

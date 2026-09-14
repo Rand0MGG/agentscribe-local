@@ -8,6 +8,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from PySide6.QtCore import QSettings
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import QApplication
 
@@ -21,7 +22,9 @@ if sys.platform == "win32":
         QFontDatabase.addApplicationFont(str(Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / font))
 app.setStyle("Fusion")
 app.setStyleSheet(STYLE)
-window = Window(discover=False)
+preview_root = Path(__file__).resolve().parents[1] / ".work" / "caption-preview"
+window = Window(discover=False, library_root=preview_root,
+                prefs=QSettings(str(preview_root / "preview.ini"), QSettings.Format.IniFormat))
 window.device.addItem("示例 · 系统声音（预览）", ("preview", True))
 window.show()
 for caption in [
@@ -76,13 +79,13 @@ app.processEvents()
 Path("docs").mkdir(exist_ok=True)
 window.grab().save(output)
 if len(sys.argv) == 1:
-    window.model_manager.show()
+    window.open_settings("识别模型")
     app.processEvents()
-    window.model_manager.grab().save("docs/models-preview.png")
-    window.model_manager.tabs.setCurrentIndex(2)
+    window.grab().save("docs/models-preview.png")
+    window.open_settings("字幕与延迟")
     app.processEvents()
-    window.model_manager.grab().save("docs/semantic-preview.png")
-    window.model_manager.close()
+    window.grab().save("docs/semantic-preview.png")
+    window.leave_settings()
     from linguaflow.audio_processing.lab import AudioLab
     lab = AudioLab(parent=window)
     lab.show()
