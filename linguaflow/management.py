@@ -52,9 +52,9 @@ class Preparation(QThread):
 
 
 class ModelManager(QDialog):
-    def __init__(self, parent):
+    def __init__(self, parent=None, *, compute_device=lambda: "cpu"):
         super().__init__(parent)
-        self.host = parent
+        self.compute_device = compute_device
         self.setWindowTitle("模型管理 · 准备一次，随后直接聆听")
         self.resize(660, 640)
         self.worker = None
@@ -138,7 +138,7 @@ class ModelManager(QDialog):
         self.add_page(advanced, "字幕与延迟")
         environment = QWidget()
         environment_form = QFormLayout(environment)
-        from .wlk_session import runtime_python
+        from .runtime_paths import runtime_python
         self.runtime_status = QLabel()
         self.runtime_status.setWordWrap(True)
         self.runtime_status.setText(("推理环境已创建" if runtime_python().is_file() else "尚未安装推理环境")
@@ -176,11 +176,11 @@ class ModelManager(QDialog):
         widget.setWordWrap(True)
         form.addRow(widget)
 
-    def finish_setup(self, window):
-        self.whisper_widgets = [window.asr]
+    def finish_setup(self, *, asr, translation):
+        self.whisper_widgets = [asr]
         self.hint(self.whisper_form, "由 WhisperLiveKit 的 AlignAtt 解码和连续语音检测驱动。使用完整 PyTorch Whisper 权重，旧 CTranslate2 目录不能用于这个解码器。")
         download = QPushButton("下载 / 检查 Whisper 模型")
-        download.clicked.connect(lambda: self.prepare_whisper(window.asr.currentText().strip()))
+        download.clicked.connect(lambda: self.prepare_whisper(asr.currentText().strip()))
         self.whisper_form.addRow(download)
         self.qwen_model = QComboBox()
         self.qwen_model.setEditable(True)
@@ -195,9 +195,27 @@ class ModelManager(QDialog):
         if sys.platform != "darwin":
             self.translation_device.addItem("NVIDIA GPU · FP16", "cuda")
         self.translation_form.addRow("翻译计算设备", self.translation_device)
+        self.translation_before = QComboBox()
+        self.translation_after = QComboBox()
+        for count in range(7):
+            self.translation_before.addItem(f'{count} 段' if count else '不参考', count)
+        for count in range(3):
+            self.translation_after.addItem(f'{count} 段' if count else '不参考', count)
+        self.translation_before.setCurrentIndex(3)
+        self.translation_after.setCurrentIndex(1)
+        self.translation_form.addRow('参考前文', self.translation_before)
+        self.translation_form.addRow('参考后文', self.translation_after)
+        def update_context_controls():
+            from .translation_models import is_hy_model
+            enabled = is_hy_model(translation.currentText().strip())
+            self.translation_before.setEnabled(enabled)
+            self.translation_after.setEnabled(enabled)
+        translation.currentTextChanged.connect(update_context_controls)
+        update_context_controls()
+        self.hint(self.translation_form, 'HY-MT2：先翻译当前段，后续短句就绪后自动修订；前后文只供参考，不会合并进译文。NLLB 仅支持逐句翻译。')
         self.hint(self.translation_form, "翻译独立排队运行，可使用 GPU。已确认的句子先翻译，原文尾部继续修订。")
         translation_download = QPushButton("下载 / 检查翻译模型")
-        translation_download.clicked.connect(lambda: self.prepare_translation(window.translation.currentText().strip()))
+        translation_download.clicked.connect(lambda: self.prepare_translation(translation.currentText().strip()))
         self.translation_form.addRow(translation_download)
         self.hint(self.advanced_form, "识别期间连续音频暂存于本机临时文件，积压时保留音频并显示延迟；会话结束删除。确认的短句进入翻译，原文尾部继续修订。停止会处理剩余音频，关闭窗口则取消剩余任务。")
         self.hint(self.advanced_form, "识别与翻译设备可以独立选择。共用 GPU 会竞争显存；8GB 预算需同时考虑两个模型及运行开销。字幕尾部可修改，已确认短句进入翻译队列。")
@@ -249,7 +267,7 @@ class ModelManager(QDialog):
 
     def prepare_whisper(self, model):
         def action():
-            from .wlk_session import runtime_python
+            from .runtime_paths import runtime_python
             return self.run_preparation([str(runtime_python()), "-m", "linguaflow.wlk_prepare", "whisper", model])
         self.prepare(action)
 
@@ -274,7 +292,7 @@ class ModelManager(QDialog):
 
     def install_runtime(self):
         command = [sys.executable, "scripts/install_runtime.py"]
-        if (self.host.compute.currentData() == "cpu"
+        if (self.compute_device() == "cpu"
                 and self.translation_device.currentData() == "cpu"):
             command.append("--cpu")
         self.prepare(lambda: self.run_preparation(command))

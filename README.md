@@ -1,10 +1,10 @@
 # AgentScribe · Agent 协作开发的本地语音工作台
 
 Windows / macOS 桌面应用：麦克风或系统声音 → 本地原文字幕 → 本地翻译。
-v0.4.0 源码预览版，原名 LinguaFlow。使用完整 WhisperLiveKit 音频处理链路，提供 Whisper / AlignAtt 和 Qwen3-ASR 两个本地后端。
+v0.5.0 源码预览版，原名 LinguaFlow。使用完整 WhisperLiveKit 音频处理链路，提供 Whisper / AlignAtt 和 Qwen3-ASR 两个本地后端。
 Qt 界面与模型运行环境隔离；应用自行启动、停止推理进程，不需要 WSL、端口或手动服务。
 
-本版新增音频实验室、可修订的上下文分句、真实草稿，并修复 Qwen 停顿检测参数未生效的问题。详见 [版本说明](docs/RELEASE_v0.4.0.md) 和 [课堂录音验证](docs/CLASSROOM_VALIDATION.md)。当前提供源码及安装脚本，尚无独立 EXE/DMG 安装包。内部 `linguaflow` 模块名、旧启动命令和本地设置位置保留兼容。
+本版加入 HY-MT2 前后文翻译、本地文件夹录音工作区，并修复重译失败丢失已有译文、错误标记完成及损坏元数据无法正常处理的问题。详见 [版本说明](docs/RELEASE_v0.5.0.md) 和 [上下文翻译](docs/CONTEXT_TRANSLATION.md)。当前提供源码及安装脚本，尚无独立 EXE/DMG 安装包。内部 `linguaflow` 模块名、旧启动命令和本地设置位置保留兼容。
 
 当前版本已完成 WhisperLiveKit / Qwen3-ASR 本地流式链路和桌面回归验收；已通过项目及适用范围见 [验证记录](docs/VALIDATION.md)。
 
@@ -59,6 +59,7 @@ python3.12 -m venv .venv
 - Whisper 使用 WhisperLiveKit 的 AlignAtt 解码器：支持 tiny/base/small/medium/large-v3/turbo、原始 `.pt` 文件或兼容 Hugging Face 目录。**旧 faster-whisper/CTranslate2 目录不能直接用于此解码器。** 在模型管理中重新准备对应格式。
 - Qwen 使用 `Qwen/Qwen3-ASR-0.6B` 或 `1.7B` 的窗口式流式适配，限制重编码窗口，运行于本地 PyTorch。没有启用社区英语专用 causal 权重。Qwen 词时间戳是估计值，不适合精密对齐。
 - NLLB 支持 600M/1.3B 及兼容目录，可独立选择 CPU 或 CUDA FP16；翻译失败保留原文。
+- HY-MT2-1.8B 支持参考前后文；默认前 3 段、后 1 段，先出译文再随后文修订。支持 CPU/CUDA 和完整本地模型目录。重译失败保留上一版译文并提示未完成，不覆盖为新定稿。
 - Whisper 识别与 NLLB 翻译可以独立选择 CPU 或 CUDA；共用 GPU 时请留出两套模型的显存。Qwen 的设备设置由其独立后端处理。
 - 8GB 显存优先尝试 Whisper small 或 Qwen 0.6B，加 NLLB 600M。16GB 可使用 large-v3，但总占用受窗口、运行库及其他程序影响，软件没有强制显存配额。
 - 模型管理中的更新间隔是调度参数，不表示模型只计算该时长；上游流式后端负责窗口推进。停顿阈值控制话语边界，不是唯一提交依据。

@@ -1,4 +1,3 @@
-import json
 import os
 import sys
 import time
@@ -7,7 +6,6 @@ from pathlib import Path
 
 from PySide6.QtCore import (
     QEvent,
-    QLockFile,
     QPoint,
     QRect,
     QSettings,
@@ -22,14 +20,11 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
-    QDialog,
     QFileDialog,
     QFormLayout,
     QFrame,
     QHBoxLayout,
     QInputDialog,
-    QLabel,
-    QListWidget,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -46,9 +41,17 @@ from PySide6.QtWidgets import (
 )
 
 from .audio import list_devices
-from .core import LANGUAGES, Settings, export_srt
+from .core import LANGUAGES, export_srt
+from .deleted_dialog import DeletedDialog
 from .library import Library
+from .library_access import acquire_recording_lock, check_library_access
+from .library_startup import LibrarySelectionCancelled, open_library
 from .management import ModelManager
+from .preferences import PREFERENCES, read_audio_device, read_preferences, write_preferences
+from .qt_controls import data_index
+from .qt_controls import text_label as label
+from .recording_state import RecordingState
+from .settings_binding import SettingsBinding
 from .wlk_session import Session
 from .workspace_widgets import LibraryTree, RecordingDialog, SettingsWorkspace, Switch
 
@@ -305,15 +308,6 @@ class WallpaperBackdrop(QWidget):
         painter.end()
 
 
-def label(text, name=None):
-    widget = QLabel(text)
-    widget.setWordWrap(True)
-    widget.setTextFormat(Qt.TextFormat.PlainText)
-    if name:
-        widget.setObjectName(name)
-    return widget
-
-
 def panel(title, subtitle=None):
     frame = QFrame()
     frame.setObjectName("panel")
@@ -515,7 +509,7 @@ class CaptionCard(QFrame):
 
 
 class Window(QMainWindow):
-    def __init__(self, discover=True, library_root=None, prefs=None):
+    def __init__(self, discover=True, library_root=None, prefs=None, library=None):
         super().__init__()
         self._backdrop_applied = False
         self._backdrop_attempted = False
@@ -527,7 +521,7 @@ class Window(QMainWindow):
         self.session = None
         self.recording_lock = None
         self.last_error = ""
-        self.phase_text = ""
+        self.recording_state = RecordingState.IDLE
         self.phase_started = time.monotonic()
         self.pipeline_state = {"音频": "未开始", "识别": "未加载", "翻译": "未加载"}
         self.captions = {}
@@ -535,28 +529,7 @@ class Window(QMainWindow):
         self.closing = False
         self.overlay = Overlay()
         self.prefs = prefs if prefs is not None else QSettings("LinguaFlow", "LocalCaptions")
-        explicit_root = library_root or os.environ.get("AGENTSCRIBE_LIBRARY")
-        migrate_defaults = not explicit_root and not self.prefs.value("library_directory")
-        install_root = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1]
-        library_root = explicit_root or self.prefs.value("library_directory") or install_root / "录音"
-        while True:
-            try:
-                self.library = Library(library_root)
-                break
-            except (OSError, ValueError) as exc:
-                if explicit_root:
-                    raise
-                QMessageBox.warning(self, "请选择录音保存位置", f"默认目录无法使用：{library_root}\n{exc}\n请选择一个可写目录。")
-                library_root = QFileDialog.getExistingDirectory(self, "选择录音保存目录")
-                if not library_root:
-                    raise SystemExit(0)
-                self.prefs.setValue("library_directory", library_root)
-        if migrate_defaults:
-            old_root = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.GenericDataLocation)) / "AgentScribe" / "library"
-            try:
-                self.library.import_legacy(old_root)
-            except (OSError, ValueError, KeyError) as exc:
-                QMessageBox.warning(self, "旧录音仍保留在原位置", f"迁移未完成，可稍后重试。\n{old_root}\n{exc}")
+        self.library = library if library is not None else self.open_recording_library(library_root)
         self.session_dirty = False
         self.current_item = None
         self.folder_id = self.library.index["folders"][0]["id"]
@@ -658,7 +631,7 @@ class Window(QMainWindow):
         form.addRow("原文语言", self.source)
         form.addRow("翻译为", self.target)
         form_outer.addLayout(form)
-        self.model_manager = ModelManager(self)
+        self.model_manager = ModelManager(self, compute_device=lambda: self.compute.currentData())
         models = self.model_manager.whisper_form
         self.asr = QComboBox()
         self.asr.setEditable(True)
@@ -683,8 +656,8 @@ class Window(QMainWindow):
         self.translation.setEditable(True)
         self.translation.setMinimumContentsLength(18)
         self.translation.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.translation.addItems(["facebook/nllb-200-distilled-600M", "facebook/nllb-200-distilled-1.3B"])
-        models.addRow("翻译模型 · NLLB", self.translation)
+        self.translation.addItems(["facebook/nllb-200-distilled-600M", "tencent/Hy-MT2-1.8B", "facebook/nllb-200-distilled-1.3B"])
+        models.addRow("翻译模型", self.translation)
         choose_translation = QPushButton("选择翻译模型目录…")
         choose_translation.clicked.connect(lambda: self.choose_model(self.translation))
         models.addRow(choose_translation)
@@ -699,7 +672,7 @@ class Window(QMainWindow):
                 "muted",
             )
         )
-        self.model_manager.finish_setup(self)
+        self.model_manager.finish_setup(asr=self.asr, translation=self.translation)
         form_outer.addWidget(label("当前引擎", "section"))
         self.model_summary = label("", "muted")
         form_outer.addWidget(self.model_summary)
@@ -844,9 +817,24 @@ class Window(QMainWindow):
         root.installEventFilter(self)
         for child in root.findChildren(QWidget):
             child.installEventFilter(self)
+        self.settings_binding = SettingsBinding({
+            pref.key: getattr(self, pref.key) if hasattr(self, pref.key) else getattr(self.model_manager, pref.key)
+            for pref in PREFERENCES})
         self.restore()
         self.update_model_summary()
-        self.settings_workspace = SettingsWorkspace(self, WorkspaceFrame)
+        self.settings_workspace = SettingsWorkspace(WorkspaceFrame,
+            storage_root=self.library.root, manager=self.model_manager,
+            controls={key: getattr(self, key) for key in
+                      ('follow', 'device', 'source', 'target', 'translate', 'audio_summary')})
+        self.settings_panel = self.settings_workspace.listening_page
+        for signal, action in (
+                (self.settings_workspace.back_requested, self.leave_settings),
+                (self.settings_workspace.open_storage_requested, self.reveal_library),
+                (self.settings_workspace.choose_storage_requested, self.choose_library),
+                (self.settings_workspace.deleted_requested, self.show_deleted),
+                (self.settings_workspace.refresh_devices_requested, self.refresh_devices),
+                (self.settings_workspace.audio_requested, self.manage_audio)):
+            signal.connect(action)
         self.pages.addWidget(self.settings_workspace)
         self.follow.setText("")
         self.translate.setText("")
@@ -866,6 +854,25 @@ class Window(QMainWindow):
         self.save()
         self.update_model_summary()
         self.pages.setCurrentIndex(0)
+
+    def open_recording_library(self, explicit_root):
+        def choose_directory(root, error):
+            QMessageBox.warning(self, "请选择录音保存位置",
+                f"默认目录无法使用：{root}\n{error}\n请选择一个可写目录。")
+            return QFileDialog.getExistingDirectory(self, "选择录音保存目录")
+
+        def migration_failed(root, error):
+            QMessageBox.warning(self, "旧录音仍保留在原位置",
+                f"迁移未完成，可稍后重试。\n{root}\n{error}")
+
+        install_root = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1]
+        legacy_root = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.GenericDataLocation)) / "AgentScribe" / "library"
+        try:
+            return open_library(self.prefs, install_root,
+                explicit_root=explicit_root or os.environ.get("AGENTSCRIBE_LIBRARY"), legacy_root=legacy_root,
+                choose_directory=choose_directory, migration_failed=migration_failed)
+        except LibrarySelectionCancelled:
+            raise SystemExit(0) from None
 
     def refresh_library(self):
         expanded = {identifier: row.isExpanded() for identifier, row in getattr(self, "library_rows", {}).items()}
@@ -901,7 +908,7 @@ class Window(QMainWindow):
             self.library_tree.setCurrentItem(folders[self.folder_id])
 
     def rescan_library(self):
-        if self.session or not self.persist_session():
+        if not self.can_edit_library():
             return
         self.library.refresh()
         if self.current_item and self.current_item["id"] not in self.library.paths:
@@ -955,7 +962,7 @@ class Window(QMainWindow):
         self.export_button.setEnabled(False)
 
     def new_recording(self, checked=False, *, folder_id=None, name=None):
-        if self.session is not None or not self.persist_session():
+        if not self.can_edit_library():
             return False
         self.library.refresh()
         if not self.library.index["folders"]:
@@ -983,7 +990,7 @@ class Window(QMainWindow):
         return True
 
     def open_library_item(self, row, column):
-        if self.session is not None or not self.persist_session():
+        if not self.can_edit_library():
             return
         kind, identifier = row.data(0, Qt.ItemDataRole.UserRole)
         if kind == "folder":
@@ -1022,9 +1029,7 @@ class Window(QMainWindow):
             self.rename_item(self.current_item)
 
     def rename_item(self, item):
-        if self.session or not self.persist_session():
-            return
-        if not self.file_operation_ready(item):
+        if not self.can_edit_library(item):
             return
         name, ok = QInputDialog.getText(self, "重命名", "名称", text=item["name"])
         if ok:
@@ -1065,9 +1070,7 @@ class Window(QMainWindow):
         menu.exec(position)
 
     def move_recording(self, item, folder_id):
-        if self.session or not self.persist_session():
-            return
-        if not self.file_operation_ready(item):
+        if not self.can_edit_library(item):
             return
         self.release_playback()
         try:
@@ -1084,9 +1087,7 @@ class Window(QMainWindow):
             self.delete_item(self.current_item)
 
     def delete_item(self, item):
-        if self.session or not self.persist_session():
-            return
-        if not self.file_operation_ready(item):
+        if not self.can_edit_library(item):
             return
         detail = "其中的子文件夹、录音与定稿都会一起移入最近删除。" if "parent" in item else "录音、字幕与定稿将一起移入最近删除。"
         answer = QMessageBox.question(self, "移到最近删除？", f"{item['name']}\n\n{detail}你可以稍后恢复。",
@@ -1110,69 +1111,19 @@ class Window(QMainWindow):
         if self.session:
             self.status.setText("请先停止录音，再管理最近删除")
             return
-        dialog = QDialog(self)
-        dialog.setWindowTitle("最近删除")
-        dialog.resize(560, 440)
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.addWidget(label("最近删除", "title"))
-        layout.addWidget(label("恢复后回到原文件夹；同名文件会自动添加序号。", "muted"))
-        entries = QListWidget()
-        entries.setObjectName("settingsNavigation")
-        layout.addWidget(entries, 1)
-        restore = QPushButton("恢复选中项")
-        layout.addWidget(restore)
-        purge = QPushButton("永久删除…")
-        purge.setObjectName("quiet")
-        layout.addWidget(purge)
-        def populate():
-            entries.clear()
-            try:
-                for item in self.library.deleted():
-                    entries.addItem(item["name"] + "   ·   " + item["deleted"][:10])
-                    entries.item(entries.count()-1).setData(Qt.ItemDataRole.UserRole, item["token"])
-                restore.setEnabled(entries.count() > 0)
-                purge.setEnabled(entries.count() > 0)
-                entries.setCurrentRow(0)
-            except (OSError, ValueError) as exc:
-                QMessageBox.warning(dialog, "无法读取最近删除", str(exc))
-        def recover():
-            row = entries.currentItem()
-            if row:
-                try:
-                    self.library.restore_deleted(row.data(Qt.ItemDataRole.UserRole))
-                    self.refresh_library()
-                    populate()
-                except (OSError, ValueError) as exc:
-                    QMessageBox.warning(dialog, "恢复失败", str(exc))
-        restore.clicked.connect(recover)
-        def purge_selected():
-            row = entries.currentItem()
-            if not row:
-                return
-            answer = QMessageBox.warning(dialog, "永久删除？", "选中项中的录音与定稿将从磁盘永久删除，无法恢复。",
-                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-                                         QMessageBox.StandardButton.Cancel)
-            if answer == QMessageBox.StandardButton.Yes:
-                try:
-                    self.library.purge_deleted(row.data(Qt.ItemDataRole.UserRole))
-                    populate()
-                except (OSError, ValueError) as exc:
-                    QMessageBox.warning(dialog, "删除失败", str(exc))
-        purge.clicked.connect(purge_selected)
-        populate()
+        dialog = DeletedDialog(self.library, self)
+        dialog.changed.connect(self.refresh_library)
         dialog.exec()
+        dialog.deleteLater()
+
+    def can_edit_library(self, item=None):
+        if self.session is not None or not self.persist_session():
+            return False
+        return item is None or self.file_operation_ready(item)
 
     def file_operation_ready(self, item):
         try:
-            directory = self.library.directory(item["id"])
-            for path in directory.rglob(".recording.lock"):
-                self.library._safe(path)
-                lock = QLockFile(str(path))
-                lock.setStaleLockTime(0)
-                if not lock.tryLock(0):
-                    raise ValueError("其中有录音正在另一个窗口中使用，请先停止录音。")
-                lock.unlock()
+            check_library_access(self.library, item)
             return True
         except (OSError, ValueError) as exc:
             QMessageBox.warning(self, "暂时无法操作", str(exc))
@@ -1192,7 +1143,7 @@ class Window(QMainWindow):
         self.open_path(self.library.root)
 
     def choose_library(self):
-        if self.session or not self.persist_session():
+        if not self.can_edit_library():
             self.status.setText("请先停止录音，再更改保存位置")
             return
         path = QFileDialog.getExistingDirectory(self, "选择录音保存目录（旧文件保留原位）", str(self.library.root))
@@ -1248,39 +1199,10 @@ class Window(QMainWindow):
                 self.player.play()
 
     def restore(self):
-        from .audio_processing.config import AudioConfig
-        try:
-            self.audio_config = AudioConfig.from_dict(json.loads(self.prefs.value("audio_processing", "{}"))).to_dict()
-        except (ValueError, TypeError, AttributeError):
-            self.audio_config = AudioConfig().to_dict()
+        values = read_preferences(self.prefs)
+        self.settings_binding.restore(values)
+        self.audio_config = values['audio_processing']
         self.update_audio_summary()
-        for key, combo in [("asr", self.asr), ("translation", self.translation)]:
-            value = self.prefs.value(key)
-            if value:
-                combo.setCurrentText(str(value))
-        for key, combo in [("source", self.source), ("target", self.target), ("compute", self.compute)]:
-            value = self.prefs.value(key)
-            index = combo.findText(str(value))
-            if key == "compute" and "NVIDIA" in str(value):
-                index = combo.findData("cuda")
-            if index >= 0:
-                combo.setCurrentIndex(index)
-        self.offline.setChecked(self.prefs.value("offline", False, type=bool))
-        self.translate.setChecked(self.prefs.value("translate", True, type=bool))
-        manager = self.model_manager
-        backend = self.prefs.value("backend", "wlk-whisper")
-        backend = {"whisper-live": "wlk-whisper", "qwen-stream": "qwen3-streaming"}.get(backend, backend)
-        index = manager.backend.findData(backend)
-        manager.backend.setCurrentIndex(max(0, index))
-        manager.qwen_model.setCurrentText(self.prefs.value("qwen_model", "Qwen/Qwen3-ASR-0.6B"))
-        manager.translation_device.setCurrentIndex(max(0, manager.translation_device.findData(self.prefs.value("translation_device", self.compute.currentData()))))
-        for key in ["update_seconds", "endpoint_seconds"]:
-            getattr(manager, key).setValue(self.prefs.value(key, 0.5 if key == "endpoint_seconds" else 1.0, type=float))
-        for key, default in [("semantic_lookahead", 3.), ("caption_max_seconds", 12.), ("draft_seconds", .5)]:
-            getattr(manager, key).setValue(self.prefs.value(key, default, type=float))
-        for key, default in [("semantic_mode", "auto"), ("semantic_device", "cpu")]:
-            combo = getattr(manager, key)
-            combo.setCurrentIndex(max(0, combo.findData(self.prefs.value(key, default))))
 
     def manage_models(self):
         self.open_settings("识别模型")
@@ -1290,7 +1212,7 @@ class Window(QMainWindow):
         dialog = AudioLab(self.audio_config, self.device.currentData(), self, discover=True)
         if dialog.exec():
             self.audio_config = dialog.result_config
-            index = self.device.findData(dialog.device)
+            index = data_index(self.device, dialog.device)
             if index < 0 and dialog.device is not None:
                 self.device.addItem(dialog.source.currentText(), dialog.device)
                 index = self.device.count() - 1
@@ -1317,29 +1239,9 @@ class Window(QMainWindow):
         self.model_summary.setText(text)
 
     def save(self):
-        if self.device.currentData() is not None:
-            self.prefs.setValue("audio_device", json.dumps(self.device.currentData()))
-        self.prefs.setValue("audio_processing", json.dumps(self.audio_config))
-        for key in ["semantic_lookahead", "caption_max_seconds", "draft_seconds"]:
-            self.prefs.setValue(key, getattr(self.model_manager, key).value())
-        for key in ["semantic_mode", "semantic_device"]:
-            self.prefs.setValue(key, getattr(self.model_manager, key).currentData())
-        for key, combo in [
-            ("asr", self.asr),
-            ("translation", self.translation),
-            ("source", self.source),
-            ("target", self.target),
-            ("compute", self.compute),
-        ]:
-            self.prefs.setValue(key, combo.currentText())
-        self.prefs.setValue("offline", self.offline.isChecked())
-        self.prefs.setValue("translate", self.translate.isChecked())
-        manager = self.model_manager
-        self.prefs.setValue("backend", manager.backend.currentData())
-        self.prefs.setValue("qwen_model", manager.qwen_model.currentText())
-        self.prefs.setValue("translation_device", manager.translation_device.currentData())
-        for key in ["update_seconds", "endpoint_seconds"]:
-            self.prefs.setValue(key, getattr(manager, key).value())
+        values = self.settings_binding.snapshot()
+        values.update(audio_processing=self.audio_config, audio_device=self.device.currentData())
+        write_preferences(self.prefs, values)
 
     def choose_model(self, combo):
         path = QFileDialog.getExistingDirectory(self, "选择完整模型目录")
@@ -1354,18 +1256,14 @@ class Window(QMainWindow):
     def refresh_devices(self):
         previous = self.device.currentData()
         if previous is None:
-            try:
-                saved_device = json.loads(self.prefs.value("audio_device", "null"))
-                previous = tuple(saved_device) if saved_device else None
-            except (ValueError, TypeError):
-                previous = None
+            previous = read_audio_device(self.prefs)
         try:
             devices = list_devices()
             self.device.clear()
             for device in devices:
                 self.device.addItem(device.name, (device.id, device.loopback))
             if previous:
-                index = self.device.findData(previous)
+                index = data_index(self.device, previous)
                 if index >= 0:
                     self.device.setCurrentIndex(index)
                 else:
@@ -1413,65 +1311,46 @@ class Window(QMainWindow):
         self.diagnostics.clear()
         self.on_status("正在启动本地推理环境…可点击停止取消加载。")
         self.empty.setText("正在准备模型和验证推理环境…\n准备好后自动开始录音，加载进度显示在下方。")
-        device_id, loopback = self.device.currentData()
-        source, source_nllb = self.source.currentData()
-        settings = Settings(
-            device_id=device_id,
-            loopback=loopback,
-            asr_model=self.asr.currentText().strip(),
-            asr_device=self.compute.currentData(),
-            translation_model=self.translation.currentText().strip(),
-            source=source,
-            source_nllb=source_nllb,
-            target=self.target.currentData(),
-            translate=self.translate.isChecked(),
-            offline=self.offline.isChecked(),
-            backend=self.model_manager.backend.currentData(),
-            translation_device=self.model_manager.translation_device.currentData(),
-            qwen_model=self.model_manager.qwen_model.currentText(),
-            update_seconds=self.model_manager.update_seconds.value(),
-            draft_seconds=self.model_manager.draft_seconds.value(),
-            endpoint_seconds=self.model_manager.endpoint_seconds.value(),
-            input_sample_rate=48000,
-            audio_processing=self.audio_config,
-            semantic_mode=self.model_manager.semantic_mode.currentData(),
-            semantic_device=self.model_manager.semantic_device.currentData(),
-            semantic_lookahead=self.model_manager.semantic_lookahead.value(),
-            caption_max_seconds=self.model_manager.caption_max_seconds.value(),
-        )
+        settings = self.settings_binding.session_settings(self.device.currentData(), self.audio_config)
         self.save()
-        self.settings_panel.setEnabled(False)
-        self.model_manager.setEnabled(False)
-        self.settings_workspace.audio_page.setEnabled(False)
-        self.start_button.setEnabled(False)
-        self.start_button.setText("正在启动…")
-        self.stop_button.setEnabled(True)
-        self.export_button.setEnabled(False)
+        self.set_recording_state(RecordingState.STARTING)
         try:
-            self.recording_lock = QLockFile(str(self.library.directory(self.current_item["id"]) / ".recording.lock"))
-            self.recording_lock.setStaleLockTime(0)
-            if not self.recording_lock.tryLock(0):
-                raise ValueError("这段录音正在另一个窗口中使用。")
+            self.recording_lock = acquire_recording_lock(self.library.directory(self.current_item["id"]))
             self.library.begin(self.current_item, asdict(settings))
         except (OSError, ValueError) as exc:
             if self.recording_lock:
                 self.recording_lock.unlock()
                 self.recording_lock = None
-            self.settings_panel.setEnabled(True)
-            self.model_manager.setEnabled(True)
-            self.settings_workspace.audio_page.setEnabled(True)
-            self.start_button.setEnabled(True)
-            self.start_button.setText("开始聆听")
-            self.stop_button.setEnabled(False)
+            self.set_recording_state(RecordingState.IDLE)
             self.on_failure(f"无法保存录音：{exc}")
             return
         self.caption_translation = settings.translate
         self.workspace_title.setText(self.current_item["name"])
         self.refresh_library()
-        self.library_tree.setEnabled(False)
-        self.new_button.setEnabled(False)
-        self.folder_button.setEnabled(False)
-        self.stop_button.show()
+        try:
+            self.launch_session(settings)
+        except (OSError, RuntimeError) as exc:
+            self.on_failure(f"无法启动录音：{exc}")
+            if self.session is not None:
+                self.on_finished()
+            else:
+                self.persist_session('incomplete')
+                self.recording_lock.unlock()
+                self.recording_lock = None
+                self.set_recording_state(RecordingState.IDLE)
+
+    def set_recording_state(self, state):
+        self.recording_state = state
+        for control in (self.settings_panel, self.model_manager, self.settings_workspace.audio_page,
+                        self.library_tree, self.new_button, self.folder_button):
+            control.setEnabled(not state.active)
+        self.start_button.setEnabled(not state.active)
+        self.start_button.setText(state.value)
+        self.stop_button.setEnabled(state.can_stop)
+        self.stop_button.setVisible(state.active)
+        self.export_button.setEnabled(not state.active and any(c.final and c.source for c in self.captions.values()))
+
+    def launch_session(self, settings):
         self.session = Session(settings, self, recording_path=
                                self.library.directory(self.current_item["id"]) / "录音.wav")
         self.session.status.connect(self.on_status)
@@ -1493,24 +1372,21 @@ class Window(QMainWindow):
         self.diagnostics.appendPlainText(time.strftime("%H:%M:%S") + "  " + message)
         if self.last_error:
             return
-        self.phase_text = message
         self.phase_started = time.monotonic()
-        self.status.setText("正在聆听 · 自动保存" if self.session and self.session.model_ready.is_set()
-                            else "正在准备模型…")
         self.status.setToolTip(message)
+        self.update_activity()
 
     def update_activity(self):
-        if self.session is not None and not self.last_error and self.phase_text:
+        if self.recording_state.active and not self.last_error:
             elapsed = int(time.monotonic() - self.phase_started)
-            if self.session.model_ready.is_set():
-                self.status.setText("正在聆听 · 自动保存")
-            else:
-                self.status.setText(f"正在准备模型 · {elapsed} 秒")
+            self.status.setText(self.recording_state.status(elapsed))
 
     def on_ready(self):
         if self.last_error:
             return
-        self.start_button.setText("聆听中")
+        if self.recording_state is RecordingState.STOPPING:
+            return
+        self.set_recording_state(RecordingState.LISTENING)
         self.on_stage("会话", "聆听中")
         self.on_status("识别已就绪，正在聆听；翻译模型独立加载。" if self.translate.isChecked()
                        else "识别已就绪，正在聆听。")
@@ -1529,9 +1405,9 @@ class Window(QMainWindow):
 
     def stop(self):
         if self.session:
-            self.session.stop()
-            self.stop_button.setEnabled(False)
+            self.set_recording_state(RecordingState.STOPPING)
             self.on_status("正在停止并处理剩余字幕；模型加载或当前推理结束后完成…")
+            self.session.stop()
 
     def on_failure(self, message):
         self.last_error = message
@@ -1542,24 +1418,16 @@ class Window(QMainWindow):
             self.empty.setText(message)
 
     def on_finished(self):
-        if self.translate.isChecked():
+        if self.caption_translation:
             for caption in list(self.captions.values()):
                 if caption.final and not caption.translation and not caption.error:
                     self.on_caption(replace(caption, error="会话已结束，此条翻译未完成"))
         self.session.deleteLater()
         self.session = None
-        self.settings_panel.setEnabled(True)
-        self.model_manager.setEnabled(True)
-        self.settings_workspace.audio_page.setEnabled(True)
-        self.start_button.setEnabled(True)
-        self.start_button.setText("开始聆听")
-        self.stop_button.setEnabled(False)
-        self.export_button.setEnabled(any(c.final and c.source for c in self.captions.values()))
-        self.library_tree.setEnabled(True)
-        self.new_button.setEnabled(True)
-        self.folder_button.setEnabled(True)
-        self.stop_button.hide()
-        state = "incomplete" if self.last_error else "complete"
+        self.set_recording_state(RecordingState.IDLE)
+        translation_incomplete = self.caption_translation and any(
+            c.source and (c.error or not c.translation) for c in self.captions.values())
+        state = "incomplete" if self.last_error or translation_incomplete else "complete"
         if self.current_item and not self.last_error and not self.captions:
             try:
                 if not (self.library.directory(self.current_item["id"]) / "录音.wav").exists():
@@ -1574,6 +1442,7 @@ class Window(QMainWindow):
         self.prepare_playback()
         self.meter.setValue(0)
         self.status.setText(self.last_error or ("已取消 · 录音尚未开始" if state == "draft" and saved else
+                            "录音已保存 · 部分翻译未完成" if saved and translation_incomplete else
                             "已保存录音与定稿" if saved else "保存失败，请导出字幕备份"))
         self.on_stage("会话", "失败，详见诊断" if self.last_error else "已结束")
         if self.closing:
@@ -1603,7 +1472,7 @@ class Window(QMainWindow):
             return
         self.empty.hide()
         if (previous and previous.source == caption.source and previous.language == caption.language
-                and not caption.translation and not caption.error and (caption.ready or caption.final)):
+                and not caption.translation and (caption.ready or caption.final)):
             caption = replace(caption, translation=previous.translation)
         self.captions[caption.id] = caption
         if caption.id in self.cards:

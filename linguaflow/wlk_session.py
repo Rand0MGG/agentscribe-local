@@ -3,7 +3,6 @@ import base64
 import json
 import os
 import subprocess
-import sys
 import time
 import wave
 from collections import deque
@@ -17,11 +16,7 @@ from PySide6.QtCore import QThread, Signal
 from .audio import capture
 from .core import Caption
 from .journal import AudioJournal
-
-
-def runtime_python():
-    root = Path(__file__).resolve().parents[1]
-    return root / ".venv-wlk" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+from .runtime_paths import runtime_python
 
 
 class Session(QThread):

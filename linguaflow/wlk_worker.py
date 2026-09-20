@@ -9,8 +9,7 @@ import json
 import math
 import os
 import sys
-import time
-from dataclasses import asdict, replace
+from dataclasses import asdict
 from pathlib import Path
 from threading import Lock
 from types import SimpleNamespace
@@ -18,6 +17,7 @@ from types import SimpleNamespace
 
 async def serve(settings, emit, read_message):
     import numpy as np
+
     from .audio_processing.pipeline import AudioPipeline, select_backend
     audio_config = settings.get("audio_processing", {})
     if audio_config.get("deepfilter"):
@@ -157,8 +157,13 @@ async def serve(settings, emit, read_message):
     mapper = CaptionMapper(config.lan, predictor=predictor,
                            lookahead=settings.get("semantic_lookahead", 3.),
                            max_seconds=settings.get("caption_max_seconds", 12.))
-    from .translation_queue import TranslationQueue, translation_is_current
+    from .translation_queue import TranslationQueue
+    from .translation_service import publish_translation_result, run_translations
     translation_queue = TranslationQueue()
+    from .translation_context import ContextPlanner
+    from .translation_models import is_hy_model
+    context_planner = (ContextPlanner(settings.get('translation_before', 3), settings.get('translation_after', 1))
+                       if is_hy_model(settings.get('translation_model', '')) else None)
     caption_lock = asyncio.Lock()
     latest = {}
 
@@ -177,57 +182,29 @@ async def serve(settings, emit, read_message):
                 captions = mapper.update(snapshot, done=done)
             for caption in captions:
                 emit({"type": "caption", "data": asdict(caption)})
-                if (caption.ready or caption.final) and caption.source and settings.get("translate"):
+                if (not context_planner and (caption.ready or caption.final)
+                        and caption.source and settings.get("translate")):
                     translation_queue.put_nowait(caption)
+            if context_planner and settings.get('translate'):
+                for caption in context_planner.update(mapper.previous.values()):
+                    translation_queue.put_nowait(caption)
+
+    async def publish_translation(caption, context=None):
+        await publish_translation_result(caption, mapper.previous.get, caption_lock,
+            lambda current: emit({"type": "caption", "data": asdict(current)}),
+            context, context_planner.get if context_planner else None)
 
     async def translate():
         if not settings.get("translate"):
             return
-        from .backends import NllbTranslator
-        translator = None
-        from collections import OrderedDict
-        cache = OrderedDict()
-        error = None
-        try:
-            translator = await asyncio.to_thread(NllbTranslator, SimpleNamespace(**settings),
-                                                lambda text: emit({"type": "status", "text": text}))
-        except Exception as exc:
-            error = str(exc)
-            emit({"type": "status", "text": "翻译加载失败，原文继续：" + error})
-        while True:
-            item = await translation_queue.get()
-            if item is None:
-                translation_queue.task_done()
-                return
-            caption, queued_at = item
-            current = mapper.previous.get(caption.id)
-            if not translation_is_current(current, caption):
-                translation_queue.task_done()
-                continue
-            started = time.monotonic()
-            try:
-                if error:
-                    raise RuntimeError(error)
-                key = (caption.source, caption.language)
-                if key in cache:
-                    text = cache[key]
-                    cache.move_to_end(key)
-                else:
-                    text = await asyncio.to_thread(translator.translate, caption.source, caption.language)
-                    cache[key] = text
-                    if len(cache) > 512:
-                        cache.popitem(last=False)
-                caption = replace(caption, translation=text)
-            except Exception as exc:
-                caption = replace(caption, error=str(exc))
-            async with caption_lock:
-                current = mapper.previous.get(caption.id)
-                if translation_is_current(current, caption):
-                    emit({"type": "caption", "data": asdict(replace(current, translation=caption.translation, error=caption.error))})
-            emit({"type": "translation_metrics", "pending": translation_queue.qsize(),
-                  "wait_seconds": started - queued_at, "compute_seconds": time.monotonic() - started,
-                  "error": caption.error})
-            translation_queue.task_done()
+        from .backends import create_translator
+        def report(text):
+            emit({"type": "status", "text": text})
+        await run_translations(translation_queue,
+            lambda: create_translator(SimpleNamespace(**settings), report),
+            mapper.previous.get, publish_translation, report,
+            lambda values: emit({"type": "translation_metrics", **values}),
+            context_planner.get if context_planner else None)
 
     async def output():
         async for snapshot in results:
@@ -260,6 +237,7 @@ async def serve(settings, emit, read_message):
     if revision_task:
         revision_task.add_done_callback(output_finished)
     translation_task = asyncio.create_task(translate())
+    translation_task.add_done_callback(output_finished)
     emit({"type": "ready", "backend": config.backend})
     try:
         while True:

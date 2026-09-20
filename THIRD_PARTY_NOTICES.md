@@ -10,6 +10,7 @@ LinguaFlow 0.3 consumes the full WhisperLiveKit pipeline as a pinned dependency.
   - Apache-2.0. LinguaFlow selects its windowed backend, not the English-only causal checkpoint.
 - Qwen3-ASR: https://github.com/QwenLM/Qwen3-ASR — Apache-2.0.
 - NLLB weights: https://huggingface.co/facebook/nllb-200-distilled-600M — CC-BY-NC-4.0.
+- Hy-MT2-1.8B weights: https://huggingface.co/tencent/Hy-MT2-1.8B — Apache-2.0. Downloaded separately; source releases do not include weights.
 - nagisa/DyNet remain installed dependencies; the Windows Unicode-path compatibility layer copies the installed package temporarily without changing its implementation or license files.
 
 No model weights are distributed in this repository. Dependency and model licenses remain separate from application code. Upstream benchmark figures do not constitute LinguaFlow performance measurements.

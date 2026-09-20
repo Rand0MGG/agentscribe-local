@@ -1,6 +1,62 @@
 """Model adapters. Imports and downloads only occur when a session is started."""
 
 from .core import WHISPER_TO_NLLB, Settings
+from .translation_models import is_hy_model, translation_prompt
+
+
+def create_translator(settings, report=lambda text: None):
+    cls = HyMtTranslator if is_hy_model(settings.translation_model) else NllbTranslator
+    return cls(settings, report)
+
+
+class HyMtTranslator:
+    """HY-MT2 dense model, with bounded context and target-only generation."""
+
+    def __init__(self, settings, report=lambda text: None):
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+
+        from .model_cache import resolve_translation
+
+        self.torch, self.target, self.source = torch, settings.target, settings.source_nllb
+        torch.set_num_threads(4)
+        path = resolve_translation(settings.translation_model, settings.offline, report)
+        device = settings.translation_device
+        dtype = torch.bfloat16 if device == 'cuda' and torch.cuda.is_bf16_supported() else (
+            torch.float16 if device == 'cuda' else torch.float32)
+        report(f'正在加载 HY-MT2 到 {device.upper()}…')
+        self.tokenizer = AutoTokenizer.from_pretrained(path, local_files_only=True, trust_remote_code=False)
+        if not self.tokenizer.chat_template:
+            raise ValueError('HY-MT2 缺少 chat_template.jinja；请重新下载 / 检查模型，或选择完整模型目录。')
+        self.model = AutoModelForCausalLM.from_pretrained(
+            path, local_files_only=True, trust_remote_code=False, weights_only=True,
+            dtype=dtype).to(device).eval()
+
+    def translate(self, text, language, context=None):
+        if (self.source or WHISPER_TO_NLLB.get(language)) == self.target:
+            return text
+        prompt = translation_prompt(text, self.target, context)
+        inputs = self.tokenizer.apply_chat_template(
+            [{'role': 'user', 'content': prompt}], add_generation_prompt=True,
+            tokenize=True, return_dict=True, return_tensors='pt').to(self.model.device)
+        # The generic fast tokenizer emits segment IDs; this causal model does
+        # not accept them (unlike encoder/decoder translation tokenizers).
+        inputs.pop('token_type_ids', None)
+        length = inputs['input_ids'].shape[-1]
+        if length > 8192:
+            raise ValueError('本段翻译输入过长；已保留原文，不静默截断。')
+        with self.torch.inference_mode():
+            output = self.model.generate(**inputs, max_new_tokens=1024, do_sample=True,
+                                         temperature=.7, top_p=.6, top_k=20, repetition_penalty=1.05)
+        tokens = output[0][length:]
+        eos = self.model.generation_config.eos_token_id
+        eos = eos if isinstance(eos, list) else [eos]
+        if len(tokens) >= 1024 and int(tokens[-1]) not in eos:
+            raise ValueError('译文达到长度上限，未将截断结果作为定稿。')
+        result = self.tokenizer.decode(tokens, skip_special_tokens=True).strip()
+        if not result:
+            raise ValueError('翻译模型未返回文字，原文已保留。')
+        return result
 
 
 class NllbTranslator:

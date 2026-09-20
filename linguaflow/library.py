@@ -9,6 +9,7 @@ from pathlib import Path
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from .core import Caption, export_srt
+from .recording_document import read_recording_document
 
 
 class Library:
@@ -64,6 +65,11 @@ class Library:
             cursor = cursor.parent
         return resolved
 
+    def recording_locks(self, item):
+        """Expose checked lock paths without exposing filesystem safety internals."""
+        for path in self.directory(item['id']).rglob('.recording.lock'):
+            yield self._safe(path)
+
     def refresh(self):
         folders, sessions, paths, warnings = [], [], {}, []
 
@@ -85,6 +91,8 @@ class Library:
                         if "session" not in data:
                             continue  # v1 files are migrated separately.
                         item = dict(data["session"])
+                        if any(not isinstance(item.get(key), str) for key in ('created', 'state')):
+                            raise ValueError('录音创建时间或状态格式无效')
                         identifier = item["id"]
                         if parent is None:
                             warnings.append(f"请把 {child.name} 放入一个文件夹。")
@@ -188,7 +196,7 @@ class Library:
 
     def load(self, item):
         data = self._read(self.directory(item["id"]) / "session.json")
-        return data, [Caption(**c) for c in data["captions"]]
+        return read_recording_document(data)
 
     def rename(self, item, name):
         source = self.directory(item["id"])

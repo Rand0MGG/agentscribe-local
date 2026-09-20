@@ -36,9 +36,19 @@ def resolve_translation(model, offline, report):
 
     if Path(model).is_dir():
         return model
+    # Reuse the optional project-local HY package installed by the CLI as well
+    # as Hub caches. Selecting the built-in model must not download it twice.
+    from .translation_models import HY_MODEL, is_hy_model
+    bundled = Path(__file__).resolve().parents[1] / 'models' / 'Hy-MT2-1.8B'
+    if (model == HY_MODEL and has_weights(bundled) and is_hy_model(str(bundled))
+            and all((bundled / name).is_file() for name in
+                    ('tokenizer.json', 'tokenizer_config.json', 'chat_template.jinja'))):
+        report('翻译模型：使用项目内已下载的 HY-MT2 权重')
+        return str(bundled)
     try:
         cached = snapshot_download(model, local_files_only=True)
-        if has_weights(cached) and (Path(cached) / "tokenizer_config.json").exists():
+        if (has_weights(cached) and (Path(cached) / "tokenizer_config.json").exists()
+                and (not is_hy_model(model) or (Path(cached) / 'chat_template.jinja').exists())):
             report("翻译模型：使用已下载缓存，不下载第二份权重")
             return cached
     except OSError:
@@ -47,6 +57,6 @@ def resolve_translation(model, offline, report):
         raise RuntimeError("离线缓存不完整，请取消严格离线下载一次，或选择完整模型目录。")
     files = HfApi().list_repo_files(model)
     safe = any(f.endswith(".safetensors") for f in files)
-    patterns = ["*.json", "*.model", "*.txt", "*.safetensors" if safe else "*.bin"]
+    patterns = ["*.json", "*.model", "*.txt", "*.jinja", "*.safetensors" if safe else "*.bin"]
     report("正在下载翻译模型（单份权重），下载进度见终端；下载完成后自动加载")
     return snapshot_download(model, allow_patterns=patterns, max_workers=1)

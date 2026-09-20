@@ -41,6 +41,8 @@ class Settings:
     draft_seconds: float = 0.5
     endpoint_seconds: float = 0.5
     translation_device: str = "cpu"
+    translation_before: int = 3
+    translation_after: int = 1
     input_sample_rate: int = 16000
     audio_processing: dict = field(default_factory=dict)
     semantic_mode: str = "auto"

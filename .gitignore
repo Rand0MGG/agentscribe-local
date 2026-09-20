@@ -27,6 +27,8 @@ media/test.m4a
 media/test.txt
 media/MacWhinney/
 media/AMI/
+/media/SlideSpeech/
+/media/test_audio.tar.gz
 .playwright-cli/
 output/playwright/
 /录音/

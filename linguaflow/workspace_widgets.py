@@ -25,14 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-
-def text_label(text, name=None):
-    label = QLabel(text)
-    label.setWordWrap(True)
-    label.setTextFormat(Qt.TextFormat.PlainText)
-    if name:
-        label.setObjectName(name)
-    return label
+from .qt_controls import text_label
 
 
 class Switch(QCheckBox):
@@ -184,9 +177,16 @@ class RecordingDialog(QDialog):
 
 
 class SettingsWorkspace(QWidget):
-    def __init__(self, host, frame_factory):
-        super().__init__()
-        self.host = host
+    back_requested = Signal()
+    open_storage_requested = Signal()
+    choose_storage_requested = Signal()
+    deleted_requested = Signal()
+    refresh_devices_requested = Signal()
+    audio_requested = Signal()
+
+    def __init__(self, frame_factory, *, storage_root, controls, manager, parent=None):
+        super().__init__(parent)
+        self.manager = manager
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(1)
@@ -199,7 +199,7 @@ class SettingsWorkspace(QWidget):
         nav.setSpacing(14)
         back = QPushButton("←  返回录音")
         back.setObjectName("navigation")
-        back.clicked.connect(host.leave_settings)
+        back.clicked.connect(self.back_requested.emit)
         nav.addWidget(back)
         self.search = QLineEdit()
         self.search.setPlaceholderText("搜索设置…")
@@ -230,51 +230,50 @@ class SettingsWorkspace(QWidget):
         general, body = self.page("常规")
         body.addWidget(text_label("文件与存储", "settingsSection"))
         card, rows = self.group()
-        self.storage_path = text_label(str(host.library.root), "muted")
+        self.storage_path = text_label(str(storage_root), "muted")
         self.storage_path.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        controls = QWidget()
-        buttons = QHBoxLayout(controls)
+        storage_controls = QWidget()
+        buttons = QHBoxLayout(storage_controls)
         buttons.setContentsMargins(0, 0, 0, 0)
-        for title, callback in [("打开", host.reveal_library), ("更改…", host.choose_library)]:
+        for title, callback in [("打开", self.open_storage_requested.emit), ("更改…", self.choose_storage_requested.emit)]:
             button = QPushButton(title)
             button.clicked.connect(callback)
             buttons.addWidget(button)
-        self.row(rows, "录音保存位置", "录音与定稿按文件夹、录音名称保存，随时可以直接打开。", controls)
+        self.row(rows, "录音保存位置", "录音与定稿按文件夹、录音名称保存，随时可以直接打开。", storage_controls)
         rows.addWidget(self.storage_path)
         deleted = QPushButton("查看最近删除")
-        deleted.clicked.connect(host.show_deleted)
+        deleted.clicked.connect(self.deleted_requested.emit)
         self.row(rows, "最近删除", "删除的文件先保留在原保存目录，可随时恢复。", deleted)
         body.addWidget(card)
         body.addSpacing(24)
         body.addWidget(text_label("使用习惯", "settingsSection"))
         card, rows = self.group()
-        self.row(rows, "跟随最新字幕", "新文字出现时，自动滚动到最新位置。", host.follow)
+        self.row(rows, "跟随最新字幕", "新文字出现时，自动滚动到最新位置。", controls['follow'])
         body.addWidget(card)
         body.addStretch()
         listening, body = self.page("聆听")
-        host.settings_panel = listening
+        self.listening_page = listening
         body.addWidget(text_label("输入与语言", "settingsSection"))
         card, rows = self.group()
-        self.row(rows, "音频来源", "选择麦克风或正在播放声音的设备。", host.device)
+        self.row(rows, "音频来源", "选择麦克风或正在播放声音的设备。", controls['device'])
         refresh = QPushButton("刷新设备")
-        refresh.clicked.connect(host.refresh_devices)
+        refresh.clicked.connect(self.refresh_devices_requested.emit)
         self.row(rows, "设备列表", "连接新设备后刷新。", refresh)
-        self.row(rows, "原文语言", "Qwen 需要明确选择原文语言。", host.source)
-        self.row(rows, "翻译语言", "选择定稿与实时译文使用的语言。", host.target)
-        self.row(rows, "显示翻译", "关闭后仅保存原文字幕与录音。", host.translate)
+        self.row(rows, "原文语言", "Qwen 需要明确选择原文语言。", controls['source'])
+        self.row(rows, "翻译语言", "选择定稿与实时译文使用的语言。", controls['target'])
+        self.row(rows, "显示翻译", "关闭后仅保存原文字幕与录音。", controls['translate'])
         body.addWidget(card)
         body.addStretch()
         _, body = self.page("音频处理")
         body.addWidget(text_label("增强与回听", "settingsSection"))
         card, rows = self.group()
         lab = QPushButton("打开音频实验室")
-        lab.clicked.connect(host.manage_audio)
+        lab.clicked.connect(self.audio_requested.emit)
         self.row(rows, "音频实验室", "先回听，再调整降噪、去混响与响度。", lab)
-        rows.addWidget(host.audio_summary)
+        rows.addWidget(controls['audio_summary'])
         body.addWidget(card)
         body.addStretch()
         self.audio_page = self.pages.widget(self.mapping["音频处理"])
-        manager = host.model_manager
         manager.setWindowFlags(Qt.WindowType.Widget)
         manager.tabs.tabBar().hide()
         manager.done_button.hide()
@@ -369,7 +368,7 @@ class SettingsWorkspace(QWidget):
         self.pages.setCurrentIndex(self.mapping[name])
         tabs = {"识别模型": 0, "翻译模型": 1, "字幕与延迟": 2, "运行环境": 3}
         if name in tabs:
-            self.host.model_manager.tabs.setCurrentIndex(tabs[name])
+            self.manager.tabs.setCurrentIndex(tabs[name])
 
     def filter(self, query):
         aliases = {"常规": "文件 存储 目录 路径 删除 恢复 跟随", "聆听": "设备 输入 语言",
