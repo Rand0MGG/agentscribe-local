@@ -1,5 +1,4 @@
 """Context boundaries, mutable presentation rows and separately committed text."""
-import re
 import time
 from dataclasses import replace
 
@@ -38,74 +37,37 @@ def separator(left, right):
 
 
 class BoundaryPolicy:
-    """Display boundaries only; no lexical guesses about semantic completeness."""
-    def __init__(self, predictor=None, max_seconds=12):
+    """Map SaT offsets to provisional caption boundaries."""
+    def __init__(self, predictor):
+        if not callable(predictor):
+            raise TypeError("字幕分句需要 SaT 边界预测器。")
         self.predictor = predictor
-        self.max_seconds = max_seconds
         self.cache = None
 
-    def split(self, text, time_at):
+    def split(self, text):
         if self.cache and self.cache[0] == text:
-            proposals = dict(self.cache[1])
-        else:
-            proposals = {}
-            if self.predictor:
-                for start in range(0, len(text), 1024):
-                    window_start = max(0, start - 128)
-                    window = text[window_start:start + 1152]
-                    for offset in self.predictor(window):
-                        absolute = window_start + offset
-                        if start < absolute <= start + 1024:
-                            proposals[absolute] = "上下文分句"
-            else:
-                for match in re.finditer(r"[。！？!?]+\s*|(?<!\.)\.(?![.\d])\s*", text):
-                    word = text[:match.end()].rstrip().split()[-1].lower()
-                    if word not in {"mr.", "mrs.", "dr.", "prof.", "e.g.", "i.e."}:
-                        proposals[match.end()] = "标点候选"
-            if re.search(r"[。！？.!?]$", text.strip()) and not text.rstrip().endswith("..."):
-                proposals[len(text)] = "句末候选"
-            self.cache = (text, dict(proposals))
-        boundaries, previous = [], 0
-        for end in sorted(proposals):
-            if not 0 < end <= len(text):
-                continue
-            part = text[previous:end]
-            if not part.strip():
-                continue
-            if len(re.sub(r"[\W_]", "", part)) < 8:
-                continue  # Keep tiny acknowledgements with their following context.
-            if end < len(text) and text[end-1].isascii() and text[end-1].isalnum() and text[end].isascii() and text[end].isalnum():
-                continue
-            boundaries.append((end, proposals[end]))
-            previous = end
+            return list(self.cache[1])
+        proposals = set()
+        for start in range(0, len(text), 1024):
+            window_start = max(0, start - 128)
+            window = text[window_start:start + 1152]
+            for offset in self.predictor(window):
+                if not isinstance(offset, int) or not 0 < offset <= len(window):
+                    raise ValueError("SaT 返回了无效的分句位置。")
+                absolute = window_start + offset
+                if start < absolute <= start + 1024:
+                    proposals.add(absolute)
+        boundaries = [(end, "上下文分句") for end in sorted(proposals)]
         if not boundaries or boundaries[-1][0] < len(text):
             boundaries.append((len(text), "等待后文"))
-        result, start = [], 0
-        for end, reason in boundaries:
-            while end - start > 240 or time_at(end) - time_at(start) > self.max_seconds:
-                limit = min(end, start + 240)
-                for pos in range(start + 1, limit + 1):
-                    if time_at(pos) - time_at(start) >= self.max_seconds:
-                        limit = pos
-                        break
-                choices = [m.end() + start for m in re.finditer(r"[,，;；:：]\s*|\s+", text[start:limit])]
-                cut = choices[-1] if choices else limit
-                while (cut < end and text[cut-1].isascii() and text[cut-1].isalnum()
-                       and text[cut].isascii() and text[cut].isalnum()):
-                    cut += 1
-                if cut <= start or cut >= end:
-                    break
-                result.append((cut, "显示换段 · 未判定句完"))
-                start = cut
-            result.append((end, reason))
-            start = end
-        return result
+        self.cache = (text, tuple(boundaries))
+        return boundaries
 
 
 class CaptionMapper:
-    def __init__(self, language="auto", predictor=None, lookahead=3., max_seconds=12., clock=time.monotonic):
+    def __init__(self, language="auto", *, predictor, lookahead=3., clock=time.monotonic):
         self.language = language
-        self.policy = BoundaryPolicy(predictor, max_seconds)
+        self.policy = BoundaryPolicy(predictor)
         self.lookahead, self.clock = lookahead, clock
         self.previous = {}
         self.active = []
@@ -161,7 +123,7 @@ class CaptionMapper:
         self.fixed = self.fixed[:keep]
         offset = self.fixed[-1][1] if self.fixed else 0
         remainder = text[offset:]
-        boundaries = self.policy.split(remainder, lambda p: at(offset + p)) if remainder else []
+        boundaries = self.policy.split(remainder) if remainder else []
         events, next_active, new_observed = [], [], {}
         now, start, can_lock = self.clock(), offset, True
         fixed_ids = {row[0] for row in self.fixed}

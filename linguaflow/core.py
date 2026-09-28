@@ -45,10 +45,8 @@ class Settings:
     translation_after: int = 1
     input_sample_rate: int = 16000
     audio_processing: dict = field(default_factory=dict)
-    semantic_mode: str = "auto"
     semantic_device: str = "cpu"
     semantic_lookahead: float = 3.0
-    caption_max_seconds: float = 12.0
 
 
 @dataclass

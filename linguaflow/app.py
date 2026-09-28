@@ -1236,11 +1236,10 @@ class Window(QMainWindow):
         manager.backend.setCurrentIndex(data_index(manager.backend, 'qwen3-mlx'))
         manager.qwen_model.setCurrentText('mlx-community/Qwen3-ASR-1.7B-4bit')
         self.sync_asr_device()
-        manager.semantic_mode.setCurrentIndex(data_index(manager.semantic_mode, 'rules'))
         manager.draft_seconds.setValue(1.)
         manager.endpoint_seconds.setValue(1.)
         self.translate.setChecked(False)
-        manager.status.setText('已选择 Apple GPU、4-bit 识别和规则分句，并关闭翻译。准备模型后可开始；翻译可在设置中单独开启。')
+        manager.status.setText('已选择 Apple GPU、4-bit 识别和 SaT 分句，并关闭翻译。准备识别与 SaT 模型后可开始；翻译可在设置中单独开启。')
 
     def manage_models(self):
         self.open_settings("识别模型")

@@ -1,16 +1,16 @@
+from dataclasses import asdict
 from types import SimpleNamespace
 
+from linguaflow.core import export_srt
 from linguaflow.qwen_revisions import RevisionStore, install_revision_bridge
 from linguaflow.revision_audit import audit
 from linguaflow.wlk_captions import CaptionMapper
-from dataclasses import asdict
-from linguaflow.core import export_srt
 
 
 def test_complete_revisions_reopen_shorten_clear_and_preserve_repetition():
     events = []
     store = RevisionStore('test', events.append)
-    mapper = CaptionMapper('en')
+    mapper = CaptionMapper('en', predictor=lambda text: [])
     for value in ['Wrong words. Extra sentence.', 'Right words.', '', 'Yes yes.']:
         store.update(0, 0, 5, value, len(value), True)
         snapshot = {}

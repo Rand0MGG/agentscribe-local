@@ -21,8 +21,8 @@ PREFERENCES = (
     Preference('translation_device', 'data'),
     Preference('translation_before', 'data', 3), Preference('translation_after', 'data', 1),
     Preference('update_seconds', 'float', 1.), Preference('endpoint_seconds', 'float', .5),
-    Preference('semantic_lookahead', 'float', 3.), Preference('caption_max_seconds', 'float', 12.),
-    Preference('draft_seconds', 'float', .5), Preference('semantic_mode', 'data', 'auto'),
+    Preference('semantic_lookahead', 'float', 3.),
+    Preference('draft_seconds', 'float', .5),
     Preference('semantic_device', 'data', 'cpu'),
 )
 

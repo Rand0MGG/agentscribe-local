@@ -46,6 +46,6 @@ class SettingsBinding:
             target=self.controls['target'].currentData(), input_sample_rate=48000,
             audio_processing=deepcopy(audio_config),
             **{key: values[key] for key in ('translate', 'offline', 'backend', 'translation_device',
-               'qwen_model', 'update_seconds', 'draft_seconds', 'endpoint_seconds', 'semantic_mode',
-               'semantic_device', 'semantic_lookahead', 'caption_max_seconds',
+               'qwen_model', 'update_seconds', 'draft_seconds', 'endpoint_seconds',
+               'semantic_device', 'semantic_lookahead',
                'translation_before', 'translation_after')})

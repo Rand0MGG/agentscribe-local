@@ -21,6 +21,7 @@ Qt 界面与模型运行环境隔离；应用自行启动、停止推理进程�
 py -3.12 -m venv .venv
 .venv\Scripts\python.exe -m pip install -e ".[dev]"
 .venv\Scripts\python.exe scripts\install_runtime.py
+.venv\Scripts\python.exe scripts\install_semantic.py
 .venv\Scripts\python.exe -m linguaflow
 ```
 
@@ -34,14 +35,15 @@ py -3.12 -m venv .venv
 python3.12 -m venv .venv
 .venv/bin/python -m pip install -e '.[dev]'
 .venv/bin/python scripts/install_runtime.py
+.venv/bin/python scripts/install_semantic.py
 .venv/bin/python -m linguaflow
 ```
 
 也可使用 `bash run-macos.command`。Whisper CPU 已通过文件识别测试；新增 Qwen3-ASR 1.7B / MLX 4-bit **试验入口**，已在 M2 / 8GB 上完成英文短音频和 101 秒连续音频的 GPU 字幕测试。中文、翻译并行和真实录音仍待验收。
 
-试用 Apple GPU 路线，另行执行 `.venv/bin/python scripts/install_mlx.py`（或模型管理 → 运行环境 → 安装 Apple GPU）。然后选择“试用 Mac 4-bit 设置”，下载 / 检查 Qwen 模型，并指定原文语言。此配置关闭翻译并采用规则分句；可按需要再开启翻译。MLX 单独使用 `.venv-mlx`，避免与现有 Windows / WLK 的 Transformers 版本冲突。
+试用 Apple GPU 路线，另行执行 `.venv/bin/python scripts/install_mlx.py`（或模型管理 → 运行环境 → 安装 Apple GPU）。然后选择“试用 Mac 4-bit 设置”，下载 / 检查 Qwen 模型，并指定原文语言。此配置使用 SaT 分句并关闭翻译；请先准备 SaT 模型，可按需要再开启翻译。MLX 单独使用 `.venv-mlx`，避免与现有 Windows / WLK 的 Transformers 版本冲突。
 
-用户授权取消内存中止阈值后，101 秒文件测试完成：首条字幕约 2.02 秒、收尾约 1.62 秒、WER 0.39%、MLX 分配峰值 2.42 GiB（不含软件和系统其他占用）。测试关闭翻译，没有访问音频设备；详见 [测试记录](docs/MACOS_FILE_TESTS.md)。
+M2 / 8GB 的 101 秒文件测试已跑通 GPU 识别与 SaT 分句：首条字幕约 2.26 秒、收尾约 3.04 秒，25 段字幕全部定稿，WER 0.39%。测试关闭翻译，没有访问音频设备；系统交换空间增长约 1.46 GiB，仍需验证长会话。详见 [测试记录](docs/MACOS_FILE_TESTS.md)。
 系统设置中需允许 Terminal/Python 使用麦克风。系统声音使用 [BlackHole](https://github.com/ExistentialAudio/BlackHole) 输入与多输出设备；尚无原生 ScreenCaptureKit 捕获。
 
 Mac 适配进展、已验证范围和待实机测试项目见 [macOS 适配记录](docs/MACOS_SUPPORT.md)。如果电脑正在进行其他录音，开发验证请使用 `.venv/bin/python scripts/test_no_audio.py`；该入口使用模拟音频，并阻止原生音频后端导入，不启动实际应用或录音测试。
@@ -52,7 +54,7 @@ Mac 适配进展、已验证范围和待实机测试项目见 [macOS 适配记�
 
 1. 打开左下角“设置 → 识别模型”，选择 Whisper 或 Qwen、计算设备，下载模型。识别、翻译、聆听行为分别管理。
 2. 在设置中选择音频来源、原文语言和目标语言；在左侧文件夹行点击“＋”，填写录音名称并确认保存位置。Windows 的“系统声音”选择当前播放设备；Qwen 必须指定原文语言。
-3. 点击“开始聆听”。原文先显示，暂定分段即可翻译；原文与译文随后文修订，稳定后再定稿。在“模型管理 → 字幕与延迟”准备 SaT 分句模型、选择 CPU/CUDA 并调整后文观察长度，详见 [语义分段](docs/SEMANTIC_SEGMENTATION.md)。
+3. 在“模型管理 → 字幕与延迟”准备 SaT 分句模型、选择 CPU/CUDA 并调整后文观察长度。然后点击“开始聆听”。原文先显示，SaT 给出暂定分段后即可翻译；原文与译文随后文修订，稳定后再定稿。SaT 加载失败会阻止启动，推理异常会停止会话并提示原因，详见 [语义分段](docs/SEMANTIC_SEGMENTATION.md)。
 4. “停止”会处理剩余音频和翻译，然后释放推理进程；关闭窗口也会先停止采集并处理剩余任务，随后保存会话。加载期间仍可取消启动。
 5. 录音和定稿自动保存在本机，点击侧栏会话可回听。可打开置顶字幕窗口，结束后导出双语 SRT。导出包含已确认字幕。
 

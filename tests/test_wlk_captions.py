@@ -1,6 +1,8 @@
 from types import SimpleNamespace as Item
 
-from linguaflow.wlk_captions import CaptionMapper, caption_snapshot
+import pytest
+
+from linguaflow.wlk_captions import BoundaryPolicy, CaptionMapper, caption_snapshot
 
 
 def line(text, start=0, end=1):
@@ -11,8 +13,8 @@ def text(mapper):
     return " ".join(c.source for c in mapper.previous.values())
 
 
-def test_punctuation_creates_provisional_row_not_final():
-    mapper = CaptionMapper("en")
+def test_model_boundary_creates_provisional_row_not_final():
+    mapper = CaptionMapper("en", predictor=lambda text: [12] if len(text) > 12 else [])
     first = mapper.update({"lines": [], "buffer_transcription": "Hell"})[0]
     second = mapper.update({"lines": [line("Hello world.")], "buffer_transcription": "Next"})
     assert first.id == second[0].id
@@ -22,7 +24,7 @@ def test_punctuation_creates_provisional_row_not_final():
 
 
 def test_stable_partial_and_speculative_tail_are_distinguished():
-    mapper = CaptionMapper("en")
+    mapper = CaptionMapper("en", predictor=lambda text: [])
     event = mapper.update({"lines": [line("Hello")], "buffer_transcription": "world"})[0]
     assert event.source == "Hello world" and event.stable_source == "Hello"
     events = mapper.update({"lines": [line("Hello world")], "buffer_transcription": ""}, done=True)
@@ -32,7 +34,7 @@ def test_stable_partial_and_speculative_tail_are_distinguished():
 
 def test_silence_and_elapsed_time_alone_do_not_finalize():
     clock = [0.]
-    mapper = CaptionMapper("zh", clock=lambda: clock[0])
+    mapper = CaptionMapper("zh", predictor=lambda text: [], clock=lambda: clock[0])
     snapshot = {"lines": [line("这个公式的前提是"), line("", 1, 60)]}
     events = mapper.update(snapshot)
     clock[0] = 60
@@ -42,7 +44,7 @@ def test_silence_and_elapsed_time_alone_do_not_finalize():
 
 def test_later_context_and_repeated_stability_finalize_prefix_only():
     clock = [0.]
-    mapper = CaptionMapper("zh", clock=lambda: clock[0])
+    mapper = CaptionMapper("zh", predictor=lambda text: [9] if len(text) > 9 else [], clock=lambda: clock[0])
     snapshot = {"lines": [line("这是第一个知识点。", 0, 2), line("接下来我们详细解释它的应用条件。", 2, 8)]}
     first = mapper.update(snapshot)
     assert not any(c.final for c in first)
@@ -54,7 +56,7 @@ def test_later_context_and_repeated_stability_finalize_prefix_only():
 
 
 def test_unfinished_clause_can_be_abandoned_without_inventing_words():
-    mapper = CaptionMapper("zh")
+    mapper = CaptionMapper("zh", predictor=lambda text: [])
     original = "这个公式的前提是……我们先看右边这个图。"
     events = mapper.update({"lines": [line(original, end=6)]})
     assert len(events) == 1 and not events[0].final
@@ -62,7 +64,7 @@ def test_unfinished_clause_can_be_abandoned_without_inventing_words():
 
 
 def test_correction_merges_boundary_and_revises_same_id():
-    mapper = CaptionMapper("en")
+    mapper = CaptionMapper("en", predictor=lambda text: [18, 38] if "Actually" in text else [18])
     first = mapper.update({"lines": [line("The value is five. Next detail.", end=5)]})
     changed = mapper.update({"lines": [line("The value is five. Actually it is six. Next detail.", end=7)]})
     assert changed[0].id == first[0].id and changed[0].revision > first[0].revision
@@ -72,7 +74,7 @@ def test_correction_merges_boundary_and_revises_same_id():
 
 
 def test_retracted_tail_gets_tombstone_and_id_is_not_reused():
-    mapper = CaptionMapper("en")
+    mapper = CaptionMapper("en", predictor=lambda text: [13])
     events = mapper.update({"lines": [line("Welcome here.")], "buffer_transcription": "noise"})
     tail_id = events[-1].id
     assert mapper.update({"lines": [line("Welcome here.")], "buffer_transcription": "noise"}) == []
@@ -82,27 +84,27 @@ def test_retracted_tail_gets_tombstone_and_id_is_not_reused():
     assert events[-1].id > tail_id
 
 
-def test_display_limit_does_not_immediately_finalize_or_drop_words():
-    tokens = [Item(start=i, end=i+1, text=f" word{i}") for i in range(21)]
+def test_pending_model_boundary_preserves_long_text_and_timestamps():
+    tokens = [Item(start=i, end=i+1, text=f" word{i}") for i in range(80)]
     segment = Item(text="words", speaker=-1, tokens=tokens, detected_language="en")
     front = Item(lines=[segment], to_dict=lambda: {"buffer_transcription": ""})
-    mapper = CaptionMapper("en", max_seconds=8)
+    mapper = CaptionMapper("en", predictor=lambda text: [])
     events = mapper.update(caption_snapshot(front))
-    assert len(events) >= 3 and not any(c.final for c in events)
-    assert ' '.join(c.source for c in events).split() == [f"word{i}" for i in range(21)]
-    assert events[0].boundary_reason.startswith("显示换段")
+    assert len(events) == 1 and not events[0].ready and not events[0].final
+    assert events[0].source.split() == [f"word{i}" for i in range(80)]
+    assert events[0].end == 80
 
 
 def test_fragment_tokens_are_not_rewritten_by_joining():
     tokens = [Item(start=i, end=i+1, text=t) for i, t in enumerate(["学", "习", "知识"])]
     front = Item(lines=[Item(text="学习知识", speaker=-1, tokens=tokens, detected_language="zh")], to_dict=lambda: {})
-    mapper = CaptionMapper("zh")
+    mapper = CaptionMapper("zh", predictor=lambda text: [])
     assert mapper.update(caption_snapshot(front))[0].source == "学习知识"
-    assert CaptionMapper().update({"lines": [line(".")]})[0].source == "."
+    assert CaptionMapper(predictor=lambda text: []).update({"lines": [line(".")]})[0].source == "."
 
 
 def test_real_upstream_correction_can_reopen_committed_caption():
-    mapper = CaptionMapper("en")
+    mapper = CaptionMapper("en", predictor=lambda text: [])
     first = mapper.update({"lines": [line("Incorrect word.")]}, done=True)[0]
     changed = mapper.update({"lines": [line("Correct word.")]})[0]
     assert first.final and not changed.final
@@ -118,7 +120,10 @@ def test_learned_boundaries_are_used_without_punctuation():
 
 def test_growing_stream_preserves_all_text_across_many_commits():
     clock = [0.]
-    mapper = CaptionMapper("en", clock=lambda: clock[0])
+    sentences = [f"This is classroom statement number {i}." for i in range(40)]
+    def predict(text):
+        return [text.index(sentence) + len(sentence) for sentence in sentences if sentence in text]
+    mapper = CaptionMapper("en", predictor=predict, clock=lambda: clock[0])
     lines = []
     for index in range(40):
         lines.append(line(f"This is classroom statement number {index}.", index * 4, (index + 1) * 4))
@@ -133,37 +138,61 @@ def test_growing_stream_preserves_all_text_across_many_commits():
     assert all(c.final for c in mapper.previous.values())
 
 
-def test_no_keyword_guesses_override_punctuation():
-    for original in ["We will calculate. The average of x.",
-                     "So this is a very. Useful property.",
-                     "They will. The result is. A Gaussian distribution."]:
-        mapper = CaptionMapper("en")
-        events = mapper.update({"lines": [line(original, end=5)]})
-        assert len(events) > 1
-        assert " ".join(c.source for c in events) == original
+def test_model_offsets_determine_short_and_unpunctuated_segments():
+    mapper = CaptionMapper("zh", predictor=lambda text: [2, 4])
+    events = mapper.update({"lines": [line("好。开始我们继续", end=5)]})
+    assert [c.source for c in events] == ["好。", "开始", "我们继续"]
+    assert [c.ready for c in events] == [True, True, False]
 
 
-def test_following_complement_rejoins_provisional_rows():
-    mapper = CaptionMapper("en")
-    mapper.update({"lines": [line("It is useful in generative modeling.", end=3)]})
-    original = "It is useful in generative modeling. Area. Because this is helpful."
-    events = mapper.update({"lines": [line(original, end=6)]})
-    assert events[0].source == "It is useful in generative modeling."
-    assert not events[0].final
+def test_model_can_rejoin_provisional_rows():
+    mapper = CaptionMapper("en", predictor=lambda text: [6] if text == "Hello world" else [])
+    first = mapper.update({"lines": [line("Hello world", end=3)]})
+    changed = mapper.update({"lines": [line("Hello world again", end=4)]})
+    assert changed[0].id == first[0].id and changed[0].source == "Hello world again"
+    assert not changed[0].ready and not changed[0].final
+    assert any(c.id == first[1].id and not c.source for c in changed)
 
 
-def test_display_break_uses_general_lookahead_not_twelve_seconds():
-    clock = [0.]
-    mapper = CaptionMapper('en', max_seconds=4, lookahead=3, clock=lambda: clock[0])
-    snapshot = {'lines': [line(' '.join('word'+str(i) for i in range(10)), end=10)]}
-    first = mapper.update(snapshot)
-    assert first[0].boundary_reason.startswith('显示换段') and not first[0].final
-    clock[0] = 1.
-    assert any(c.id == first[0].id and c.final for c in mapper.update(snapshot))
+def test_model_pending_tail_waits_for_context_or_session_end():
+    mapper = CaptionMapper("en", predictor=lambda text: [])
+    snapshot = {"lines": [line("Hello world. Is this complete? Yes!", end=30)]}
+    pending = mapper.update(snapshot)
+    assert len(pending) == 1 and not pending[0].ready
+    final = mapper.update(snapshot, done=True)
+    assert len(final) == 1 and final[0].ready and final[0].final
+    assert final[0].source == pending[0].source
 
 
-def test_display_limit_does_not_split_inside_long_word():
-    original = 'a' * 300
-    mapper = CaptionMapper('en', max_seconds=1)
-    events = mapper.update({'lines': [line(original, end=10)]})
-    assert len(events) == 1 and events[0].source == original
+def test_predictor_is_required_and_errors_leave_captions_intact():
+    with pytest.raises(TypeError):
+        CaptionMapper(predictor=None)
+    def predict(text):
+        if text.endswith("again"):
+            raise RuntimeError("SaT inference failed")
+        return []
+    mapper = CaptionMapper(predictor=predict)
+    first = mapper.update({"lines": [line("Hello world")]})[0]
+    with pytest.raises(RuntimeError, match="SaT inference failed"):
+        mapper.update({"lines": [line("Hello world again")]})
+    assert mapper.previous == {first.id: first}
+
+
+def test_overlapping_model_windows_and_cache_preserve_offsets():
+    calls = []
+    def predict(text):
+        calls.append(text)
+        return [i + 1 for i, char in enumerate(text) if char == "界"]
+    original = "文" * 1023 + "界" + "文" * 1023 + "界" + "文" * 20
+    policy = BoundaryPolicy(predict)
+    boundaries = policy.split(original)
+    assert boundaries == [(1024, "上下文分句"), (2048, "上下文分句"), (2068, "等待后文")]
+    assert len(calls) == 3
+    boundaries.clear()
+    assert len(policy.split(original)) == 3 and len(calls) == 3
+
+
+@pytest.mark.parametrize("offset", [0, -1, 100, 1.5])
+def test_invalid_model_offsets_raise(offset):
+    with pytest.raises(ValueError, match="SaT"):
+        BoundaryPolicy(lambda text: [offset]).split("hello")

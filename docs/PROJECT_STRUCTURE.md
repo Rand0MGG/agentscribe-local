@@ -39,6 +39,6 @@ The experimental Mac MLX backend uses `.venv-mlx`, created by `scripts/install_m
 
 `audio_processing/` separates serializable configuration, stateful DSP, ONNX compatibility, signal health checks, bounded sample recording (`recorder.py`) and the Qt audition workspace. File audition and the live worker use the same front end. `scripts/install_audio.py` manages its optional dependencies; `scripts/smoke_audio.py` exercises actual CPU/CUDA processing.
 
-`semantic_model.py` loads the optional local SaT boundary predictor prepared by `scripts/install_semantic.py`. `wlk_captions.py` owns provisional boundaries, stability and revisions; `translation_queue.py` coalesces pending caption revisions. See `docs/SEMANTIC_SEGMENTATION.md` for the state transitions and limitations.
+`semantic_model.py` loads the required local SaT boundary predictor prepared by `scripts/install_semantic.py`. `wlk_captions.py` owns provisional boundaries, stability and revisions; `translation_queue.py` coalesces pending caption revisions. See `docs/SEMANTIC_SEGMENTATION.md` for the state transitions and limitations.
 
 `caption_changes.py` is a legacy revision-description utility; the live UI no longer displays change explanations or calls it. `media/README.md` defines the local classroom regression fixture; `scripts/prepare_classroom.py`, `smoke_wlk.py` and `compare_classroom.py` provide reproducible decoding, paced inference and update/revision measurements. The other app's text is an unverified comparison, never injected as a model prompt.

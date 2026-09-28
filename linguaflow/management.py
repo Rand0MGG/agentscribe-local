@@ -110,14 +110,10 @@ class ModelManager(QDialog):
         classroom = QPushButton("课堂逐词草稿 · 保留短停顿")
         classroom.clicked.connect(self.classroom_drafts)
         self.advanced_form.addRow(classroom)
-        self.semantic_mode = QComboBox()
-        self.semantic_mode.addItem("SaT 上下文模型优先", "auto")
-        self.semantic_mode.addItem("上下文规则 · 不加载分句模型", "rules")
         self.semantic_device = QComboBox()
         self.semantic_device.addItem("CPU", "cpu")
         if sys.platform != "darwin":
             self.semantic_device.addItem("NVIDIA CUDA", "cuda")
-        self.advanced_form.addRow("分句策略", self.semantic_mode)
         self.advanced_form.addRow("分句模型设备", self.semantic_device)
         prepare_semantic = QPushButton("准备 / 检查 SaT 分句模型")
         prepare_semantic.clicked.connect(lambda: self.prepare(lambda: self.run_preparation(
@@ -127,13 +123,8 @@ class ModelManager(QDialog):
         self.semantic_lookahead.setRange(1, 12)
         self.semantic_lookahead.setValue(3)
         self.semantic_lookahead.setSuffix(" 秒后文")
-        self.caption_max_seconds = QDoubleSpinBox()
-        self.caption_max_seconds.setRange(6, 30)
-        self.caption_max_seconds.setValue(12)
-        self.caption_max_seconds.setSuffix(" 秒")
         self.advanced_form.addRow("定稿前保留后文", self.semantic_lookahead)
-        self.advanced_form.addRow("显示分段参考长度", self.caption_max_seconds)
-        self.hint(self.advanced_form, "听写 → 暂定分段 → 定稿。暂定译文会跟随原文更新；达到显示长度只换段，不立即锁定。SaT 缺失时明确提示并使用规则，不阻止转写。")
+        self.hint(self.advanced_form, "SaT 根据上下文分句：听写 → 暂定分段 → 定稿。暂定译文会跟随原文更新。开始聆听前请准备 SaT；模型异常会提示并停止会话。")
         self.behavior_hint = QLabel()
         self.behavior_hint.setWordWrap(True)
         self.advanced_form.addRow(self.behavior_hint)
@@ -240,9 +231,9 @@ class ModelManager(QDialog):
             if qwen else
             "Whisper：AlignAtt 根据注意力决定继续输出还是等待新音频。连续说话也能确认原文，不需要等整段停顿；调小合并间隔会增加计算频率。")
         if mlx:
-            self.behavior_hint.setText('Apple GPU / MLX 4-bit：短窗口识别，近期草稿可修订；停止时处理剩余音频。8GB Mac 可先关闭翻译，分句使用规则；实际更新速度取决于音频与模型负载。')
+            self.behavior_hint.setText('Apple GPU / MLX 4-bit：短窗口识别，近期草稿可修订；停止时处理剩余音频。8GB Mac 可先关闭翻译；实际更新速度取决于音频与模型负载。')
         self.qwen_hint.setText(
-            'MLX 4-bit 使用 Apple GPU。当前为试验功能。请选择原文语言；8GB Mac 可用下方按钮关闭翻译并选择规则分句。'
+            'MLX 4-bit 使用 Apple GPU。当前为试验功能。请选择原文语言；8GB Mac 可用下方按钮关闭翻译，分句使用 SaT。'
             if mlx else
             'Qwen 在本机识别，近期原文可随语音修订。请选择原文语言。0.6B 占用较少内存，1.7B 需要更多资源。')
         self.whisper_page.setVisible(not qwen)

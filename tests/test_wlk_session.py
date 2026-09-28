@@ -124,3 +124,37 @@ time.sleep(30)
     _, failures = execute(monkeypatch, tmp_path, program,
                          lambda *a: (_ for _ in ()).throw(AssertionError('no capture')))
     assert any('长时间没有进展' in error for error in failures)
+
+
+def test_model_load_error_prevents_capture(monkeypatch, tmp_path):
+    program = '''
+import json, sys, time
+sys.stdin.readline()
+print(json.dumps({'type': 'error', 'text': 'SaT 分句模型加载失败'}), flush=True)
+time.sleep(30)
+'''
+    opened = []
+    captions, failures = execute(monkeypatch, tmp_path, program, lambda *args: opened.append(True))
+    assert not opened and not captions
+    assert any('SaT' in error for error in failures)
+
+
+def test_model_inference_error_stops_capture_and_preserves_caption(monkeypatch, tmp_path):
+    program = '''
+import json, sys, time
+sys.stdin.readline()
+print(json.dumps({'type': 'ready'}), flush=True)
+sys.stdin.readline()
+print(json.dumps({'type': 'caption', 'data': {
+    'id': 1, 'start': 0, 'end': 1, 'source': 'Hello', 'language': 'en'}}), flush=True)
+print(json.dumps({'type': 'error', 'text': 'SaT 分句推理失败'}), flush=True)
+time.sleep(30)
+'''
+    stopped = []
+    def capture(settings, stop, block):
+        block(np.ones(1600, dtype=np.float32) * .01)
+        assert stop.wait(5)
+        stopped.append(True)
+    captions, failures = execute(monkeypatch, tmp_path, program, capture)
+    assert stopped == [True] and captions[0].source == 'Hello'
+    assert any('SaT' in error for error in failures)

@@ -12,7 +12,7 @@
 - 项目 `.venv-wlk`：PyTorch / torchaudio 2.11.0、WhisperLiveKit 0.2.26（项目固定提交）、qwen3-asr-causal 0.1.0（项目固定提交）、Transformers 4.57.6。安装成功且 `pip check` 通过。
 - Whisper `tiny.pt` 来自上游列出的 OpenAI 下载地址，SHA-256 为 `65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9`，下载后已校验。
 - 输入为仓库已有 `tests/fixtures/hello.wav`（5.62 秒）和 `continuous-en.wav`（101.18 秒），都是历史英文合成语音夹具。参考文本只用于事后评分，不传给识别模型。
-- 固定 `source=en`、`translate=false`、`semantic_mode=rules`、`offline=true`，音频处理使用默认直通配置；因此不包含翻译、SaT 模型或可选降噪的开销。
+- 固定 `source=en`、`translate=false`、`offline=true`，音频处理使用默认直通配置；因此不包含翻译、SaT 模型或可选降噪的开销。
 
 路径与桌面共用：
 
@@ -121,7 +121,7 @@ NLLB 600M 的官方权重约 2.46GB；下载启动后，因上述资源事件取
 
 ### 实际软件字幕流程
 
-随后直接运行现有 `scripts/replay_streaming.py`，通过 Session → AudioJournal → WLK → MLX → 字幕，而不是模拟模型。音频按 1 倍速度输入。外围内存中止仍关闭；应用保持其正常 3 GiB MLX 分配上限，两次都没有触及上限。`translate=false`、规则分句、1 秒草稿目标与停顿检测。
+随后直接运行现有 `scripts/replay_streaming.py`，通过 Session → AudioJournal → WLK → MLX → 字幕，而不是模拟模型。音频按 1 倍速度输入。外围内存中止仍关闭；应用保持其正常 3 GiB MLX 分配上限，两次都没有触及上限。`translate=false`，未加载 SaT，1 秒草稿目标与停顿检测。这些历史结果不代表当前完整链路的性能。
 
 | 指标 | 5.62 秒短音频 | 101.18 秒连续语音 |
 | --- | ---: | ---: |
@@ -147,3 +147,48 @@ NLLB 600M 的官方权重约 2.46GB；下载启动后，因上述资源事件取
 证据：`mlx-4bit-stream-short/`、`mlx-4bit-stream-long/` 的 `resources.json`、`summary.json`、`replay/events.jsonl` 与 `replay/manifest.json`。评分工具 `.work/cache/score_mlx_files.py` 只在识别完成后读取参考文本，不向 ASR 提供参考。
 
 **当前结论：M2 / 8GB 的 Apple GPU 已完成这些英文样本的实际识别和完整字幕流程，能够按实时输入持续处理；中文、真实会议、翻译并行和长期内存稳定性仍待验证。**
+
+
+## SaT 完整字幕链路验证（2026-09-28）
+
+环境仍为 M2 / 8 GiB、macOS 26.6.2、Python 3.12.14。Qwen3-ASR-1.7B 4-bit 使用 MLX / Apple GPU，SaT-3l-sm 使用 ONNX Runtime CPU；`wtpsplit==2.2.1`，模型和分词器版本固定于 `semantic_model.py`。关闭翻译和可选音频增强，严格离线，按实时速度送入 101.176 秒的现成英文音频。没有访问、枚举或播放音频设备。
+
+命令通过带原生音频导入保护、资源记录和 300 秒超时的文件回放包装器执行：
+
+```bash
+.venv/bin/python scripts/replay_streaming.py run \
+  --prepared .work/mac-file-tests/continuous-en.json \
+  --settings .work/mac-file-tests/sat.settings.json \
+  --output .work/mac-file-tests/mlx-sat-stream-long/replay
+```
+
+| 指标 | 结果 |
+| --- | ---: |
+| 模型和进程准备 | 9.71 秒 |
+| 开始送入音频至首条字幕 | 2.26 秒 |
+| 输入结束至会话收尾 | 3.04 秒 |
+| 最终字幕 | 25 段，全部定稿 |
+| 字幕修订检查异常 | 0 |
+| WER | 0.39%（1 / 256；无删除或插入） |
+| MLX 分配峰值 | 2.42 GiB |
+| WLK 计算延后 P95 / 最大值 | 2.4 / 3.0 秒 |
+| 测试期间系统交换空间增长 | 1490.44 MiB |
+| 音频设备访问尝试 | 0 |
+
+模型状态确认 SaT 已加载，字幕事件的边界类型为“上下文分句”或“等待后文”。这些结果验证实际模型链路和正常收尾，WER 不衡量断句质量。交换空间数据覆盖整个系统，不能全部归因于 SaT；MLX 峰值也不包含 SaT、PyTorch、Qt 和系统占用。未验证翻译并行、中文、长会话或 Windows 实机。
+
+证据：`.work/mac-file-tests/mlx-sat-stream-long/summary.json`、`resources.json`、`replay/manifest.json`、`replay/events.jsonl`。模型准备记录在 `.work/mac-file-tests/sat-prepare/`。SaT 权重已复制到本机默认 Hugging Face 缓存并通过离线加载检查。
+
+同次代码验证：183 项回归通过，包含 SaT 加载失败不启动采集、推理失败停止会话并保留已显示字幕；整个测试过程阻止原生音频模块导入。改动 Python 文件 Ruff 检查通过，完整仓库仍有 44 项其他文件的既有静态检查问题。设置页使用禁止音频访问的 Qt 离屏窗口生成并检查，预览为 `docs/semantic-preview.png`。
+
+### 断句人工核对
+
+对照 `tests/fixtures/continuous-en.txt` 的句界，参考为 20 句，最终字幕为 25 段。按词位置核对内部句界（不计文件末尾）：参考 19 处，输出 24 处，重合 18 处，多切 6 处，漏切 1 处。本次输出与参考均为 256 词，只有一处词替换，因此词位置可以直接对应。这是单份合成英文素材的原稿对照，不是通用断句准确率或翻译分段质量分数。
+
+- 明显不自然的切分：`At first. | They planned ...`、`They also watched. | For repeated words ...`、`They discussed the weather, the number of visitors. | And the equipment ...`。
+- 上下文归属错误：在 `more than a minute` 后切开，又把 `With different sentences and natural pauses` 接到下一句 `on Monday morning ...` 前。对应一处多切与一处漏切。
+- 另外两处多切位于 `The chairs were arranged` 和 `The sound was clear` 后。原稿将三个并列分句放在一句内；拆为字幕短段不一定影响理解，但仍不同于原稿句界。
+
+输出中的这些位置已有句号，SaT 只返回边界而不改写标点；这次链路未把上述不自然边界合并回来。现有事件日志没有独立 ASR hypothesis/snapshot，不能据此量化音频窗口、识别标点、SaT 预测及字幕定稿各自的影响，需要后续记录各阶段文本与边界再定位。
+
+结论：模型链路与正常收尾已验证，断句质量仍需改进。0.39% WER 只衡量归一化后的词错误，不能用于证明句界正确。

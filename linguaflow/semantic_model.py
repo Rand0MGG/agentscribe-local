@@ -27,8 +27,8 @@ class SemanticModel:
             import torch
             if not torch.cuda.is_available():
                 raise RuntimeError("SaT CUDA 不可用")
-        from wtpsplit import SaT
         import onnxruntime as ort
+        from wtpsplit import SaT
         model, tokenizer = paths()
         options = ort.SessionOptions()
         options.intra_op_num_threads = 2
@@ -41,7 +41,11 @@ class SemanticModel:
 
     def boundaries(self, text):
         # The model predicts each character's boundary probability using context.
-        pieces = self.model.split(text, threshold=.5, strip_whitespace=False)
+        try:
+            pieces = self.model.split(text, threshold=.5, strip_whitespace=False,
+                                      split_on_input_newlines=False)
+        except Exception as exc:
+            raise RuntimeError("SaT 分句推理失败：" + str(exc)) from exc
         if "".join(pieces) != text:
             raise ValueError("分句模型改变了输入文本，已拒绝该结果。")
         offset, boundaries = 0, []

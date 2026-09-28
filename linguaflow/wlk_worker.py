@@ -22,11 +22,14 @@ async def serve(settings, emit, read_message):
     audio_config = settings.get("audio_processing", {})
     if audio_config.get("deepfilter"):
         select_backend(audio_config.get("df_device", "cpu"))
-    if settings.get("semantic_mode", "auto") != "rules" and settings.get("semantic_device") == "cuda":
-        try:
-            select_backend("cuda")
-        except RuntimeError:
-            pass  # Optional semantic-model initialization below reports fallback.
+    emit({"type": "status", "text": "加载本地 SaT 上下文分句模型…"})
+    try:
+        from .semantic_model import SemanticModel
+        semantic = await asyncio.to_thread(SemanticModel, settings.get("semantic_device", "cpu"))
+    except Exception as exc:
+        raise RuntimeError("SaT 分句模型加载失败，请在‘字幕与延迟’中准备 / 检查模型：" + str(exc)) from exc
+    emit({"type": "status", "text": "SaT 上下文分句已就绪；近期原文和译文可修订"})
+
     emit({"type": "status", "text": "正在准备音频处理链…"})
     # Legacy 16 kHz clients keep their original PCM route. Desktop captures 48 kHz.
     frontend = (AudioPipeline(audio_config, settings.get("input_sample_rate", 16000))
@@ -157,19 +160,8 @@ async def serve(settings, emit, read_message):
             revision_event)
     results = await processor.create_tasks()
     from .wlk_captions import CaptionMapper, caption_snapshot
-    predictor = None
-    if settings.get("semantic_mode", "auto") != "rules":
-        emit({"type": "status", "text": "加载本地 SaT 上下文分句模型…"})
-        try:
-            from .semantic_model import SemanticModel
-            semantic = await asyncio.to_thread(SemanticModel, settings.get("semantic_device", "cpu"))
-            predictor = semantic.boundaries
-            emit({"type": "status", "text": "SaT 上下文分句已启用；近期原文和译文可修订"})
-        except Exception as exc:
-            emit({"type": "status", "text": "SaT 暂不可用，使用标点与长度排版；可在模型管理准备分句模型：" + str(exc)})
-    mapper = CaptionMapper(config.lan, predictor=predictor,
-                           lookahead=settings.get("semantic_lookahead", 3.),
-                           max_seconds=settings.get("caption_max_seconds", 12.))
+    mapper = CaptionMapper(config.lan, predictor=semantic.boundaries,
+                           lookahead=settings.get("semantic_lookahead", 3.))
     from .translation_queue import TranslationQueue
     from .translation_service import publish_translation_result, run_translations
     translation_queue = TranslationQueue()
@@ -182,17 +174,9 @@ async def serve(settings, emit, read_message):
 
     async def publish(snapshot, done=False):
         async with caption_lock:
-            try:
-                if revisions is not None:
-                    revisions.augment_snapshot(snapshot, config.lan)
-                captions = await asyncio.to_thread(mapper.update, snapshot, done=done)
-            except Exception:
-                if mapper.policy.predictor is None:
-                    raise
-                mapper.policy.predictor = None
-                mapper.policy.cache = None
-                emit({"type": "status", "text": "分句模型推理异常，已切换标点与长度排版；原文继续保留"})
-                captions = mapper.update(snapshot, done=done)
+            if revisions is not None:
+                revisions.augment_snapshot(snapshot, config.lan)
+            captions = await asyncio.to_thread(mapper.update, snapshot, done=done)
             for caption in captions:
                 emit({"type": "caption", "data": asdict(caption)})
                 if (not context_planner and (caption.ready or caption.final)
