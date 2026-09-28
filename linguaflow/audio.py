@@ -26,6 +26,10 @@ def list_devices() -> list[Device]:
 
 
 def capture(settings, stop, on_block):
+    if stop.is_set():
+        return
+    if sys.platform == "darwin" and settings.loopback:
+        raise RuntimeError("macOS 不支持 Windows 系统回环录音，请选择已配置的 BlackHole 输入。")
     import soundcard as sc
 
     # Resolve inside the capture thread; native audio handles stay thread-local.
@@ -38,9 +42,15 @@ def capture(settings, stop, on_block):
         raise RuntimeError("录音设备已断开，请停止后刷新设备列表。")
     # Record all native channels. WASAPI mono-channel recording has a known
     # SoundCard issue; downmix here rather than requesting a single channel.
-    # One second of native buffering absorbs model-loading scheduling stalls.
-    # Still read 100 ms at a time; buffer capacity is not the subtitle interval.
-    with mic.recorder(samplerate=48000, blocksize=48000) as recorder:
+    # WASAPI uses a one-second buffer. CoreAudio constrains hardware buffer
+    # sizes, so keep its native default instead of requesting 48,000 frames.
+    # Both backends still deliver 100 ms blocks to the application.
+    options = {"samplerate": 48000}
+    if sys.platform != "darwin":
+        options["blocksize"] = 48000
+    if stop.is_set():
+        return
+    with mic.recorder(**options) as recorder:
         while not stop.is_set():
             data = recorder.record(numframes=4800)
             data = np.asarray(data, dtype=np.float32)

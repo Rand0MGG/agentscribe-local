@@ -12,6 +12,7 @@ docs/             architecture, validation, screenshots, and notices
 docs/testing/     benchmark protocols and scoring documentation
 .work/            local agent artifacts and test evidence (ignored by Git)
 requirements-runtime.txt  isolated WhisperLiveKit/Qwen runtime
+requirements-mlx.txt      isolated Apple GPU / MLX runtime (experimental)
 requirements-audio.txt    optional APM/WPE/DF3 dependencies
 pyproject.toml    desktop package and development dependencies
 ```
@@ -31,6 +32,8 @@ Future agent screenshots and scratch files should be placed under `.work/browser
 Benchmark documentation: [AMI protocol](testing/AMI_BENCHMARK.md), [audio presets](testing/AUDIO_PRESET_BENCHMARK.md), and [scoring system](testing/SCORING_SYSTEM.md).
 
 The desktop `.venv` contains only the UI and model-management dependencies. Heavy ASR and translation dependencies live in `.venv-wlk`, which is created by `scripts/install_runtime.py` and is ignored by Git. Model weights remain in the user cache and are never committed to the repository.
+
+The experimental Mac MLX backend uses `.venv-mlx`, created by `scripts/install_mlx.py`. Its Transformers 5 dependencies stay separate from WLK's Transformers 4 environment. `mlx_asr.py` adapts a local PCM-only subprocess to `qwen_accurate.py`'s shared window/caption contract; `mlx_asr_worker.py` owns model loading, Metal memory limits and inference. The helper exits when its parent disappears. Pinned 4-bit weights are prepared in ignored `models/Qwen3-ASR-1.7B-4bit`.
 
 `wlk_session.py` owns the process boundary, `wlk_worker.py` assembles the streaming pipeline, `translation_service.py` owns revision-aware translation consumption, and `backends.py` contains translation adapters. Shared environment paths live in `runtime_paths.py`, so other desktop tools do not import the recording session merely to locate Python.
 

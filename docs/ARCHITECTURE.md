@@ -20,6 +20,7 @@
 | 字幕边界与修订 | `wlk_captions.py`、`qwen_revisions.py` | 文本边界、稳定性、版本保留；与 UI 独立 |
 | 翻译调度 | `translation_queue.py`、`translation_service.py` | 合并排队版本、缓存、错误、过期结果拒绝；后端通过工厂注入 |
 | 模型适配 | `backends.py`、`semantic_model.py`、`runtime_compat.py` | 实际模型及上游兼容接口；按需加载依赖 |
+| Mac ASR 适配 | `mlx_asr.py`、`mlx_asr_worker.py` | WLK → 独立 MLX 环境，仅传递本地 PCM；复用 Qwen 窗口、字幕和翻译流程，不访问音频设备 |
 | 音频实验室 | `audio_processing/lab.py`、`recorder.py` | 实验室负责交互，Recorder 负责定长采样/WAV/信号健康；可注入采集函数测试 |
 | DSP 与评测 | `audio_processing/config.py`、`pipeline.py`、`health.py`、`evaluation.py`、`ami_evaluation.py` | 保持既有独立边界；评测不借用 UI 或修改原始识别结果 |
 

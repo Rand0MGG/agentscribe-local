@@ -3,12 +3,12 @@ import json
 import os
 import shutil
 import signal
+import sys
 import tempfile
 import time
 from pathlib import Path
 
 from PySide6.QtCore import QProcess, QProcessEnvironment, Qt, QTimer, QUrl
-from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -58,7 +58,7 @@ class AudioLab(QDialog):
         self.watchdog.timeout.connect(self.check_timeout)
         self.record_failed = False
         self.controls = {}
-        self.result_config = AudioConfig.from_dict(config).to_dict()
+        self.result_config = AudioConfig.from_dict(config).for_platform().to_dict()
         outer = QVBoxLayout(self)
         title = QLabel("音频实验室")
         title.setStyleSheet("font-size:22px;font-weight:600")
@@ -166,7 +166,8 @@ class AudioLab(QDialog):
             ("df_mix", "增强混合比例（0 原声 / 1 全增强）", 0, 1, .05, 2)])
         self.df_device = QComboBox()
         self.df_device.addItem("CPU", "cpu")
-        self.df_device.addItem("NVIDIA CUDA", "cuda")
+        if sys.platform != "darwin":
+            self.df_device.addItem("NVIDIA CUDA", "cuda")
         df.addRow("计算设备", self.df_device)
         self.controls["df_device"] = self.df_device
         self.df_device.currentIndexChanged.connect(self.changed)
@@ -202,18 +203,13 @@ class AudioLab(QDialog):
         buttons.addWidget(self.apply_button)
         buttons.addWidget(self.close_button)
         outer.addLayout(buttons)
-        self.player = QMediaPlayer(self)
-        self.audio_output = QAudioOutput(self)
-        self.audio_output.setVolume(.7)
-        self.player.setAudioOutput(self.audio_output)
-        self.player.positionChanged.connect(lambda p: self.seek.setValue(p) if not self.seek.isSliderDown() else None)
-        self.player.durationChanged.connect(lambda d: self.seek.setRange(0, int(d)))
-        self.player.errorOccurred.connect(lambda *_: self.status.setText(self.player.errorString()))
-        self.seek.sliderMoved.connect(self.player.setPosition)
-        self.volume.valueChanged.connect(lambda v: self.audio_output.setVolume(v / 100))
+        self.player = None
+        self.audio_output = None
+        self.seek.sliderMoved.connect(lambda p: self.player.setPosition(p) if self.player else None)
+        self.volume.valueChanged.connect(lambda v: self.audio_output.setVolume(v / 100) if self.audio_output else None)
         self.play_original.clicked.connect(lambda: self.play(self.original))
         self.play_processed.clicked.connect(lambda: self.play(self.processed))
-        self.stop_play.clicked.connect(self.player.stop)
+        self.stop_play.clicked.connect(lambda: self.stop_playback())
         self.record.clicked.connect(self.record_sample)
         self.refresh_sources.clicked.connect(self.discover_sources)
         self.source.currentIndexChanged.connect(self.source_changed)
@@ -293,13 +289,14 @@ class AudioLab(QDialog):
                                       for key, w in self.controls.items()}).to_dict()
 
     def load_config(self, data):
+        data = AudioConfig.from_dict(data).for_platform().to_dict()
         for key, value in data.items():
             w = self.controls[key]
             w.blockSignals(True)
             if isinstance(w, QGroupBox):
                 w.setChecked(value)
             elif isinstance(w, QComboBox):
-                w.setCurrentIndex(w.findData(value))
+                w.setCurrentIndex(max(0, w.findData(value)))
             else:
                 w.setValue(value)
             w.blockSignals(False)
@@ -319,8 +316,7 @@ class AudioLab(QDialog):
             self.preset.setCurrentIndex(0)
             self.preset.blockSignals(False)
         self.processed = None
-        if hasattr(self, "player"):
-            self.player.stop()
+        self.stop_playback()
         self.status.setText("参数已更改；重新处理样本后可回听")
         cfg = self.config()
         names = [name for key, name in [("apm", "APM"), ("highpass", "低频清理"), ("wpe", "WPE"),
@@ -341,12 +337,29 @@ class AudioLab(QDialog):
 
     def play(self, path):
         if path and not self.busy:
+            # Opening settings must not initialize CoreAudio or an output
+            # device; create multimedia objects only on explicit playback.
+            if self.player is None:
+                from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+                self.player = QMediaPlayer(self)
+                self.audio_output = QAudioOutput(self)
+                self.audio_output.setVolume(self.volume.value() / 100)
+                self.player.setAudioOutput(self.audio_output)
+                self.player.positionChanged.connect(
+                    lambda p: self.seek.setValue(p) if not self.seek.isSliderDown() else None)
+                self.player.durationChanged.connect(lambda d: self.seek.setRange(0, int(d)))
+                self.player.errorOccurred.connect(lambda *_: self.status.setText(self.player.errorString()))
             self.player.setSource(QUrl.fromLocalFile(str(path)))
             self.player.play()
 
+    def stop_playback(self, clear=False):
+        if self.player is not None:
+            self.player.stop()
+            if clear:
+                self.player.setSource(QUrl())
+
     def record_sample(self):
-        self.player.stop()
-        self.player.setSource(QUrl())
+        self.stop_playback(clear=True)
         self.original = self.processed = None
         self.busy, self.record_failed = True, False
         self.record_job = Recorder(self.device, self.root / "recorded.wav", self.duration.value(), self)
@@ -381,8 +394,7 @@ class AudioLab(QDialog):
     def import_sample(self):
         path, _ = QFileDialog.getOpenFileName(self, "选择最多 60 秒的样本", "", "WAV 音频 (*.wav)")
         if path:
-            self.player.stop()
-            self.player.setSource(QUrl())
+            self.stop_playback(clear=True)
             self.original = Path(path)
             self.processed = None
             self.sample_label.setText("样本：" + Path(path).name)
@@ -395,8 +407,7 @@ class AudioLab(QDialog):
             return
         self.busy = True
         self.cancelled = False
-        self.player.stop()
-        self.player.setSource(QUrl())
+        self.stop_playback(clear=True)
         self.operation = operation
         self.started_at = time.monotonic()
         self.refresh()
@@ -517,8 +528,7 @@ class AudioLab(QDialog):
             self.close_requested = True
             self.cancel_operation()
             return
-        self.player.stop()
-        self.player.setSource(QUrl())
+        self.stop_playback(clear=True)
         # Multimedia may release a file asynchronously on Windows. QDialog's
         # owner retains this object until playback has stopped; cleanup is best effort.
         try:

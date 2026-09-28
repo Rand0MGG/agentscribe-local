@@ -108,3 +108,19 @@ def test_stop_cancels_model_loading_without_waiting(monkeypatch, tmp_path):
                           "import sys,time; sys.stdin.readline(); time.sleep(30)",
                           lambda *args: opened.append(True), cancel_loading=True)
     assert not opened and not failures
+
+
+def test_cancelled_worker_does_not_leave_mlx_helper_pipes_open(monkeypatch, tmp_path):
+    if sys.platform != 'darwin':
+        __import__('pytest').skip('MLX helper is Mac-only')
+    monkeypatch.setattr(Session, 'startup_idle_timeout', 1.)
+    program = '''
+import os,sys,subprocess,time
+sys.stdin.readline()
+code = 'import sys; from linguaflow.mlx_asr_worker import watch_parent; watch_parent(int(sys.argv[1]))'
+subprocess.Popen([sys.executable, '-c', code, str(os.getpid())])
+time.sleep(30)
+'''
+    _, failures = execute(monkeypatch, tmp_path, program,
+                         lambda *a: (_ for _ in ()).throw(AssertionError('no capture')))
+    assert any('长时间没有进展' in error for error in failures)

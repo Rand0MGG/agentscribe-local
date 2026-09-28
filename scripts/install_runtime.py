@@ -1,6 +1,7 @@
 """Install the isolated local inference runtime, without changing system Python."""
 import argparse
 import os
+import platform
 import subprocess
 import sys
 from pathlib import Path
@@ -10,6 +11,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--cpu", action="store_true")
     args = parser.parse_args()
+    if sys.platform == "darwin" and platform.machine().lower() != "arm64":
+        raise SystemExit("当前 macOS 推理环境仅支持原生 Apple Silicon Python。"
+                         "请使用 arm64 Python 3.11–3.13；Intel Mac / Rosetta 环境尚未支持。")
     root = Path(__file__).resolve().parents[1]
     environment = root / ".venv-wlk"
     subprocess.run([sys.executable, "-m", "venv", str(environment)], check=True)

@@ -1,5 +1,6 @@
 """Serializable settings; no Qt or model imports."""
-from dataclasses import asdict, dataclass, fields
+import sys
+from dataclasses import asdict, dataclass, fields, replace
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,10 @@ class AudioConfig:
 
     def to_dict(self):
         return asdict(self)
+
+    def for_platform(self):
+        """Keep imported Windows presets usable on CPU-only macOS."""
+        return replace(self, df_device="cpu") if sys.platform == "darwin" else self
 
 
 PRESETS = {

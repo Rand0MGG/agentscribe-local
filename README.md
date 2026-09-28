@@ -37,8 +37,14 @@ python3.12 -m venv .venv
 .venv/bin/python -m linguaflow
 ```
 
-也可使用 `bash run-macos.command`。当前桌面入口在 Mac 上提供 CPU 推理，尚未启用 Metal/MLX；不要将 Windows CUDA 实测结果视为 Mac 性能保证。未在实体 Mac 上完成验收。
+也可使用 `bash run-macos.command`。Whisper CPU 已通过文件识别测试；新增 Qwen3-ASR 1.7B / MLX 4-bit **试验入口**，已在 M2 / 8GB 上完成英文短音频和 101 秒连续音频的 GPU 字幕测试。中文、翻译并行和真实录音仍待验收。
+
+试用 Apple GPU 路线，另行执行 `.venv/bin/python scripts/install_mlx.py`（或模型管理 → 运行环境 → 安装 Apple GPU）。然后选择“试用 Mac 4-bit 设置”，下载 / 检查 Qwen 模型，并指定原文语言。此配置关闭翻译并采用规则分句；可按需要再开启翻译。MLX 单独使用 `.venv-mlx`，避免与现有 Windows / WLK 的 Transformers 版本冲突。
+
+用户授权取消内存中止阈值后，101 秒文件测试完成：首条字幕约 2.02 秒、收尾约 1.62 秒、WER 0.39%、MLX 分配峰值 2.42 GiB（不含软件和系统其他占用）。测试关闭翻译，没有访问音频设备；详见 [测试记录](docs/MACOS_FILE_TESTS.md)。
 系统设置中需允许 Terminal/Python 使用麦克风。系统声音使用 [BlackHole](https://github.com/ExistentialAudio/BlackHole) 输入与多输出设备；尚无原生 ScreenCaptureKit 捕获。
+
+Mac 适配进展、已验证范围和待实机测试项目见 [macOS 适配记录](docs/MACOS_SUPPORT.md)。如果电脑正在进行其他录音，开发验证请使用 `.venv/bin/python scripts/test_no_audio.py`；该入口使用模拟音频，并阻止原生音频后端导入，不启动实际应用或录音测试。
 
 ## 使用
 

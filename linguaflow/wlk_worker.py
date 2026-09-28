@@ -50,8 +50,13 @@ async def serve(settings, emit, read_message):
     from whisperlivekit import AudioProcessor, TranscriptionEngine
     from whisperlivekit.config import WhisperLiveKitConfig
 
-    qwen = settings["backend"] == "qwen3-streaming"
-    accurate_qwen = qwen and settings.get("qwen_mode", "fast") == "accurate"
+    mlx = settings["backend"] == "qwen3-mlx"
+    qwen = settings["backend"] in ("qwen3-streaming", "qwen3-mlx")
+    accurate_qwen = mlx or (qwen and settings.get("qwen_mode", "fast") == "accurate")
+    if mlx and (sys.platform != 'darwin' or settings.get('asr_device') != 'mlx'):
+        raise ValueError('MLX 后端需要 macOS 和 Apple GPU 识别设备。')
+    if not mlx and settings.get('asr_device') == 'mlx':
+        raise ValueError('Apple GPU 设备需要选择 Qwen · MLX 4-bit 识别引擎。')
     # Request fresh hypotheses independently of semantic readiness. Upstream
     # still paces decoding against actual compute time; no audio is discarded.
     draft_seconds = max(0.25, min(3., float(settings.get("draft_seconds", .5))))
@@ -82,8 +87,9 @@ async def serve(settings, emit, read_message):
     if qwen and config.lan == "auto":
         raise ValueError("Qwen 流式模式请选择原文语言。")
     if qwen:
-        from .runtime_compat import prepare_qwen_dependencies
-        prepare_qwen_dependencies()
+        if not mlx:
+            from .runtime_compat import prepare_qwen_dependencies
+            prepare_qwen_dependencies()
         from .model_cache import resolve_qwen_cached
         model = config.model_size
         emit({"type": "status", "text": "检查 Qwen 模型文件；已缓存权重复用"})
@@ -110,11 +116,18 @@ async def serve(settings, emit, read_message):
     emit({"type": "status", "text": "识别模型已加载，正在创建流式解码任务…"})
     processor = AudioProcessor(transcription_engine=engine)
     if accurate_qwen:
-        from .qwen_accurate import build_official_online
-        emit({"type": "status", "text": "加载 Qwen 官方原始编码器 · 准确优先；近期原文可整体修订…"})
-        processor.transcription = build_official_online(config.model_path,
-            settings.get("asr_device", "cpu"), settings.get("source"), draft_seconds,
-            settings.get("qwen_window_seconds", 30.))
+        if mlx:
+            from .mlx_asr import build_mlx_online
+            emit({"type": "status", "text": "加载 Qwen 4-bit · Apple GPU / Metal…"})
+            processor.transcription = build_mlx_online(config.model_path,
+                settings.get('source'), draft_seconds,
+                lambda text: emit({'type': 'status', 'text': text}))
+        else:
+            from .qwen_accurate import build_official_online
+            emit({"type": "status", "text": "加载 Qwen 官方原始编码器 · 准确优先；近期原文可整体修订…"})
+            processor.transcription = build_official_online(config.model_path,
+                settings.get("asr_device", "cpu"), settings.get("source"), draft_seconds,
+                settings.get("qwen_window_seconds", 30.))
         processor.args.transcription = True
         processor.transcription_queue = asyncio.Queue()
         processor.sep = " "
@@ -266,6 +279,8 @@ async def serve(settings, emit, read_message):
         output_task.cancel()
         translation_task.cancel()
         await processor.cleanup()
+        if mlx:
+            processor.transcription.close()
 
 
 def main():

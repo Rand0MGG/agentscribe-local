@@ -1,5 +1,6 @@
 .venv/
 .venv-wlk/
+.venv-mlx/
 .work/
 .venv-qwen/
 __pycache__/

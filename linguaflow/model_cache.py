@@ -21,6 +21,10 @@ def has_weights(path):
 def resolve_qwen_cached(model):
     """Listening never hides a multi-gigabyte Qwen download behind startup."""
     from huggingface_hub import snapshot_download
+    if model == 'mlx-community/Qwen3-ASR-1.7B-4bit':
+        bundled = Path(__file__).resolve().parents[1] / 'models' / 'Qwen3-ASR-1.7B-4bit'
+        if has_weights(bundled):
+            model = str(bundled)
     try:
         path = Path(model) if Path(model).is_dir() else Path(snapshot_download(model, local_files_only=True))
         if has_weights(path) and all((path / name).is_file() for name in
@@ -29,6 +33,18 @@ def resolve_qwen_cached(model):
     except OSError:
         pass
     raise ValueError(f"Qwen 模型未下载完整：{model}。请打开模型管理 → 识别模型 → 下载 / 检查 Qwen 模型，完成后再聆听。")
+
+
+def validate_mlx_model(path):
+    """Reject incompatible weights before starting a GPU worker."""
+    try:
+        config = json.loads((Path(path) / 'config.json').read_text(encoding='utf-8'))
+        quant = config.get('quantization', config.get('quantization_config', {}))
+        valid = config.get('model_type') == 'qwen3_asr' and quant.get('bits') == 4
+    except (OSError, ValueError, AttributeError):
+        valid = False
+    if not valid:
+        raise ValueError('Apple GPU 识别需要 Qwen3-ASR 的 MLX 4-bit 权重；请选择对应模型。')
 
 
 def resolve_translation(model, offline, report):

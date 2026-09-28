@@ -65,6 +65,8 @@ class ModelManager(QDialog):
         self.backend = QComboBox()
         self.backend.addItem("WhisperLiveKit · Whisper / AlignAtt", "wlk-whisper")
         self.backend.addItem("WhisperLiveKit · Qwen3-ASR 流式", "qwen3-streaming")
+        if sys.platform == 'darwin':
+            self.backend.addItem('Qwen3-ASR · MLX 4-bit（试验）', 'qwen3-mlx')
         self.asr_page = QWidget()
         self.asr_form = QFormLayout(self.asr_page)
         self.asr_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
@@ -147,6 +149,11 @@ class ModelManager(QDialog):
         install = QPushButton("安装 / 修复本地推理环境")
         install.clicked.connect(self.install_runtime)
         environment_form.addRow(install)
+        if sys.platform == 'darwin':
+            install_mlx = QPushButton('安装 / 修复 Apple GPU · MLX 识别环境')
+            install_mlx.clicked.connect(lambda: self.prepare(lambda: self.run_preparation(
+                [sys.executable, 'scripts/install_mlx.py'])))
+            environment_form.addRow(install_mlx)
         self.hint(environment_form, "桌面界面与模型推理使用独立环境。无需手动启动服务。安装后请先到识别模型和翻译模型页下载所需权重，再开始聆听。")
         self.add_page(environment, "运行环境")
         self.status = QLabel("下载只准备文件；开始聆听时才加载模型。")
@@ -175,6 +182,7 @@ class ModelManager(QDialog):
         widget = QLabel(text)
         widget.setWordWrap(True)
         form.addRow(widget)
+        return widget
 
     def finish_setup(self, *, asr, translation):
         self.whisper_widgets = [asr]
@@ -185,11 +193,13 @@ class ModelManager(QDialog):
         self.qwen_model = QComboBox()
         self.qwen_model.setEditable(True)
         self.qwen_model.addItems(["Qwen/Qwen3-ASR-0.6B", "Qwen/Qwen3-ASR-1.7B"])
+        if sys.platform == 'darwin':
+            self.qwen_model.addItem('mlx-community/Qwen3-ASR-1.7B-4bit')
         self.qwen_form.addRow("Qwen 识别模型", self.qwen_model)
         check = QPushButton("下载 / 检查 Qwen 模型")
         check.clicked.connect(lambda: self.prepare_qwen(self.qwen_model.currentText()))
         self.qwen_form.addRow(check)
-        self.hint(self.qwen_form, "本机直接运行 Qwen 窗口式流式后端，不需要 WSL 或手动启动服务。请选择原文语言。0.6B 优先用于较小显存；1.7B 需要更多资源。")
+        self.qwen_hint = self.hint(self.qwen_form, '')
         self.translation_device = QComboBox()
         self.translation_device.addItem("CPU", "cpu")
         if sys.platform != "darwin":
@@ -223,11 +233,18 @@ class ModelManager(QDialog):
         self.update_backend()
 
     def update_backend(self):
-        qwen = self.backend.currentData() == "qwen3-streaming"
+        mlx = self.backend.currentData() == 'qwen3-mlx'
+        qwen = self.backend.currentData() in ('qwen3-streaming', 'qwen3-mlx')
         self.behavior_hint.setText(
             "Qwen：窗口式流式识别，使用缓存和稳定前缀确认原文。请在主界面指定原文语言；音频合并间隔不是模型上下文窗口。"
             if qwen else
             "Whisper：AlignAtt 根据注意力决定继续输出还是等待新音频。连续说话也能确认原文，不需要等整段停顿；调小合并间隔会增加计算频率。")
+        if mlx:
+            self.behavior_hint.setText('Apple GPU / MLX 4-bit：短窗口识别，近期草稿可修订；停止时处理剩余音频。8GB Mac 可先关闭翻译，分句使用规则；实际更新速度取决于音频与模型负载。')
+        self.qwen_hint.setText(
+            'MLX 4-bit 使用 Apple GPU。当前为试验功能。请选择原文语言；8GB Mac 可用下方按钮关闭翻译并选择规则分句。'
+            if mlx else
+            'Qwen 在本机识别，近期原文可随语音修订。请选择原文语言。0.6B 占用较少内存，1.7B 需要更多资源。')
         self.whisper_page.setVisible(not qwen)
         self.qwen_page.setVisible(qwen)
         for widget in self.whisper_widgets:
@@ -314,7 +331,13 @@ class ModelManager(QDialog):
             if Path(model).is_dir():
                 from .model_cache import resolve_qwen_cached
                 return f"Qwen 模型文件已就绪：{resolve_qwen_cached(model)}"
-            path = snapshot_download(model, allow_patterns=["*.json", "*.safetensors", "*.txt", "*.model"], max_workers=1)
+            options = {}
+            if model == 'mlx-community/Qwen3-ASR-1.7B-4bit':
+                from .mlx_asr import MLX_REVISION
+                options = {'revision': MLX_REVISION, 'local_dir': str(
+                    Path(__file__).resolve().parents[1] / 'models' / 'Qwen3-ASR-1.7B-4bit')}
+            path = snapshot_download(model, allow_patterns=["*.json", "*.safetensors", "*.txt", "*.model", "*.jinja"],
+                                     max_workers=1, **options)
             from .model_cache import resolve_qwen_cached
             resolve_qwen_cached(path)
             return f"Qwen 模型已下载：{path}"

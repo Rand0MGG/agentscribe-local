@@ -38,7 +38,8 @@ def read_preferences(store):
     values['backend'] = {'whisper-live': 'wlk-whisper', 'qwen-stream': 'qwen3-streaming'}.get(
         values['backend'], values['backend'])
     try:
-        values['audio_processing'] = AudioConfig.from_dict(json.loads(store.value('audio_processing', '{}'))).to_dict()
+        values['audio_processing'] = AudioConfig.from_dict(
+            json.loads(store.value('audio_processing', '{}'))).for_platform().to_dict()
     except (ValueError, TypeError, AttributeError):
         values['audio_processing'] = AudioConfig().to_dict()
     return values

@@ -10,7 +10,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
     args = parser.parse_args()
-    if os.name != "nt":
+    if sys.platform == "darwin" and args.device == "cuda":
+        raise SystemExit("macOS 请使用 CPU 增强；CUDA 需要 NVIDIA GPU。")
+    if os.name != "nt" and os.getsid(0) != os.getpid():
         os.setsid()  # The desktop can cancel this installer and its children.
     root = Path(__file__).resolve().parents[1]
     python = root / ".venv-wlk" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
@@ -19,8 +21,6 @@ def main():
     print("[1/3] 检查增强依赖…", flush=True)
     subprocess.run([str(python), "-m", "pip", "install", "--timeout", "30", "--retries", "2", "-r", str(root / "requirements-audio.txt")], check=True, timeout=900)
     if args.device == "cuda":
-        if sys.platform == "darwin":
-            raise SystemExit("macOS 请使用 CPU 增强；CUDA 需要 NVIDIA GPU。")
         # Keep the two distributions in separate directories; never let their
         # shared filenames overwrite each other during a runtime repair.
         print("[2/3] 检查 CUDA 12 增强后端…", flush=True)

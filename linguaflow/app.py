@@ -648,6 +648,8 @@ class Window(QMainWindow):
         models.addRow(choose_checkpoint)
         self.compute = QComboBox()
         self.compute.addItem("CPU（通用）", "cpu")
+        if sys.platform == 'darwin':
+            self.compute.addItem('Apple GPU · Metal / MLX', 'mlx')
         if sys.platform != "darwin":
             self.compute.addItem("NVIDIA GPU · 半精度", "cuda")
         self.model_manager.asr_form.addRow("识别计算设备", self.compute)
@@ -821,6 +823,12 @@ class Window(QMainWindow):
             pref.key: getattr(self, pref.key) if hasattr(self, pref.key) else getattr(self.model_manager, pref.key)
             for pref in PREFERENCES})
         self.restore()
+        self.model_manager.backend.currentIndexChanged.connect(self.sync_asr_device)
+        self.compute.currentIndexChanged.connect(self.select_asr_device)
+        if sys.platform == 'darwin':
+            mac_profile = QPushButton('试用 Mac 4-bit 设置 · Apple GPU')
+            mac_profile.clicked.connect(self.use_mac_profile)
+            self.model_manager.asr_form.addRow(mac_profile)
         self.update_model_summary()
         self.settings_workspace = SettingsWorkspace(WorkspaceFrame,
             storage_root=self.library.root, manager=self.model_manager,
@@ -1201,8 +1209,38 @@ class Window(QMainWindow):
     def restore(self):
         values = read_preferences(self.prefs)
         self.settings_binding.restore(values)
+        self.sync_asr_device()
         self.audio_config = values['audio_processing']
         self.update_audio_summary()
+
+    def sync_asr_device(self):
+        manager = self.model_manager
+        mlx = manager.backend.currentData() == 'qwen3-mlx'
+        if mlx:
+            self.compute.setCurrentIndex(data_index(self.compute, 'mlx'))
+            if manager.qwen_model.currentText().startswith('Qwen/'):
+                manager.qwen_model.setCurrentText('mlx-community/Qwen3-ASR-1.7B-4bit')
+        elif self.compute.currentData() == 'mlx':
+            self.compute.setCurrentIndex(data_index(self.compute, 'cpu'))
+        if not mlx and manager.qwen_model.currentText() == 'mlx-community/Qwen3-ASR-1.7B-4bit':
+            manager.qwen_model.setCurrentText('Qwen/Qwen3-ASR-0.6B')
+        self.compute.setEnabled(not mlx)
+
+    def select_asr_device(self):
+        if self.compute.currentData() == 'mlx':
+            manager = self.model_manager
+            manager.backend.setCurrentIndex(data_index(manager.backend, 'qwen3-mlx'))
+
+    def use_mac_profile(self):
+        manager = self.model_manager
+        manager.backend.setCurrentIndex(data_index(manager.backend, 'qwen3-mlx'))
+        manager.qwen_model.setCurrentText('mlx-community/Qwen3-ASR-1.7B-4bit')
+        self.sync_asr_device()
+        manager.semantic_mode.setCurrentIndex(data_index(manager.semantic_mode, 'rules'))
+        manager.draft_seconds.setValue(1.)
+        manager.endpoint_seconds.setValue(1.)
+        self.translate.setChecked(False)
+        manager.status.setText('已选择 Apple GPU、4-bit 识别和规则分句，并关闭翻译。准备模型后可开始；翻译可在设置中单独开启。')
 
     def manage_models(self):
         self.open_settings("识别模型")
@@ -1236,6 +1274,8 @@ class Window(QMainWindow):
             text = f"WhisperLiveKit · {self.asr.currentText()}\nAlignAtt · {self.compute.currentText()}"
         else:
             text = f"WhisperLiveKit · {manager.qwen_model.currentText()}\nQwen 窗口式流式 · {self.compute.currentText()}"
+        if manager.backend.currentData() == 'qwen3-mlx':
+            text += '\n试验后端 · 8GB Mac 建议先关闭翻译'
         self.model_summary.setText(text)
 
     def save(self):
@@ -1283,13 +1323,18 @@ class Window(QMainWindow):
         if self.device.currentData() is None:
             QMessageBox.warning(self, "没有音频来源", "请连接录音设备并刷新列表。")
             return
-        if self.model_manager.backend.currentData() == "qwen3-streaming" and self.source.currentData()[0] is None:
+        if self.model_manager.backend.currentData() in ('qwen3-streaming', 'qwen3-mlx') and self.source.currentData()[0] is None:
             QMessageBox.warning(self, "请选择原文语言", "Qwen 流式模式需要明确原文语言，例如 English 或简体中文。")
             return
-        if self.model_manager.backend.currentData() == "qwen3-streaming":
-            from .model_cache import resolve_qwen_cached
+        if self.model_manager.backend.currentData() in ('qwen3-streaming', 'qwen3-mlx'):
+            from .model_cache import resolve_qwen_cached, validate_mlx_model
             try:
-                resolve_qwen_cached(self.model_manager.qwen_model.currentText().strip())
+                path = resolve_qwen_cached(self.model_manager.qwen_model.currentText().strip())
+                if self.model_manager.backend.currentData() == 'qwen3-mlx':
+                    from .runtime_paths import mlx_python
+                    validate_mlx_model(path)
+                    if not mlx_python().is_file():
+                        raise ValueError('请先到运行环境页安装 Apple GPU / MLX 识别环境。')
             except ValueError as exc:
                 QMessageBox.warning(self, "模型尚未准备好", str(exc))
                 return
