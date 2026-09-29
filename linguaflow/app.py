@@ -1431,7 +1431,8 @@ class Window(QMainWindow):
                 QMessageBox.warning(self, "模型尚未准备好", str(exc))
                 return
         if ((self.model_manager.backend.currentData() == "wlk-whisper" and not self.asr.currentText().strip())
-                or (self.translate.isChecked() and not self.translation.currentText().strip())):
+                or (self.translate.isChecked() and self.model_manager.translation_engine.currentData() == 'pytorch'
+                    and not self.translation.currentText().strip())):
             QMessageBox.warning(self, "模型为空", "请选择模型名称或本地模型目录。")
             return
         if not self.current_item or self.current_item["state"] != "draft":

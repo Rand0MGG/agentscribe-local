@@ -12,10 +12,15 @@ from linguaflow.translation_service import publish_translation_result, run_trans
 @pytest.mark.parametrize('cancel', [False, True])
 def test_owned_translator_is_closed_on_stop_and_cancel(cancel):
     async def exercise():
-        queue, loaded, closed = TranslationQueue(), asyncio.Event(), []
-        loop = asyncio.get_running_loop()
+        loaded, closed = asyncio.Event(), []
+        class ReadyQueue(TranslationQueue):
+            async def get(self):
+                # Reaching queue consumption proves create_owned has registered
+                # the translator; a constructor signal can arrive before that.
+                loaded.set()
+                return await super().get()
+        queue = ReadyQueue()
         class Translator:
-            def __init__(self): loop.call_soon_threadsafe(loaded.set)
             def close(self): closed.append(True)
         task = asyncio.create_task(run_translations(queue, Translator, lambda _: None,
                     lambda _: None, lambda _: None, lambda _: None))
@@ -24,7 +29,8 @@ def test_owned_translator_is_closed_on_stop_and_cancel(cancel):
             task.cancel()
         else:
             queue.put_nowait(None)
-        await asyncio.gather(task, return_exceptions=True)
+        result, = await asyncio.gather(task, return_exceptions=True)
+        assert isinstance(result, asyncio.CancelledError) if cancel else result is None
         assert closed == [True]
     asyncio.run(exercise())
 
@@ -32,8 +38,11 @@ def test_owned_translator_is_closed_on_stop_and_cancel(cancel):
 def test_cancel_during_model_load_closes_late_created_translator():
     async def exercise():
         queue, started, release, closed = TranslationQueue(), Event(), Event(), Event()
+        closes = []
         class Translator:
-            def close(self): closed.set()
+            def close(self):
+                closes.append(True)
+                closed.set()
         def create():
             started.set()
             assert release.wait(3)
@@ -47,6 +56,7 @@ def test_cancel_during_model_load_closes_late_created_translator():
         finally:
             release.set()
         assert await asyncio.to_thread(closed.wait, 3)
+        assert closes == [True]
     asyncio.run(exercise())
 
 

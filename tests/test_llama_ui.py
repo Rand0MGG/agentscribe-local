@@ -79,3 +79,52 @@ w.close()
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path), 'FIXTURE_PLATFORM': system})
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize('system', ['darwin', 'win32'])
+def test_start_validates_only_active_translation_model(tmp_path, system):
+    code = r"""
+import os, sys
+from pathlib import Path
+from PySide6.QtCore import QSettings
+from PySide6.QtWidgets import QApplication, QMessageBox
+from linguaflow.app import Window
+import linguaflow.llama_assets as assets
+sys.platform = os.environ['FIXTURE_PLATFORM']
+app = QApplication([])
+prefs = QSettings(str(Path(os.environ['AGENTSCRIBE_LIBRARY'])/'prefs.ini'), QSettings.Format.IniFormat)
+w = Window(discover=False, prefs=prefs)
+w.device.addItem('fixture', ('fixture', False))
+manager = w.model_manager
+manager.backend.setCurrentIndex(manager.backend.findData('wlk-whisper'))
+w.asr.setCurrentText('tiny')
+w.translation.setCurrentText('')
+manager.translation_engine.setCurrentIndex(manager.translation_engine.findData('llama'))
+w.translate.setChecked(True)
+checks, warnings, next_steps = [], [], []
+assets.resolve_assets = lambda settings: checks.append(settings.translation_engine)
+QMessageBox.warning = lambda *args: warnings.append(args[-1])
+# Stop after preflight, before a recording or inference process is created.
+w.new_recording = lambda: next_steps.append('new recording') or False
+w.start()
+assert checks == ['llama'] and not warnings and len(next_steps) == 1
+manager.translation_engine.setCurrentIndex(manager.translation_engine.findData('pytorch'))
+w.start()
+assert len(warnings) == 1 and len(next_steps) == 1
+# Disabling translation permits an empty translation model on either engine.
+for engine in ('pytorch', 'llama'):
+    manager.translation_engine.setCurrentIndex(manager.translation_engine.findData(engine))
+    w.translate.setChecked(False)
+    w.start()
+assert len(warnings) == 1 and len(next_steps) == 3 and checks == ['llama']
+# ASR validation still applies with llama.cpp translation selected.
+w.translate.setChecked(True)
+w.asr.setCurrentText('')
+w.start()
+assert len(warnings) == 2 and len(next_steps) == 3
+w.close()
+"""
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=20,
+                            env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
+                                 'AGENTSCRIBE_LIBRARY': str(tmp_path), 'FIXTURE_PLATFORM': system})
+    assert result.returncode == 0, result.stdout + result.stderr
