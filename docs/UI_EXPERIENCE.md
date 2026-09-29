@@ -43,3 +43,6 @@
 - SaT 清理与偏移映射只用 Python 标准库；Mac 仍使用 SaT CPU，MLX ASR 独立使用 Apple GPU。原文提交/定稿与翻译调度的共享层没有新增 CUDA 或 Windows 限制，未更改 MLX 进程协议。
 
 本次执行环境是 Windows 11 / AMD64 / Python 3.12.8。针对性无音频测试 53 项通过；修复后完整回归 229 项通过、2 项 Mac 专用测试跳过，未发现原生音频导入尝试。修改文件 Ruff 通过。模拟 darwin 和合成触控板事件不等于 Mac 实测；仍需在 Mac 检查真实触控板、Retina 显示、原生菜单/透明弹窗、Command 快捷键，以及今日更新后的 MLX/SaT/翻译完整链路。安全复核命令：`.venv/bin/python scripts/test_no_audio.py -q`；独立无音频预览：`.venv/bin/python scripts/preview_caption_follow.py`。
+
+
+2026-09-29 已在实体 M2 Mac 上完成本轮无音频回归、Cocoa / Retina 窗口和 Command 快捷键检查，并验证最新主线的 MLX + SaT 文件链路。字体修复、结果及待验收范围见 [Mac 主线同步验证](testing/MACOS_MAIN_SYNC.md)。

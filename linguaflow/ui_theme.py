@@ -1,4 +1,8 @@
 """Presentation tokens shared by settings, menus and secondary windows."""
+import sys
+
+PLATFORM_STYLE = ("\nQWidget { font-family: 'PingFang SC', 'Helvetica Neue'; }\n"
+                  if sys.platform == 'darwin' else '')
 
 SURFACE_STYLE = """
 QLabel#muted { color: #a5a5ad; line-height: 1.5; }

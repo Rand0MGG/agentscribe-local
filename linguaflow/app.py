@@ -52,7 +52,7 @@ from .recording_state import RecordingState
 from .settings_binding import SettingsBinding
 from .ui_components import ActionMenu, Disclosure, NameDialog
 from .ui_components import ChoiceBox as QComboBox
-from .ui_theme import SURFACE_STYLE
+from .ui_theme import PLATFORM_STYLE, SURFACE_STYLE
 from .wlk_session import Session
 from .workspace_widgets import LibraryTree, RecordingDialog, SettingsWorkspace, Switch
 
@@ -177,7 +177,7 @@ QListWidget#settingsNavigation::item { padding: 12px 14px; border-radius: 8px; m
 QListWidget#settingsNavigation::item:selected { background: #353033; color: #f3f3f5; }
 QListWidget#settingsNavigation::item:hover:!selected { background: rgba(255,255,255,10); }
 """
-STYLE += SURFACE_STYLE
+STYLE += SURFACE_STYLE + PLATFORM_STYLE
 
 
 def enable_system_backdrop(window):
