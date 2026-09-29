@@ -110,3 +110,5 @@ NLLB 权重遵循 [CC-BY-NC-4.0](https://huggingface.co/facebook/nllb-200-distil
 音频临时缓冲约 690MB/小时（48 kHz float32），会话结束删除。没有云端 API、语音合成或独立安装包；不声称达到商业软件所有场景的准确率。
 
 项目目录说明见 [PROJECT_STRUCTURE](docs/PROJECT_STRUCTURE.md)。
+
+参与开发前阅读 [开发规范](AGENTS.md) 和 [模块职责与依赖约束](docs/ARCHITECTURE.md)。开发规范集中维护于 `AGENTS.md`，功能行为及验证证据保留在各自文档中。
