@@ -10,7 +10,7 @@ from linguaflow.core import Settings
 from linguaflow.wlk_session import Session
 
 
-def execute(monkeypatch, tmp_path, program, capture, stopped=False, cancel_loading=False):
+def execute(monkeypatch, tmp_path, program, capture, stopped=False, cancel_loading=False, setup=None, tick=None):
     import linguaflow.wlk_session as module
     script = tmp_path / "worker.py"
     script.write_text(program, encoding="utf8")
@@ -24,12 +24,16 @@ def execute(monkeypatch, tmp_path, program, capture, stopped=False, cancel_loadi
     captions, failures = [], []
     session.caption.connect(captions.append)
     session.failure.connect(failures.append)
+    if setup:
+        setup(session)
     if stopped:
         session.stop()
     session.start()
     deadline = time.monotonic() + 10
     while session.isRunning() and time.monotonic() < deadline:
         app.processEvents()
+        if tick:
+            tick(session)
         if cancel_loading and session.process is not None:
             session.stop()
         time.sleep(.01)
@@ -137,6 +141,107 @@ time.sleep(30)
     captions, failures = execute(monkeypatch, tmp_path, program, lambda *args: opened.append(True))
     assert not opened and not captions
     assert any('SaT' in error for error in failures)
+
+
+def test_pause_closes_capture_drains_audio_and_resumes_same_recording(monkeypatch, tmp_path):
+    import wave
+    from threading import Event
+
+    captured = Event()
+    segments, pauses, status = [], [], []
+    phase = [0]
+    program = PROGRAM.replace("if message['type'] == 'stop': break", """
+    if message['type'] == 'stop': break
+    if message['type'] == 'pause':
+        print(json.dumps({'type':'status','text':'paused:' + str(total)}), flush=True)
+        continue
+""")
+
+    def capture(settings, stop, block):
+        segments.append(True)
+        block(np.full(1600, .1 * len(segments), dtype=np.float32))
+        if len(segments) == 1:
+            captured.set()
+            assert stop.wait(5)
+            # A native read already in progress can return after pause is requested.
+            block(np.ones(1600, dtype=np.float32))
+
+    def setup(session):
+        session.paused.connect(pauses.append)
+        session.status.connect(status.append)
+
+    def tick(session):
+        if phase[0] == 0 and captured.is_set():
+            assert session.pause()
+            phase[0] = 1
+        elif phase[0] == 1 and pauses == [True] and 'paused:3200' in status:
+            assert segments == [True]
+            assert session.isRunning() and not session.capture_done.is_set()
+            assert session.resume()
+            phase[0] = 2
+
+    captions, failures = execute(monkeypatch, tmp_path, program, capture, setup=setup, tick=tick)
+    assert not failures
+    assert phase == [2] and pauses == [True, False] and len(segments) == 2
+    assert captions[-1].source == '6400' and captions[-1].end == .2
+    with wave.open(str(tmp_path / 'recording.wav')) as wav:
+        assert wav.getnframes() == 3200
+        audio = np.frombuffer(wav.readframes(3200), dtype='<i2')
+    assert np.all(audio[:1600] == int(.1 * 32767))
+    assert np.all(audio[1600:] == int(.2 * 32767))
+
+
+def test_stop_while_paused_wakes_capture_and_finishes(monkeypatch, tmp_path):
+    from threading import Event
+    captured = Event()
+    pauses = []
+    requested = [False]
+    def capture(settings, stop, block):
+        block(np.ones(1600, dtype=np.float32) * .01)
+        captured.set()
+        assert stop.wait(5)
+    def tick(session):
+        if captured.is_set() and not requested[0]:
+            assert session.pause()
+            requested[0] = True
+        if pauses:
+            session.stop()
+            assert not session.resume()
+    program = PROGRAM.replace("if message['type'] == 'stop': break",
+                              "if message['type'] == 'stop': break\n    if message['type'] == 'pause': continue")
+    captions, failures = execute(monkeypatch, tmp_path, program, capture,
+                                 setup=lambda s: s.paused.connect(pauses.append), tick=tick)
+    assert not failures and pauses == [True]
+    assert captions[-1].source == '3200'
+
+
+def test_reconnect_failure_after_pause_finishes_without_losing_saved_audio(monkeypatch, tmp_path):
+    import wave
+    from threading import Event
+    captured = Event()
+    segments, pauses = [], []
+    phase = [0]
+    def capture(settings, stop, block):
+        segments.append(True)
+        if len(segments) == 2:
+            raise RuntimeError('fixture device disconnected during pause')
+        block(np.ones(1600, dtype=np.float32) * .01)
+        captured.set()
+        assert stop.wait(5)
+    def tick(session):
+        if phase[0] == 0 and captured.is_set():
+            assert session.pause()
+            phase[0] = 1
+        elif phase[0] == 1 and pauses:
+            assert session.resume()
+            phase[0] = 2
+    program = PROGRAM.replace("if message['type'] == 'stop': break",
+                              "if message['type'] == 'stop': break\n    if message['type'] == 'pause': continue")
+    _, failures = execute(monkeypatch, tmp_path, program, capture,
+                          setup=lambda s: s.paused.connect(pauses.append), tick=tick)
+    assert len(segments) == 2 and any('disconnected' in text for text in failures)
+    with wave.open(str(tmp_path / 'recording.wav')) as wav:
+        assert wav.getnframes() == 1600
 
 
 def test_model_inference_error_stops_capture_and_preserves_caption(monkeypatch, tmp_path):

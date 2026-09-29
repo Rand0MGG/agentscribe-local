@@ -11,6 +11,8 @@ LinguaFlow 0.3 consumes the full WhisperLiveKit pipeline as a pinned dependency.
 - Qwen3-ASR: https://github.com/QwenLM/Qwen3-ASR — Apache-2.0.
 - NLLB weights: https://huggingface.co/facebook/nllb-200-distilled-600M — CC-BY-NC-4.0.
 - Hy-MT2-1.8B weights: https://huggingface.co/tencent/Hy-MT2-1.8B — Apache-2.0. Downloaded separately; source releases do not include weights.
+- Hy-MT2-1.8B-GGUF: https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF — Apache-2.0; the Metal installer downloads the pinned official Q4_K_M weights and upstream license separately.
+- llama.cpp: https://github.com/ggml-org/llama.cpp — MIT; the optional Metal installer downloads the official b11254 macOS arm64 archive separately and verifies its SHA-256.
 - nagisa/DyNet remain installed dependencies; the Windows Unicode-path compatibility layer copies the installed package temporarily without changing its implementation or license files.
 
 No model weights are distributed in this repository. Dependency and model licenses remain separate from application code. Upstream benchmark figures do not constitute LinguaFlow performance measurements.

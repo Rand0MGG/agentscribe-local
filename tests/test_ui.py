@@ -290,6 +290,7 @@ class FakeSession(QObject):
     status = Signal(str)
     stage = Signal(str, str)
     ready = Signal()
+    paused = Signal(bool)
     caption = Signal(object)
     level = Signal(float)
     failure = Signal(str)
@@ -304,6 +305,10 @@ class FakeSession(QObject):
         self.ready.emit()
     def stop(self):
         self.finished.emit()
+    def pause(self):
+        return True
+    def resume(self):
+        return True
 module.Session = FakeSession
 app = QApplication([])
 w = module.Window(discover=False, prefs=QSettings(os.environ['AGENTSCRIBE_LIBRARY'] + '/prefs.ini', QSettings.Format.IniFormat))
@@ -325,6 +330,19 @@ w.leave_settings()
 w.start()
 assert w.session is not None and w.current_item['id'] == identifier
 assert not w.settings_panel.isEnabled() and not w.model_manager.isEnabled()
+assert w.pause_button.isEnabled() and w.pause_button.text() == '暂停'
+w.pause_button.click()
+assert not w.pause_button.isEnabled() and w.stop_button.isEnabled()
+w.session.paused.emit(True)
+assert w.pause_button.text() == '继续录音' and w.pause_button.isEnabled()
+assert not w.new_button.isEnabled() and not w.settings_panel.isEnabled()
+w.on_ready()
+assert w.pause_button.text() == '继续录音'
+w.pause_button.click()
+assert not w.pause_button.isEnabled()
+w.session.paused.emit(False)
+assert w.pause_button.text() == '暂停' and w.pause_button.isEnabled()
+assert w.current_item['id'] == identifier
 before = w.session.settings.audio_processing['output_db']
 w.audio_config['output_db'] = before + 1
 assert w.session.settings.audio_processing['output_db'] == before
@@ -366,10 +384,22 @@ w.session.stop = lambda: None
 w.stop()
 w.on_status('late model progress')
 w.on_ready()
+w.session.paused.emit(True)
 w.update_activity()
 assert '正在停止' in w.status.text() and not w.stop_button.isEnabled()
 assert not w.start_button.isEnabled() and not w.model_manager.isEnabled()
 w.on_finished()
+# Closing a paused recording follows the same drain/save path as Stop.
+assert w.new_recording(name='暂停后关闭')
+w.start()
+w.toggle_pause()
+w.session.paused.emit(True)
+from PySide6.QtGui import QCloseEvent
+event = QCloseEvent()
+w.closeEvent(event)
+assert w.session is None and w.recording_lock is None
+assert not w.pause_button.isEnabled()
+w.closing = False
 # A constructor failure also releases the recording lock and restores controls.
 assert w.new_recording(name='启动失败')
 def failed_constructor(*args, **kwargs): raise RuntimeError('cannot construct session')

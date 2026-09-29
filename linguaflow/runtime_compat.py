@@ -9,6 +9,29 @@ import tempfile
 from pathlib import Path
 
 
+async def pause_audio_processor(processor):
+    """Drain accepted PCM and end the utterance without ending the session."""
+    await processor._flush_remaining_pcm()
+    await processor._begin_silence(at_sample=processor.total_pcm_samples)
+    if processor.vac is not None:
+        processor.vac.reset_states()
+        processor.vac.current_sample = processor.total_pcm_samples
+
+
+async def results_with_final_snapshot(processor, results):
+    """Refresh after EOF: ASR can finish while the consumer handles a snapshot.
+
+    The pinned formatter checks task completion after yielding. If final tokens
+    arrive during that yield, it can return without publishing those tokens.
+    A fresh formatter pass reads the completed state before it checks EOF.
+    """
+    async for snapshot in results:
+        yield snapshot
+    if processor.is_stopping:
+        async for snapshot in processor.results_formatter():
+            yield snapshot
+
+
 def configure_vad_float32(processor):
     """Install before processing PCM; keep VAD independent of model load dtype.
 

@@ -18,3 +18,19 @@ def test_journal_preserves_quiet_samples_and_backlog(rate):
     finally:
         journal.close()
 
+
+def test_pause_markers_stay_between_audio_segments_even_with_backlog():
+    journal = AudioJournal()
+    try:
+        journal.append(np.ones(3, dtype=np.float32))
+        journal.mark_pause()
+        journal.mark_pause()
+        journal.append(np.ones(2, dtype=np.float32) * 2)
+        assert not journal.take_pause()
+        assert journal.read(100).tolist() == [1, 1, 1]
+        assert not len(journal.read(100))
+        assert journal.take_pause() and journal.take_pause()
+        assert journal.read(100).tolist() == [2, 2]
+        assert not journal.take_pause()
+    finally:
+        journal.close()

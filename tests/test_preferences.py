@@ -35,3 +35,9 @@ def test_all_keys_roundtrip_and_missing_device_does_not_erase_selection():
     assert read_audio_device(store) == ('microphone', False)
     for invalid in ('bad', '[]', '"abc"', '["device", "False"]'):
         assert read_audio_device(Store(audio_device=invalid)) is None
+
+
+def test_legacy_metal_migrates_to_llama_without_overriding_explicit_engine():
+    assert read_preferences(Store(translation_device='metal'))['translation_engine'] == 'llama'
+    assert read_preferences(Store(translation_device='cuda'))['translation_engine'] == 'pytorch'
+    assert read_preferences(Store(translation_device='metal', translation_engine='pytorch'))['translation_engine'] == 'pytorch'

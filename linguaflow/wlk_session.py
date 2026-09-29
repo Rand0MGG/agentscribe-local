@@ -14,6 +14,7 @@ import numpy as np
 from PySide6.QtCore import QThread, Signal
 
 from .audio import capture
+from .capture_control import CaptureControl
 from .core import Caption
 from .journal import AudioJournal
 from .runtime_paths import runtime_python
@@ -27,6 +28,7 @@ class Session(QThread):
     level = Signal(float)
     failure = Signal(str)
     ready = Signal()
+    paused = Signal(bool)
     stage = Signal(str, str)
 
     def __init__(self, settings, parent=None, capture_fn=capture, diagnostic=False, recording_path=None):
@@ -41,9 +43,19 @@ class Session(QThread):
         self.model_ready = Event()
         self.last_error = ""
         self.recording_path = recording_path
+        self.capture_control = CaptureControl()
+
+    def pause(self):
+        if not self.model_ready.is_set() or self.stop_capture.is_set():
+            return False
+        return self.capture_control.pause()
+
+    def resume(self):
+        return self.capture_control.resume()
 
     def stop(self, discard=False):
         self.stop_capture.set()
+        self.capture_control.stop()
         if discard or (self.process is not None and not self.model_ready.is_set()):
             self.abort.set()
             if self.process and self.process.poll() is None:
@@ -109,7 +121,7 @@ class Session(QThread):
                 silent_samples = 0
                 warned = False
                 recording = None
-                def block(samples):
+                def write_block(samples):
                     nonlocal silent_samples, warned
                     if recording is not None:
                         recording.writeframes((np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes())
@@ -123,13 +135,31 @@ class Session(QThread):
                     elif warned and silent_samples == 0:
                         warned = False
                         self.stage.emit("音频", "已收到声音 · 连续采集")
+
+                def block(samples):
+                    return self.capture_control.accept(lambda: write_block(samples))
+
+                def paused():
+                    nonlocal silent_samples, warned
+                    silent_samples, warned = 0, False
+                    journal.mark_pause()
+                    self.level.emit(0.)
+                    self.stage.emit("音频", "已暂停 · 不采集声音")
+                    self.paused.emit(True)
+
+                def resumed():
+                    self.stage.emit("音频", "连续采集")
+                    self.paused.emit(False)
                 try:
                     if self.recording_path:
                         recording = wave.open(str(self.recording_path), "wb")
                         recording.setnchannels(1)
                         recording.setsampwidth(2)
                         recording.setframerate(self.settings.input_sample_rate)
-                    self.capture_fn(self.settings, self.stop_capture, block)
+                    while (segment := self.capture_control.next_segment(paused, resumed)) is not None:
+                        self.capture_fn(self.settings, segment, block)
+                        if not segment.is_set():
+                            break
                 except Exception as exc:
                     self.fail(f"录音失败：{exc}")
                 finally:
@@ -148,7 +178,9 @@ class Session(QThread):
                         if len(samples):
                             pcm = (np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes()
                             send({"type": "audio", "pcm": base64.b64encode(pcm).decode()})
-                        elif self.capture_done.is_set():
+                        elif journal.take_pause():
+                            send({"type": "pause"})
+                        elif self.capture_done.is_set() and journal.pending_seconds == 0:
                             send({"type": "stop"})
                             break
                         else:
@@ -201,6 +233,7 @@ class Session(QThread):
         finally:
             self.abort.set()
             self.stop_capture.set()
+            self.capture_control.stop()
             if self.process and self.process.poll() is None:
                 self.process.terminate()
                 self.process.wait()

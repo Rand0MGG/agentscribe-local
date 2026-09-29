@@ -39,11 +39,12 @@ python3.12 -m venv .venv
 .venv/bin/python -m linguaflow
 ```
 
-也可使用 `bash run-macos.command`。Whisper CPU 已通过文件识别测试；新增 Qwen3-ASR 1.7B / MLX 4-bit **试验入口**，已在 M2 / 8GB 上完成英文短音频和 101 秒连续音频的 GPU 字幕测试。中文、翻译并行和真实录音仍待验收。
+也可使用 `bash run-macos.command`。Whisper CPU 已通过文件识别测试；新增 Qwen3-ASR 1.7B / MLX 4-bit **试验入口**，已在 M2 / 8GB 上完成英文短音频和 101 秒连续音频的 GPU 字幕测试。中文、长会话和真实录音仍待验收。
 
 试用 Apple GPU 路线，另行执行 `.venv/bin/python scripts/install_mlx.py`（或模型管理 → 运行环境 → 安装 Apple GPU）。然后选择“试用 Mac 4-bit 设置”，下载 / 检查 Qwen 模型，并指定原文语言。此配置使用 SaT 分句并关闭翻译；请先准备 SaT 模型，可按需要再开启翻译。MLX 单独使用 `.venv-mlx`，避免与现有 Windows / WLK 的 Transformers 版本冲突。
 
 M2 / 8GB 的 101 秒文件测试已跑通 GPU 识别与 SaT 分句：首条字幕约 2.26 秒、收尾约 3.04 秒，25 段字幕全部定稿，WER 0.39%。测试关闭翻译，没有访问音频设备；系统交换空间增长约 1.46 GiB，仍需验证长会话。详见 [测试记录](docs/MACOS_FILE_TESTS.md)。
+Apple Silicon 的翻译可选择“设置 → 翻译模型 → 使用 HY 1.8B · Apple GPU”，推理引擎显示“llama.cpp · GGUF”，计算设备显示“Apple GPU · Metal”。首次点击“下载 / 检查翻译模型”，或运行 `.venv/bin/python scripts/install_llama.py --device metal`，准备官方量化权重和本地运行组件。开启翻译后，下次聆听自动加载；诊断会显示实际 GPU 加载层数。已打开的应用需在录音结束后重新启动，才能载入更新的代码。长会话和内存压力下的稳定性仍待验收，详见 [HY Metal 测试](docs/testing/HY_METAL.md)。
 系统设置中需允许 Terminal/Python 使用麦克风。系统声音使用 [BlackHole](https://github.com/ExistentialAudio/BlackHole) 输入与多输出设备；尚无原生 ScreenCaptureKit 捕获。
 
 Mac 适配进展、已验证范围和待实机测试项目见 [macOS 适配记录](docs/MACOS_SUPPORT.md)。如果电脑正在进行其他录音，开发验证请使用 `.venv/bin/python scripts/test_no_audio.py`；该入口使用模拟音频，并阻止原生音频后端导入，不启动实际应用或录音测试。
@@ -57,19 +58,31 @@ Mac 适配进展、已验证范围和待实机测试项目见 [macOS 适配记�
 1. 打开左下角“设置 → 识别模型”，选择 Whisper 或 Qwen、计算设备，下载模型。识别、翻译、聆听行为分别管理。
 2. 在首页底部直接选择音频来源，在语言快捷入口选择原文与目标语言；在左侧文件夹行点击“＋”，填写录音名称并确认保存位置。Windows 的“系统声音”选择当前播放设备；Qwen 必须指定原文语言。字幕位于底部时自动平滑跟随；向上滚动暂停，点击圆形向下箭头或自行回到底部即可恢复。
 3. 在“模型管理 → 字幕与延迟”准备 SaT 分句模型、选择 CPU/CUDA 并调整稳定尾部首次提交等待。然后点击“开始聆听”。首次提交生成初译；中间原文修订保留初译，识别段结束后原文独立定稿，再生成最终译文。SaT 加载失败会阻止启动，推理异常会停止会话并提示原因，详见 [语义分段](docs/SEMANTIC_SEGMENTATION.md)。
-4. “停止”会处理剩余音频和翻译，然后释放推理进程；关闭窗口也会先停止采集并处理剩余任务，随后保存会话。加载期间仍可取消启动。
+4. 聆听时点击“暂停”会释放当前采集句柄，继续处理已有音频和翻译；点击“继续录音”接着写入同一份录音，暂停期间的声音和等待时间不计入录音及字幕时间轴。暂停时也可直接停止。“停止”会处理剩余音频和翻译，然后释放推理进程；关闭窗口也会先停止采集并处理剩余任务，随后保存会话。加载期间仍可取消启动。暂停功能已用模拟采集及文件回放验证，真实设备验收范围见 [暂停测试记录](docs/testing/RECORDING_PAUSE.md)。
 5. 录音和定稿自动保存在本机，点击侧栏会话可回听。可打开置顶字幕窗口，结束后导出双语 SRT。导出包含已确认字幕。
 
 ![模型管理](docs/models-preview.png)
 
 麦克风环境可先打开左下角“设置 → 音频实验室 · 增强与回听”，确认录音来源与输入电平，再用同一段样本比较预设和自定义处理。提供 WebRTC APM、WPE、DF3、响度/EQ/峰值保护；DF3 可选 CPU/CUDA。详见 [音频处理与故障恢复](docs/AUDIO_PROCESSING.md)。
 
+## 翻译引擎
+
+设置 → 翻译模型可独立选择 **PyTorch** 或 **llama.cpp · GGUF**，再选择 CPU / GPU。
+
+- PyTorch 保留现有 HY-MT2、NLLB 及兼容目录；原有设置默认继续使用它。
+- llama.cpp 提供已验证的 HY 1.8B Q4_K_M，也可选择本地 `.gguf` 指令模型。FP16、FP32 或量化精度由文件决定，选择 llama.cpp 不会自动量化。
+- 两种引擎分别记住模型选择；原有 Metal 翻译偏好会迁移到 llama.cpp。
+- Mac 提供 CPU / Metal；Windows x64 提供 CPU / CUDA / Vulkan 的准备与启动路径，**Windows 尚待实机验收**。
+- 新模型必须受固定版本的 llama.cpp 支持，并能使用聊天模板执行翻译指令。GGUF 文件校验通过不代表翻译质量已经验收。
+
+详细准备方法、限制与验证范围见 [llama.cpp 翻译](docs/LLAMA_CPP.md)。
+
 ## 模型与显存
 
 - Whisper 使用 WhisperLiveKit 的 AlignAtt 解码器：支持 tiny/base/small/medium/large-v3/turbo、原始 `.pt` 文件或兼容 Hugging Face 目录。**旧 faster-whisper/CTranslate2 目录不能直接用于此解码器。** 在模型管理中重新准备对应格式。
 - Qwen 使用 `Qwen/Qwen3-ASR-0.6B` 或 `1.7B` 的窗口式流式适配，限制重编码窗口，运行于本地 PyTorch。没有启用社区英语专用 causal 权重。Qwen 词时间戳是估计值，不适合精密对齐。
 - NLLB 支持 600M/1.3B 及兼容目录，可独立选择 CPU 或 CUDA FP16；翻译失败保留原文。
-- HY-MT2-1.8B 首次提交时独立翻译当前段；原文定稿时参考当时可用的前后文（默认前 3 段、后 1 段）完成最终译文，不等待新后文。支持 CPU/CUDA 和完整本地模型目录。最终翻译失败保留初译并提示未完成。
+- HY-MT2-1.8B 首次提交时独立翻译当前段；原文定稿时参考当时可用的前后文（默认前 3 段、后 1 段）完成最终译文，不等待新后文。支持 CPU/CUDA 和完整本地模型目录；Apple Silicon 可选择官方 1.8B Q4_K_M / Metal。最终翻译失败保留初译并提示未完成。
 - Whisper 识别与 NLLB 翻译可以独立选择 CPU 或 CUDA；共用 GPU 时请留出两套模型的显存。Qwen 的设备设置由其独立后端处理。
 - 8GB 显存优先尝试 Whisper small 或 Qwen 0.6B，加 NLLB 600M。16GB 可使用 large-v3，但总占用受窗口、运行库及其他程序影响，软件没有强制显存配额。
 - 模型管理中的更新间隔是调度参数，不表示模型只计算该时长；上游流式后端负责窗口推进。停顿阈值控制话语边界，不是唯一提交依据。

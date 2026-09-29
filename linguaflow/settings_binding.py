@@ -1,5 +1,6 @@
 """Adapt explicitly supplied controls to preferences and an immutable session snapshot."""
 from copy import deepcopy
+from pathlib import Path
 
 from .core import Settings
 from .preferences import PREFERENCES
@@ -38,6 +39,10 @@ class SettingsBinding:
 
     def session_settings(self, device, audio_config):
         values = self.snapshot()
+        if values['translation_engine'] == 'llama':
+            from .llama_assets import HY_GGUF
+            if values['llama_model'] != HY_GGUF:
+                values['llama_model'] = str(Path(values['llama_model'].strip()).expanduser().resolve())
         source, source_nllb = self.controls['source'].currentData()
         return Settings(
             device_id=device[0], loopback=device[1], asr_model=values['asr'].strip(),
@@ -46,6 +51,7 @@ class SettingsBinding:
             target=self.controls['target'].currentData(), input_sample_rate=48000,
             audio_processing=deepcopy(audio_config),
             **{key: values[key] for key in ('translate', 'offline', 'backend', 'translation_device',
+               'translation_engine', 'llama_model',
                'qwen_model', 'update_seconds', 'draft_seconds', 'endpoint_seconds',
                'semantic_device', 'semantic_lookahead',
                'translation_before', 'translation_after')})

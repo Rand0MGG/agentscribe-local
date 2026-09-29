@@ -10,6 +10,7 @@ from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QDialog,
     QDoubleSpinBox,
+    QFileDialog,
     QFormLayout,
     QLabel,
     QProgressBar,
@@ -204,11 +205,25 @@ class ModelManager(QDialog):
         check.clicked.connect(lambda: self.prepare_qwen(self.qwen_model.currentText()))
         self.qwen_form.addRow(check)
         self.qwen_hint = self.hint(self.qwen_form, '')
+        self.translation_model = translation
+        self.translation_engine = QComboBox()
+        self.translation_engine.addItem('PyTorch', 'pytorch')
+        self.translation_engine.addItem('llama.cpp · GGUF', 'llama')
+        self.translation_form.insertRow(0, '翻译推理引擎', self.translation_engine)
+        self.llama_model = QComboBox()
+        self.llama_model.setEditable(True)
+        from .llama_assets import HY_GGUF
+        self.llama_model.addItem(HY_GGUF)
+        self.translation_form.addRow('GGUF 模型', self.llama_model)
+        self.choose_gguf = QPushButton('选择 GGUF 文件…')
+        def choose_gguf():
+            path, _ = QFileDialog.getOpenFileName(self, '选择 GGUF 翻译模型', '', 'GGUF 模型 (*.gguf)')
+            if path:
+                self.llama_model.setCurrentText(path)
+        self.choose_gguf.clicked.connect(choose_gguf)
+        self.translation_form.addRow(self.choose_gguf)
         self.translation_device = QComboBox()
-        self.translation_device.addItem("CPU", "cpu")
-        if sys.platform != "darwin":
-            self.translation_device.addItem("NVIDIA GPU · FP16", "cuda")
-        self.translation_form.addRow("翻译计算设备", self.translation_device)
+        self.translation_form.addRow('翻译计算设备', self.translation_device)
         self.translation_before = QComboBox()
         self.translation_after = QComboBox()
         for count in range(7):
@@ -219,21 +234,54 @@ class ModelManager(QDialog):
         self.translation_after.setCurrentIndex(1)
         self.translation_form.addRow('参考前文', self.translation_before)
         self.translation_form.addRow('参考后文', self.translation_after)
-        def update_context_controls():
-            from .translation_models import is_hy_model
-            enabled = is_hy_model(translation.currentText().strip())
-            self.translation_before.setEnabled(enabled)
-            self.translation_after.setEnabled(enabled)
-        translation.currentTextChanged.connect(update_context_controls)
-        update_context_controls()
-        self.hint(self.translation_form, '首次提交只翻译当前段；中间原文修改时保留初译。原文定稿后，HY-MT2 使用当时已有的稳定前后文生成最终译文，不等待未来段落。NLLB 逐句处理。')
-        self.hint(self.translation_form, "翻译独立排队运行，可使用 GPU。已确认的句子先翻译，原文尾部继续修订。")
-        translation_download = QPushButton("下载 / 检查翻译模型")
+        self.translation_engine.currentIndexChanged.connect(self.update_translation_engine)
+        translation.currentTextChanged.connect(self.update_translation_context)
+        self.hint(self.translation_form, '首次提交生成初译；原文定稿后，HY 与 GGUF 指令模型参考已有前后文生成最终译文。NLLB 逐句处理。')
+        self.translation_hint = self.hint(self.translation_form, '')
+        translation_download = QPushButton('下载 / 检查翻译模型')
         translation_download.clicked.connect(lambda: self.prepare_translation(translation.currentText().strip()))
         self.translation_form.addRow(translation_download)
+        if sys.platform == 'darwin':
+            self.hy_metal_button = QPushButton('使用 HY 1.8B · Apple GPU')
+            def select_hy_metal():
+                self.translation_engine.setCurrentIndex(self.translation_engine.findData('llama'))
+                self.llama_model.setCurrentText(HY_GGUF)
+                self.translation_device.setCurrentIndex(self.translation_device.findData('metal'))
+                self.status.setText('已选择 HY 1.8B Q4_K_M · llama.cpp / Metal。首次请准备模型，下次聆听生效。')
+            self.hy_metal_button.clicked.connect(select_hy_metal)
+            self.translation_form.addRow(self.hy_metal_button)
+        self.update_translation_engine()
         self.hint(self.advanced_form, "没有分句边界时，稳定尾部达到等待时长即可首次提交。定稿由识别段结束触发，不受翻译状态影响。")
         self.backend.currentIndexChanged.connect(self.update_backend)
         self.update_backend()
+
+    def update_translation_context(self):
+        from .translation_models import is_hy_model
+        enabled = (self.translation_engine.currentData() == 'llama'
+                   or is_hy_model(self.translation_model.currentText().strip()))
+        self.translation_before.setEnabled(enabled)
+        self.translation_after.setEnabled(enabled)
+
+    def update_translation_engine(self):
+        from .llama_assets import devices
+        llama = self.translation_engine.currentData() == 'llama'
+        selected = self.translation_device.currentData()
+        self.translation_device.clear()
+        labels = {'cpu': 'CPU', 'cuda': 'NVIDIA GPU · CUDA',
+                  'metal': 'Apple GPU · Metal', 'vulkan': 'GPU · Vulkan'}
+        available = devices() if llama else (('cpu',) if sys.platform == 'darwin' else ('cpu', 'cuda'))
+        for device in available:
+            self.translation_device.addItem(labels[device], device)
+        self.translation_device.setCurrentIndex(max(0, self.translation_device.findData(selected)))
+        self.translation_form.setRowVisible(self.translation_model, not llama)
+        self.translation_form.setRowVisible(self.choose_translation, not llama)
+        self.translation_form.setRowVisible(self.llama_model, llama)
+        self.translation_form.setRowVisible(self.choose_gguf, llama)
+        self.translation_hint.setText(
+            '内置 HY 1.8B 为 Q4_K_M。也可选择受当前 llama.cpp 支持、带聊天模板的本地 GGUF 指令模型；精度由权重文件决定。新模型的翻译质量需验证。'
+            if llama else '支持 HY-MT2、NLLB 及兼容模型目录。模型与 GGUF 分别保存，切换引擎不会覆盖选择。')
+        self.update_translation_context()
+        self.status.setText('已选择 ' + self.translation_engine.currentText() + '，下次聆听生效。')
 
     def update_backend(self):
         mlx = self.backend.currentData() == 'qwen3-mlx'
@@ -320,6 +368,12 @@ class ModelManager(QDialog):
         self.prepare(lambda: self.run_preparation(command))
 
     def prepare_translation(self, model):
+        if self.translation_engine.currentData() == 'llama':
+            command = [sys.executable, 'scripts/install_llama.py',
+                       '--device', self.translation_device.currentData(),
+                       '--model', self.llama_model.currentText().strip()]
+            self.prepare(lambda: self.run_preparation(command))
+            return
         def action():
             from .model_cache import has_weights, resolve_translation
             path = resolve_translation(model, False, lambda message: None)

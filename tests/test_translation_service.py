@@ -9,6 +9,47 @@ from linguaflow.translation_queue import TranslationQueue
 from linguaflow.translation_service import publish_translation_result, run_translations
 
 
+@pytest.mark.parametrize('cancel', [False, True])
+def test_owned_translator_is_closed_on_stop_and_cancel(cancel):
+    async def exercise():
+        queue, loaded, closed = TranslationQueue(), asyncio.Event(), []
+        loop = asyncio.get_running_loop()
+        class Translator:
+            def __init__(self): loop.call_soon_threadsafe(loaded.set)
+            def close(self): closed.append(True)
+        task = asyncio.create_task(run_translations(queue, Translator, lambda _: None,
+                    lambda _: None, lambda _: None, lambda _: None))
+        await asyncio.wait_for(loaded.wait(), 3)
+        if cancel:
+            task.cancel()
+        else:
+            queue.put_nowait(None)
+        await asyncio.gather(task, return_exceptions=True)
+        assert closed == [True]
+    asyncio.run(exercise())
+
+
+def test_cancel_during_model_load_closes_late_created_translator():
+    async def exercise():
+        queue, started, release, closed = TranslationQueue(), Event(), Event(), Event()
+        class Translator:
+            def close(self): closed.set()
+        def create():
+            started.set()
+            assert release.wait(3)
+            return Translator()
+        task = asyncio.create_task(run_translations(queue, create, lambda _: None,
+                    lambda _: None, lambda _: None, lambda _: None))
+        try:
+            assert await asyncio.to_thread(started.wait, 3)
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        finally:
+            release.set()
+        assert await asyncio.to_thread(closed.wait, 3)
+    asyncio.run(exercise())
+
+
 def test_revision_during_inference_drops_old_translation_and_drains_queue():
     async def exercise():
         first = Caption(1, 0, 1, 'old', 'en', final=False, ready=True)

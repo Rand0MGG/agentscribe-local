@@ -15,6 +15,7 @@ def main():
     from linguaflow.audio_processing.lab import AudioLab
     from linguaflow.core import Caption
     from linguaflow.deleted_dialog import DeletedDialog
+    from linguaflow.recording_state import RecordingState
     from linguaflow.ui_components import ActionMenu, Disclosure, NameDialog
     from linguaflow.workspace_widgets import RecordingDialog
     from scripts.test_no_audio import GUARD
@@ -60,6 +61,12 @@ def main():
     capture('search-sat', lambda: window.settings_workspace.search.setText('SaT'))
     capture('models-compact', lambda: (window.resize(900, 650), window.open_settings('识别模型')))
     capture('home-compact', window.leave_settings)
+    def recording_state(state):
+        window.set_recording_state(state)
+        window.status.setText(state.status())
+    capture('recording-listening', lambda: recording_state(RecordingState.LISTENING))
+    capture('recording-paused', lambda: recording_state(RecordingState.PAUSED))
+    steps.append(lambda: (recording_state(RecordingState.IDLE), advance()))
     capture('models-wide', lambda: (window.resize(1600, 900), window.open_settings('识别模型')))
     capture('models-local', lambda: window.model_manager.findChild(Disclosure).toggle.setChecked(True))
     steps.append(lambda: (window.leave_settings(), advance()))

@@ -47,6 +47,8 @@ class Settings:
     audio_processing: dict = field(default_factory=dict)
     semantic_device: str = "cpu"
     semantic_lookahead: float = 3.0
+    translation_engine: str | None = None
+    llama_model: str = ""
 
 
 @dataclass

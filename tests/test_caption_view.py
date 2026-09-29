@@ -100,7 +100,8 @@ w.quick_device.setCurrentIndex(1)
 assert w.device.currentData() == ('loopback', True)
 w.device.setCurrentIndex(0)
 assert w.quick_device.currentData() == ('mic', False)
-for state in (RecordingState.STARTING, RecordingState.LISTENING, RecordingState.STOPPING):
+for state in (RecordingState.STARTING, RecordingState.LISTENING, RecordingState.PAUSING,
+              RecordingState.PAUSED, RecordingState.RESUMING, RecordingState.STOPPING):
     w.set_recording_state(state)
     assert not w.quick_device.isEnabled() and not w.device.isEnabled()
     assert not w.refresh_source.isEnabled()

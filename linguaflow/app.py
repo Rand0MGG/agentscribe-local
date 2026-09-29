@@ -679,6 +679,7 @@ class Window(QMainWindow):
         choose_translation = QPushButton("选择翻译模型目录…")
         choose_translation.clicked.connect(lambda: self.choose_model(self.translation))
         models.addRow(choose_translation)
+        self.model_manager.choose_translation = choose_translation
         self.translate = Switch("同时显示翻译")
         self.translate.setChecked(True)
         self.offline = QCheckBox("严格离线 · 只使用已下载模型")
@@ -830,7 +831,13 @@ class Window(QMainWindow):
         self.stop_button.setEnabled(False)
         self.stop_button.hide()
         self.stop_button.clicked.connect(self.stop)
+        self.pause_button = QPushButton("暂停")
+        self.pause_button.setToolTip("暂停收音；已有字幕继续处理，继续后接着录")
+        self.pause_button.setEnabled(False)
+        self.pause_button.hide()
+        self.pause_button.clicked.connect(self.toggle_pause)
         bottom.addWidget(self.start_button)
+        bottom.addWidget(self.pause_button)
         bottom.addWidget(self.stop_button)
         self.playback = QFrame()
         playback_layout = QHBoxLayout(self.playback)
@@ -1401,6 +1408,13 @@ class Window(QMainWindow):
         if self.device.currentData() is None:
             QMessageBox.warning(self, "没有音频来源", "请连接录音设备并刷新列表。")
             return
+        if self.translate.isChecked() and self.model_manager.translation_engine.currentData() == 'llama':
+            from .llama_assets import resolve_assets
+            try:
+                resolve_assets(self.settings_binding.session_settings(self.device.currentData(), self.audio_config))
+            except (ValueError, OSError) as exc:
+                QMessageBox.warning(self, "翻译模型尚未准备好", str(exc))
+                return
         if self.model_manager.backend.currentData() in ('qwen3-streaming', 'qwen3-mlx') and self.source.currentData()[0] is None:
             QMessageBox.warning(self, "请选择原文语言", "Qwen 流式模式需要明确原文语言，例如 English 或简体中文。")
             return
@@ -1471,6 +1485,9 @@ class Window(QMainWindow):
         self.start_button.setText(state.value)
         self.stop_button.setEnabled(state.can_stop)
         self.stop_button.setVisible(state.active)
+        self.pause_button.setVisible(state.active)
+        self.pause_button.setEnabled(state.can_pause and not self.last_error)
+        self.pause_button.setText("继续录音" if state is RecordingState.PAUSED else "暂停")
         self.export_button.setEnabled(not state.active and any(c.final and c.source for c in self.captions.values()))
 
     def launch_session(self, settings):
@@ -1479,6 +1496,7 @@ class Window(QMainWindow):
         self.session.status.connect(self.on_status)
         self.session.stage.connect(self.on_stage)
         self.session.ready.connect(self.on_ready)
+        self.session.paused.connect(self.on_paused)
         self.session.caption.connect(self.on_caption)
         self.session.level.connect(lambda value: self.meter.setValue(min(100, int(value * 500))))
         self.session.failure.connect(self.on_failure)
@@ -1507,7 +1525,7 @@ class Window(QMainWindow):
     def on_ready(self):
         if self.last_error:
             return
-        if self.recording_state is RecordingState.STOPPING:
+        if self.recording_state is not RecordingState.STARTING:
             return
         self.set_recording_state(RecordingState.LISTENING)
         self.on_stage("会话", "聆听中")
@@ -1533,8 +1551,35 @@ class Window(QMainWindow):
             self.on_status("正在停止并处理剩余字幕；模型加载或当前推理结束后完成…")
             self.session.stop()
 
+    def toggle_pause(self):
+        if self.session is None or self.last_error:
+            return
+        if self.recording_state is RecordingState.LISTENING:
+            if self.session.pause():
+                self.set_recording_state(RecordingState.PAUSING)
+                self.on_status("正在暂停收音；已有音频继续识别和翻译。")
+        elif self.recording_state is RecordingState.PAUSED:
+            if self.session.resume():
+                self.set_recording_state(RecordingState.RESUMING)
+                self.on_status("正在继续当前录音。")
+
+    def on_paused(self, paused):
+        if self.last_error or self.recording_state is RecordingState.STOPPING or self.session is None:
+            return
+        expected = RecordingState.PAUSING if paused else RecordingState.RESUMING
+        if self.recording_state is not expected:
+            return
+        self.set_recording_state(RecordingState.PAUSED if paused else RecordingState.LISTENING)
+        self.on_stage("会话", "已暂停" if paused else "聆听中")
+        self.on_status("已暂停收音；点击继续录音可接着录，暂停时间不计入录音。" if paused else "已继续录音。")
+        if paused:
+            self.meter.setValue(0)
+        if not self.captions:
+            self.empty.setText("已暂停收音" if paused else "正在聆听…")
+
     def on_failure(self, message):
         self.last_error = message
+        self.pause_button.setEnabled(False)
         self.status.setText(message)
         self.diagnostics.appendPlainText(time.strftime("%H:%M:%S") + "  " + message)
         self.diagnostics.show()
@@ -1698,8 +1743,7 @@ class Window(QMainWindow):
             return
         if self.session is not None:
             self.closing = True
-            self.session.stop()
-            self.stop_button.setEnabled(False)
+            self.stop()
             self.status.setText("正在释放模型，请等待当前加载或推理结束…")
             event.ignore()
             return

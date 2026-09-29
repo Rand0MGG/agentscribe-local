@@ -7,6 +7,7 @@ import asyncio
 import time
 from collections import OrderedDict
 from dataclasses import replace
+from threading import Lock
 
 from .translation_queue import translation_is_current
 
@@ -27,6 +28,33 @@ async def publish_translation_result(caption, current_caption, lock, publish,
 
 async def run_translations(queue, create_translator, current_caption, publish, status, metrics,
                            context_for=None, planner=None):
+    lock, closing, translator = Lock(), False, None
+
+    def create_owned():
+        nonlocal translator
+        value = create_translator()
+        with lock:
+            if not closing:
+                translator = value
+                return value
+        close = getattr(value, 'close', None)
+        if close:
+            close()
+        raise RuntimeError('翻译会话已取消')
+
+    try:
+        await _consume_translations(queue, create_owned, current_caption, publish, status, metrics,
+                                    context_for, planner)
+    finally:
+        with lock:
+            closing = True
+            close = getattr(translator, 'close', None)
+        if close:
+            await asyncio.to_thread(close)
+
+
+async def _consume_translations(queue, create_translator, current_caption, publish, status, metrics,
+                                context_for=None, planner=None):
     cache = OrderedDict()
     translator, load_error = None, None
     try:

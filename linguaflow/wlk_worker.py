@@ -1,7 +1,7 @@
 """Isolated full WhisperLiveKit pipeline over local JSON-lines stdin/stdout.
 
 The Qt process never imports the model runtime. PCM is s16le/16kHz/mono.
-No HTTP service, WSL or user-managed port is required.
+The application owns local model services and their ports.
 """
 import asyncio
 import base64
@@ -169,8 +169,9 @@ async def serve(settings, emit, read_message):
     from .translation_service import publish_translation_result, run_translations
     translation_queue = TranslationQueue()
     from .translation_context import ContextPlanner
-    from .translation_models import is_hy_model
-    contextual_translation = is_hy_model(settings.get('translation_model', ''))
+    from .translation_models import is_hy_model, translation_engine
+    contextual_translation = (translation_engine(SimpleNamespace(**settings)) == 'llama'
+                             or is_hy_model(settings.get('translation_model', '')))
     context_planner = ContextPlanner(
         settings.get('translation_before', 3) if contextual_translation else 0,
         settings.get('translation_after', 1) if contextual_translation else 0)
@@ -211,7 +212,8 @@ async def serve(settings, emit, read_message):
             context_planner.get if contextual_translation else None, context_planner)
 
     async def output():
-        async for snapshot in results:
+        from .runtime_compat import results_with_final_snapshot
+        async for snapshot in results_with_final_snapshot(processor, results):
             latest.clear()
             latest.update(caption_snapshot(snapshot))
             if accurate_qwen:
@@ -274,6 +276,13 @@ async def serve(settings, emit, read_message):
                 break
             if message["type"] == "audio":
                 await process_pcm(base64.b64decode(message["pcm"], validate=True))
+            elif message["type"] == "pause":
+                from .runtime_compat import pause_audio_processor
+                await process_pcm()
+                await pause_audio_processor(processor)
+                if frontend is not None:
+                    frontend = await asyncio.to_thread(
+                        AudioPipeline, audio_config, settings.get("input_sample_rate", 16000))
         await output_task
         lifecycle_task.cancel()
         await asyncio.gather(lifecycle_task, return_exceptions=True)

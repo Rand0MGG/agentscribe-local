@@ -114,7 +114,8 @@ devices.reverse()
 w.refresh_devices()
 assert w.quick_device.currentIndex() == w.device.currentIndex() == 0
 assert w.quick_device.currentData() == ('coreaudio:blackhole', False)
-for state in (RecordingState.STARTING, RecordingState.LISTENING, RecordingState.STOPPING):
+for state in (RecordingState.STARTING, RecordingState.LISTENING, RecordingState.PAUSING,
+              RecordingState.PAUSED, RecordingState.RESUMING, RecordingState.STOPPING):
     w.set_recording_state(state)
     assert not w.quick_device.isEnabled() and not w.device.isEnabled()
     assert not w.refresh_source.isEnabled()

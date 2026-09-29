@@ -18,11 +18,14 @@
 | 文件锁适配 | `library_access.py` | QLockFile 的获取和检查；只使用 Library 提供的已校验路径 |
 | 本地推理环境路径 | `runtime_paths.py` | 会话、模型管理和音频工具共用；不导入 Qt 或模型 |
 | 会话传输 | `wlk_session.py` | 采集、连续音频暂存、子进程协议及停止清理 |
+| 暂停与继续 | `capture_control.py`、`journal.py` | 关闭当前采集段、等待继续、拒绝迟到音频；暂停标记与 PCM 保持同一顺序 |
 | 推理装配 | `wlk_worker.py` | ASR 初始化、音频和字幕事件协调；不依赖桌面模块 |
 | 字幕边界与修订 | `wlk_captions.py`、`qwen_revisions.py` | 文本边界、稳定性、版本保留；与 UI 独立 |
 | 翻译调度 | `translation_queue.py`、`translation_service.py` | 合并排队版本、缓存、错误、过期结果拒绝；后端通过工厂注入 |
 | 模型适配 | `backends.py`、`semantic_model.py`、`runtime_compat.py` | 实际模型及上游兼容接口；按需加载依赖 |
 | Mac ASR 适配 | `mlx_asr.py`、`mlx_asr_worker.py` | WLK → 独立 MLX 环境，仅传递本地 PCM；复用 Qwen 窗口、字幕和翻译流程，不访问音频设备 |
+| GGUF 翻译 | `llama_translation.py` | 两端共用认证 HTTP、请求、设备确认和结果校验；复用翻译队列与提示词 |
+| 本地服务与平台配置 | `llama_assets.py`、`managed_process.py`、`process_platform.py` | 固定运行组件、GGUF 校验；平台差异限于设备、路径、父进程监测和进程树清理 |
 | 音频实验室 | `audio_processing/lab.py`、`recorder.py` | 实验室负责交互，Recorder 负责定长采样/WAV/信号健康；可注入采集函数测试 |
 | DSP 与评测 | `audio_processing/config.py`、`pipeline.py`、`health.py`、`evaluation.py`、`ami_evaluation.py` | 保持既有独立边界；评测不借用 UI 或修改原始识别结果 |
 
@@ -34,8 +37,11 @@
 - 录音控件的启用/禁用统一从 `Window.set_recording_state` 设置。停止后到达的 ready/status 不得恢复成聆听状态；错误不能被进度刷新覆盖。简洁状态显示在主界面，具体日志保留在诊断与提示中。
 - 修改文件库前统一经过 `can_edit_library`：活动会话检查、保存未写入的字幕、必要时检查目标目录中的录音锁。磁盘安全校验留在 Library 内部，窗口不调用其私有方法。
 - 原文提交和定稿由 ASR / 字幕层独立决定。SaT 保持必需，只负责分句；稳定尾部时钟只触发首次提交，ASR 段结束或会话 EOF 才触发定稿。
+- 暂停保持会话和录音文件打开，但释放当前音频采集句柄。恢复重新打开所选设备，PCM 接续写入，时间轴只计算实际保留的采样。暂停标记必须排在已接受的音频之后；worker 刷新音频处理尾部、结束当前话语并重置 VAD，保持累计采样时钟。已有字幕和翻译继续处理，停止或关闭可唤醒暂停中的采集线程。
 - `translation_context.ContextPlanner` 为首次提交和原文定稿分别建立请求快照，中间修订不触发翻译。最终上下文只捕获一次，不等待未来邻句。翻译开始前及发布时验证请求；初译可以对应较早原文，并明确记录来源。发布在字幕锁内执行，保留当前 Caption 的原文、时间和定稿字段，只更新译文、错误和翻译阶段/来源。出错或取消也必须归还已取出的队列任务计数。
 - VAD 音频张量通过 `runtime_compat.configure_vad_float32` 显式保持 Float32，避免后台半精度模型加载改变 PyTorch 全局默认类型时崩溃；见 [修复与实测记录](testing/VAD_DTYPE_FIX.md)。
+- llama.cpp 在 `backends.create_translator` 按 `translation_engine` 加载，GPU 模式确认所选设备和全部模型层加载后才开始翻译，CPU 模式显式关闭 GPU 层加载。准备步骤固定下载版本并校验 SHA-256；推理阶段只读本地文件，不下载、不回退 CPU。服务绑定 127.0.0.1、使用每次会话独立认证并忽略系统代理。翻译消费结束或取消时关闭服务，独立守护进程通过 stdin 管道断开处理 worker 意外退出。
+- PyTorch 与 llama.cpp 分别保存 `translation_model`、`llama_model`；引擎与设备独立。旧的 Metal 会话通过缺省引擎兼容，旧偏好迁移在 `preferences.py` 完成。提示词与默认生成参数统一维护于 `translation_models.py`。
 - 默认保存目录仍为安装目录下的 `录音`；开发态使用项目下的 `录音`。自定义目录不自动混入其他库的数据。取消选目录不进入无限重试；成功打开后才记住新的路径。
 
 ## 验证与后续修改

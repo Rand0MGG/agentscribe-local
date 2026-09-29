@@ -2,6 +2,7 @@
 .venv-wlk/
 .venv-mlx/
 .work/
+.runtime/
 .venv-qwen/
 __pycache__/
 *.pyc

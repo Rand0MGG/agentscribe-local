@@ -10,3 +10,10 @@ def runtime_python():
 
 def mlx_python():
     return Path(__file__).resolve().parents[1] / '.venv-mlx' / 'bin/python'
+
+
+def llama_server(device='cpu'):
+    root = Path(__file__).resolve().parents[1] / '.runtime' / 'llama-b11254'
+    if sys.platform == 'win32':
+        return root / ('windows-x64-' + device) / 'llama-server.exe'
+    return root / 'llama-server'

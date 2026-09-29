@@ -1,10 +1,20 @@
 """Model adapters. Imports and downloads only occur when a session is started."""
 
 from .core import WHISPER_TO_NLLB, Settings
-from .translation_models import is_hy_model, translation_prompt
+from .translation_models import HY_GENERATION, is_hy_model, translation_engine, translation_prompt
 
 
 def create_translator(settings, report=lambda text: None):
+    engine = translation_engine(settings)
+    if engine == 'llama':
+        from .llama_translation import LlamaTranslator
+        return LlamaTranslator(settings, report)
+    if engine != 'pytorch' or settings.translation_device not in ('cpu', 'cuda'):
+        raise ValueError('不支持的翻译引擎与设备组合')
+    if not is_hy_model(settings.translation_model) and 'nllb' not in settings.translation_model.lower():
+        from pathlib import Path
+        if not Path(settings.translation_model).is_dir():
+            raise ValueError('PyTorch 当前支持 HY-MT2、NLLB 及兼容模型目录。')
     cls = HyMtTranslator if is_hy_model(settings.translation_model) else NllbTranslator
     return cls(settings, report)
 
@@ -46,12 +56,11 @@ class HyMtTranslator:
         if length > 8192:
             raise ValueError('本段翻译输入过长；已保留原文，不静默截断。')
         with self.torch.inference_mode():
-            output = self.model.generate(**inputs, max_new_tokens=1024, do_sample=True,
-                                         temperature=.7, top_p=.6, top_k=20, repetition_penalty=1.05)
+            output = self.model.generate(**inputs, **HY_GENERATION)
         tokens = output[0][length:]
         eos = self.model.generation_config.eos_token_id
         eos = eos if isinstance(eos, list) else [eos]
-        if len(tokens) >= 1024 and int(tokens[-1]) not in eos:
+        if len(tokens) >= HY_GENERATION['max_new_tokens'] and int(tokens[-1]) not in eos:
             raise ValueError('译文达到长度上限，未将截断结果作为定稿。')
         result = self.tokenizer.decode(tokens, skip_special_tokens=True).strip()
         if not result:

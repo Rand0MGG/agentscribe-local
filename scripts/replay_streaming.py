@@ -6,7 +6,6 @@ Reference transcripts are deliberately not an input to this program.
 import argparse
 import hashlib
 import json
-import os
 import sys
 import time
 from dataclasses import asdict
@@ -78,9 +77,10 @@ def prepare(source, destination):
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
 
 
-def replay(manifest_path, output, settings_path=None):
+def replay(manifest_path, output, settings_path=None, pause_at=(), pause_seconds=2.):
     import numpy as np
     from PySide6.QtCore import QCoreApplication
+
     from linguaflow.core import Settings
     from linguaflow.wlk_session import Session
     manifest = json.loads(Path(manifest_path).read_text(encoding='utf-8'))
@@ -113,19 +113,21 @@ def replay(manifest_path, output, settings_path=None):
     delivery_lateness = []
     def capture(settings, stop, on_block):
         began = time.monotonic()
-        capture_info['start_after_launch_seconds'] = began-started
-        for offset in range(0, len(pcm), 4800):
+        capture_info.setdefault('start_after_launch_seconds', began-started)
+        origin = capture_info['samples_delivered']
+        for offset in range(origin, len(pcm), 4800):
             block = np.array(pcm[offset:offset+4800], copy=True)
-            due = began + (offset+len(block))/48000
+            due = began + (offset-origin+len(block))/48000
             if stop.wait(max(0, due-time.monotonic())):
                 break
             lateness = max(0., time.monotonic()-due)
             delivery_lateness.append(lateness)
             capture_info['max_delivery_lateness_seconds'] = max(capture_info['max_delivery_lateness_seconds'], lateness)
-            on_block(block)
+            if on_block(block) is False:
+                break
             capture_info['samples_delivered'] += len(block)
             capture_info['blocks_delivered'] += 1
-        capture_info['wall_seconds'] = time.monotonic()-began
+        capture_info['wall_seconds'] = capture_info.get('wall_seconds', 0.) + time.monotonic()-began
         if delivery_lateness:
             capture_info['delivery_lateness_p50_p95_p99_seconds'] = {
                 name: float(np.quantile(delivery_lateness, q))
@@ -133,15 +135,21 @@ def replay(manifest_path, output, settings_path=None):
     app = QCoreApplication.instance() or QCoreApplication([])
     session = Session(settings, capture_fn=capture, diagnostic=True)
     failures = []
+    pending_pauses = sorted(pause_at)
+    resume_at = [None]
     code_files = ['wlk_session.py', 'wlk_worker.py', 'journal.py', 'runtime_compat.py',
                   'wlk_captions.py', 'qwen_revisions.py', 'revision_audit.py', 'translation_queue.py',
-                  'semantic_model.py', 'audio_processing/pipeline.py', 'core.py']
+                  'semantic_model.py', 'audio_processing/pipeline.py', 'core.py', 'capture_control.py',
+                  'translation_service.py', 'translation_context.py', 'backends.py',
+                  'llama_translation.py', 'llama_assets.py', 'managed_process.py', 'process_platform.py',
+                  'translation_models.py']
     code_files = sorted(set(code_files) | {
         p.relative_to(ROOT/'linguaflow').as_posix() for p in (ROOT/'linguaflow/audio_processing').glob('*.py')})
     provenance = {'schema': 1, 'audio': manifest, 'replay_speed': 1.0, 'capture_block_samples': 4800,
                   'path': 'Session(capture_fn=file) -> AudioJournal -> wlk_worker -> captions',
                   'file_sha256': {p: sha256(ROOT/'linguaflow'/p) for p in code_files},
                   'runner_sha256': sha256(__file__), 'reference_available_to_asr': False,
+                  'pause_at': list(pause_at), 'pause_seconds': pause_seconds,
                   'settings_sha256': sha256(output/'settings.json')}
     (output/'manifest.json').write_text(json.dumps(provenance, ensure_ascii=False, indent=2), encoding='utf-8')
     with (output/'events.jsonl').open('w', encoding='utf-8') as events:
@@ -151,6 +159,10 @@ def replay(manifest_path, output, settings_path=None):
             events.flush()
         session.model_result.connect(lambda data: event("model_result", data=data))
         session.ready.connect(lambda: event('ready'))
+        def pause_changed(paused):
+            event('capture_paused', paused=paused, samples_delivered=capture_info['samples_delivered'])
+            resume_at[0] = time.monotonic() + pause_seconds if paused else None
+        session.paused.connect(pause_changed)
         session.caption.connect(lambda caption: event('caption', data=asdict(caption)))
         session.status.connect(lambda text: event('status', text=text))
         session.stage.connect(lambda stage, text: event('stage', stage=stage, text=text))
@@ -164,6 +176,12 @@ def replay(manifest_path, output, settings_path=None):
             while session.isRunning():
                 app.processEvents()
                 now = time.monotonic()
+                if resume_at[0] is not None and now >= resume_at[0]:
+                    session.resume()
+                    resume_at[0] = None
+                elif pending_pauses and capture_info['samples_delivered']/48000 >= pending_pauses[0]:
+                    if session.pause():
+                        pending_pauses.pop(0)
                 if now-last_progress >= 30:
                     print(f'Input {capture_info["samples_delivered"]/48000:.1f}/{len(pcm)/48000:.1f}s', flush=True)
                     last_progress = now
@@ -199,8 +217,10 @@ if __name__ == '__main__':
     p.add_argument('--prepared', required=True)
     p.add_argument('--output', required=True)
     p.add_argument('--settings')
+    p.add_argument('--pause-at', type=float, action='append', default=[])
+    p.add_argument('--pause-seconds', type=float, default=2.)
     args = parser.parse_args()
     if args.command == 'prepare':
         prepare(args.input, args.output)
     else:
-        replay(args.prepared, args.output, args.settings)
+        replay(args.prepared, args.output, args.settings, args.pause_at, args.pause_seconds)
