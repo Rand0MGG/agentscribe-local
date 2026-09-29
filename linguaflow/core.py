@@ -63,6 +63,24 @@ class Caption:
     stable_source: str = ""
     ready: bool = False
     boundary_reason: str = ""
+    translation_phase: str = ""  # initial / final; empty for older saved captions
+    translation_source: str = ""
+
+
+def translation_status(caption):
+    if caption.error:
+        return "最终翻译失败" if caption.final else "初译失败"
+    if caption.translation_phase == "final" and caption.translation:
+        return "译文已定稿"
+    if not caption.translation_phase and caption.translation and caption.final:
+        return "已保存译文"
+    if caption.translation:
+        if caption.final:
+            return "初译 · 等待最终译文"
+        if caption.translation_source and caption.translation_source != caption.source:
+            return "初译 · 原文已更新"
+        return "初译 · 待原文定稿"
+    return "等待最终翻译" if caption.final else ("等待初译" if caption.ready else "等待原文提交")
 
 
 def srt_time(seconds: float) -> str:
@@ -78,6 +96,7 @@ def export_srt(captions: list[Caption]) -> str:
     for index, caption in enumerate((c for c in captions if c.final and c.source.strip()), 1):
         text = caption.source.strip()
         if caption.translation:
-            text += "\n" + caption.translation.strip()
+            prefix = '[初译] ' if caption.translation_phase == 'initial' else ''
+            text += "\n" + prefix + caption.translation.strip()
         rows.append(f"{index}\n{srt_time(caption.start)} --> {srt_time(caption.end)}\n{text}\n")
     return "\n".join(rows)

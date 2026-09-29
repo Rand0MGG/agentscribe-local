@@ -117,7 +117,10 @@ async def serve(settings, emit, read_message):
         from .runtime_compat import create_whisper_engine
         engine = create_whisper_engine(TranscriptionEngine, config, settings.get("asr_device", "cpu"))
     emit({"type": "status", "text": "识别模型已加载，正在创建流式解码任务…"})
-    processor = AudioProcessor(transcription_engine=engine)
+    stream_events = asyncio.Queue()
+    processor = AudioProcessor(transcription_engine=engine, stream_event_queue=stream_events)
+    from .runtime_compat import configure_vad_float32
+    configure_vad_float32(processor)
     if accurate_qwen:
         if mlx:
             from .mlx_asr import build_mlx_online
@@ -167,29 +170,33 @@ async def serve(settings, emit, read_message):
     translation_queue = TranslationQueue()
     from .translation_context import ContextPlanner
     from .translation_models import is_hy_model
-    context_planner = (ContextPlanner(settings.get('translation_before', 3), settings.get('translation_after', 1))
-                       if is_hy_model(settings.get('translation_model', '')) else None)
+    contextual_translation = is_hy_model(settings.get('translation_model', ''))
+    context_planner = ContextPlanner(
+        settings.get('translation_before', 3) if contextual_translation else 0,
+        settings.get('translation_after', 1) if contextual_translation else 0)
     caption_lock = asyncio.Lock()
     latest = {}
+    closed_audio_time = -1.
 
     async def publish(snapshot, done=False):
         async with caption_lock:
             if revisions is not None:
                 revisions.augment_snapshot(snapshot, config.lan)
+            elif closed_audio_time >= 0:
+                snapshot['closed_audio_time'] = max(snapshot.get('closed_audio_time', -1), closed_audio_time)
             captions = await asyncio.to_thread(mapper.update, snapshot, done=done)
             for caption in captions:
                 emit({"type": "caption", "data": asdict(caption)})
-                if (not context_planner and (caption.ready or caption.final)
-                        and caption.source and settings.get("translate")):
-                    translation_queue.put_nowait(caption)
-            if context_planner and settings.get('translate'):
+            if settings.get('translate'):
                 for caption in context_planner.update(mapper.previous.values()):
                     translation_queue.put_nowait(caption)
 
     async def publish_translation(caption, context=None):
+        def apply(current):
+            mapper.previous[current.id] = current
+            emit({'type': 'caption', 'data': asdict(current)})
         await publish_translation_result(caption, mapper.previous.get, caption_lock,
-            lambda current: emit({"type": "caption", "data": asdict(current)}),
-            context, context_planner.get if context_planner else None)
+            apply, context, context_planner.get if contextual_translation else None, context_planner)
 
     async def translate():
         if not settings.get("translate"):
@@ -201,7 +208,7 @@ async def serve(settings, emit, read_message):
             lambda: create_translator(SimpleNamespace(**settings), report),
             mapper.previous.get, publish_translation, report,
             lambda values: emit({"type": "translation_metrics", **values}),
-            context_planner.get if context_planner else None)
+            context_planner.get if contextual_translation else None, context_planner)
 
     async def output():
         async for snapshot in results:
@@ -225,7 +232,28 @@ async def serve(settings, emit, read_message):
             revision_changed.clear()
             await publish({})
 
+    async def source_lifecycle():
+        nonlocal closed_audio_time
+        checked = event_loop.time()
+        while True:
+            ended = False
+            try:
+                event = await asyncio.wait_for(stream_events.get(), .25)
+                if event.kind == 'silence_transcription_ready':
+                    # WLK emits this only after final decoding and its snapshot,
+                    # unlike silence_started, which can precede pending inference.
+                    closed_audio_time = max(closed_audio_time, event.timestamp)
+                    ended = True
+                stream_events.task_done()
+            except asyncio.TimeoutError:
+                pass
+            if ended or event_loop.time() - checked >= .25:
+                checked = event_loop.time()
+                if latest or revisions is not None:
+                    await publish(dict(latest))
+
     revision_task = asyncio.create_task(revision_output()) if revisions is not None else None
+    lifecycle_task = asyncio.create_task(source_lifecycle())
     output_task = asyncio.create_task(output())
     def output_finished(task):
         if not task.cancelled() and task.exception():
@@ -233,6 +261,7 @@ async def serve(settings, emit, read_message):
     output_task.add_done_callback(output_finished)
     if revision_task:
         revision_task.add_done_callback(output_finished)
+    lifecycle_task.add_done_callback(output_finished)
     translation_task = asyncio.create_task(translate())
     translation_task.add_done_callback(output_finished)
     emit({"type": "ready", "backend": config.backend})
@@ -246,6 +275,8 @@ async def serve(settings, emit, read_message):
             if message["type"] == "audio":
                 await process_pcm(base64.b64decode(message["pcm"], validate=True))
         await output_task
+        lifecycle_task.cancel()
+        await asyncio.gather(lifecycle_task, return_exceptions=True)
         if revision_task:
             revision_task.cancel()
             await asyncio.gather(revision_task, return_exceptions=True)
@@ -257,6 +288,8 @@ async def serve(settings, emit, read_message):
             emit({"type": "status", "text": f"本次 PyTorch 显存分配峰值 {torch.cuda.max_memory_allocated() / 1024**3:.2f} GiB（不含驱动等额外占用）"})
         emit({"type": "done"})
     finally:
+        lifecycle_task.cancel()
+        await asyncio.gather(lifecycle_task, return_exceptions=True)
         if revision_task:
             revision_task.cancel()
             await asyncio.gather(revision_task, return_exceptions=True)

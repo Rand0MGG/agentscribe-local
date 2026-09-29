@@ -15,18 +15,15 @@ from PySide6.QtCore import (
     QTimer,
     QUrl,
 )
-from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
-    QComboBox,
     QFileDialog,
     QFormLayout,
     QFrame,
     QHBoxLayout,
-    QInputDialog,
     QMainWindow,
-    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
@@ -41,7 +38,7 @@ from PySide6.QtWidgets import (
 )
 
 from .audio import list_devices
-from .core import LANGUAGES, export_srt
+from .core import LANGUAGES, export_srt, translation_status
 from .deleted_dialog import DeletedDialog
 from .library import Library
 from .library_access import acquire_recording_lock, check_library_access
@@ -52,6 +49,9 @@ from .qt_controls import data_index
 from .qt_controls import text_label as label
 from .recording_state import RecordingState
 from .settings_binding import SettingsBinding
+from .ui_components import ActionMenu, Disclosure, NameDialog
+from .ui_components import ChoiceBox as QComboBox
+from .ui_theme import SURFACE_STYLE
 from .wlk_session import Session
 from .workspace_widgets import LibraryTree, RecordingDialog, SettingsWorkspace, Switch
 
@@ -176,6 +176,7 @@ QListWidget#settingsNavigation::item { padding: 12px 14px; border-radius: 8px; m
 QListWidget#settingsNavigation::item:selected { background: #353033; color: #f3f3f5; }
 QListWidget#settingsNavigation::item:hover:!selected { background: rgba(255,255,255,10); }
 """
+STYLE += SURFACE_STYLE
 
 
 def enable_system_backdrop(window):
@@ -472,7 +473,8 @@ class Overlay(QWidget):
         self.source.setText(caption.source)
         self.source.setStyleSheet("font-size: 19px; color: " +
                                  ("#e5e5e7;" if caption.final else "#a8a8ae;"))
-        self.target.setText(caption.translation if translating else "")
+        prefix = '初译 · ' if caption.translation_phase == 'initial' else ''
+        self.target.setText(prefix + caption.translation if translating and caption.translation else "")
         self.target.setVisible(bool(self.target.text()))
         self.adjustSize()
 
@@ -501,10 +503,12 @@ class CaptionCard(QFrame):
         self.source.setStyleSheet("font-size: 16px; color: " +
                                  ("#efeff1;" if caption.final else "#98989f;"))
         self.meta.setText(f"{int(caption.start) // 60:02}:{int(caption.start) % 60:02}" +
-                          ("  ·  ●" if not caption.final else ""))
-        self.meta.setToolTip("正在聆听，文字会随语音更新" if not caption.final else "已定稿")
+                          (' · 原文已定稿' if caption.final else (' · 已提交，可修订' if caption.ready else ' · 识别中')) +
+                          (' · ' + translation_status(caption) if self.translating else ''))
+        self.meta.setToolTip(translation_status(caption) if self.translating else '识别独立决定提交与定稿')
         self.target.setText(caption.translation or ("翻译暂不可用" if caption.error else ""))
-        self.target.setToolTip(caption.error)
+        self.target.setToolTip(caption.error or ('初译依据：' + caption.translation_source
+                               if caption.translation_phase == 'initial' else ''))
         self.target.setVisible(bool(self.target.text()))
 
 
@@ -600,6 +604,10 @@ class Window(QMainWindow):
         deleted_button.setObjectName("navigation")
         deleted_button.clicked.connect(self.show_deleted)
         sidebar_layout.addWidget(deleted_button)
+        guide_button = QPushButton('使用指南')
+        guide_button.setObjectName('navigation')
+        guide_button.clicked.connect(lambda: self.open_settings('使用指南'))
+        sidebar_layout.addWidget(guide_button)
         sidebar_layout.addWidget(settings_button)
         sidebar_layout.addWidget(label("  本地工作空间", "timestamp"))
         self.settings_panel = QWidget()
@@ -640,19 +648,24 @@ class Window(QMainWindow):
         self.asr.addItems(["tiny", "base", "small", "medium", "large-v3", "turbo"])
         self.asr.setCurrentText("small")
         models.addRow("识别模型 · Whisper", self.asr)
-        choose_asr = QPushButton("选择识别模型目录…")
+        choose_asr = QPushButton("选择模型目录…")
         choose_asr.clicked.connect(lambda: self.choose_model(self.asr))
-        models.addRow(choose_asr)
-        choose_checkpoint = QPushButton("选择 Whisper .pt 文件…")
+        choose_checkpoint = QPushButton("选择 .pt 文件…")
         choose_checkpoint.clicked.connect(self.choose_checkpoint)
-        models.addRow(choose_checkpoint)
+        local_models = QWidget()
+        local_buttons = QHBoxLayout(local_models)
+        local_buttons.setContentsMargins(0, 0, 0, 0)
+        local_buttons.addWidget(choose_asr)
+        local_buttons.addWidget(choose_checkpoint)
+        local_buttons.addStretch()
+        models.addRow(Disclosure('使用已下载的本地权重', local_models))
         self.compute = QComboBox()
         self.compute.addItem("CPU（通用）", "cpu")
         if sys.platform == 'darwin':
             self.compute.addItem('Apple GPU · Metal / MLX', 'mlx')
         if sys.platform != "darwin":
             self.compute.addItem("NVIDIA GPU · 半精度", "cuda")
-        self.model_manager.asr_form.addRow("识别计算设备", self.compute)
+        self.model_manager.asr_form.insertRow(2, "识别计算设备", self.compute)
         models = self.model_manager.translation_form
         self.translation = QComboBox()
         self.translation.setEditable(True)
@@ -688,7 +701,7 @@ class Window(QMainWindow):
         self.audio_summary = label("音频：原声直通", "muted")
         self.audio_summary.setWordWrap(True)
         form_outer.addWidget(self.audio_summary)
-        form_outer.addWidget(label("原文先出现，并随后文修正。\n暂定分段即可翻译，稳定后定稿。", "muted"))
+        form_outer.addWidget(label("原文提交后先显示初译。\n识别定稿后，再生成最终译文。", "muted"))
         form_outer.addStretch()
         self.legacy_settings_panel = self.settings_panel
         self.legacy_settings_panel.setParent(self)
@@ -718,12 +731,13 @@ class Window(QMainWindow):
         more = QPushButton("···")
         more.setObjectName("quiet")
         more.setToolTip("更多操作")
-        menu = QMenu(more)
+        menu = ActionMenu(more)
         menu.addAction("复制最新字幕", self.copy_latest)
+        menu.addSeparator()
         menu.addAction("重命名录音", self.rename_current)
         menu.addAction("打开保存位置", self.reveal_recording)
-        menu.addAction("删除录音…", self.delete_current)
         menu.addAction("刷新文件列表", self.rescan_library)
+        menu.addSeparator()
         diagnostics_button = menu.addAction("诊断记录")
         diagnostics_button.setCheckable(True)
         more.setMenu(menu)
@@ -756,12 +770,17 @@ class Window(QMainWindow):
         self.scroll.setWidget(self.feed)
         content_layout.addWidget(self.scroll, 1)
         self.follow = Switch("自动滚动到最新字幕")
+        self.reduce_motion = Switch('减少动态效果')
+        self.reduce_motion.toggled.connect(lambda value: QApplication.instance().setProperty('reduceMotion', value))
         self.follow.setChecked(True)
         self.follow.hide()
         follow_action = menu.addAction("跟随最新字幕")
         follow_action.setCheckable(True)
         follow_action.setChecked(True)
         follow_action.toggled.connect(self.follow.setChecked)
+        self.follow.toggled.connect(follow_action.setChecked)
+        menu.addSeparator()
+        menu.addAction('移到最近删除…', self.delete_current)
         self.diagnostics = QPlainTextEdit()
         self.diagnostics.setReadOnly(True)
         self.diagnostics.setMaximumBlockCount(500)
@@ -808,6 +827,19 @@ class Window(QMainWindow):
         self.playback.hide()
         self.player = None
         content_layout.addWidget(self.playback)
+        quick = QHBoxLayout()
+        self.quick_language = QPushButton('输入与语言')
+        self.quick_language.setObjectName('quiet')
+        self.quick_language.setToolTip('更改音频来源、原文和目标语言')
+        self.quick_language.clicked.connect(lambda: self.open_settings('聆听'))
+        quick.addWidget(self.quick_language)
+        self.quick_model = QPushButton('识别模型')
+        self.quick_model.setObjectName('quiet')
+        self.quick_model.setToolTip('选择和准备本地识别模型')
+        self.quick_model.clicked.connect(lambda: self.open_settings('识别模型'))
+        quick.addWidget(self.quick_model)
+        quick.addStretch()
+        content_layout.addLayout(quick)
         content_layout.addWidget(footer)
         right_layout.addWidget(content, 1)
         split.addWidget(right)
@@ -823,6 +855,7 @@ class Window(QMainWindow):
             pref.key: getattr(self, pref.key) if hasattr(self, pref.key) else getattr(self.model_manager, pref.key)
             for pref in PREFERENCES})
         self.restore()
+        QApplication.instance().setProperty('reduceMotion', self.reduce_motion.isChecked())
         self.model_manager.backend.currentIndexChanged.connect(self.sync_asr_device)
         self.compute.currentIndexChanged.connect(self.select_asr_device)
         if sys.platform == 'darwin':
@@ -833,7 +866,7 @@ class Window(QMainWindow):
         self.settings_workspace = SettingsWorkspace(WorkspaceFrame,
             storage_root=self.library.root, manager=self.model_manager,
             controls={key: getattr(self, key) for key in
-                      ('follow', 'device', 'source', 'target', 'translate', 'audio_summary')})
+                      ('follow', 'device', 'source', 'target', 'translate', 'audio_summary', 'reduce_motion')})
         self.settings_panel = self.settings_workspace.listening_page
         for signal, action in (
                 (self.settings_workspace.back_requested, self.leave_settings),
@@ -844,6 +877,15 @@ class Window(QMainWindow):
                 (self.settings_workspace.audio_requested, self.manage_audio)):
             signal.connect(action)
         self.pages.addWidget(self.settings_workspace)
+        self.source.currentTextChanged.connect(self.update_quick_settings)
+        self.target.currentTextChanged.connect(self.update_quick_settings)
+        self.translate.toggled.connect(self.update_quick_settings)
+        self.model_manager.backend.currentIndexChanged.connect(self.update_quick_settings)
+        self.update_quick_settings()
+        for sequence, action in [('Ctrl+,', self.open_settings), ('Ctrl+N', self.new_recording),
+                                 ('Escape', self.return_to_recording), ('Ctrl+F', self.focus_settings_search)]:
+            shortcut = QShortcut(QKeySequence(sequence), self)
+            shortcut.activated.connect(action)
         self.follow.setText("")
         self.translate.setText("")
         self.activity_timer = QTimer(self)
@@ -862,6 +904,23 @@ class Window(QMainWindow):
         self.save()
         self.update_model_summary()
         self.pages.setCurrentIndex(0)
+
+    def return_to_recording(self):
+        if self.pages.currentIndex() == 1 and QApplication.activeModalWidget() is None:
+            self.leave_settings()
+
+    def focus_settings_search(self):
+        if self.pages.currentIndex() == 1:
+            self.settings_workspace.search.setFocus()
+            self.settings_workspace.search.selectAll()
+
+    def update_quick_settings(self):
+        language = self.source.currentText()
+        self.quick_language.setText(language + (' → ' + self.target.currentText()
+                                    if self.translate.isChecked() else ' · 仅原文') + '  ⌄')
+        backend = self.model_manager.backend.currentData()
+        self.quick_model.setText({'wlk-whisper': 'Whisper', 'qwen3-streaming': 'Qwen3-ASR',
+                                 'qwen3-mlx': 'Qwen · Apple GPU'}.get(backend, '识别模型') + '  ⌄')
 
     def open_recording_library(self, explicit_root):
         def choose_directory(root, error):
@@ -932,7 +991,7 @@ class Window(QMainWindow):
     def create_folder(self, checked=False, parent_id=None):
         if self.session:
             return
-        name, ok = QInputDialog.getText(self, "新建文件夹", "文件夹名称")
+        name, ok = NameDialog.getText(self, "新建文件夹", "文件夹名称")
         if ok:
             try:
                 self.folder_id = self.library.folder(name, parent=parent_id)["id"]
@@ -1039,7 +1098,7 @@ class Window(QMainWindow):
     def rename_item(self, item):
         if not self.can_edit_library(item):
             return
-        name, ok = QInputDialog.getText(self, "重命名", "名称", text=item["name"])
+        name, ok = NameDialog.getText(self, "重命名", "名称", text=item["name"])
         if ok:
             self.release_playback()
             try:
@@ -1062,19 +1121,21 @@ class Window(QMainWindow):
         item = next((i for i in collection if i["id"] == identifier), None)
         if item is None:
             return
-        menu = QMenu(self)
+        menu = ActionMenu(self)
         if kind == "folder":
             menu.addAction("在此文件夹中新建录音…", lambda: self.new_recording(folder_id=identifier))
             menu.addAction("新建子文件夹…", lambda: self.create_folder(parent_id=identifier))
             menu.addSeparator()
         menu.addAction("重命名…", lambda: self.rename_item(item))
         menu.addAction("在资源管理器中打开", lambda: self.open_path(self.library.directory(identifier)))
-        move = menu.addMenu("移动到文件夹")
+        move = ActionMenu(menu)
+        move.setTitle('移动到文件夹')
+        menu.addMenu(move)
         for folder in self.library.index["folders"]:
             if folder["id"] != identifier:
                 move.addAction(self.library.folder_label(folder["id"]), lambda f=folder: self.move_recording(item, f["id"]))
         menu.addSeparator()
-        menu.addAction("删除…", lambda: self.delete_item(item))
+        menu.addAction("移到最近删除…", lambda: self.delete_item(item))
         menu.exec(position)
 
     def move_recording(self, item, folder_id):
@@ -1464,13 +1525,13 @@ class Window(QMainWindow):
     def on_finished(self):
         if self.caption_translation:
             for caption in list(self.captions.values()):
-                if caption.final and not caption.translation and not caption.error:
+                if caption.final and (not caption.translation or caption.translation_phase == 'initial') and not caption.error:
                     self.on_caption(replace(caption, error="会话已结束，此条翻译未完成"))
         self.session.deleteLater()
         self.session = None
         self.set_recording_state(RecordingState.IDLE)
         translation_incomplete = self.caption_translation and any(
-            c.source and (c.error or not c.translation) for c in self.captions.values())
+            c.source and (c.error or not c.translation or c.translation_phase == 'initial') for c in self.captions.values())
         state = "incomplete" if self.last_error or translation_incomplete else "complete"
         if self.current_item and not self.last_error and not self.captions:
             try:
@@ -1517,7 +1578,9 @@ class Window(QMainWindow):
         self.empty.hide()
         if (previous and previous.source == caption.source and previous.language == caption.language
                 and not caption.translation and (caption.ready or caption.final)):
-            caption = replace(caption, translation=previous.translation)
+            caption = replace(caption, translation=previous.translation,
+                              translation_source=previous.translation_source,
+                              translation_phase=previous.translation_phase)
         self.captions[caption.id] = caption
         if caption.id in self.cards:
             self.cards[caption.id].update_caption(caption)

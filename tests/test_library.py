@@ -148,3 +148,15 @@ def test_permanent_delete_is_confined_to_trash(tmp_path):
     library.purge_deleted(token)
     assert library.directory(retained["id"]).is_dir()
     assert not library.deleted()
+
+
+def test_initial_translation_roundtrip_and_exports_are_explicit(tmp_path):
+    library = Library(tmp_path)
+    item = library.create('inbox', {}, name='初译保留')
+    caption = Caption(1, 0, 1, 'correct source', 'en', translation='initial translation',
+                      translation_phase='initial', translation_source='old source')
+    library.save(item, [caption], state='incomplete')
+    loaded = library.load(item)[1][0]
+    assert loaded.translation_source == 'old source' and loaded.translation_phase == 'initial'
+    for name in ('定稿.txt', '定稿.srt'):
+        assert '[初译] initial translation' in (library.directory(item['id']) / name).read_text(encoding='utf-8-sig')

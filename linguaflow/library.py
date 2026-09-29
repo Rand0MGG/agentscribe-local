@@ -186,7 +186,9 @@ class Library:
         self._write(directory / "session.json", data)
         final = [Caption(**c) for c in data["captions"] if c["final"] and c["source"]]
         for filename, text in [("定稿.srt", export_srt(final)),
-                               ("定稿.txt", "\n\n".join("\n".join(filter(None, [c.source, c.translation]))
+                               ("定稿.txt", "\n\n".join("\n".join(filter(None, [c.source,
+                                                       ('[初译] ' if c.translation_phase == 'initial' else '') + c.translation
+                                                       if c.translation else '']))
                                                       for c in final))]:
             path = directory / filename
             temporary = path.with_suffix(path.suffix + ".tmp")

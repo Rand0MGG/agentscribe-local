@@ -9,6 +9,43 @@ import tempfile
 from pathlib import Path
 
 
+def configure_vad_float32(processor):
+    """Install before processing PCM; keep VAD independent of model load dtype.
+
+    Transformers temporarily changes torch's process-wide default dtype while
+    loading HY-MT2 in another thread. WLK's FixedVADIterator uses torch.Tensor
+    on each NumPy frame, which then becomes BF16/FP16. ONNX requires FP32.
+    Keep upstream VAD decisions/reset behavior and only replace frame conversion.
+    """
+    if processor.vac is None:
+        return
+    import numpy as np
+    import torch
+    from whisperlivekit.silero_vad_iterator import FixedVADIterator, VADIterator
+
+    class Float32VADIterator(FixedVADIterator):
+        def __call__(self, x, return_seconds=False):
+            self.buffer = np.append(self.buffer, np.asarray(x, dtype=np.float32))
+            events = []
+            while len(self.buffer) >= 512:
+                # from_numpy preserves FP32 without consulting global defaults.
+                # It also keeps ONNX's concatenated context FP32 when its initial
+                # zeros were allocated during a half-precision model load.
+                frame = torch.from_numpy(self.buffer[:512])
+                event = VADIterator.__call__(self, frame, return_seconds=return_seconds)
+                self.buffer = self.buffer[512:]
+                if event is not None:
+                    events.append(event)
+            return events
+
+    vad = processor.vac
+    processor.vac = Float32VADIterator(
+        vad.model, threshold=vad.threshold, sampling_rate=vad.sampling_rate,
+        min_silence_duration_ms=vad.min_silence_samples * 1000 / vad.sampling_rate,
+        speech_pad_ms=vad.speech_pad_samples * 1000 / vad.sampling_rate,
+    )
+
+
 def configure_vad_pause(processor, seconds):
     """Apply the UI pause to Silero itself, not only WLK line segmentation."""
     import math

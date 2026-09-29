@@ -10,8 +10,6 @@ from pathlib import Path
 
 from PySide6.QtCore import QProcess, QProcessEnvironment, Qt, QTimer, QUrl
 from PySide6.QtWidgets import (
-    QComboBox,
-    QDialog,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -32,17 +30,19 @@ from PySide6.QtWidgets import (
 from ..audio import list_devices
 from ..qt_controls import data_index
 from ..runtime_paths import runtime_python
+from ..ui_components import ChoiceBox as QComboBox
+from ..ui_components import SurfaceDialog
 from .config import PRESETS, AudioConfig
 from .health import input_warning
 from .recorder import Recorder
 
 
-class AudioLab(QDialog):
+class AudioLab(SurfaceDialog):
     def __init__(self, config=None, device=None, parent=None, discover=False):
-        super().__init__(parent)
+        super().__init__('音频实验室', '导入或录制短样本，对比原声与处理效果，再应用到下一次聆听。', parent)
         self.setWindowTitle("音频实验室 · 试听后再应用")
         self.resize(920, 760)
-        self.setStyleSheet("QDialog {background:#202020;} QGroupBox {border:1px solid #454545; border-radius:8px; margin-top:14px; padding:16px 10px 10px;} QGroupBox::title {subcontrol-origin:margin; left:12px;} QGroupBox::indicator {width:14px;height:14px;border:1px solid #888;border-radius:3px;background:#202020;} QGroupBox::indicator:checked {background:#dddddd;border-color:#dddddd;} QTabWidget::pane {border:0;}")
+        self.setStyleSheet("QGroupBox {border:1px solid #3e3e44; border-radius:10px; margin-top:16px; padding:18px 12px 12px;} QGroupBox::title {subcontrol-origin:margin; left:12px; color:#c4c4cf;} QGroupBox::indicator {width:14px;height:14px;border:1px solid #888;border-radius:3px;background:#202020;} QGroupBox::indicator:checked {background:#dddddd;border-color:#dddddd;} QTabWidget::pane {border:0;}")
         self.temp = tempfile.TemporaryDirectory(prefix="linguaflow-audition-")
         self.root = Path(self.temp.name)
         self.device = device
@@ -59,11 +59,9 @@ class AudioLab(QDialog):
         self.record_failed = False
         self.controls = {}
         self.result_config = AudioConfig.from_dict(config).for_platform().to_dict()
-        outer = QVBoxLayout(self)
-        title = QLabel("音频实验室")
-        title.setStyleSheet("font-size:22px;font-weight:600")
-        outer.addWidget(title)
-        hint = QLabel("选择预设 → 录一小段或导入 WAV → 处理并对比回听 → 应用到下一次聆听")
+        outer = self.body
+        hint = QLabel("01  准备样本    →    02  对比回听    →    03  应用设置")
+        hint.setObjectName('stepBadge')
         hint.setWordWrap(True)
         outer.addWidget(hint)
         top = QHBoxLayout()
@@ -145,6 +143,8 @@ class AudioLab(QDialog):
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setMaximumBlockCount(300)
+        self.log.setPlaceholderText('处理记录将在这里显示。\n先导入一段 WAV，或选择来源录制短样本。')
+        self.log.setMaximumHeight(140)
         listen.addWidget(self.log, 1)
         privacy = QLabel("录制与处理样本仅存本机临时目录，关闭后删除；导入的原文件、导出文件会保留。录音时暂停回听。")
         privacy.setWordWrap(True)
@@ -195,6 +195,7 @@ class AudioLab(QDialog):
         self.status.setWordWrap(True)
         buttons.addWidget(self.status, 1)
         self.apply_button = QPushButton("应用到聆听")
+        self.apply_button.setObjectName('primary')
         self.apply_button.setToolTip("将当前处理参数和录制来源用于下一次聆听。")
         self.cancel_button = QPushButton("取消当前操作")
         self.cancel_button.setEnabled(False)

@@ -55,6 +55,7 @@ class RevisionStore:
     def augment_snapshot(self, snapshot, language='en'):
         with self.lock:
             text, spans, stable_end = '', [], 0
+            closed_ends = []
             stable_prefix = True
             for _, row in sorted(self.rows.items()):
                 value = row['text']
@@ -64,13 +65,16 @@ class RevisionStore:
                     text += ' '
                 lo = len(text)
                 text += value
+                if row['closed']:
+                    closed_ends.append(len(text))
                 spans.extend((lo+i, lo+i+1, a, b, language)
                              for i, (a, b) in enumerate(self.times[row['interval_id']]))
                 if stable_prefix:
                     stable_end = lo + row['stable_end']
                     stable_prefix = row['stable_end'] == len(value)
             snapshot.clear()
-            snapshot.update(revision_text=text, stable_end=stable_end, revision_spans=spans)
+            snapshot.update(revision_text=text, stable_end=stable_end, revision_spans=spans,
+                            closed_ends=closed_ends)
 
 
 def install_revision_bridge(online, emit=None):

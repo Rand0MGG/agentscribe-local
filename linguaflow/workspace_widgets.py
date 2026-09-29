@@ -2,13 +2,11 @@
 
 from datetime import datetime
 
-from PySide6.QtCore import QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QEasingCurve, QRectF, QSize, Qt, QVariantAnimation, Signal
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QCheckBox,
-    QComboBox,
-    QDialog,
     QFormLayout,
     QFrame,
     QHBoxLayout,
@@ -26,6 +24,19 @@ from PySide6.QtWidgets import (
 )
 
 from .qt_controls import text_label
+from .ui_components import ChoiceBox as QComboBox
+from .ui_components import PageTransition, SurfaceDialog, motion_enabled
+
+PAGE_DESCRIPTIONS = {
+    '常规': '管理本地录音、保存位置和使用习惯。',
+    '聆听': '从哪里听、听什么语言，以及你想看到的译文。',
+    '识别模型': '把声音变成原文。选择引擎和计算设备，再准备模型。',
+    '翻译模型': '提交后先看初译，识别定稿后再结合上下文生成最终译文。',
+    '字幕与延迟': '让听写更连贯，让分句与定稿的节奏适合你。',
+    '音频处理': '先听原声，再决定是否需要降噪、去混响或响度调整。',
+    '运行环境': '首次使用时准备本地组件；遇到依赖问题时在这里修复。',
+    '使用指南': '从第一次聆听，到整理和分享你的录音。',
+}
 
 
 class Switch(QCheckBox):
@@ -34,6 +45,25 @@ class Switch(QCheckBox):
         self.setAccessibleName(text)
         self.setFixedSize(38, 24)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.position = 0.
+        self.motion = QVariantAnimation(self)
+        self.motion.setDuration(150)
+        self.motion.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.motion.valueChanged.connect(self.set_position)
+        self.toggled.connect(self.animate)
+
+    def set_position(self, value):
+        self.position = float(value)
+        self.update()
+
+    def animate(self, checked):
+        self.motion.stop()
+        if not self.isVisible() or not motion_enabled():
+            self.set_position(float(checked))
+            return
+        self.motion.setStartValue(self.position)
+        self.motion.setEndValue(float(checked))
+        self.motion.start()
 
     def hitButton(self, point):
         return self.rect().contains(point)
@@ -46,7 +76,11 @@ class Switch(QCheckBox):
         painter.setBrush(QColor("#4277c8" if self.isChecked() else "#4b4b50"))
         painter.drawRoundedRect(QRectF(1, 3, 36, 20), 10, 10)
         painter.setBrush(QColor("#f7f7f9"))
-        painter.drawEllipse(QRectF(19 if self.isChecked() else 3, 5, 16, 16))
+        painter.drawEllipse(QRectF(3 + 16 * self.position, 5, 16, 16))
+        if self.hasFocus():
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QColor('#c5d2ed'))
+            painter.drawRoundedRect(QRectF(.5, .5, 37, 23), 11, 11)
 
 
 class LibraryDelegate(QStyledItemDelegate):
@@ -129,23 +163,19 @@ class LibraryTree(QTreeWidget):
         super().mousePressEvent(event)
 
 
-class RecordingDialog(QDialog):
+class RecordingDialog(SurfaceDialog):
     def __init__(self, library, folder_id, parent):
-        super().__init__(parent)
-        self.setWindowTitle("新建录音")
-        self.setMinimumWidth(460)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(28, 26, 28, 24)
-        layout.setSpacing(14)
-        layout.addWidget(text_label("新建录音", "title"))
-        layout.addWidget(text_label("先起个名字，稍后开始聆听。", "muted"))
-        layout.addSpacing(8)
-        layout.addWidget(text_label("录音名称"))
+        super().__init__('新建录音', '为这次聆听留一个位置。创建后，你可以再开始录音。', parent)
+        layout = self.body
+        layout.addWidget(text_label('本地保存 · 原文与译文自动记录', 'stepBadge'))
+        layout.addSpacing(6)
+        layout.addWidget(text_label("录音名称", 'settingsLabel'))
         self.name = QLineEdit(datetime.now().strftime("录音 %m月%d日 %H时%M分"))
         self.name.setMaxLength(64)
         self.name.selectAll()
+        self.name.setPlaceholderText('例如：第 02 讲 · 梯度与优化')
         layout.addWidget(self.name)
-        layout.addWidget(text_label("保存到文件夹"))
+        layout.addWidget(text_label("保存到文件夹", 'settingsLabel'))
         self.folder = QComboBox()
         for item in library.index["folders"]:
             self.folder.addItem(library.folder_label(item["id"]), item["id"])
@@ -153,7 +183,7 @@ class RecordingDialog(QDialog):
         layout.addWidget(self.folder)
         self.error = text_label("同名录音会自动添加序号，已有文件不会被覆盖。", "muted")
         layout.addWidget(self.error)
-        buttons = QHBoxLayout()
+        buttons = self.actions
         buttons.addStretch()
         cancel = QPushButton("取消")
         cancel.clicked.connect(self.reject)
@@ -162,8 +192,10 @@ class RecordingDialog(QDialog):
         create.setObjectName("primary")
         create.clicked.connect(lambda: self.validate(library))
         create.setDefault(True)
+        create.setEnabled(bool(self.name.text().strip()) and self.folder.count() > 0)
+        self.name.textChanged.connect(lambda value: create.setEnabled(bool(value.strip()) and self.folder.count() > 0))
         buttons.addWidget(create)
-        layout.addLayout(buttons)
+        self.name.setFocus()
 
     def validate(self, library):
         try:
@@ -172,6 +204,9 @@ class RecordingDialog(QDialog):
                 raise ValueError("请先创建文件夹。")
         except ValueError as exc:
             self.error.setText(str(exc))
+            self.name.setProperty('invalid', True)
+            self.name.style().polish(self.name)
+            self.name.setFocus()
             return
         self.accept()
 
@@ -203,13 +238,15 @@ class SettingsWorkspace(QWidget):
         nav.addWidget(back)
         self.search = QLineEdit()
         self.search.setPlaceholderText("搜索设置…")
+        self.search.setAccessibleName('搜索设置')
+        self.search.setToolTip('搜索设置 · Ctrl+F')
         self.search.setClearButtonEnabled(True)
         nav.addWidget(self.search)
         nav.addSpacing(12)
         nav.addWidget(text_label("工作空间", "section"))
         self.navigation = QListWidget()
         self.navigation.setObjectName("settingsNavigation")
-        self.categories = ["常规", "聆听", "识别模型", "翻译模型", "字幕与延迟", "音频处理", "运行环境"]
+        self.categories = ["常规", "聆听", "识别模型", "翻译模型", "字幕与延迟", "音频处理", "运行环境", '使用指南']
         self.navigation.addItems(self.categories)
         nav.addWidget(self.navigation, 1)
         nav.addWidget(text_label("更改将用于下一次录音", "timestamp"))
@@ -222,9 +259,23 @@ class SettingsWorkspace(QWidget):
         outer.setContentsMargins(36, 44, 36, 24)
         self.title = text_label("常规", "settingsTitle")
         outer.addWidget(self.title)
-        outer.addSpacing(18)
+        self.description = text_label(PAGE_DESCRIPTIONS['常规'], 'pageDescription')
+        outer.addWidget(self.description)
+        outer.addSpacing(10)
         self.pages = QStackedWidget()
+        self.transition = PageTransition(self.pages)
         outer.addWidget(self.pages, 1)
+        self.no_results = QWidget()
+        empty_layout = QVBoxLayout(self.no_results)
+        empty_layout.addStretch()
+        empty_layout.addWidget(text_label('没有找到这个设置', 'dialogTitle'))
+        empty_layout.addWidget(text_label('试试「SaT」「GPU」「保存位置」或「翻译」。', 'muted'))
+        clear = QPushButton('清除搜索')
+        clear.clicked.connect(self.search.clear)
+        empty_layout.addWidget(clear, 0, Qt.AlignmentFlag.AlignLeft)
+        empty_layout.addStretch()
+        outer.addWidget(self.no_results, 1)
+        self.no_results.hide()
         layout.addWidget(right, 1)
         self.mapping = {}
         general, body = self.page("常规")
@@ -249,7 +300,9 @@ class SettingsWorkspace(QWidget):
         body.addWidget(text_label("使用习惯", "settingsSection"))
         card, rows = self.group()
         self.row(rows, "跟随最新字幕", "新文字出现时，自动滚动到最新位置。", controls['follow'])
+        self.row(rows, '减少动态效果', '关闭切页、弹窗和开关动画，即时显示操作结果。', controls['reduce_motion'])
         body.addWidget(card)
+        body.addWidget(text_label('键盘操作    Ctrl+,  打开设置    ·    Ctrl+N  新录音    ·    Esc  返回录音', 'infoBanner'))
         body.addStretch()
         listening, body = self.page("聆听")
         self.listening_page = listening
@@ -274,35 +327,68 @@ class SettingsWorkspace(QWidget):
         body.addWidget(card)
         body.addStretch()
         self.audio_page = self.pages.widget(self.mapping["音频处理"])
+        _, body = self.page('使用指南')
+        body.addWidget(text_label('第一次使用', 'settingsSection'))
+        card, rows = self.group()
+        for title, detail, category, action in [
+            ('01  准备本地模型', '首次安装运行环境，下载识别模型，并准备必需的 SaT 分句模型。', '运行环境', '准备环境'),
+            ('02  选择音频与语言', '选择麦克风或系统声音。使用 Qwen 时，指定原文语言。', '聆听', '设置聆听'),
+            ('03  按需开启翻译', '选择翻译模型和目标语言；只需要原文时，可关闭显示翻译。', '翻译模型', '设置翻译'),
+        ]:
+            button = QPushButton(action + '  →')
+            button.clicked.connect(lambda checked=False, category=category:
+                self.navigation.setCurrentRow(self.categories.index(category)))
+            self.row(rows, title, detail, button)
+        body.addWidget(card)
+        body.addWidget(text_label('聆听中的文字会发生什么？', 'settingsSection'))
+        body.addWidget(text_label('未提交  →  已提交，可修订  →  原文已定稿\n\n首次提交生成初译；中间原文修订时保留初译并标注。识别段结束后原文独立定稿，再生成最终译文。翻译不阻挡原文更新，也不等待尚未出现的后文。停止聆听会处理剩余内容，请等待收尾完成。', 'infoBanner'))
+        body.addWidget(text_label('录音结束以后', 'settingsSection'))
+        body.addWidget(text_label('从侧栏打开录音，可回听音频或导出双语 SRT。使用「···」重命名、移动或打开保存位置；删除的录音先进入「最近删除」，可在那里恢复。', 'muted'))
+        body.addStretch()
         manager.setWindowFlags(Qt.WindowType.Widget)
         manager.tabs.tabBar().hide()
         manager.done_button.hide()
         manager.cancel_button.setVisible(manager.worker is not None)
         manager.setObjectName("embeddedModels")
         manager.setStyleSheet("QDialog#embeddedModels { background: transparent; } QTabWidget::pane { border: none; }")
+        manager.layout().setContentsMargins(0, 0, 0, 0)
+        manager.layout().setSpacing(14)
         for form in manager.findChildren(QFormLayout):
             form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
-            form.setVerticalSpacing(18)
+            form.setAlignment(Qt.AlignmentFlag.AlignTop)
+            form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+            form.setVerticalSpacing(16)
             form.setHorizontalSpacing(24)
             form.setContentsMargins(18, 18, 18, 18)
             form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             for row in range(form.rowCount()):
                 field = form.itemAt(row, QFormLayout.ItemRole.FieldRole)
-                if field and field.widget() and isinstance(field.widget(), (QComboBox, QAbstractSpinBox, QCheckBox)):
-                    field.widget().setMaximumWidth(320)
-                    form.setAlignment(field.widget(), Qt.AlignmentFlag.AlignRight)
+                if field and field.widget() and isinstance(field.widget(), (QComboBox, QAbstractSpinBox)):
+                    field.widget().setMaximumWidth(380)
+                    field.widget().setMinimumWidth(170)
         for button in manager.findChildren(QPushButton):
             button.setMaximumWidth(340)
             if button.parentWidget().layout():
-                button.parentWidget().layout().setAlignment(button, Qt.AlignmentFlag.AlignRight)
+                button.parentWidget().layout().setAlignment(button, Qt.AlignmentFlag.AlignLeft)
         for tab in range(manager.tabs.count()):
-            page = manager.tabs.widget(tab).widget()
+            scroll = manager.tabs.widget(tab)
+            page = scroll.takeWidget()
             page.setObjectName("modelSettingsGroup")
             page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+            wrapper = QWidget()
+            column = QVBoxLayout(wrapper)
+            column.setContentsMargins(0, 0, 6, 0)
+            column.addWidget(page)
+            column.addStretch()
+            scroll.setWidget(wrapper)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         for hint in manager.findChildren(QLabel):
             hint.setWordWrap(True)
-            if hint.wordWrap():
-                hint.setStyleSheet("font-size: 12px; color: #aaaab0; border: none;")
+            if hint.objectName() not in ('settingsSection', 'preparationStatus'):
+                hint.setObjectName('settingsHint')
+        for subsection in (manager.whisper_page, manager.qwen_page):
+            subsection.setObjectName('modelSubsection')
+            subsection.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
         index = self.pages.addWidget(manager)
         for category in ["识别模型", "翻译模型", "字幕与延迟", "运行环境"]:
             self.mapping[category] = index
@@ -313,8 +399,8 @@ class SettingsWorkspace(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.sidebar.setFixedWidth(max(220, min(250, int(self.width() * .2))))
-        margin = max(24, (self.right.width() - 1000) // 2)
-        self.content_layout.setContentsMargins(margin, 40, margin, 24)
+        margin = max(24, (self.right.width() - 850) // 2)
+        self.content_layout.setContentsMargins(margin, 32, margin, 24)
 
     def page(self, name):
         scroll = QScrollArea()
@@ -365,26 +451,33 @@ class SettingsWorkspace(QWidget):
             return
         name = self.categories[index]
         self.title.setText(name)
+        self.description.setText(PAGE_DESCRIPTIONS[name])
         self.pages.setCurrentIndex(self.mapping[name])
         tabs = {"识别模型": 0, "翻译模型": 1, "字幕与延迟": 2, "运行环境": 3}
         if name in tabs:
             self.manager.tabs.setCurrentIndex(tabs[name])
+        self.transition.start()
 
     def filter(self, query):
         aliases = {"常规": "文件 存储 目录 路径 删除 恢复 跟随", "聆听": "设备 输入 语言",
-                   "识别模型": "Qwen Whisper GPU CPU 下载", "翻译模型": "NLLB 下载 译文",
-                   "字幕与延迟": "分句 草稿 刷新 停顿", "音频处理": "降噪 响度 增强 回听",
-                   "运行环境": "安装 修复"}
+                   "识别模型": "Qwen Whisper GPU CPU MLX 下载", "翻译模型": "NLLB HY-MT2 前文 后文 GPU CPU 下载 译文",
+                   "字幕与延迟": "SaT 分句 草稿 刷新 停顿", "音频处理": "降噪 响度 增强 回听",
+                   "运行环境": "安装 修复", '使用指南': '首次 使用 帮助 入门 导出 SRT 开始 说明'}
+        aliases['常规'] += ' 动画 减少动态效果 快捷键'
+        query = query.strip().casefold()
         visible = []
         for i, name in enumerate(self.categories):
-            match = query.casefold() in (name + " " + aliases[name]).casefold()
+            match = all(term in (name + ' ' + aliases[name] + ' ' + PAGE_DESCRIPTIONS[name]).casefold()
+                        for term in query.split())
             self.navigation.item(i).setHidden(not match)
             if match:
                 visible.append(i)
         if visible and self.navigation.currentRow() not in visible:
             self.navigation.setCurrentRow(visible[0])
         self.pages.setVisible(bool(visible))
+        self.no_results.setVisible(not visible)
         if not visible:
-            self.title.setText("没有匹配的设置")
+            self.title.setText('搜索设置')
+            self.description.setText('没有与「' + query + '」匹配的设置。')
         elif self.navigation.currentRow() in visible:
             self.select(self.navigation.currentRow())

@@ -32,17 +32,18 @@ def test_stable_partial_and_speculative_tail_are_distinguished():
     assert mapper.update({"lines": [line("Hello world")]}, done=True) == []
 
 
-def test_silence_and_elapsed_time_alone_do_not_finalize():
+def test_elapsed_time_submits_stable_tail_but_does_not_finalize():
     clock = [0.]
     mapper = CaptionMapper("zh", predictor=lambda text: [], clock=lambda: clock[0])
     snapshot = {"lines": [line("这个公式的前提是"), line("", 1, 60)]}
     events = mapper.update(snapshot)
     clock[0] = 60
-    assert mapper.update(snapshot) == []
+    submitted = mapper.update(snapshot)
+    assert submitted[0].ready and not submitted[0].final
     assert not events[0].final and not events[0].ready
 
 
-def test_later_context_and_repeated_stability_finalize_prefix_only():
+def test_later_context_never_finalizes_without_asr_completion():
     clock = [0.]
     mapper = CaptionMapper("zh", predictor=lambda text: [9] if len(text) > 9 else [], clock=lambda: clock[0])
     snapshot = {"lines": [line("这是第一个知识点。", 0, 2), line("接下来我们详细解释它的应用条件。", 2, 8)]}
@@ -50,6 +51,8 @@ def test_later_context_and_repeated_stability_finalize_prefix_only():
     assert not any(c.final for c in first)
     assert mapper.update(snapshot) == []
     clock[0] = 1
+    assert mapper.update(snapshot) == []
+    snapshot['closed_audio_time'] = 2.
     final = mapper.update(snapshot)
     assert len(final) == 1 and final[0].final and final[0].id == first[0].id
     assert not mapper.previous[first[1].id].final
@@ -127,7 +130,7 @@ def test_growing_stream_preserves_all_text_across_many_commits():
     lines = []
     for index in range(40):
         lines.append(line(f"This is classroom statement number {index}.", index * 4, (index + 1) * 4))
-        snapshot = {"lines": list(lines)}
+        snapshot = {"lines": list(lines), 'closed_audio_time': (index+1)*4}
         mapper.update(snapshot)
         clock[0] += 1
         mapper.update(snapshot)
@@ -147,8 +150,8 @@ def test_model_offsets_determine_short_and_unpunctuated_segments():
 
 def test_model_can_rejoin_provisional_rows():
     mapper = CaptionMapper("en", predictor=lambda text: [6] if text == "Hello world" else [])
-    first = mapper.update({"lines": [line("Hello world", end=3)]})
-    changed = mapper.update({"lines": [line("Hello world again", end=4)]})
+    first = mapper.update({"buffer_transcription": "Hello world"})
+    changed = mapper.update({"buffer_transcription": "Hello world again"})
     assert changed[0].id == first[0].id and changed[0].source == "Hello world again"
     assert not changed[0].ready and not changed[0].final
     assert any(c.id == first[1].id and not c.source for c in changed)
@@ -190,6 +193,12 @@ def test_overlapping_model_windows_and_cache_preserve_offsets():
     assert len(calls) == 3
     boundaries.clear()
     assert len(policy.split(original)) == 3 and len(calls) == 3
+
+
+@pytest.mark.parametrize('mark', [',', '，', ';', '；', ':', '：', '、'])
+def test_clause_separator_does_not_create_sentence_boundary(mark):
+    policy = BoundaryPolicy(lambda text: [len('First' + mark + ' ')])
+    assert policy.split('First' + mark + ' second') == [(len('First' + mark + ' second'), '等待后文')]
 
 
 @pytest.mark.parametrize("offset", [0, -1, 100, 1.5])

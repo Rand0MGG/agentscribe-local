@@ -17,6 +17,8 @@ def document():
     lambda d: d.update(settings=None),
     lambda d: d.update(captions={}),
     lambda d: d['captions'][0].update(source=None),
+    lambda d: d['captions'][0].update(translation_source=None),
+    lambda d: d['captions'][0].update(translation_phase='unknown'),
     lambda d: d['captions'][0].update(start=float('nan')),
     lambda d: d['captions'][0].update(end=-1),
     lambda d: d['captions'].append(d['captions'][0].copy()),

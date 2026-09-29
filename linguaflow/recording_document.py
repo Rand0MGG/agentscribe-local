@@ -33,9 +33,12 @@ def read_recording_document(data):
                     raise ValueError('字幕时间无效')
             if caption.end < caption.start:
                 raise ValueError('字幕结束时间早于开始时间')
-            for key in ('source', 'language', 'translation', 'error', 'stable_source', 'boundary_reason'):
+            for key in ('source', 'language', 'translation', 'error', 'stable_source', 'boundary_reason',
+                        'translation_phase', 'translation_source'):
                 if not isinstance(getattr(caption, key), str):
                     raise ValueError(f'字幕 {key} 必须是文字')
+            if caption.translation_phase not in ('', 'initial', 'final'):
+                raise ValueError('译文阶段无效')
             if any(type(getattr(caption, key)) is not bool for key in ('final', 'ready')):
                 raise ValueError('字幕状态必须是布尔值')
             captions.append(caption)

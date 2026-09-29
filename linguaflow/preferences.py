@@ -24,6 +24,7 @@ PREFERENCES = (
     Preference('semantic_lookahead', 'float', 3.),
     Preference('draft_seconds', 'float', .5),
     Preference('semantic_device', 'data', 'cpu'),
+    Preference('reduce_motion', 'bool', False),
 )
 
 

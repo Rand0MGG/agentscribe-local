@@ -8,17 +8,20 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
-    QComboBox,
     QDialog,
     QDoubleSpinBox,
     QFormLayout,
     QLabel,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QTabWidget,
     QVBoxLayout,
     QWidget,
 )
+
+from .qt_controls import text_label
+from .ui_components import ChoiceBox as QComboBox
 
 
 class Preparation(QThread):
@@ -70,6 +73,7 @@ class ModelManager(QDialog):
         self.asr_page = QWidget()
         self.asr_form = QFormLayout(self.asr_page)
         self.asr_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+        self.asr_form.addRow(text_label('识别引擎与设备', 'settingsSection'))
         self.asr_form.addRow("聆听引擎", self.backend)
         self.whisper_page = QWidget()
         self.whisper_form = QFormLayout(self.whisper_page)
@@ -86,6 +90,7 @@ class ModelManager(QDialog):
         self.add_page(self.translation_page, "翻译模型")
         advanced = QWidget()
         self.advanced_form = QFormLayout(advanced)
+        self.advanced_form.addRow(text_label('听写更新', 'settingsSection'))
         self.update_seconds = QDoubleSpinBox()
         self.update_seconds.setRange(0.5, 3)
         self.update_seconds.setSingleStep(0.5)
@@ -110,6 +115,7 @@ class ModelManager(QDialog):
         classroom = QPushButton("课堂逐词草稿 · 保留短停顿")
         classroom.clicked.connect(self.classroom_drafts)
         self.advanced_form.addRow(classroom)
+        self.advanced_form.addRow(text_label('SaT 上下文分句 · 必需', 'settingsSection'))
         self.semantic_device = QComboBox()
         self.semantic_device.addItem("CPU", "cpu")
         if sys.platform != "darwin":
@@ -122,9 +128,9 @@ class ModelManager(QDialog):
         self.semantic_lookahead = QDoubleSpinBox()
         self.semantic_lookahead.setRange(1, 12)
         self.semantic_lookahead.setValue(3)
-        self.semantic_lookahead.setSuffix(" 秒后文")
-        self.advanced_form.addRow("定稿前保留后文", self.semantic_lookahead)
-        self.hint(self.advanced_form, "SaT 根据上下文分句：听写 → 暂定分段 → 定稿。暂定译文会跟随原文更新。开始聆听前请准备 SaT；模型异常会提示并停止会话。")
+        self.semantic_lookahead.setSuffix(" 秒")
+        self.advanced_form.addRow("稳定尾部首次提交等待", self.semantic_lookahead)
+        self.hint(self.advanced_form, "SaT 整理字幕分段。原文提交后仍可修订，识别段结束后独立定稿。首次聆听前需要准备模型。")
         self.behavior_hint = QLabel()
         self.behavior_hint.setWordWrap(True)
         self.advanced_form.addRow(self.behavior_hint)
@@ -136,6 +142,7 @@ class ModelManager(QDialog):
         self.runtime_status.setWordWrap(True)
         self.runtime_status.setText(("推理环境已创建" if runtime_python().is_file() else "尚未安装推理环境")
                                    + f"\n{runtime_python()}\n文件存在不代表依赖和 GPU 已通过检查；启动时会显示各阶段进度。")
+        environment_form.addRow(text_label('本地推理组件', 'settingsSection'))
         environment_form.addRow(self.runtime_status)
         install = QPushButton("安装 / 修复本地推理环境")
         install.clicked.connect(self.install_runtime)
@@ -148,7 +155,13 @@ class ModelManager(QDialog):
         self.hint(environment_form, "桌面界面与模型推理使用独立环境。无需手动启动服务。安装后请先到识别模型和翻译模型页下载所需权重，再开始聆听。")
         self.add_page(environment, "运行环境")
         self.status = QLabel("下载只准备文件；开始聆听时才加载模型。")
+        self.status.setObjectName('preparationStatus')
         self.status.setWordWrap(True)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 0)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.hide()
+        layout.addWidget(self.progress_bar)
         layout.addWidget(self.status)
         self.cancel_button = QPushButton("取消准备")
         self.cancel_button.setEnabled(False)
@@ -167,7 +180,7 @@ class ModelManager(QDialog):
     def classroom_drafts(self):
         self.draft_seconds.setValue(.5)
         self.endpoint_seconds.setValue(1.5)
-        self.status.setText("Qwen 课堂草稿：每 0.5 秒请求更新，停顿 1.5 秒才结束语音段；点击完成后用于下一次聆听。Whisper 保留原有节奏。")
+        self.status.setText("已应用课堂设置：每 0.5 秒请求草稿，保留 1.5 秒短停顿。下一次聆听生效；实际更新速度取决于模型。")
 
     def hint(self, form, text):
         widget = QLabel(text)
@@ -177,7 +190,7 @@ class ModelManager(QDialog):
 
     def finish_setup(self, *, asr, translation):
         self.whisper_widgets = [asr]
-        self.hint(self.whisper_form, "由 WhisperLiveKit 的 AlignAtt 解码和连续语音检测驱动。使用完整 PyTorch Whisper 权重，旧 CTranslate2 目录不能用于这个解码器。")
+        self.hint(self.whisper_form, "支持自动识别语言。小模型占用更少，大模型需要更多内存；本地导入请选择原始 Whisper .pt 权重或兼容目录。")
         download = QPushButton("下载 / 检查 Whisper 模型")
         download.clicked.connect(lambda: self.prepare_whisper(asr.currentText().strip()))
         self.whisper_form.addRow(download)
@@ -213,13 +226,12 @@ class ModelManager(QDialog):
             self.translation_after.setEnabled(enabled)
         translation.currentTextChanged.connect(update_context_controls)
         update_context_controls()
-        self.hint(self.translation_form, 'HY-MT2：先翻译当前段，后续短句就绪后自动修订；前后文只供参考，不会合并进译文。NLLB 仅支持逐句翻译。')
+        self.hint(self.translation_form, '首次提交只翻译当前段；中间原文修改时保留初译。原文定稿后，HY-MT2 使用当时已有的稳定前后文生成最终译文，不等待未来段落。NLLB 逐句处理。')
         self.hint(self.translation_form, "翻译独立排队运行，可使用 GPU。已确认的句子先翻译，原文尾部继续修订。")
         translation_download = QPushButton("下载 / 检查翻译模型")
         translation_download.clicked.connect(lambda: self.prepare_translation(translation.currentText().strip()))
         self.translation_form.addRow(translation_download)
-        self.hint(self.advanced_form, "识别期间连续音频暂存于本机临时文件，积压时保留音频并显示延迟；会话结束删除。确认的短句进入翻译，原文尾部继续修订。停止会处理剩余音频，关闭窗口则取消剩余任务。")
-        self.hint(self.advanced_form, "识别与翻译设备可以独立选择。共用 GPU 会竞争显存；8GB 预算需同时考虑两个模型及运行开销。字幕尾部可修改，已确认短句进入翻译队列。")
+        self.hint(self.advanced_form, "没有分句边界时，稳定尾部达到等待时长即可首次提交。定稿由识别段结束触发，不受翻译状态影响。")
         self.backend.currentIndexChanged.connect(self.update_backend)
         self.update_backend()
 
@@ -250,6 +262,7 @@ class ModelManager(QDialog):
         self.done_button.setEnabled(False)
         self.cancel_button.setEnabled(True)
         self.cancel_button.show()
+        self.progress_bar.show()
         self.status.setText("正在准备，请保留此窗口。下载进度见启动终端；已存在的权重会复用。")
         self.worker = Preparation(action, self)
         self.worker.result.connect(self.status.setText)
@@ -264,6 +277,7 @@ class ModelManager(QDialog):
         self.done_button.setEnabled(True)
         self.cancel_button.setEnabled(False)
         self.cancel_button.hide()
+        self.progress_bar.hide()
         if self.close_requested:
             self.close_requested = False
             self.reject()

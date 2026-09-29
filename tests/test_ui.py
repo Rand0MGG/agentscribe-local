@@ -25,16 +25,21 @@ assert w.captions[1].error == 'inference failed'
 w.on_caption(replace(c, id=2, source='old'))
 w.on_caption(replace(c, id=2, source='new', revision=2, translation='', error='failed'))
 assert not w.captions[2].translation
+w.on_caption(Caption(3, 2, 3, 'final source', 'en', translation='initial translation',
+                     translation_phase='initial', translation_source='old source'))
 w.translate.setChecked(False)  # Completion uses the recorded session settings.
 w.session = SimpleNamespace(deleteLater=lambda: None)
 w.on_finished()
 data, captions = w.library.load(w.current_item)
 assert data['session']['state'] == 'incomplete'
 assert captions[0].translation == 'usable translation'
+assert captions[2].translation == 'initial translation' and captions[2].error
 assert '部分翻译未完成' in w.status.text()
 # Successful retry clears the error and permits complete state.
 w.on_caption(replace(c, translation='updated'))
 w.on_caption(replace(c, id=2, source='new', revision=2, translation='new translated'))
+w.on_caption(Caption(3, 2, 3, 'final source', 'en', translation='final translation',
+                     translation_phase='final', translation_source='final source'))
 w.session = SimpleNamespace(deleteLater=lambda: None)
 w.on_finished()
 assert w.library.load(w.current_item)[0]['session']['state'] == 'complete'
@@ -181,7 +186,7 @@ w.on_caption(Caption(1, 0, 1, '错字', 'zh', final=False))
 w.on_caption(Caption(1, 0, 2, '正确原文', 'zh', final=False, revision=2))
 assert w.cards[1].source.text() == '正确原文'
 assert not hasattr(w.cards[1], 'change')
-assert '●' in w.cards[1].meta.text()
+assert '识别中' in w.cards[1].meta.text()
 w.on_caption(Caption(1, 0, 1, '过期结果', 'zh', final=False))
 assert w.cards[1].source.text() == '正确原文'
 w.on_caption(Caption(1, 0, 2, '', 'zh', final=True, revision=3))

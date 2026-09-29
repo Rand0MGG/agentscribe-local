@@ -11,7 +11,6 @@ from types import SimpleNamespace
 
 import numpy as np
 
-
 LANGUAGE_NAMES = dict(en='English', zh='Chinese', ja='Japanese', ko='Korean',
                       fr='French', de='German', es='Spanish', ru='Russian',
                       ar='Arabic', pt='Portuguese', it='Italian')
@@ -51,6 +50,7 @@ class QwenAccurateOnline:
         self.decode_seconds = 0.
         self.drafts = OrderedDict()
         self.any_emitted = False
+        self.finalized_until = -1.
 
     def insert_audio_chunk(self, audio, audio_stream_end_time):
         if not len(self.audio_buffer):
@@ -83,6 +83,7 @@ class QwenAccurateOnline:
         text = self.text if count == self.decoded_samples else self._decode(count)
         end = self.start + count / self.SAMPLING_RATE
         tokens = self._tokens(text, self.start, end)
+        self.finalized_until = end
         self.audio_buffer = self.audio_buffer[count:].copy()
         self.start = end
         self.text = ''
@@ -136,6 +137,7 @@ class QwenAccurateOnline:
 
     def augment_snapshot(self, snapshot):
         """Soft agreement is revisable; do not insert it into WLK's token log."""
+        snapshot['closed_audio_time'] = self.finalized_until
         text = snapshot.get('buffer_transcription', '')
         draft = self.drafts.get(text)
         if not draft or not text:
