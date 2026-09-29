@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from PySide6.QtCore import QEasingCurve, QRectF, QSize, Qt, QVariantAnimation, Signal
-from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPixmap
+from PySide6.QtGui import QColor, QKeySequence, QLinearGradient, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QCheckBox,
@@ -239,7 +239,7 @@ class SettingsWorkspace(QWidget):
         self.search = QLineEdit()
         self.search.setPlaceholderText("搜索设置…")
         self.search.setAccessibleName('搜索设置')
-        self.search.setToolTip('搜索设置 · Ctrl+F')
+        self.search.setToolTip('搜索设置 · ' + QKeySequence('Ctrl+F').toString(QKeySequence.SequenceFormat.NativeText))
         self.search.setClearButtonEnabled(True)
         nav.addWidget(self.search)
         nav.addSpacing(12)
@@ -299,10 +299,13 @@ class SettingsWorkspace(QWidget):
         body.addSpacing(24)
         body.addWidget(text_label("使用习惯", "settingsSection"))
         card, rows = self.group()
-        self.row(rows, "跟随最新字幕", "新文字出现时，自动滚动到最新位置。", controls['follow'])
-        self.row(rows, '减少动态效果', '关闭切页、弹窗和开关动画，即时显示操作结果。', controls['reduce_motion'])
+        rows.addWidget(text_label('字幕停留在底部时自动跟随；向上翻阅会暂停。点击字幕区的向下箭头可回到最新位置。', 'infoBanner'))
+        self.row(rows, '减少动态效果', '关闭平滑跟随、切页、弹窗和开关动画。', controls['reduce_motion'])
         body.addWidget(card)
-        body.addWidget(text_label('键盘操作    Ctrl+,  打开设置    ·    Ctrl+N  新录音    ·    Esc  返回录音', 'infoBanner'))
+        shortcuts = '    ·    '.join(
+            QKeySequence(key).toString(QKeySequence.SequenceFormat.NativeText) + '  ' + title
+            for key, title in [('Ctrl+,', '打开设置'), ('Ctrl+N', '新录音'), ('Escape', '返回录音')])
+        body.addWidget(text_label('键盘操作    ' + shortcuts, 'infoBanner'))
         body.addStretch()
         listening, body = self.page("聆听")
         self.listening_page = listening

@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
-    QScrollArea,
+    QSizePolicy,
     QSlider,
     QSplitter,
     QStackedWidget,
@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 )
 
 from .audio import list_devices
+from .caption_view import CaptionScrollArea
 from .core import LANGUAGES, export_srt, translation_status
 from .deleted_dialog import DeletedDialog
 from .library import Library
@@ -499,9 +500,11 @@ class CaptionCard(QFrame):
         self.update_caption(caption)
 
     def update_caption(self, caption):
-        self.source.setText(caption.source)
-        self.source.setStyleSheet("font-size: 16px; color: " +
-                                 ("#efeff1;" if caption.final else "#98989f;"))
+        if self.source.text() != caption.source:
+            self.source.setText(caption.source)
+        source_style = "font-size: 16px; color: " + ("#efeff1;" if caption.final else "#98989f;")
+        if self.source.styleSheet() != source_style:
+            self.source.setStyleSheet(source_style)
         self.meta.setText(f"{int(caption.start) // 60:02}:{int(caption.start) % 60:02}" +
                           (' · 原文已定稿' if caption.final else (' · 已提交，可修订' if caption.ready else ' · 识别中')) +
                           (' · ' + translation_status(caption) if self.translating else ''))
@@ -751,12 +754,11 @@ class Window(QMainWindow):
         content.installEventFilter(self)
         content_layout.setContentsMargins(32, 12, 32, 24)
         content_layout.setSpacing(10)
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
+        self.scroll = CaptionScrollArea()
         self.feed = QWidget()
         self.feed.setObjectName("feed")
         self.feed_layout = QVBoxLayout(self.feed)
-        self.feed_layout.setContentsMargins(12, 24, 12, 0)
+        self.feed_layout.setContentsMargins(12, 24, 12, 16)
         self.feed_layout.setSpacing(4)
         self.empty = label(
             "让每一次聆听，都有所留存。\n\n开始录音，原文与译文将在这里自然呈现。",
@@ -769,16 +771,9 @@ class Window(QMainWindow):
         self.feed_layout.addStretch()
         self.scroll.setWidget(self.feed)
         content_layout.addWidget(self.scroll, 1)
-        self.follow = Switch("自动滚动到最新字幕")
         self.reduce_motion = Switch('减少动态效果')
         self.reduce_motion.toggled.connect(lambda value: QApplication.instance().setProperty('reduceMotion', value))
-        self.follow.setChecked(True)
-        self.follow.hide()
-        follow_action = menu.addAction("跟随最新字幕")
-        follow_action.setCheckable(True)
-        follow_action.setChecked(True)
-        follow_action.toggled.connect(self.follow.setChecked)
-        self.follow.toggled.connect(follow_action.setChecked)
+        self.reduce_motion.toggled.connect(self.scroll.content_changed)
         menu.addSeparator()
         menu.addAction('移到最近删除…', self.delete_current)
         self.diagnostics = QPlainTextEdit()
@@ -799,8 +794,32 @@ class Window(QMainWindow):
         content_layout.addWidget(self.meter)
         footer = QFrame()
         footer.setObjectName("footer")
-        bottom = QHBoxLayout(footer)
-        bottom.setContentsMargins(13, 9, 9, 9)
+        footer_layout = QVBoxLayout(footer)
+        footer_layout.setContentsMargins(13, 12, 12, 10)
+        footer_layout.setSpacing(12)
+        input_row = QHBoxLayout()
+        input_row.addWidget(label('音频来源', 'muted'))
+        self.quick_device = QComboBox()
+        self.quick_device.setAccessibleName('音频来源')
+        self.quick_device.setPlaceholderText('选择麦克风或系统声音')
+        self.quick_device.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.quick_device.setMinimumContentsLength(12)
+        self.quick_device.setMinimumWidth(0)
+        self.quick_device.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.quick_device.setModel(self.device.model())
+        self.quick_device.setCurrentIndex(self.device.currentIndex())
+        self.quick_device.currentIndexChanged.connect(self.device.setCurrentIndex)
+        self.device.currentIndexChanged.connect(self.quick_device.setCurrentIndex)
+        self.quick_device.currentTextChanged.connect(self.quick_device.setToolTip)
+        input_row.addWidget(self.quick_device, 1)
+        self.refresh_source = QPushButton('刷新')
+        self.refresh_source.setObjectName('quiet')
+        self.refresh_source.setToolTip('刷新音频设备列表')
+        self.refresh_source.clicked.connect(self.refresh_devices)
+        input_row.addWidget(self.refresh_source)
+        footer_layout.addLayout(input_row)
+        bottom = QHBoxLayout()
+        footer_layout.addLayout(bottom)
         self.status = label("准备开始", "muted")
         bottom.addWidget(self.status, 1)
         self.start_button = QPushButton("开始聆听")
@@ -830,7 +849,7 @@ class Window(QMainWindow):
         quick = QHBoxLayout()
         self.quick_language = QPushButton('输入与语言')
         self.quick_language.setObjectName('quiet')
-        self.quick_language.setToolTip('更改音频来源、原文和目标语言')
+        self.quick_language.setToolTip('更改原文和目标语言')
         self.quick_language.clicked.connect(lambda: self.open_settings('聆听'))
         quick.addWidget(self.quick_language)
         self.quick_model = QPushButton('识别模型')
@@ -866,7 +885,7 @@ class Window(QMainWindow):
         self.settings_workspace = SettingsWorkspace(WorkspaceFrame,
             storage_root=self.library.root, manager=self.model_manager,
             controls={key: getattr(self, key) for key in
-                      ('follow', 'device', 'source', 'target', 'translate', 'audio_summary', 'reduce_motion')})
+                      ('device', 'source', 'target', 'translate', 'audio_summary', 'reduce_motion')})
         self.settings_panel = self.settings_workspace.listening_page
         for signal, action in (
                 (self.settings_workspace.back_requested, self.leave_settings),
@@ -886,7 +905,6 @@ class Window(QMainWindow):
                                  ('Escape', self.return_to_recording), ('Ctrl+F', self.focus_settings_search)]:
             shortcut = QShortcut(QKeySequence(sequence), self)
             shortcut.activated.connect(action)
-        self.follow.setText("")
         self.translate.setText("")
         self.activity_timer = QTimer(self)
         self.activity_timer.timeout.connect(self.update_activity)
@@ -1447,7 +1465,7 @@ class Window(QMainWindow):
     def set_recording_state(self, state):
         self.recording_state = state
         for control in (self.settings_panel, self.model_manager, self.settings_workspace.audio_page,
-                        self.library_tree, self.new_button, self.folder_button):
+                        self.library_tree, self.new_button, self.folder_button, self.quick_device, self.refresh_source):
             control.setEnabled(not state.active)
         self.start_button.setEnabled(not state.active)
         self.start_button.setText(state.value)
@@ -1498,6 +1516,7 @@ class Window(QMainWindow):
         self.empty.setText("正在聆听…")
 
     def clear_captions(self):
+        self.scroll.reset_follow()
         for card in self.cards.values():
             card.hide()
             self.feed_layout.removeWidget(card)
@@ -1560,6 +1579,7 @@ class Window(QMainWindow):
         if previous and (caption.revision < previous.revision or
                          (caption.revision == previous.revision and caption.source != previous.source)):
             return
+        self.scroll.prepare_update()
         if not caption.source:
             self.captions.pop(caption.id, None)
             card = self.cards.pop(caption.id, None)
@@ -1574,6 +1594,7 @@ class Window(QMainWindow):
             else:
                 self.overlay.source.setText("等待语音…")
                 self.overlay.target.setText("")
+            self.scroll.content_changed()
             return
         self.empty.hide()
         if (previous and previous.source == caption.source and previous.language == caption.language
@@ -1599,10 +1620,7 @@ class Window(QMainWindow):
         self.export_button.setEnabled(any(c.final and c.source for c in self.captions.values()))
         if self.current_item and not self.loading_saved and not self.autosave.isActive():
             self.autosave.start(1500)
-        if self.follow.isChecked():
-            QTimer.singleShot(
-                0, lambda: self.scroll.verticalScrollBar().setValue(self.scroll.verticalScrollBar().maximum())
-            )
+        self.scroll.content_changed()
 
     def toggle_overlay(self):
         self.overlay.setVisible(not self.overlay.isVisible())

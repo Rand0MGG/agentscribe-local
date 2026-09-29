@@ -11,6 +11,7 @@
 | 控件适配 | `settings_binding.py`、`qt_controls.py` | 控件与偏好互转、生成独立会话配置快照；不持有 Window |
 | 设置与对话框 | `workspace_widgets.py`、`management.py`、`deleted_dialog.py` | 显式传入所需控件/配置，通过信号报告操作；Qt parent 仅用于窗口归属与生命周期 |
 | 界面表面与动效 | `ui_components.py`、`ui_theme.py` | 统一菜单、弹窗、渐显、可展开选项与颜色；不导入模型、会话或文件库；减少动态效果通过偏好控制 |
+| 字幕浏览 | `caption_view.py` | 根据滚动位置自动跟随、平滑追踪底部、保留阅读位置与返回按钮；不改变 Caption 或推理流程 |
 | 录音交互状态 | `recording_state.py` | 空闲、启动、聆听、收尾及对应按钮策略；不依赖 Qt |
 | 文件库 | `library.py` | 普通本地文件夹、元数据、路径安全、迁移、最近删除；不弹窗 |
 | 库启动策略 | `library_startup.py` | 默认/指定目录、重试、迁移策略；选择目录与错误展示通过回调注入 |

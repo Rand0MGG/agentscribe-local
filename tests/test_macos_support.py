@@ -97,6 +97,32 @@ assert w.compute.currentData() == 'cpu'
 assert w.model_manager.translation_device.currentData() == 'cpu'
 assert w.model_manager.semantic_device.currentData() == 'cpu'
 assert w.audio_config['df_device'] == 'cpu' and w.audio_config['deepfilter']
+# Simulated CoreAudio inputs must retain their IDs and non-loopback flag in
+# both selectors, including after a refresh, reorder or device disconnection.
+import linguaflow.app as desktop
+from linguaflow.audio import Device
+from linguaflow.recording_state import RecordingState
+devices = [Device('coreaudio:mic', '输入 · MacBook 麦克风', False),
+           Device('coreaudio:blackhole', '输入 · BlackHole 2ch', False)]
+desktop.list_devices = lambda: devices
+w.refresh_devices()
+w.quick_device.setCurrentIndex(1)
+assert w.device.currentData() == ('coreaudio:blackhole', False)
+snapshot = w.settings_binding.session_settings(w.device.currentData(), w.audio_config)
+assert snapshot.device_id == 'coreaudio:blackhole' and not snapshot.loopback
+devices.reverse()
+w.refresh_devices()
+assert w.quick_device.currentIndex() == w.device.currentIndex() == 0
+assert w.quick_device.currentData() == ('coreaudio:blackhole', False)
+for state in (RecordingState.STARTING, RecordingState.LISTENING, RecordingState.STOPPING):
+    w.set_recording_state(state)
+    assert not w.quick_device.isEnabled() and not w.device.isEnabled()
+    assert not w.refresh_source.isEnabled()
+w.set_recording_state(RecordingState.IDLE)
+devices.pop(0)
+w.refresh_devices()
+assert w.device.currentIndex() == w.quick_device.currentIndex() == -1
+assert w.quick_device.currentData() is None
 lab = AudioLab({'deepfilter': True, 'df_device': 'cuda', 'df_mix': .4}, parent=w)
 assert lab.df_device.findData('cuda') == -1
 assert lab.config()['df_device'] == 'cpu' and lab.config()['df_mix'] == .4
