@@ -33,7 +33,8 @@ class QwenAccurateOnline:
     SAMPLING_RATE = 16000
 
     def __init__(self, decode, choose_cut, language, update_seconds=.5,
-                 window_seconds=30., token_type=None, transcript_type=None):
+                 window_seconds=30., token_type=None, transcript_type=None,
+                 pause_context_seconds=0.):
         if token_type is None:
             from whisperlivekit.timed_objects import ASRToken, Transcript
             token_type, transcript_type = ASRToken, Transcript
@@ -51,8 +52,61 @@ class QwenAccurateOnline:
         self.drafts = OrderedDict()
         self.any_emitted = False
         self.finalized_until = -1.
+        self.pause_context_seconds = max(0., float(pause_context_seconds))
+        self.pending_silence = 0.
+        self.pending_tokens = []
+        self.revisions = None
+        self.interval = 0
+        self.silence_endpoint = None
+        self.capture_silence_start = None
+        self.capture_time = 0.
+        self.force_endpoint = False
+        self.force_endpoint_time = None
+
+    def set_revision_store(self, store):
+        """Use the same full-hypothesis store as the streaming Qwen backend."""
+        self.revisions = store
+
+    def _observe(self, text, stable, end, closed=False):
+        if self.revisions is not None:
+            self.revisions.update(self.interval, self.start, end, text, stable, closed)
+
+    def observe_capture_event(self, kind, timestamp):
+        """Record explicit PCM/VAD progress; no inference or buffer mutation."""
+        if kind == 'silence_started':
+            self.capture_silence_start = timestamp
+        elif kind == 'speech_started':
+            self.capture_silence_start = None
+        elif kind == 'audio_advanced':
+            self.capture_time = timestamp
+
+    def force_next_endpoint(self, at_time=None):
+        """An explicit recording pause must drain the current utterance."""
+        self.force_endpoint = True
+        self.force_endpoint_time = at_time
+
+    def _forced_endpoint_ready(self):
+        return self.force_endpoint and (self.force_endpoint_time is None
+                                       or self.end >= self.force_endpoint_time - .001)
 
     def insert_audio_chunk(self, audio, audio_stream_end_time):
+        if (self.force_endpoint_time is not None
+                and audio_stream_end_time > self.force_endpoint_time + .001):
+            self.force_endpoint = False
+            self.force_endpoint_time = None
+        self.silence_endpoint = None
+        if self.pending_silence and len(self.audio_buffer):
+            gap = round(self.pending_silence * self.SAMPLING_RATE)
+            cap = round((self.window_seconds + 5) * self.SAMPLING_RATE)
+            if (self.pending_silence < self.pause_context_seconds
+                    and len(self.audio_buffer) + gap + len(audio) <= cap):
+                # Keep a brief hesitation in the next decode, with its real
+                # duration, so later speech can correct the whole phrase.
+                self.audio_buffer = np.concatenate((self.audio_buffer, np.zeros(gap, np.float32)))
+            else:
+                self.pending_tokens.extend(self._drain())
+                self.drafts.clear()
+            self.pending_silence = 0.
         if not len(self.audio_buffer):
             self.start = audio_stream_end_time - len(audio) / self.SAMPLING_RATE
         self.audio_buffer = np.concatenate((self.audio_buffer, np.asarray(audio, np.float32)))
@@ -83,6 +137,8 @@ class QwenAccurateOnline:
         text = self.text if count == self.decoded_samples else self._decode(count)
         end = self.start + count / self.SAMPLING_RATE
         tokens = self._tokens(text, self.start, end)
+        self._observe(text, len(text), end, closed=True)
+        self.interval += 1
         self.finalized_until = end
         self.audio_buffer = self.audio_buffer[count:].copy()
         self.start = end
@@ -99,41 +155,90 @@ class QwenAccurateOnline:
         return count
 
     def process_iter(self):
+        pending, self.pending_tokens = self.pending_tokens, []
         if len(self.audio_buffer) >= (self.window_seconds + 5) * self.SAMPLING_RATE:
-            return self._commit(self._cut()), self.end
+            return pending + self._commit(self._cut()), self.end
         fresh = (len(self.audio_buffer) - self.decoded_samples) / self.SAMPLING_RATE
         if fresh < max(self.update_seconds, 1.15 * self.decode_seconds):
-            return [], self.end
+            return pending, self.end
         previous = self.text
         self.text = self._decode(len(self.audio_buffer))
         self.decoded_samples = len(self.audio_buffer)
         self.drafts[self.text] = (self.start, self.end, stable_offset(previous, self.text))
+        self._observe(self.text, self.drafts[self.text][2], self.end)
         self.drafts.move_to_end(self.text)
         while len(self.drafts) > 8:
             self.drafts.popitem(last=False)
-        return [], self.end
+        return pending, self.end
 
     def get_buffer(self):
+        # WLK calls this from its serialized transcription loop, including
+        # while idle. Only drain an already-decoded buffer: the UI event loop
+        # never performs model inference, and wall-clock waiting alone cannot
+        # finalize source text without continuing silent PCM.
+        quiet_complete = (self.silence_endpoint is not None
+                          and self.capture_silence_start is not None
+                          and abs(self.silence_endpoint - self.capture_silence_start) <= .001
+                          and self.capture_time - self.capture_silence_start >= self.pause_context_seconds)
+        forced_complete = self._forced_endpoint_ready()
+        if (self.pause_context_seconds and (forced_complete or quiet_complete)
+                and len(self.audio_buffer) and self.decoded_samples == len(self.audio_buffer)):
+            self.pending_tokens.extend(self._drain())
+            self.drafts.clear()
+            self.silence_endpoint = None
+            self.force_endpoint = False
+            self.force_endpoint_time = None
+        if self.force_endpoint and not len(self.audio_buffer) and forced_complete:
+            self.force_endpoint = False
+            self.force_endpoint_time = None
         return self.transcript_type(start=self.start, end=self.end, text=self.text)
 
     def start_silence(self):
+        if self.pause_context_seconds and not self._forced_endpoint_ready() and len(self.audio_buffer):
+            tokens = []
+            cap = round((self.window_seconds + 5) * self.SAMPLING_RATE)
+            while len(self.audio_buffer) > cap:
+                tokens.extend(self._commit(self._cut()))
+            # A VAD endpoint confirms a decode, not an immutable acoustic
+            # window. Leave it revisable until speech resumes or EOF arrives.
+            self.text = (self.text if self.decoded_samples == len(self.audio_buffer)
+                         else self._decode(len(self.audio_buffer)))
+            self.decoded_samples = len(self.audio_buffer)
+            self.drafts.clear()
+            self.drafts[self.text] = (self.start, self.end, len(self.text))
+            self.silence_endpoint = self.end
+            self._observe(self.text, len(self.text), self.end)
+            return tokens, self.end
+        return self.finish()
+
+    def _drain(self):
+        """Finalize buffered PCM in bounded windows, including after backlog."""
         tokens = []
         while len(self.audio_buffer):
             cap = (self.window_seconds + 5) * self.SAMPLING_RATE
             count = self._cut() if len(self.audio_buffer) > cap else len(self.audio_buffer)
             tokens.extend(self._commit(count))
-        self.drafts.clear()
-        return tokens, self.end
+        return tokens
 
     def finish(self):
-        return self.start_silence()
+        tokens, self.pending_tokens = self.pending_tokens, []
+        tokens.extend(self._drain())
+        self.drafts.clear()
+        self.pending_silence = 0.
+        self.silence_endpoint = None
+        self.force_endpoint = False
+        self.force_endpoint_time = None
+        return tokens, self.end
 
     def end_silence(self, duration, offset):
         self.end += duration
-        self.start = self.end
+        if self.pause_context_seconds and len(self.audio_buffer):
+            self.pending_silence += duration
+        else:
+            self.start = self.end
 
     def new_speaker(self, change_speaker=None):
-        return self.start_silence()
+        return self.finish()
 
     def augment_snapshot(self, snapshot):
         """Soft agreement is revisable; do not insert it into WLK's token log."""

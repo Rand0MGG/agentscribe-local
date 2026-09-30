@@ -127,7 +127,8 @@ async def serve(settings, emit, read_message):
             emit({"type": "status", "text": "加载 Qwen 4-bit · Apple GPU / Metal…"})
             processor.transcription = build_mlx_online(config.model_path,
                 settings.get('source'), draft_seconds,
-                lambda text: emit({'type': 'status', 'text': text}))
+                lambda text: emit({'type': 'status', 'text': text}),
+                window_seconds=settings.get('qwen_window_seconds', 30.))
         else:
             from .qwen_accurate import build_official_online
             emit({"type": "status", "text": "加载 Qwen 官方原始编码器 · 准确优先；近期原文可整体修订…"})
@@ -157,7 +158,7 @@ async def serve(settings, emit, read_message):
         if os.environ.get("LINGUAFLOW_TRACE_REVISIONS") == "1":
             emit(event)
         event_loop.call_soon_threadsafe(revision_changed.set)
-    if qwen and not accurate_qwen:
+    if qwen and (not accurate_qwen or mlx):
         from .qwen_revisions import install_revision_bridge
         revisions = install_revision_bridge(processor.transcription,
             revision_event)
@@ -216,7 +217,7 @@ async def serve(settings, emit, read_message):
         async for snapshot in results_with_final_snapshot(processor, results):
             latest.clear()
             latest.update(caption_snapshot(snapshot))
-            if accurate_qwen:
+            if accurate_qwen and revisions is None:
                 processor.transcription.augment_snapshot(latest)
             if os.environ.get("LINGUAFLOW_TRACE_SNAPSHOTS") == "1":
                 emit({"type": "snapshot", "data": latest.copy()})
@@ -241,6 +242,8 @@ async def serve(settings, emit, read_message):
             ended = False
             try:
                 event = await asyncio.wait_for(stream_events.get(), .25)
+                if mlx:
+                    processor.transcription.observe_capture_event(event.kind, event.timestamp)
                 if event.kind == 'silence_transcription_ready':
                     # WLK emits this only after final decoding and its snapshot,
                     # unlike silence_started, which can precede pending inference.

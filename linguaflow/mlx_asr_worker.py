@@ -36,8 +36,9 @@ def serve(read, emit):
           'active_bytes': mx.get_active_memory()})
     while (message := read()) is not None and message.get('type') != 'stop':
         pcm = np.frombuffer(base64.b64decode(message['pcm'], validate=True), '<f4')
-        if not 0 < len(pcm) <= 17 * 16000 or not np.isfinite(pcm).all():
-            raise ValueError('MLX 识别音频必须是 0–17 秒的有限值 16 kHz 单声道 PCM。')
+        # The shared adapter permits a 40 s window plus at most 5 s lookahead.
+        if not 0 < len(pcm) <= 45 * 16000 or not np.isfinite(pcm).all():
+            raise ValueError('MLX 识别音频必须是 0–45 秒的有限值 16 kHz 单声道 PCM。')
         started = time.perf_counter()
         result = model.generate(pcm, language=settings['language'], temperature=0.,
                                 max_tokens=512, prefill_step_size=256, verbose=False)

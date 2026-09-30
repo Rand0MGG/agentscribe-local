@@ -12,6 +12,9 @@ from pathlib import Path
 async def pause_audio_processor(processor):
     """Drain accepted PCM and end the utterance without ending the session."""
     await processor._flush_remaining_pcm()
+    force_endpoint = getattr(getattr(processor, 'transcription', None), 'force_next_endpoint', None)
+    if force_endpoint is not None:
+        force_endpoint(processor.total_pcm_samples / processor.sample_rate)
     await processor._begin_silence(at_sample=processor.total_pcm_samples)
     if processor.vac is not None:
         processor.vac.reset_states()

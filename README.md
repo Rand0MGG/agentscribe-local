@@ -43,6 +43,8 @@ python3.12 -m venv .venv
 
 试用 Apple GPU 路线，另行执行 `.venv/bin/python scripts/install_mlx.py`（或模型管理 → 运行环境 → 安装 Apple GPU）。然后选择“试用 Mac 4-bit 设置”，下载 / 检查 Qwen 模型，并指定原文语言。此配置使用 SaT 分句并关闭翻译；请先准备 SaT 模型，可按需要再开启翻译。MLX 单独使用 `.venv-mlx`，避免与现有 Windows / WLK 的 Transformers 版本冲突。
 
+MLX 的近期完整原文现接入与 Qwen 流式路线相同的提交与修订策略：短停顿保留音频上下文，默认使用 30 秒识别窗口；原文定稿由真正的话语结束或收尾驱动。已有窗口内的词可随后文修正，首次提交等待和两阶段翻译规则不变。详见 [语义分段](docs/SEMANTIC_SEGMENTATION.md)。
+
 M2 / 8GB 的 101 秒文件测试已跑通 GPU 识别与 SaT 分句：首条字幕约 2.26 秒、收尾约 3.04 秒，25 段字幕全部定稿，WER 0.39%。测试关闭翻译，没有访问音频设备；系统交换空间增长约 1.46 GiB，仍需验证长会话。详见 [测试记录](docs/MACOS_FILE_TESTS.md)。
 Apple Silicon 的翻译可选择“设置 → 翻译模型 → 使用 HY 1.8B · Apple GPU”，推理引擎显示“llama.cpp · GGUF”，计算设备显示“Apple GPU · Metal”。首次点击“下载 / 检查翻译模型”，或运行 `.venv/bin/python scripts/install_llama.py --device metal`，准备官方量化权重和本地运行组件。开启翻译后，下次聆听自动加载；诊断会显示实际 GPU 加载层数。已打开的应用需在录音结束后重新启动，才能载入更新的代码。长会话和内存压力下的稳定性仍待验收，详见 [HY Metal 测试](docs/testing/HY_METAL.md)。
 系统设置中需允许 Terminal/Python 使用麦克风。系统声音使用 [BlackHole](https://github.com/ExistentialAudio/BlackHole) 输入与多输出设备；尚无原生 ScreenCaptureKit 捕获。

@@ -31,6 +31,14 @@ class RevisionStore:
                         break
                     common += 1
             times = self.times.get(row['interval_id'], [])[:common]
+            if old and row['end'] < old['end'] and times:
+                # A bounded full-window decoder can replace a wide draft with
+                # its shorter final cut. Prefix estimates must stay inside that
+                # cut rather than overlapping the following acoustic interval.
+                width = old['end'] - old['start']
+                scale = max(0., row['end'] - row['start']) / width if width > 0 else 0.
+                times = [(row['start'] + (a - old['start']) * scale,
+                          row['start'] + (b - old['start']) * scale) for a, b in times]
             begin = times[-1][1] if times else row['start']
             end = max(begin, row['end'])
             count = len(row['text']) - common
@@ -88,6 +96,9 @@ desktop mapper consumes exclusively the revision snapshot below.
     while '_inner' in vars(online):
         online = vars(online)['_inner']
     store = RevisionStore(emit=emit)
+    if hasattr(online, 'set_revision_store'):
+        online.set_revision_store(store)
+        return store
     interval, start = 0, None
     original_insert = online.insert_audio_chunk
     original_emit = online._emit_committed
