@@ -141,6 +141,89 @@ def test_growing_stream_preserves_all_text_across_many_commits():
     assert all(c.final for c in mapper.previous.values())
 
 
+def test_long_session_diffs_with_ten_stable_context_rows(monkeypatch):
+    import linguaflow.wlk_captions as module
+    mapper = CaptionMapper('en', predictor=lambda text: [
+        i + 1 for i, char in enumerate(text) if char == '.'])
+    history = ' '.join(f'Classroom statement {i}.' for i in range(200))
+    mapper.update({'lines': [line(history)]}, done=True)
+    original_ids = list(mapper.previous)
+    context = ' ' + ' '.join(f'Classroom statement {i}.' for i in range(190, 200))
+    matcher = module.SequenceMatcher
+    compared = []
+    def compare(junk, old, new, **kwargs):
+        compared.append((old, new))
+        assert old.startswith(context) and new.startswith(context)
+        assert len(old) < 300 and len(new) < 300
+        return matcher(junk, old, new, **kwargs)
+    monkeypatch.setattr(module, 'SequenceMatcher', compare)
+    mapper.update({'lines': [line(history + ' A new sentence.')]})
+    assert compared == [(context, context + ' A new sentence.')]
+    assert list(mapper.previous)[:len(original_ids)] == original_ids
+    assert all(mapper.previous[cid].final for cid in original_ids)
+    assert ' '.join(c.source for c in mapper.previous.values()) == history + ' A new sentence.'
+    tail_id = next(cid for cid in mapper.previous if cid not in original_ids)
+    mapper.update({'lines': [line(history + ' A corrected sentence.')]}, done=True)
+    assert compared[-1] == (context + ' A new sentence.', context + ' A corrected sentence.')
+    assert mapper.previous[tail_id].source == 'A corrected sentence.'
+    assert mapper.previous[tail_id].final
+    assert ' '.join(c.source for c in mapper.previous.values()) == history + ' A corrected sentence.'
+
+
+@pytest.mark.parametrize('count', [3, 10, 20])
+def test_diff_context_includes_up_to_ten_stable_rows(monkeypatch, count):
+    import linguaflow.wlk_captions as module
+    mapper = CaptionMapper('en', predictor=lambda text: [
+        i + 1 for i, char in enumerate(text) if char == '.'])
+    sentences = [f'Sentence {i}.' for i in range(count)]
+    history = ' '.join(sentences)
+    mapper.update({'lines': [line(history)]}, done=True)
+    compared = []
+    matcher = module.SequenceMatcher
+    def compare(junk, old, new, **kwargs):
+        compared.append((old, new))
+        return matcher(junk, old, new, **kwargs)
+    monkeypatch.setattr(module, 'SequenceMatcher', compare)
+    mapper.update({'lines': [line(history + ' Next sentence.')]})
+    context = (' ' if count > 10 else '') + ' '.join(sentences[-10:])
+    assert compared == [(context, context + ' Next sentence.')]
+
+
+@pytest.mark.parametrize('changed_index, context_start', [(4, 0), (14, 4)])
+def test_correction_before_sliding_window_expands_to_affected_history(monkeypatch, changed_index, context_start):
+    import linguaflow.wlk_captions as module
+    mapper = CaptionMapper('en', predictor=lambda text: [
+        i + 1 for i, char in enumerate(text) if char == '.'])
+    sentences = [f'Classroom statement {i}.' for i in range(30)]
+    history = ' '.join(sentences)
+    mapper.update({'lines': [line(history)]}, done=True)
+    original_ids = list(mapper.previous)
+    versions = {cid: c.revision for cid, c in mapper.previous.items()}
+    compared = []
+    matcher = module.SequenceMatcher
+    def compare(junk, old, new, **kwargs):
+        compared.append((old, new))
+        return matcher(junk, old, new, **kwargs)
+    monkeypatch.setattr(module, 'SequenceMatcher', compare)
+    # These corrections precede the normal window covering sentences 21–30.
+    sentences[changed_index] = f'Corrected classroom statement {changed_index}.'
+    corrected = ' '.join(sentences)
+    mapper.update({'lines': [line(corrected)]})
+    context = (' ' if context_start else '') + ' '.join(
+        f'Classroom statement {i}.' for i in range(context_start, 30))
+    changed_context = (' ' if context_start else '') + ' '.join(sentences[context_start:])
+    assert compared == [(context, changed_context)]
+    assert list(mapper.previous) == original_ids
+    assert text(mapper) == corrected
+    assert all(mapper.previous[cid].final and mapper.previous[cid].revision == versions[cid]
+               for cid in original_ids[:changed_index])
+    affected = mapper.previous[original_ids[changed_index]]
+    assert affected.source == sentences[changed_index] and affected.revision > versions[affected.id]
+    assert not affected.final
+    mapper.update({'lines': [line(corrected)]}, done=True)
+    assert text(mapper) == corrected and all(c.final for c in mapper.previous.values())
+
+
 def test_model_offsets_determine_short_and_unpunctuated_segments():
     mapper = CaptionMapper("zh", predictor=lambda text: [2, 4])
     events = mapper.update({"lines": [line("好。开始我们继续", end=5)]})

@@ -344,7 +344,7 @@ class SettingsWorkspace(QWidget):
             self.row(rows, title, detail, button)
         body.addWidget(card)
         body.addWidget(text_label('聆听中的文字会发生什么？', 'settingsSection'))
-        body.addWidget(text_label('未提交  →  已提交，可修订  →  原文已定稿\n\n首次提交生成初译；中间原文修订时保留初译并标注。识别段结束后原文独立定稿，再生成最终译文。翻译不阻挡原文更新，也不等待尚未出现的后文。暂停会停止收音并继续处理已有内容；点击“继续录音”可接着录，暂停时间不计入录音。停止聆听会处理剩余内容，请等待收尾完成。', 'infoBanner'))
+        body.addWidget(text_label('未提交  →  已提交，可修订  →  原文已定稿\n\n首次提交和已提交原文的变化立即排队初译，默认参考前 1 段已定稿原文。识别段结束后原文独立定稿，再参考前 10 段已定稿原文生成最终译文。相邻待译内容可以合并、共享背景；等待更新时保留已有译文并标注。翻译不阻挡原文更新，也不等待尚未出现的后文。暂停会停止收音并继续处理已有内容；点击“继续录音”可接着录，暂停时间不计入录音。停止聆听会处理剩余内容，请等待收尾完成。', 'infoBanner'))
         body.addWidget(text_label('录音结束以后', 'settingsSection'))
         body.addWidget(text_label('从侧栏打开录音，可回听音频或导出双语 SRT。使用「···」重命名、移动或打开保存位置；删除的录音先进入「最近删除」，可在那里恢复。', 'muted'))
         body.addStretch()

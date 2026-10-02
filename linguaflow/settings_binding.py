@@ -54,4 +54,4 @@ class SettingsBinding:
                'translation_engine', 'llama_model',
                'qwen_model', 'update_seconds', 'draft_seconds', 'endpoint_seconds',
                'semantic_device', 'semantic_lookahead',
-               'translation_before', 'translation_after')})
+               'translation_before', 'translation_after', 'translation_initial_before')})

@@ -233,7 +233,7 @@ def test_shared_sat_policy_rejoins_punctuated_fragments_while_asr_remains_open()
     assert changed.id == first.id and changed.source == continued and not changed.final
 
 
-def test_shared_submission_translates_once_then_finalizes_corrected_original():
+def test_shared_submission_retranslates_corrected_source_then_finalizes():
     clock = [0.]
     asr = online(lambda audio: 'The value is five.' if len(audio) == 16000 else 'The value is six.')
     store = install_revision_bridge(asr)
@@ -253,6 +253,10 @@ def test_shared_submission_translates_once_then_finalizes_corrected_original():
     asr.end_silence(.75, 1)
     asr.insert_audio_chunk(np.ones(16000), 2.75)
     asr.process_iter()
+    revised = publish()
+    assert len(revised) == 1 and revised[0].translation_phase == 'initial'
+    assert revised[0].id == first[0].id and revised[0].source == 'The value is six.'
+    assert not planner.accepts(first[0]) and planner.accepts(revised[0])
     assert publish() == []
     asr.finish()
     final = publish()

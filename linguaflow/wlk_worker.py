@@ -167,15 +167,16 @@ async def serve(settings, emit, read_message):
     mapper = CaptionMapper(config.lan, predictor=semantic.boundaries,
                            lookahead=settings.get("semantic_lookahead", 3.))
     from .translation_queue import TranslationQueue
-    from .translation_service import publish_translation_result, run_translations
+    from .translation_service import publish_translation_batch, publish_translation_result, run_translations
     translation_queue = TranslationQueue()
     from .translation_context import ContextPlanner
     from .translation_models import is_hy_model, translation_engine
     contextual_translation = (translation_engine(SimpleNamespace(**settings)) == 'llama'
                              or is_hy_model(settings.get('translation_model', '')))
     context_planner = ContextPlanner(
-        settings.get('translation_before', 3) if contextual_translation else 0,
-        settings.get('translation_after', 1) if contextual_translation else 0)
+        settings.get('translation_before', 10) if contextual_translation else 0,
+        settings.get('translation_after', 1) if contextual_translation else 0,
+        settings.get('translation_initial_before', 1) if contextual_translation else 0)
     caption_lock = asyncio.Lock()
     latest = {}
     closed_audio_time = -1.
@@ -193,12 +194,17 @@ async def serve(settings, emit, read_message):
                 for caption in context_planner.update(mapper.previous.values()):
                     translation_queue.put_nowait(caption)
 
+    def apply_translation(current):
+        mapper.previous[current.id] = current
+        emit({'type': 'caption', 'data': asdict(current)})
+
     async def publish_translation(caption, context=None):
-        def apply(current):
-            mapper.previous[current.id] = current
-            emit({'type': 'caption', 'data': asdict(current)})
         await publish_translation_result(caption, mapper.previous.get, caption_lock,
-            apply, context, context_planner.get if contextual_translation else None, context_planner)
+            apply_translation, context, context_planner.get if contextual_translation else None, context_planner)
+
+    async def publish_batch(captions, contexts):
+        return await publish_translation_batch(captions, contexts, mapper.previous.get,
+                                               caption_lock, apply_translation, context_planner)
 
     async def translate():
         if not settings.get("translate"):
@@ -210,7 +216,7 @@ async def serve(settings, emit, read_message):
             lambda: create_translator(SimpleNamespace(**settings), report),
             mapper.previous.get, publish_translation, report,
             lambda values: emit({"type": "translation_metrics", **values}),
-            context_planner.get if contextual_translation else None, context_planner)
+            context_planner.get if contextual_translation else None, context_planner, publish_batch)
 
     async def output():
         from .runtime_compat import results_with_final_snapshot

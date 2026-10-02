@@ -26,22 +26,23 @@ def test_neighbours_do_not_retranslate_final_rows_and_corrections_do():
     assert planner.get(1) is None
 
 
-def test_first_snapshot_survives_revisions_and_final_context_is_frozen():
+def test_submitted_revisions_replace_initial_snapshot_and_final_context_is_frozen():
     planner = ContextPlanner(3, 1)
     first = Caption(1, 0, 1, 'project', 'en', final=False, ready=True)
     job = planner.update([first])[0]
     assert job.translation_phase == 'initial' and planner.get(1) == TranslationContext()
     revised = replace(first, source='plan with budget 9000', revision=4, ready=False)
-    assert planner.update([revised]) == []
-    assert planner.accepts(job)
+    newer = planner.update([revised])[0]
+    assert newer.source == revised.source and newer.translation_phase == 'initial'
+    assert planner.accepts(newer) and not planner.accepts(job)
     final = replace(revised, final=True, revision=5)
     neighbour = Caption(2, 2, 3, 'next', 'en', final=False, stable_source='next')
     last = planner.update([final, neighbour])[0]
     assert last.source == final.source and last.translation_phase == 'final'
     assert not planner.accepts(job)
-    assert planner.get(1).after == ('next',)
+    assert planner.get(1).after == ()  # Only finalized source is background.
     assert planner.update([final, replace(neighbour, source='different', stable_source='different')]) == []
-    assert planner.get(1).after == ('next',)
+    assert planner.get(1).after == ()
 
 
 def test_drafts_excluded_and_context_bounded():
@@ -54,7 +55,7 @@ def test_drafts_excluded_and_context_bounded():
     assert all(len(s) == 600 for s in planner.get(4).before)
     rows[-1] = replace(rows[-1], ready=True)
     assert [c.id for c in planner.update(rows)] == [5]
-    assert planner.get(5) == TranslationContext()
+    assert planner.get(5) == TranslationContext((rows[4].source[-600:],))
     rows[-1] = replace(rows[-1], final=True, revision=2)
     assert [c.id for c in planner.update(rows)] == [5]
     assert len(planner.get(5).before) == 3
@@ -63,7 +64,7 @@ def test_drafts_excluded_and_context_bounded():
     assert disabled.get(4) == TranslationContext()
 
 
-def test_initial_inflight_can_publish_after_source_edits_then_final_supersedes():
+def test_initial_inflight_is_superseded_and_queued_revisions_coalesce():
     async def exercise():
         queue, planner, lock = TranslationQueue(), ContextPlanner(), asyncio.Lock()
         first = Caption(1, 0, 1, 'project', 'en', final=False, ready=True)
@@ -96,10 +97,11 @@ def test_initial_inflight_can_publish_after_source_edits_then_final_supersedes()
                 schedule()
             release.set()
             await asyncio.wait_for(queue.join(), 3)
-            assert len(calls) == 1
-            assert results[-1].source == 'plan 5' and results[-1].translation == 'project translated'
+            assert [text for text, _ in calls] == ['project', 'plan 5']
+            assert len(results) == 1
+            assert results[-1].source == 'plan 5' and results[-1].translation == 'plan 5 translated'
             assert results[-1].translation_phase == 'initial'
-            assert results[-1].translation_source == 'project'
+            assert results[-1].translation_source == 'plan 5'
             latest[1] = replace(latest[1], final=True, revision=6)
             schedule()
             await asyncio.wait_for(queue.join(), 3)

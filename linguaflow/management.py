@@ -226,17 +226,21 @@ class ModelManager(QDialog):
         self.translation_form.addRow('翻译计算设备', self.translation_device)
         self.translation_before = QComboBox()
         self.translation_after = QComboBox()
-        for count in range(7):
+        self.translation_initial_before = QComboBox()
+        for count in range(11):
             self.translation_before.addItem(f'{count} 段' if count else '不参考', count)
         for count in range(3):
             self.translation_after.addItem(f'{count} 段' if count else '不参考', count)
-        self.translation_before.setCurrentIndex(3)
+            self.translation_initial_before.addItem(f'{count} 段' if count else '不参考', count)
+        self.translation_before.setCurrentIndex(10)
         self.translation_after.setCurrentIndex(1)
-        self.translation_form.addRow('参考前文', self.translation_before)
-        self.translation_form.addRow('参考后文', self.translation_after)
+        self.translation_initial_before.setCurrentIndex(1)
+        self.translation_form.addRow('初译参考前文', self.translation_initial_before)
+        self.translation_form.addRow('定稿参考前文', self.translation_before)
+        self.translation_form.addRow('定稿参考后文', self.translation_after)
         self.translation_engine.currentIndexChanged.connect(self.update_translation_engine)
         translation.currentTextChanged.connect(self.update_translation_context)
-        self.hint(self.translation_form, '首次提交生成初译；原文定稿后，HY 与 GGUF 指令模型参考已有前后文生成最终译文。NLLB 逐句处理。')
+        self.hint(self.translation_form, '提交及提交后原文变化立即更新初译，使用少量已定稿前文；定稿使用更多上下文。相邻待处理段可共享上下文合并翻译，NLLB 逐段处理。')
         self.translation_hint = self.hint(self.translation_form, '')
         translation_download = QPushButton('下载 / 检查翻译模型')
         translation_download.clicked.connect(lambda: self.prepare_translation(translation.currentText().strip()))
@@ -261,6 +265,7 @@ class ModelManager(QDialog):
                    or is_hy_model(self.translation_model.currentText().strip()))
         self.translation_before.setEnabled(enabled)
         self.translation_after.setEnabled(enabled)
+        self.translation_initial_before.setEnabled(enabled)
 
     def update_translation_engine(self):
         from .llama_assets import devices

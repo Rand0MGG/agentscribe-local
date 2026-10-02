@@ -27,6 +27,10 @@ w.translation.setCurrentText(HY_MODEL)
 manager.translation_engine.setCurrentIndex(manager.translation_engine.findData('llama'))
 manager.llama_model.setCurrentText(str(folder/'new-model-f16.gguf'))
 assert manager.translation_before.isEnabled()
+assert manager.translation_initial_before.isEnabled()
+assert manager.translation_before.currentData() == 10
+assert manager.translation_initial_before.currentData() == 1
+manager.translation_initial_before.setCurrentIndex(0)
 device = 'metal' if sys.platform == 'darwin' else 'cuda'
 manager.translation_device.setCurrentIndex(manager.translation_device.findData(device))
 if sys.platform == 'win32':
@@ -35,6 +39,7 @@ if sys.platform == 'win32':
 w.translate.setChecked(True)
 settings = w.settings_binding.session_settings(('fixture', False), {})
 assert settings.translation_engine == 'llama' and settings.translation_device == device
+assert settings.translation_initial_before == 0 and settings.translation_before == 10
 assert settings.llama_model.endswith('new-model-f16.gguf')
 commands = []
 manager.prepare = lambda action: action()
@@ -45,6 +50,7 @@ w.close()
 w = window()
 manager = w.model_manager
 assert manager.translation_engine.currentData() == 'llama'
+assert manager.translation_initial_before.currentData() == 0
 assert manager.translation_device.currentData() == device
 assert manager.llama_model.currentText() == settings.llama_model
 manager.translation_engine.setCurrentIndex(manager.translation_engine.findData('pytorch'))
@@ -54,6 +60,7 @@ assert manager.translation_device.findData('vulkan') == -1
 assert manager.translation_device.findData('metal') == -1
 w.translation.setCurrentText('facebook/nllb-200-distilled-600M')
 assert not manager.translation_before.isEnabled()
+assert not manager.translation_initial_before.isEnabled()
 manager.translation_engine.setCurrentIndex(manager.translation_engine.findData('llama'))
 assert manager.llama_model.currentText() == settings.llama_model
 assert manager.translation_before.isEnabled()

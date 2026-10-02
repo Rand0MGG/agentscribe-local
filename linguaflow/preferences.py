@@ -21,7 +21,8 @@ PREFERENCES = (
     Preference('llama_model', 'editable', 'tencent/Hy-MT2-1.8B-GGUF'),
     Preference('translation_engine', 'data', 'pytorch'),
     Preference('translation_device', 'data'),
-    Preference('translation_before', 'data', 3), Preference('translation_after', 'data', 1),
+    Preference('translation_before', 'data', 10), Preference('translation_after', 'data', 1),
+    Preference('translation_initial_before', 'data', 1),
     Preference('update_seconds', 'float', 1.), Preference('endpoint_seconds', 'float', .5),
     Preference('semantic_lookahead', 'float', 3.),
     Preference('draft_seconds', 'float', .5),
@@ -40,6 +41,9 @@ def read_preferences(store):
             values[pref.key] = pref.default
     if store.value('translation_engine') is None and values['translation_device'] == 'metal':
         values['translation_engine'] = 'llama'
+    # Upgrade the old three-row default once; explicit non-default choices stay.
+    if store.value('translation_initial_before') is None and values['translation_before'] == 3:
+        values['translation_before'] = 10
     values['backend'] = {'whisper-live': 'wlk-whisper', 'qwen-stream': 'qwen3-streaming'}.get(
         values['backend'], values['backend'])
     try:

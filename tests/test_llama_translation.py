@@ -51,6 +51,10 @@ def test_translation_preserves_context_and_rejects_incomplete_output(finish, con
     translator.process = SimpleNamespace(poll=lambda: None)
     translator.target, translator.source = 'zho_Hans', 'eng_Latn'
     def request(path, payload):
+        if path == '/apply-template':
+            return {'prompt': payload['messages'][0]['content']}
+        if path == '/tokenize':
+            return {'tokens': [1] * 100}
         assert path == '/v1/chat/completions'
         assert 'We watched birds.' in payload['messages'][0]['content']
         assert payload['messages'][0]['content'].endswith('[Source Text]\nThe crane moved.')
@@ -81,6 +85,38 @@ def test_startup_requires_actual_full_gpu_offload_and_closes_failed_helper(monke
     with pytest.raises(RuntimeError, match='未在'):
         LlamaTranslator(Settings('test', translation_model=HY_MODEL, translation_device='metal'))
     assert calls == ['wait'] and process.stdin.closed and process.stdout.closed
+
+
+@pytest.mark.parametrize('device', ['cpu', 'metal', 'cuda', 'vulkan'])
+def test_server_disables_historical_prompt_cache_for_long_sessions(monkeypatch, device):
+    import linguaflow.llama_translation as module
+    monkeypatch.setattr(module, 'resolve_assets', lambda _: (Path('fake'), Path('fake.gguf')))
+    class Socket:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def bind(self, _): pass
+        def getsockname(self): return ('127.0.0.1', 1234)
+    monkeypatch.setattr(module.socket, 'socket', lambda: Socket())
+    device_id = {'metal': 'MTL0', 'cuda': 'CUDA0', 'vulkan': 'Vulkan0', 'cpu': 'none'}[device]
+    process = SimpleNamespace(stdin=io.StringIO(), stdout=io.StringIO(
+        f'using device {device_id}\noffloaded 33/33 layers to GPU\n'),
+        poll=lambda: None, wait=lambda **_: None)
+    commands = []
+    def start(command, **kwargs):
+        commands.append(command)
+        return process
+    monkeypatch.setattr(module.subprocess, 'Popen', start)
+    monkeypatch.setattr(LlamaTranslator, 'request', lambda *a, **kw: {'status': 'ok'})
+    translator = LlamaTranslator(Settings('test', translation_model=HY_MODEL, translation_device=device))
+    try:
+        command = commands[0]
+        # b11254 otherwise keeps up to 8192 MiB of previous prompt KV states.
+        assert '--cache-ram' in command
+        assert command[command.index('--cache-ram') + 1] == '0'
+        assert '--no-cache-idle-slots' in command
+        assert command[command.index('-c') + 1] == '4096'
+    finally:
+        translator.close()
 
 
 @pytest.mark.skipif(sys.platform == 'win32', reason='Metal supervisor is used on macOS')

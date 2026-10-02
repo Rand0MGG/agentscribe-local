@@ -1,7 +1,15 @@
 """Model adapters. Imports and downloads only occur when a session is started."""
 
 from .core import WHISPER_TO_NLLB, Settings
-from .translation_models import HY_GENERATION, is_hy_model, translation_engine, translation_prompt
+from .translation_models import (
+    HY_GENERATION,
+    batch_translation_prompt,
+    fit_translation_prompt,
+    is_hy_model,
+    parse_batch_translation,
+    translation_engine,
+    translation_prompt,
+)
 
 
 def create_translator(settings, report=lambda text: None):
@@ -29,6 +37,7 @@ class HyMtTranslator:
         from .model_cache import resolve_translation
 
         self.torch, self.target, self.source = torch, settings.target, settings.source_nllb
+        self.report = report
         torch.set_num_threads(4)
         path = resolve_translation(settings.translation_model, settings.offline, report)
         device = settings.translation_device
@@ -45,10 +54,26 @@ class HyMtTranslator:
     def translate(self, text, language, context=None):
         if (self.source or WHISPER_TO_NLLB.get(language)) == self.target:
             return text
-        prompt = translation_prompt(text, self.target, context)
-        inputs = self.tokenizer.apply_chat_template(
-            [{'role': 'user', 'content': prompt}], add_generation_prompt=True,
-            tokenize=True, return_dict=True, return_tensors='pt').to(self.model.device)
+        return self.complete(lambda background: translation_prompt(text, self.target, background), context)
+
+    def translate_batch(self, captions, context=None):
+        if (self.source or WHISPER_TO_NLLB.get(captions[0].language)) == self.target:
+            return {c.id: c.source for c in captions}
+        output = self.complete(lambda background: batch_translation_prompt(captions, self.target, background), context)
+        return parse_batch_translation(output, captions)
+
+    def complete(self, build_prompt, context):
+        inputs = None
+        def count_tokens(prompt):
+            nonlocal inputs
+            inputs = self.tokenizer.apply_chat_template(
+                [{'role': 'user', 'content': prompt}], add_generation_prompt=True,
+                tokenize=True, return_dict=True, return_tensors='pt')
+            return inputs['input_ids'].shape[-1]
+        _prompt, trimmed = fit_translation_prompt(build_prompt, context, count_tokens, 8192)
+        if trimmed:
+            self.report('翻译背景超出输入预算，已缩减较远上下文；待译原文完整保留。')
+        inputs = inputs.to(self.model.device)
         # The generic fast tokenizer emits segment IDs; this causal model does
         # not accept them (unlike encoder/decoder translation tokenizers).
         inputs.pop('token_type_ids', None)

@@ -16,7 +16,14 @@ from threading import Lock, Thread
 from .core import WHISPER_TO_NLLB
 from .llama_assets import resolve_assets
 from .process_platform import spawn_options, stop_tree
-from .translation_models import llama_generation, translation_prompt
+from .translation_models import (
+    batch_translation_prompt,
+    batch_translation_schema,
+    fit_translation_prompt,
+    llama_generation,
+    parse_batch_translation,
+    translation_prompt,
+)
 
 
 class LlamaTranslator:
@@ -25,6 +32,7 @@ class LlamaTranslator:
     def __init__(self, settings, report=lambda _: None):
         binary, weights = resolve_assets(settings)
         self.target, self.source = settings.target, settings.source_nllb
+        self.report = report
         self.process = None
         self.reader = None
         self.lock = Lock()
@@ -42,8 +50,11 @@ class LlamaTranslator:
             sock.bind(('127.0.0.1', 0))
             port = sock.getsockname()[1]
         self.endpoint = f'http://127.0.0.1:{port}'
+        # b11254 defaults to an 8 GiB host cache of previous prompt KV states.
+        # Classroom requests rarely revisit old prompts; keep only the live slot.
         command = [str(binary), '-m', str(weights), '--host', '127.0.0.1', '--port', str(port),
                    '--device', self.device_id, '-ngl', '0' if self.device == 'cpu' else '99', '--fit', 'off', '-c', '4096', '-np', '1',
+                   '--cache-ram', '0', '--no-cache-idle-slots',
                    '-t', '2', '-tb', '2', '--no-webui', '--no-context-shift', '-lv', '4',
                    '--api-key', self.api_key]
         try:
@@ -95,8 +106,33 @@ class LlamaTranslator:
             raise RuntimeError('llama.cpp 翻译进程已结束，请停止后重新开始聆听。')
         if (self.source or WHISPER_TO_NLLB.get(language)) == self.target:
             return text
-        payload = {'messages': [{'role': 'user', 'content': translation_prompt(text, self.target, context)}],
+        return self.complete(lambda background: translation_prompt(text, self.target, background), context)
+
+    def translate_batch(self, captions, context=None):
+        if (self.source or WHISPER_TO_NLLB.get(captions[0].language)) == self.target:
+            return {c.id: c.source for c in captions}
+        output = self.complete(lambda background: batch_translation_prompt(captions, self.target, background),
+                               context, batch_translation_schema(captions))
+        return parse_batch_translation(output, captions)
+
+    def complete(self, build_prompt, context, schema=None):
+        if self.closed or self.process.poll() is not None:
+            raise RuntimeError('llama.cpp 翻译进程已结束，请停止后重新开始聆听。')
+        def count_tokens(prompt):
+            rendered = self.request('/apply-template', {'messages': [{'role': 'user', 'content': prompt}],
+                                                       'add_generation_prompt': True})['prompt']
+            return len(self.request('/tokenize', {'content': rendered, 'add_special': True})['tokens'])
+        prompt, trimmed = fit_translation_prompt(build_prompt, context, count_tokens,
+                                                4096 - llama_generation()['max_tokens'])
+        if trimmed:
+            self.report('翻译背景超出输入预算，已缩减较远上下文；待译原文完整保留。')
+        payload = {'messages': [{'role': 'user', 'content': prompt}],
                    **llama_generation(), 'stream': False}
+        if schema is not None:
+            # b11254 reads schema from this nested wrapper; a top-level schema
+            # silently constrains only "any object", allowing missing/extra IDs.
+            payload['response_format'] = {'type': 'json_schema', 'json_schema': {
+                'name': 'subtitle_translations', 'strict': True, 'schema': schema}}
         try:
             result = self.request('/v1/chat/completions', payload)
         except urllib.error.HTTPError as exc:

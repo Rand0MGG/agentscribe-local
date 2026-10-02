@@ -5,6 +5,8 @@ from difflib import SequenceMatcher
 
 from .core import Caption
 
+DIFF_CONTEXT_ROWS = 10
+
 
 def seconds(value):
     result = 0.
@@ -155,10 +157,22 @@ class CaptionMapper:
         offset = self.fixed[-1][1] if self.fixed else 0
         remainder = text[offset:]
         boundaries = self.policy.split(remainder) if remainder else []
-        edits = (SequenceMatcher(None, self.last_text, text, autojunk=False).get_opcodes()
-                 if self.last_text != text else [('equal', 0, len(text), 0, len(text))])
+        # Include ten unchanged caption rows as context, plus the entire mutable
+        # suffix. Earlier corrections already reduced `keep`, moving this window
+        # back with them; never discard a correction to enforce a fixed cutoff.
+        if self.last_text != text:
+            diff_start = (self.fixed[-DIFF_CONTEXT_ROWS - 1][1]
+                          if len(self.fixed) > DIFF_CONTEXT_ROWS else 0)
+            edits = [('equal', 0, diff_start, 0, diff_start)] if diff_start else []
+            edits.extend((tag, a + diff_start, b + diff_start, c + diff_start, d + diff_start)
+                         for tag, a, b, c, d in SequenceMatcher(
+                             None, self.last_text[diff_start:], text[diff_start:], autojunk=False).get_opcodes())
+        else:
+            edits = [('equal', 0, len(text), 0, len(text))]
 
         def mapped(pos):
+            if pos <= offset:
+                return pos  # Stable context participates in matching, not revision.
             for tag, a, b, c, d in edits:
                 if a <= pos <= b:
                     return c + pos - a if tag == 'equal' else (d if pos == b else c)

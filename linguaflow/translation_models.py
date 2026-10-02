@@ -2,6 +2,8 @@
 import json
 from pathlib import Path
 
+from .translation_context import TranslationContext
+
 HY_MODEL = 'tencent/Hy-MT2-1.8B'
 
 
@@ -51,3 +53,53 @@ def translation_prompt(text, target, context=None):
             + '\nUse this only to resolve meaning and terminology. Do not translate the background.\n')
     return (background + f'Translate only the following source text into {language}. '
             'Output only its translation, without explanations or background text.\n[Source Text]\n' + text)
+
+
+def batch_translation_prompt(captions, target, context=None):
+    # Keep boundaries explicit: free-form concatenation cannot preserve subtitle IDs.
+    segments = [{'id': str(c.id), 'source': c.source} for c in captions]
+    return (translation_prompt(json.dumps(segments, ensure_ascii=False), target, context)
+            + '\nThe source is an ordered list of adjacent subtitle segments. Use all segments together '
+            'to resolve meaning. Translate EVERY source segment, preserving its ID and source boundary. '
+            'Return ONLY a JSON object mapping each ID to its translated text. Do not merge, omit, '
+            'duplicate or add IDs. Do not translate the background or the JSON field names.')
+
+
+def batch_translation_schema(captions):
+    keys = [str(c.id) for c in captions]
+    return {'type': 'object', 'properties': {key: {'type': 'string', 'minLength': 1} for key in keys},
+            'required': keys, 'additionalProperties': False}
+
+
+def parse_batch_translation(output, captions):
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError('合并翻译返回了重复字幕 ID。')
+            result[key] = value
+        return result
+    try:
+        values = json.loads(output, object_pairs_hook=unique)
+    except ValueError as exc:
+        raise ValueError('合并翻译格式无效；已保留原文和已有译文。') from exc
+    if (not isinstance(values, dict) or set(values) != {str(c.id) for c in captions}
+            or any(not isinstance(v, str) or not v.strip() for v in values.values())):
+        raise ValueError('合并翻译返回的字幕缺失、多余或为空；已保留原文和已有译文。')
+    return {c.id: values[str(c.id)].strip() for c in captions}
+
+
+def fit_translation_prompt(build, context, count_tokens, limit):
+    """Trim only background, oldest preceding row first; source is never truncated."""
+    context = context or TranslationContext()
+    original = context
+    while True:
+        prompt = build(context)
+        if count_tokens(prompt) <= limit:
+            return prompt, context != original
+        if context.before:
+            context = TranslationContext(context.before[1:], context.after)
+        elif context.after:
+            context = TranslationContext((), context.after[:-1])
+        else:
+            raise ValueError('本段翻译原文超出模型输入预算；已保留完整原文和已有译文。')

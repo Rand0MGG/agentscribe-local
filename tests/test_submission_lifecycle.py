@@ -6,7 +6,7 @@ from linguaflow.translation_context import ContextPlanner
 from linguaflow.wlk_captions import CaptionMapper
 
 
-def test_project_can_change_back_to_plan_without_another_first_translation():
+def test_submitted_project_change_requests_new_initial_translation_then_final():
     clock = [0.]
     mapper = CaptionMapper('zh', predictor=lambda text: [], lookahead=1, clock=lambda: clock[0])
     planner = ContextPlanner()
@@ -26,16 +26,17 @@ def test_project_can_change_back_to_plan_without_another_first_translation():
     update('我们今天讨论这个项目的预算')
     first_id = jobs[0].id
     update('我们今天讨论这个方案的预算是9000')
-    assert len(jobs) == 1 and not mapper.previous[first_id].final
+    assert len(jobs) == 2 and not mapper.previous[first_id].final
+    assert jobs[1].translation_source.endswith('方案的预算是9000')
     assert mapper.previous[first_id].source == '我们今天讨论这个方案的预算是9000'
     update('我们今天讨论这个方案的预算是9000', closed=True)
-    assert len(jobs) == 2
-    assert [c.translation_phase for c in jobs] == ['initial', 'final']
-    assert jobs[1].id == first_id and jobs[1].source.endswith('方案的预算是9000')
+    assert len(jobs) == 3
+    assert [c.translation_phase for c in jobs] == ['initial', 'initial', 'final']
+    assert jobs[2].id == first_id and jobs[2].source.endswith('方案的预算是9000')
     assert mapper.previous[first_id].final
 
 
-def test_submitted_rows_can_merge_without_repeating_initial_translation():
+def test_submitted_rows_merge_and_request_updated_initial_translation():
     boundaries = [[6]]
     mapper = CaptionMapper('en', predictor=lambda text: boundaries[0])
     planner = ContextPlanner()
@@ -47,7 +48,9 @@ def test_submitted_rows_can_merge_without_repeating_initial_translation():
     mapper.update({'lines': [{'text': 'Hello world again', 'start': 0, 'end': 4}]})
     assert mapper.previous[first[0].id].source == 'Hello world again'
     assert first[1].id not in mapper.previous
-    assert planner.update(mapper.previous.values()) == [] and planner.accepts(job)
+    newer = planner.update(mapper.previous.values())
+    assert len(newer) == 1 and newer[0].source == 'Hello world again'
+    assert planner.accepts(newer[0]) and not planner.accepts(job)
     assert mapper.previous[first[0].id].translation == '你好'
     boundaries[0] = [2, 6, 9]
     mapper.update({'lines': [{'text': 'Hello world again!', 'start': 0, 'end': 5}]})

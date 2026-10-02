@@ -26,8 +26,23 @@ async def publish_translation_result(caption, current_caption, lock, publish,
                             translation_source=(caption.translation_source if caption.translation else current.translation_source)))
 
 
+async def publish_translation_batch(captions, contexts, current_caption, lock, publish, planner):
+    """Publish a shared-context response atomically, or reject the entire block."""
+    async with lock:
+        current = [current_caption(c.id) for c in captions]
+        if any(not row or not row.source or not planner.accepts(caption)
+               or planner.get(caption.id) != context
+               for row, caption, context in zip(current, captions, contexts, strict=True)):
+            return False
+        for row, caption in zip(current, captions, strict=True):
+            publish(replace(row, translation=caption.translation or row.translation, error=caption.error,
+                            translation_phase=caption.translation_phase if caption.translation else row.translation_phase,
+                            translation_source=caption.translation_source if caption.translation else row.translation_source))
+        return True
+
+
 async def run_translations(queue, create_translator, current_caption, publish, status, metrics,
-                           context_for=None, planner=None):
+                           context_for=None, planner=None, publish_batch=None):
     lock, closing, translator = Lock(), False, None
 
     def create_owned():
@@ -44,7 +59,7 @@ async def run_translations(queue, create_translator, current_caption, publish, s
 
     try:
         await _consume_translations(queue, create_owned, current_caption, publish, status, metrics,
-                                    context_for, planner)
+                                    context_for, planner, publish_batch)
     finally:
         with lock:
             closing = True
@@ -54,7 +69,7 @@ async def run_translations(queue, create_translator, current_caption, publish, s
 
 
 async def _consume_translations(queue, create_translator, current_caption, publish, status, metrics,
-                                context_for=None, planner=None):
+                                context_for=None, planner=None, publish_batch=None):
     cache = OrderedDict()
     translator, load_error = None, None
     try:
@@ -64,39 +79,62 @@ async def _consume_translations(queue, create_translator, current_caption, publi
         status('翻译加载失败，原文继续：' + load_error)
     while True:
         item = await queue.get()
+        batch = [item]
         try:
             if item is None:
                 return
             caption, queued_at = item
             if not (planner.accepts(caption) if planner else translation_is_current(current_caption(caption.id), caption)):
                 continue
+            if (planner and context_for and publish_batch
+                    and callable(getattr(translator, 'translate_batch', None))):
+                batch = queue.take_batch(item, lambda left, right: planner.accepts(right) and planner.adjacent(left, right))
+            captions = [entry[0] for entry in batch]
             started = time.monotonic()
-            context = context_for(caption.id) if context_for else None
+            contexts = [context_for(c.id) if context_for else None for c in captions]
+            context = planner.shared_context(captions) if len(batch) > 1 else contexts[0]
             try:
                 if load_error:
                     raise RuntimeError(load_error)
-                key = (caption.source, caption.language, context)
+                key = (('batch', tuple((c.source, c.language) for c in captions), context)
+                       if len(batch) > 1 else (caption.source, caption.language, context))
                 if key in cache:
-                    text = cache[key]
+                    texts = cache[key]
                     cache.move_to_end(key)
                 else:
-                    args = (caption.source, caption.language, context) if context_for else (caption.source, caption.language)
-                    text = await asyncio.to_thread(translator.translate, *args)
-                    if not text or not text.strip():
+                    if len(batch) > 1:
+                        outputs = await asyncio.to_thread(translator.translate_batch, captions, context)
+                        if set(outputs) != {c.id for c in captions}:
+                            raise ValueError('合并翻译返回的字幕 ID 不完整；已保留原文和已有译文。')
+                        texts = tuple(outputs[c.id] for c in captions)
+                    else:
+                        args = (caption.source, caption.language, context) if context_for else (caption.source, caption.language)
+                        texts = (await asyncio.to_thread(translator.translate, *args),)
+                    if any(not isinstance(text, str) or not text.strip() for text in texts):
                         raise ValueError('翻译模型返回空译文')
-                    cache[key] = text
+                    cache[key] = texts
                     if len(cache) > 512:
                         cache.popitem(last=False)
-                result = replace(caption, translation=text, error='')
+                results = [replace(c, translation=text.strip(), error='') for c, text in zip(captions, texts, strict=True)]
             except Exception as exc:
-                result = replace(caption, error=str(exc))
-            if context_for:
-                await publish(result, context)
+                results = [replace(c, error=str(exc)) for c in captions]
+            if len(batch) > 1:
+                published = await publish_batch(results, contexts)
+                if published is False:
+                    # A neighbour changed during this shared inference. Still-current
+                    # members need fresh work too; errors themselves are never retried.
+                    for c in captions:
+                        if planner.accepts(c):
+                            queue.put_nowait(c)
+            elif context_for:
+                await publish(results[0], context)
             else:
-                await publish(result)
+                await publish(results[0])
             metrics({'pending': queue.qsize(), 'wait_seconds': started - queued_at,
-                     'compute_seconds': time.monotonic() - started, 'error': result.error,
-                     'caption_id': caption.id, 'phase': caption.translation_phase})
+                     'compute_seconds': time.monotonic() - started, 'error': results[0].error,
+                     'caption_id': caption.id, 'phase': caption.translation_phase,
+                     'batch_size': len(batch), 'caption_ids': [c.id for c in captions]})
         finally:
             # Also release unfinished work on publish failure or cancellation.
-            queue.task_done()
+            for _ in batch:
+                queue.task_done()
