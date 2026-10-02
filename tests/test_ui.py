@@ -3,6 +3,58 @@ import subprocess
 import sys
 
 
+def test_background_autosave_keeps_new_revisions_dirty_and_rejects_other_recording_results(tmp_path):
+    code = """
+import os
+from threading import Event, get_ident
+from dataclasses import replace
+from PySide6.QtCore import QSettings
+from PySide6.QtWidgets import QApplication
+from linguaflow.app import Window
+from linguaflow.core import Caption
+from linguaflow.recording_save import SaveSnapshot
+app = QApplication([])
+w = Window(discover=False, prefs=QSettings(os.environ['AGENTSCRIBE_LIBRARY']+'/prefs.ini', QSettings.Format.IniFormat))
+assert w.new_recording(name='autosave')
+first = Caption(1, 0, 1, 'first', 'en')
+w.on_caption(first)
+release, original, threads = Event(), w.library.save, []
+def slow(item, captions, state):
+    threads.append(get_ident())
+    assert release.wait(3)
+    original(item, captions, state)
+w.library.save = slow
+main_thread = get_ident()
+w.queue_session_save()
+assert w.recording_saver.busy and w.session_dirty
+w.on_caption(replace(first, source='latest', revision=2))
+release.set()
+assert w.recording_saver.flush(3000)
+assert w.session_dirty  # Older save completion cannot clear the new revision.
+assert threads and all(t != main_thread for t in threads)
+w.library.save = original
+assert w.persist_session('complete') and not w.session_dirty
+assert w.library.load(w.current_item)[1][0].source == 'latest'
+old = SaveSnapshot((w.save_generation, w.current_item['id']), w.caption_version,
+                   w.current_item.copy(), (), 'complete')
+assert w.new_recording(name='next')
+w.on_caption(Caption(1, 0, 1, 'next recording', 'en'))
+w.on_saved(old, 'complete', '')
+assert w.session_dirty and w.current_item['state'] == 'draft'
+def fail(*args): raise OSError('disk unavailable')
+w.library.save = fail
+assert not w.persist_session() and w.session_dirty
+assert '保存失败' in w.status.text()
+w.library.save = original
+assert w.persist_session() and not w.session_dirty
+w.close()
+"""
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=20,
+                            env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
+                                 'AGENTSCRIBE_LIBRARY': str(tmp_path)})
+    assert result.returncode == 0, result.stderr
+
+
 def test_failed_retranslation_preserves_text_and_corrupt_recording_is_rejected(tmp_path):
     code = """
 import os, json

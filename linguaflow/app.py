@@ -48,6 +48,7 @@ from .management import ModelManager
 from .preferences import PREFERENCES, read_audio_device, read_preferences, write_preferences
 from .qt_controls import data_index
 from .qt_controls import text_label as label
+from .recording_save import RecordingSaver
 from .recording_state import RecordingState
 from .settings_binding import SettingsBinding
 from .ui_components import ActionMenu, Disclosure, NameDialog
@@ -538,13 +539,17 @@ class Window(QMainWindow):
         self.prefs = prefs if prefs is not None else QSettings("LinguaFlow", "LocalCaptions")
         self.library = library if library is not None else self.open_recording_library(library_root)
         self.session_dirty = False
+        self.save_generation = 0
+        self.caption_version = 0
+        self.recording_saver = RecordingSaver(self)
+        self.recording_saver.completed.connect(self.on_saved)
         self.current_item = None
         self.folder_id = self.library.index["folders"][0]["id"]
         self.loading_saved = False
         self.caption_translation = True
         self.autosave = QTimer(self)
         self.autosave.setSingleShot(True)
-        self.autosave.timeout.connect(self.persist_session)
+        self.autosave.timeout.connect(self.queue_session_save)
         root = WallpaperBackdrop()
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
@@ -1024,18 +1029,34 @@ class Window(QMainWindow):
             except (OSError, ValueError) as exc:
                 QMessageBox.warning(self, "无法创建文件夹", str(exc))
 
+    def queue_session_save(self, state=None):
+        if not self.current_item or self.loading_saved or (not self.session_dirty and state is None):
+            return
+        token = (self.save_generation, self.current_item['id'])
+        self.recording_saver.submit(self.library.save, token, self.caption_version,
+                                   self.current_item, self.captions.values(), state)
+
+    def on_saved(self, snapshot, state, error):
+        if not self.current_item or snapshot.token != (self.save_generation, self.current_item['id']):
+            return
+        if error:
+            self.session_dirty = True
+            self.status.setText("自动保存失败，请导出字幕备份")
+            self.status.setToolTip(error)
+            return
+        self.current_item['state'] = state
+        if snapshot.revision == self.caption_version:
+            self.session_dirty = False
+
     def persist_session(self, state=None):
         self.autosave.stop()
-        if not self.current_item or self.loading_saved or (not self.session_dirty and state is None):
-            return True
-        try:
-            self.library.save(self.current_item, self.captions.values(), state)
-            self.session_dirty = False
-            return True
-        except (OSError, ValueError) as exc:
-            self.status.setText("自动保存失败，请导出字幕备份")
-            self.status.setToolTip(str(exc))
+        if self.recording_saver.waiting:
             return False
+        self.queue_session_save(state)
+        if not self.recording_saver.flush():
+            self.status.setText("保存仍在进行，请稍后重试；字幕已保留在界面中")
+            return False
+        return not self.session_dirty
 
     def release_playback(self):
         if self.player:
@@ -1535,6 +1556,8 @@ class Window(QMainWindow):
         self.empty.setText("正在聆听…")
 
     def clear_captions(self):
+        self.save_generation += 1
+        self.caption_version = 0
         self.scroll.reset_follow()
         for card in self.cards.values():
             card.hide()
@@ -1619,12 +1642,13 @@ class Window(QMainWindow):
             self.close()
 
     def on_caption(self, caption):
-        if self.current_item and not self.loading_saved:
-            self.session_dirty = True
         previous = self.captions.get(caption.id)
         if previous and (caption.revision < previous.revision or
                          (caption.revision == previous.revision and caption.source != previous.source)):
             return
+        if self.current_item and not self.loading_saved:
+            self.session_dirty = True
+            self.caption_version += 1
         self.scroll.prepare_update()
         if not caption.source:
             self.captions.pop(caption.id, None)
