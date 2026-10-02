@@ -40,6 +40,10 @@ GGUF translation uses `llama_translation.py` with a session-owned llama.cpp serv
 
 `wlk_session.py` owns the process boundary, `wlk_worker.py` assembles the streaming pipeline, `translation_service.py` owns revision-aware translation consumption, and `backends.py` contains translation adapters. Shared environment paths live in `runtime_paths.py`, so other desktop tools do not import the recording session merely to locate Python.
 
+`translation_config.py` owns shared context defaults/ranges and input limits. The live worker passes caption deltas to `translation_context.py`; its ordered source/finalized indexes preserve history edits without rescanning every saved caption for each update. `recording_save.py` owns serial background writes and copied recording snapshots; the desktop checks recording generation/version before applying completion results.
+
+`.github/workflows/checks.yml` runs Ruff and no-audio tests for pushes/pull requests on `windows`, `mac`, and `main`. The unit matrix covers Windows/macOS and Python 3.11–3.13, installs desktop/development dependencies only, and neither prepares models nor opens audio devices. These jobs do not certify GPU inference or real recording hardware.
+
 `audio_processing/` separates serializable configuration, stateful DSP, ONNX compatibility, signal health checks, bounded sample recording (`recorder.py`) and the Qt audition workspace. File audition and the live worker use the same front end. `scripts/install_audio.py` manages its optional dependencies; `scripts/smoke_audio.py` exercises actual CPU/CUDA processing.
 
 `semantic_model.py` loads the required local SaT boundary predictor prepared by `scripts/install_semantic.py`. `wlk_captions.py` owns provisional boundaries, stability and revisions; `translation_queue.py` coalesces pending caption revisions. See `docs/SEMANTIC_SEGMENTATION.md` for the state transitions and limitations.

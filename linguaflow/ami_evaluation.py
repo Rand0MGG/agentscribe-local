@@ -3,15 +3,15 @@
 This is an ordered-reference WER, not diarization WER or an overlap-invariant
 metric. Both turn order and word-time order are reported, never cherry-picked.
 """
-from collections import Counter
 import csv
 import json
 import math
-from pathlib import Path
 import re
 import wave
 import xml.etree.ElementTree as ET
 import zipfile
+from collections import Counter
+from pathlib import Path
 
 from linguaflow.evaluation import FILLERS, POLICY, align, file_hash, final_captions, words
 

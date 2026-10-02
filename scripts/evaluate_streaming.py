@@ -10,10 +10,19 @@ import os
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from linguaflow.evaluation import (
+    POLICY,
+    file_hash,
+    final_captions,
+    parse_chat,
+    reference_issues,
+    score,
+    words,
+)
+
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-from linguaflow.evaluation import (POLICY, file_hash, parse_chat, reference_issues,
-                                  review_problems, score, final_captions, words)
 
 
 def write_json(path, data):
@@ -22,6 +31,7 @@ def write_json(path, data):
 
 def audit(folder, output):
     import av
+
     folder, output = Path(folder).resolve(), Path(output).resolve()
     output.mkdir(parents=True, exist_ok=True)
     results = []

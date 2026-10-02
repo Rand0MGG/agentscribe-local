@@ -4,7 +4,6 @@ No ASR/model imports. CHAT provenance never grants human-review status. A review
 is a recorded human attestation, not proof that a reference is infallible.
 """
 import hashlib
-import json
 import re
 import unicodedata
 from array import array

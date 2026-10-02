@@ -114,3 +114,5 @@ NLLB 权重遵循 [CC-BY-NC-4.0](https://huggingface.co/facebook/nllb-200-distil
 项目目录说明见 [PROJECT_STRUCTURE](docs/PROJECT_STRUCTURE.md)。
 
 参与开发前阅读 [开发规范](AGENTS.md) 和 [模块职责与依赖约束](docs/ARCHITECTURE.md)。开发规范集中维护于 `AGENTS.md`，功能行为及验证证据保留在各自文档中。
+
+固定开发分支的提交和 Pull Request 配置了 [自动代码检查](.github/workflows/checks.yml)：Ruff 与 Windows/macOS、Python 3.11–3.13 的无音频单元测试。自动检查不下载模型、不访问音频设备，也不替代 GPU 推理及真实录音验收。

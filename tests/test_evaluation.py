@@ -1,10 +1,8 @@
-import copy
 import json
 
 import pytest
 
-from linguaflow.evaluation import (POLICY, align, chat_text, final_captions, parse_chat,
-                                  review_problems, score, words)
+from linguaflow.evaluation import align, chat_text, final_captions, parse_chat, review_problems, score, words
 
 
 def reference():
@@ -154,8 +152,8 @@ def test_empty_hypothesis_is_full_deletion_not_a_crash():
 
 @pytest.mark.parametrize('defect', ['unfinished', 'events_tampered', 'settings_tampered'])
 def test_cli_rejects_incomplete_or_changed_run_files(tmp_path, defect):
-    from scripts.evaluate_streaming import evaluate
     from linguaflow.evaluation import file_hash
+    from scripts.evaluate_streaming import evaluate
     ref_path = tmp_path/'reference.json'
     ref_path.write_text(json.dumps(reference()), encoding='utf-8')
     manifest, events = run()

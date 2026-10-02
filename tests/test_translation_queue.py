@@ -2,8 +2,7 @@ import asyncio
 from dataclasses import replace
 
 from linguaflow.core import Caption
-from linguaflow.translation_queue import TranslationQueue
-from linguaflow.translation_queue import translation_is_current
+from linguaflow.translation_queue import TranslationQueue, translation_is_current
 
 
 def test_new_revision_replaces_queued_work_and_can_follow_inflight_work():

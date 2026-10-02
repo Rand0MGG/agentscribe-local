@@ -1,7 +1,6 @@
 """Install sentence segmentation independently of ASR weights."""
 import os
 import subprocess
-import sys
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]

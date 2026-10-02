@@ -4,10 +4,19 @@ import sys
 
 import pytest
 
-from linguaflow.ami_evaluation import (MEETING, PROTOCOL, evaluate, overlap_seconds,
-                                      parse_speaker, reference_tokens, validate_run, write_json)
+from linguaflow.ami_evaluation import (
+    MEETING,
+    PROTOCOL,
+    evaluate,
+    overlap_seconds,
+    parse_speaker,
+    reference_tokens,
+    validate_run,
+    write_json,
+)
 from linguaflow.evaluation import file_hash
-from scripts.benchmark_ami import frozen_settings, run as benchmark
+from scripts.benchmark_ami import frozen_settings
+from scripts.benchmark_ami import run as benchmark
 
 
 def test_xml_word_pointer_coverage_and_nonlexical_annotations():
@@ -67,24 +76,36 @@ def run_fixture():
 @pytest.mark.parametrize('defect', ['incomplete', 'end', 'source', 'length', 'samples', 'speed', 'leak', 'pacing', 'draft', 'clock', 'runtime'])
 def test_protocol_rejects_invalid_runs(defect):
     manifest, events = run_fixture()
-    if defect == 'incomplete': manifest['complete'] = False
-    elif defect == 'end': events.pop()
-    elif defect == 'source': manifest['audio']['source_sha256'] = 'different'
-    elif defect == 'length': manifest['audio']['samples'] -= 50
-    elif defect == 'samples': manifest['capture']['samples_delivered'] -= 1
-    elif defect == 'speed': manifest['replay_speed'] = 2.
-    elif defect == 'leak': manifest['reference_available_to_asr'] = True
-    elif defect == 'pacing': manifest['capture']['max_delivery_lateness_seconds'] = .3
-    elif defect == 'draft': events[1]['data']['final'] = False
-    elif defect == 'clock': events[1]['elapsed_seconds'] = float('nan')
-    elif defect == 'runtime': events.insert(-1,dict(type='error',elapsed_seconds=4.5,text='failed'))
+    if defect == 'incomplete':
+        manifest['complete'] = False
+    elif defect == 'end':
+        events.pop()
+    elif defect == 'source':
+        manifest['audio']['source_sha256'] = 'different'
+    elif defect == 'length':
+        manifest['audio']['samples'] -= 50
+    elif defect == 'samples':
+        manifest['capture']['samples_delivered'] -= 1
+    elif defect == 'speed':
+        manifest['replay_speed'] = 2.
+    elif defect == 'leak':
+        manifest['reference_available_to_asr'] = True
+    elif defect == 'pacing':
+        manifest['capture']['max_delivery_lateness_seconds'] = .3
+    elif defect == 'draft':
+        events[1]['data']['final'] = False
+    elif defect == 'clock':
+        events[1]['elapsed_seconds'] = float('nan')
+    elif defect == 'runtime':
+        events.insert(-1,dict(type='error',elapsed_seconds=4.5,text='failed'))
     with pytest.raises(ValueError, match='No score issued'):
         validate_run(reference(), manifest, events)
 
 
 def write_run(tmp_path, empty=False):
     manifest, events = run_fixture()
-    if empty: events = events[-1:]
+    if empty:
+        events = events[-1:]
     (tmp_path/'events.jsonl').write_text('\n'.join(json.dumps(e) for e in events), encoding='utf-8')
     write_json(tmp_path/'settings.json', {})
     manifest.update(events_sha256=file_hash(tmp_path/'events.jsonl'), settings_sha256=file_hash(tmp_path/'settings.json'))
@@ -131,6 +152,7 @@ def test_default_settings_and_windowed_path_rejection(tmp_path):
 def test_orchestrator_failure_does_not_start_scoring(tmp_path, monkeypatch):
     import argparse
     import subprocess
+
     import scripts.benchmark_ami as script
     ref = reference()
     ref['source']['audio_path'] = 'fixture.wav'

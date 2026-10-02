@@ -1,5 +1,6 @@
 import pytest
-from linguaflow.audio_processing.config import AudioConfig, PRESETS
+
+from linguaflow.audio_processing.config import PRESETS, AudioConfig
 
 
 def test_reject_invalid_audio_settings():
@@ -18,7 +19,8 @@ def test_default_bypasses_enhancement_and_presets_are_valid():
 
 def test_silence_and_invalid_input_are_distinguished():
     import numpy as np
-    from linguaflow.audio_processing.health import signal_stats, input_warning
+
+    from linguaflow.audio_processing.health import input_warning, signal_stats
     assert '全部为零' in input_warning(signal_stats(np.zeros(4800)))
     assert '电平很低' in input_warning(signal_stats(np.full(4800, 1e-5)))
     assert not input_warning(signal_stats(np.full(4800, .1)))

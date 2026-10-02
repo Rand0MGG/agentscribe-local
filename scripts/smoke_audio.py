@@ -11,8 +11,8 @@ import numpy as np
 from scipy.signal import correlate, correlation_lags
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from linguaflow.audio_processing.config import AudioConfig, PRESETS
-from linguaflow.audio_processing.pipeline import AudioPipeline, DeepFilter, WPE
+from linguaflow.audio_processing.config import PRESETS, AudioConfig
+from linguaflow.audio_processing.pipeline import WPE, AudioPipeline, DeepFilter
 from linguaflow.audio_processing.preview import process_file
 
 

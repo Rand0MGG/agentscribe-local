@@ -19,10 +19,12 @@ def main():
     args = parser.parse_args()
     import numpy as np
     import torch
+
     from linguaflow.runtime_compat import prepare_qwen_dependencies
     prepare_qwen_dependencies()
-    from linguaflow.model_cache import resolve_qwen_cached
     from qwen_asr import Qwen3ASRModel
+
+    from linguaflow.model_cache import resolve_qwen_cached
     torch.set_num_threads(4)
     torch.manual_seed(0)
     # Leave driver/runtime headroom within the 8 GiB deployment target.

@@ -7,8 +7,8 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
+from .health import input_warning, signal_stats
 from .pipeline import AudioPipeline
-from .health import signal_stats, input_warning
 
 
 def process_file(source, destination, config):
@@ -40,7 +40,9 @@ def process_file(source, destination, config):
         raise RuntimeError("原声有信号，但处理输出完全为零。请关闭降噪逐项检查；本次结果不作为成功输出。")
     # Explicit PCM16 conversion, identical to the live worker.
     sf.write(destination, (np.clip(y, -1, 1) * 32767).astype(np.int16), 16000, subtype="PCM_16")
-    rms = lambda a: float(20 * np.log10(max(float(np.sqrt(np.mean(a ** 2))), 1e-9)))
+    def rms(a):
+        return float(20 * np.log10(max(float(np.sqrt(np.mean(a ** 2))), 1e-9)))
+
     return {"seconds": len(x) / rate, "elapsed": elapsed, "input_dbfs": rms(x),
             "output_dbfs": rms(y), "clip_percent": float(np.mean(np.abs(y) > 1) * 100),
             "wpe_protected_bins": sum(getattr(s, "protected_bins", 0) for s in pipeline.stages),

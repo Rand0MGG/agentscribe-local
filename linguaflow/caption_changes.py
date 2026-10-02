@@ -6,7 +6,9 @@ from difflib import SequenceMatcher
 def revision_note(before, after):
     if not before or before == after or after.startswith(before):
         return ""
-    tokenize = lambda text: re.findall(r"\w+|[^\w\s]", text)
+    def tokenize(text):
+        return re.findall(r"\w+|[^\w\s]", text)
+
     old, new = tokenize(before), tokenize(after)
     changes = []
     for tag, a, b, c, d in SequenceMatcher(None, old, new, autojunk=False).get_opcodes():

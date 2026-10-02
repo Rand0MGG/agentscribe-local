@@ -5,20 +5,22 @@ translation, 1x input through the real Session/AudioJournal/worker. Each run get
 a new evidence directory. This script never cuts audio by reference timestamps.
 """
 import argparse
-from dataclasses import asdict
-from datetime import datetime
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
+from dataclasses import asdict
+from datetime import datetime
+from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from linguaflow.ami_evaluation import MEETING, PROTOCOL, evaluate, import_reference, write_json
 from linguaflow.core import Settings
 from linguaflow.evaluation import file_hash
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def frozen_settings(path=None):

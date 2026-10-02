@@ -17,6 +17,7 @@ def main():
     args = parser.parse_args()
     import av
     import numpy as np
+
     from linguaflow.audio_processing.pipeline import AudioPipeline
     config = json.loads(Path(args.config).read_text(encoding='utf-8'))
     began = time.perf_counter()

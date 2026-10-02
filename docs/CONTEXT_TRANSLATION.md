@@ -39,6 +39,12 @@ HY-MT2 的 PyTorch 路线使用 Transformers；Apple Silicon 的 GGUF / Metal �
 
 自动测试覆盖提交后原文变化立即请求、元数据与邻句变化不重译、小/大上下文、排队版本覆盖、冻结背景、批次限制、共享推理与按段映射、整批过期拒绝及有效成员重新排队、失败/取消任务释放、输入预算、缓存和旧录音兼容。旧两阶段策略的历史实测见 [两阶段提交验证](testing/TWO_PHASE_TRANSLATION.md)，其中“中间修订不翻译”不是当前行为。
 
+2026-10-03 配置统一与增量调度：上下文默认值、偏好范围、界面选项与后台缺省配置共用 `translation_config.py`，已有有效选择不变。实时 worker 改用规划器的 `update_changes()`，维护有序位置及定稿索引，按字幕变化更新，不在每次规划时遍历整段会话。空原文删除、早期历史纠正、重新提交/定稿及位置变化均更新索引，原有冻结背景和批量相邻规则保留。
+
+Windows 11 / AMD64 / Python 3.12.8：`.venv\Scripts\python.exe scripts/test_no_audio.py -q` 为 389 passed、5 skipped，没有原生音频导入尝试；`.venv\Scripts\python.exe -m ruff check linguaflow scripts tests` 全部通过，清理了历史 41 项问题。Qt 保存测试使用延迟/失败写入和临时文件，覆盖后台线程、版本合并、失败重试、超时所有权及不同录音的迟到结果；界面测试为 offscreen，没有真实音频或模型推理。
+
+独立模拟对照使用 `d2ca932` 规划器基线，1,000 次固定种子的历史增删改/位置变化中，请求、冻结背景和相邻判断与增量实现一致。100 次单条尾部修订的中位耗时：200 段历史为 0.084 → 0.007 ms，2,000 段为 0.843 → 0.009 ms，10,000 段为 4.537 → 0.016 ms。证据在 `.work/cache/code-maintenance-20261003/check_planner.py` 和 `planner-results.json`。这是规划器本身的局部计时，不代表 ASR、翻译模型、完整会话延迟或 Mac 性能。
+
 2026-10-03 背景范围与偏好修复验证：Windows 11 / AMD64 / Python 3.12.8，在 `0402383` 加本次补丁的隔离源码中运行项目无音频入口，完整测试 372 passed、6 skipped；实际工作区使用 `.venv\Scripts\python.exe scripts/test_no_audio.py -q` 再次验证，373 passed、5 skipped，额外覆盖已有本地 Silero ONNX / Float32 回归，跳过项均为 Mac 专属测试。两次均没有原生音频导入尝试。新增回归使用 500 段历史，覆盖前文 0 / 1 / 3 / 10 段、初译与定稿、单段与合并请求，经 PyTorch HY 与 llama.cpp 的实际提示词构建和生成入口检查输入；翻译模型与服务 IO 使用替身。超界背景在分词和生成前拒绝，已有译文保留、队列正常释放。已有 0–10 段设置保留，缺失设置默认 10 段；全部改动文件 Ruff 通过，全库 41 项既有问题与合并前 `main` 的诊断一致。证据在 `.work/cache/translation-context-fix/`，其中 `working-tree-tests.log`、`working-tree-ruff.json` 为实际工作区结果；此验证没有执行 ASR / 翻译模型的 CUDA / Metal 真实推理或音频设备测试。
 
 2026-10-03，M2 / 8GB、macOS 26.6.2、Python 3.12.14：完整无音频设备测试 327 项通过，修改文件 Ruff 与差异格式检查通过。全库 Ruff 仍有 41 项既有问题，均位于未修改文件。Qt offscreen 检查新增上下文控件及使用指南，覆盖 900 × 650 窗口。HY 1.8B Q4_K_M / Metal 确认 33 层 GPU：人工文本单段带 1 段背景翻译约 0.356 秒；3 段合并带 10 段背景，10 个固定种子均返回完整 ID 映射，中位约 0.561 秒、范围 0.542–0.969 秒，不含加载。测试服务退出码 0、日志线程结束，没有音频访问尝试。证据在 `.work/cache/translation-phases/`；这是短文本格式与链路检查，不能代替 50 分钟课堂性能、内存曲线、翻译质量或 Windows 实机验收。
