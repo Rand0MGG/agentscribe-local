@@ -41,9 +41,6 @@ def read_preferences(store):
             values[pref.key] = pref.default
     if store.value('translation_engine') is None and values['translation_device'] == 'metal':
         values['translation_engine'] = 'llama'
-    # Upgrade the old three-row default once; explicit non-default choices stay.
-    if store.value('translation_initial_before') is None and values['translation_before'] == 3:
-        values['translation_before'] = 10
     values['backend'] = {'whisper-live': 'wlk-whisper', 'qwen-stream': 'qwen3-streaming'}.get(
         values['backend'], values['backend'])
     try:

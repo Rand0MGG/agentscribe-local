@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-from .translation_context import TranslationContext
+from .translation_context import TranslationContext, validate_translation_context
 
 HY_MODEL = 'tencent/Hy-MT2-1.8B'
 
@@ -42,6 +42,7 @@ def is_hy_model(model):
 
 
 def translation_prompt(text, target, context=None):
+    validate_translation_context(context)
     language = TARGET_NAMES.get(target)
     if language is None:
         raise ValueError(f'翻译暂不支持目标语言：{target}')
@@ -91,6 +92,7 @@ def parse_batch_translation(output, captions):
 
 def fit_translation_prompt(build, context, count_tokens, limit):
     """Trim only background, oldest preceding row first; source is never truncated."""
+    validate_translation_context(context)
     context = context or TranslationContext()
     original = context
     while True:

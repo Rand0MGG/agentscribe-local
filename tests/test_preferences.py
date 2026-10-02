@@ -43,10 +43,9 @@ def test_legacy_metal_migrates_to_llama_without_overriding_explicit_engine():
     assert read_preferences(Store(translation_device='metal', translation_engine='pytorch'))['translation_engine'] == 'pytorch'
 
 
-def test_draft_final_context_defaults_and_legacy_default_upgrade():
+def test_draft_final_context_defaults_preserve_saved_user_choices():
     assert read_preferences(Store())['translation_before'] == 10
     assert read_preferences(Store())['translation_initial_before'] == 1
-    assert read_preferences(Store(translation_before=3))['translation_before'] == 10
-    for before in (0, 2, 6):
+    for before in range(11):
         assert read_preferences(Store(translation_before=before))['translation_before'] == before
     assert read_preferences(Store(translation_before=3, translation_initial_before=0))['translation_before'] == 3
