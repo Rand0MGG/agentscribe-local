@@ -3,6 +3,7 @@ import json
 from dataclasses import dataclass
 
 from .audio_processing.config import AudioConfig
+from .translation_config import CONTEXT_COUNTS, context_count
 
 
 @dataclass(frozen=True)
@@ -21,8 +22,7 @@ PREFERENCES = (
     Preference('llama_model', 'editable', 'tencent/Hy-MT2-1.8B-GGUF'),
     Preference('translation_engine', 'data', 'pytorch'),
     Preference('translation_device', 'data'),
-    Preference('translation_before', 'data', 10), Preference('translation_after', 'data', 1),
-    Preference('translation_initial_before', 'data', 1),
+    *(Preference(key, 'data', default) for key, (default, _maximum) in CONTEXT_COUNTS.items()),
     Preference('update_seconds', 'float', 1.), Preference('endpoint_seconds', 'float', .5),
     Preference('semantic_lookahead', 'float', 3.),
     Preference('draft_seconds', 'float', .5),
@@ -39,6 +39,8 @@ def read_preferences(store):
             values[pref.key] = store.value(pref.key, pref.default, **({'type': converter} if converter else {}))
         except (ValueError, TypeError):
             values[pref.key] = pref.default
+    for key, (default, maximum) in CONTEXT_COUNTS.items():
+        values[key] = context_count(values[key], default, maximum)
     if store.value('translation_engine') is None and values['translation_device'] == 'metal':
         values['translation_engine'] = 'llama'
     values['backend'] = {'whisper-live': 'wlk-whisper', 'qwen-stream': 'qwen3-streaming'}.get(

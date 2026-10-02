@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from .qt_controls import text_label
+from .translation_config import CONTEXT_COUNTS
 from .ui_components import ChoiceBox as QComboBox
 
 
@@ -227,14 +228,11 @@ class ModelManager(QDialog):
         self.translation_before = QComboBox()
         self.translation_after = QComboBox()
         self.translation_initial_before = QComboBox()
-        for count in range(11):
-            self.translation_before.addItem(f'{count} 段' if count else '不参考', count)
-        for count in range(3):
-            self.translation_after.addItem(f'{count} 段' if count else '不参考', count)
-            self.translation_initial_before.addItem(f'{count} 段' if count else '不参考', count)
-        self.translation_before.setCurrentIndex(10)
-        self.translation_after.setCurrentIndex(1)
-        self.translation_initial_before.setCurrentIndex(1)
+        for key, (default, maximum) in CONTEXT_COUNTS.items():
+            control = getattr(self, key)
+            for count in range(maximum + 1):
+                control.addItem(f'{count} 段' if count else '不参考', count)
+            control.setCurrentIndex(default)
         self.translation_form.addRow('初译参考前文', self.translation_initial_before)
         self.translation_form.addRow('定稿参考前文', self.translation_before)
         self.translation_form.addRow('定稿参考后文', self.translation_after)

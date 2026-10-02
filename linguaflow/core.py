@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass, field
 
+from .translation_config import DEFAULT_CONTEXT_AFTER, DEFAULT_CONTEXT_BEFORE, DEFAULT_INITIAL_CONTEXT_BEFORE
+
 SAMPLE_RATE = 16000
 # UI label, Whisper code, NLLB language token
 LANGUAGES = [
@@ -41,15 +43,15 @@ class Settings:
     draft_seconds: float = 0.5
     endpoint_seconds: float = 0.5
     translation_device: str = "cpu"
-    translation_before: int = 10
-    translation_after: int = 1
+    translation_before: int = DEFAULT_CONTEXT_BEFORE
+    translation_after: int = DEFAULT_CONTEXT_AFTER
     input_sample_rate: int = 16000
     audio_processing: dict = field(default_factory=dict)
     semantic_device: str = "cpu"
     semantic_lookahead: float = 3.0
     translation_engine: str | None = None
     llama_model: str = ""
-    translation_initial_before: int = 1
+    translation_initial_before: int = DEFAULT_INITIAL_CONTEXT_BEFORE
 
 
 @dataclass

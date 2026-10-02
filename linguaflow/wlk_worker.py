@@ -169,14 +169,19 @@ async def serve(settings, emit, read_message):
     from .translation_queue import TranslationQueue
     from .translation_service import publish_translation_batch, publish_translation_result, run_translations
     translation_queue = TranslationQueue()
+    from .translation_config import (
+        DEFAULT_CONTEXT_AFTER,
+        DEFAULT_CONTEXT_BEFORE,
+        DEFAULT_INITIAL_CONTEXT_BEFORE,
+    )
     from .translation_context import ContextPlanner
     from .translation_models import is_hy_model, translation_engine
     contextual_translation = (translation_engine(SimpleNamespace(**settings)) == 'llama'
                              or is_hy_model(settings.get('translation_model', '')))
     context_planner = ContextPlanner(
-        settings.get('translation_before', 10) if contextual_translation else 0,
-        settings.get('translation_after', 1) if contextual_translation else 0,
-        settings.get('translation_initial_before', 1) if contextual_translation else 0)
+        settings.get('translation_before', DEFAULT_CONTEXT_BEFORE) if contextual_translation else 0,
+        settings.get('translation_after', DEFAULT_CONTEXT_AFTER) if contextual_translation else 0,
+        settings.get('translation_initial_before', DEFAULT_INITIAL_CONTEXT_BEFORE) if contextual_translation else 0)
     caption_lock = asyncio.Lock()
     latest = {}
     closed_audio_time = -1.
@@ -191,7 +196,7 @@ async def serve(settings, emit, read_message):
             for caption in captions:
                 emit({"type": "caption", "data": asdict(caption)})
             if settings.get('translate'):
-                for caption in context_planner.update(mapper.previous.values()):
+                for caption in context_planner.update_changes(captions):
                     translation_queue.put_nowait(caption)
 
     def apply_translation(current):

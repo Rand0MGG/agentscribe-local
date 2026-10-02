@@ -1,10 +1,17 @@
 """Revision-triggered draft/final translation snapshots; no model dependencies."""
+from bisect import bisect_left, bisect_right, insort
 from dataclasses import dataclass, replace
 
-MAX_CONTEXT_BEFORE = 10
-MAX_CONTEXT_AFTER = 2
-MAX_INITIAL_CONTEXT_BEFORE = 2
-MAX_CONTEXT_CHARACTERS = 600
+from .translation_config import (
+    DEFAULT_CONTEXT_AFTER,
+    DEFAULT_CONTEXT_BEFORE,
+    DEFAULT_INITIAL_CONTEXT_BEFORE,
+    MAX_CONTEXT_AFTER,
+    MAX_CONTEXT_BEFORE,
+    MAX_CONTEXT_CHARACTERS,
+    MAX_INITIAL_CONTEXT_BEFORE,
+    context_count,
+)
 
 
 @dataclass(frozen=True)
@@ -36,24 +43,60 @@ def validate_translation_context(context):
 class ContextPlanner:
     """Schedule submitted source changes; neighbours alone never cause retranslation."""
 
-    def __init__(self, before=10, after=1, initial_before=1):
-        self.before = max(0, min(MAX_CONTEXT_BEFORE, int(before)))
-        self.after = max(0, min(MAX_CONTEXT_AFTER, int(after)))
-        self.initial_before = max(0, min(MAX_INITIAL_CONTEXT_BEFORE, int(initial_before)))
+    def __init__(self, before=DEFAULT_CONTEXT_BEFORE, after=DEFAULT_CONTEXT_AFTER,
+                 initial_before=DEFAULT_INITIAL_CONTEXT_BEFORE):
+        self.before = context_count(before, DEFAULT_CONTEXT_BEFORE, MAX_CONTEXT_BEFORE)
+        self.after = context_count(after, DEFAULT_CONTEXT_AFTER, MAX_CONTEXT_AFTER)
+        self.initial_before = context_count(initial_before, DEFAULT_INITIAL_CONTEXT_BEFORE, MAX_INITIAL_CONTEXT_BEFORE)
         self.contexts = {}
         self.requests = {}
-        self.positions = {}
+        self._rows = {}
+        self._keys = []
+        self._stable_keys = []
 
     def update(self, captions):
-        rows = sorted((c for c in captions if c.source), key=lambda c: (c.start, c.id))
-        self.positions = {c.id: i for i, c in enumerate(rows)}
-        ids = {c.id for c in rows}
-        for cid in self.requests.keys() - ids:
-            self.requests.pop(cid)
-            self.contexts.pop(cid, None)
-        stable = [c for c in rows if c.final]
+        """Accept a complete snapshot for existing callers; omitted IDs are removed."""
+        rows = {c.id: c for c in captions if c.source}
+        for cid in self._rows.keys() - rows.keys():
+            self._remove(cid)
+        return self.update_changes(c for cid, c in rows.items() if c != self._rows.get(cid))
+
+    def _remove(self, cid):
+        old = self._rows.pop(cid, None)
+        if old is not None:
+            key = (old.start, cid)
+            self._keys.pop(bisect_left(self._keys, key))
+            if old.final:
+                self._stable_keys.pop(bisect_left(self._stable_keys, key))
+        self.requests.pop(cid, None)
+        self.contexts.pop(cid, None)
+
+    def update_changes(self, captions):
+        """Accept mapper deltas, including empty-source removals, in any order.
+
+        Index all changes before freezing request backgrounds. Only changed rows
+        are planned; unchanged neighbours never trigger another translation.
+        """
+        incoming = {c.id: c for c in captions}
+        for cid, caption in incoming.items():
+            if not caption.source:
+                self._remove(cid)
+                continue
+            old_row = self._rows.get(cid)
+            key = (caption.start, cid)
+            if old_row is None:
+                insort(self._keys, key)
+            elif old_row.start != caption.start:
+                self._keys.pop(bisect_left(self._keys, (old_row.start, cid)))
+                insort(self._keys, key)
+            if old_row and old_row.final and (not caption.final or old_row.start != caption.start):
+                self._stable_keys.pop(bisect_left(self._stable_keys, (old_row.start, cid)))
+            if caption.final and (old_row is None or not old_row.final or old_row.start != caption.start):
+                insort(self._stable_keys, key)
+            # Caption is mutable; freeze the index's source/position independently.
+            self._rows[cid] = replace(caption)
         changed = []
-        for caption in rows:
+        for caption in sorted((c for c in incoming.values() if c.source), key=lambda c: (c.start, c.id)):
             old = self.requests.get(caption.id)
             if old and old.final and not caption.final:
                 # An explicit ASR correction reopens the finalization cycle.
@@ -66,12 +109,14 @@ class ContextPlanner:
                     and (old.source, old.language) == (caption.source, caption.language)):
                 continue
             position = (caption.start, caption.id)
-            before = [c for c in stable if (c.start, c.id) < position]
-            after = [c for c in stable if (c.start, c.id) > position]
             count = self.before if caption.final else self.initial_before
+            index = bisect_left(self._stable_keys, position)
+            before = self._stable_keys[max(0, index - count):index]
+            index = bisect_right(self._stable_keys, position)
+            after = self._stable_keys[index:index + self.after] if caption.final else ()
             context = TranslationContext(
-                tuple(c.source[-MAX_CONTEXT_CHARACTERS:] for c in before[-count:]) if count else (),
-                tuple(c.source[:MAX_CONTEXT_CHARACTERS] for c in after[:self.after]) if caption.final else ())
+                tuple(self._rows[cid].source[-MAX_CONTEXT_CHARACTERS:] for _start, cid in before),
+                tuple(self._rows[cid].source[:MAX_CONTEXT_CHARACTERS] for _start, cid in after))
             request = replace(caption, translation='', error='',
                               translation_phase='final' if caption.final else 'initial',
                               translation_source=caption.source)
@@ -89,9 +134,11 @@ class ContextPlanner:
         return self.contexts.get(caption_id)
 
     def adjacent(self, left, right):
-        return (left.language == right.language and left.translation_phase == right.translation_phase
-                and left.id in self.positions and right.id in self.positions
-                and self.positions[right.id] == self.positions[left.id] + 1)
+        if (left.language != right.language or left.translation_phase != right.translation_phase
+                or left.id not in self._rows or right.id not in self._rows):
+            return False
+        index = bisect_left(self._keys, (self._rows[left.id].start, left.id))
+        return index + 1 < len(self._keys) and self._keys[index + 1][1] == right.id
 
     def shared_context(self, captions):
         """One background around the block; internal neighbours are source segments."""
