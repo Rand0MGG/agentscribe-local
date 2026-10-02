@@ -543,6 +543,7 @@ class Window(QMainWindow):
         self.caption_version = 0
         self.recording_saver = RecordingSaver(self)
         self.recording_saver.completed.connect(self.on_saved)
+        self.recording_saver.idle.connect(self.release_recording_lock)
         self.current_item = None
         self.folder_id = self.library.index["folders"][0]["id"]
         self.loading_saved = False
@@ -1057,6 +1058,12 @@ class Window(QMainWindow):
             self.status.setText("保存仍在进行，请稍后重试；字幕已保留在界面中")
             return False
         return not self.session_dirty
+
+    def release_recording_lock(self):
+        if (self.recording_lock and self.session is None and not self.recording_state.active
+                and not self.recording_saver.busy):
+            self.recording_lock.unlock()
+            self.recording_lock = None
 
     def release_playback(self):
         if self.player:
@@ -1615,9 +1622,9 @@ class Window(QMainWindow):
             for caption in list(self.captions.values()):
                 if caption.final and (not caption.translation or caption.translation_phase == 'initial') and not caption.error:
                     self.on_caption(replace(caption, error="会话已结束，此条翻译未完成"))
-        self.session.deleteLater()
+        finished_session = self.session
         self.session = None
-        self.set_recording_state(RecordingState.IDLE)
+        self.set_recording_state(RecordingState.STOPPING)
         translation_incomplete = self.caption_translation and any(
             c.source and (c.error or not c.translation or c.translation_phase == 'initial') for c in self.captions.values())
         state = "incomplete" if self.last_error or translation_incomplete else "complete"
@@ -1628,9 +1635,11 @@ class Window(QMainWindow):
             except (OSError, ValueError):
                 state = "incomplete"
         saved = self.persist_session(state)
-        if self.recording_lock:
-            self.recording_lock.unlock()
-            self.recording_lock = None
+        # Saving dispatches a nested Qt loop. Deleting a synchronous signal's
+        # sender before that loop can destroy it while finished.emit() is active.
+        finished_session.deleteLater()
+        self.set_recording_state(RecordingState.IDLE)
+        self.release_recording_lock()
         self.refresh_library()
         self.prepare_playback()
         self.meter.setValue(0)

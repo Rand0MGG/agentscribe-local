@@ -55,6 +55,44 @@ w.close()
     assert result.returncode == 0, result.stderr
 
 
+def test_finish_does_not_dispose_signal_sender_while_background_save_is_pending(tmp_path):
+    code = """
+import os
+from threading import Event
+from PySide6.QtCore import QObject, QSettings, Signal
+from PySide6.QtWidgets import QApplication
+from linguaflow.app import Window
+from linguaflow.core import Caption
+app = QApplication([])
+w = Window(discover=False, prefs=QSettings(os.environ['AGENTSCRIBE_LIBRARY']+'/prefs.ini', QSettings.Format.IniFormat))
+assert w.new_recording(name='finish ordering')
+w.caption_translation = False
+w.on_caption(Caption(1, 0, 1, 'source', 'en'))
+saved, original = Event(), w.library.save
+def write(*args):
+    original(*args)
+    saved.set()
+w.library.save = write
+class Session(QObject):
+    finished = Signal()
+    def deleteLater(self):
+        assert saved.is_set(), 'Signal sender disposed before the nested save loop'
+        assert not w.recording_saver.busy
+        super().deleteLater()
+session = Session(w)
+w.session = session
+session.finished.connect(w.on_finished)
+session.finished.emit()
+assert saved.is_set() and not w.session_dirty and w.session is None
+assert w.start_button.isEnabled()
+w.close()
+"""
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=20,
+                            env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
+                                 'AGENTSCRIBE_LIBRARY': str(tmp_path)})
+    assert result.returncode == 0, result.stderr
+
+
 def test_failed_retranslation_preserves_text_and_corrupt_recording_is_rejected(tmp_path):
     code = """
 import os, json

@@ -17,6 +17,8 @@ from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
+from types import SimpleNamespace
+import linguaflow.caption_view as view
 from linguaflow.caption_view import CaptionScrollArea
 app = QApplication([])
 scroll = CaptionScrollArea()
@@ -25,41 +27,52 @@ content = QWidget()
 content.setMinimumHeight(1200)
 scroll.setWidget(content)
 scroll.show()
-QTest.qWait(1000)
+# Drive animation time explicitly: a loaded CI host need not deliver a timer
+# within 70 ms. Geometry and real mouse/keyboard events still go through Qt.
+clock = [0.]
+view.time = SimpleNamespace(monotonic=lambda: clock[0])
+def advance(milliseconds):
+    for _ in range((milliseconds + 15)//16):
+        app.processEvents()
+        clock[0] += .016
+        if scroll.animation.isActive():
+            scroll.animation.timeout.emit()
+    app.processEvents()
+advance(1000)
 bar = scroll.verticalScrollBar()
 assert scroll.following and bar.value() == bar.maximum()
 assert not scroll.latest_button.isVisible()
 before = bar.value()
 content.setMinimumHeight(1800)
-QTest.qWait(70)
+advance(70)
 assert before < bar.value() < bar.maximum(), (before, bar.value(), bar.maximum())
 # New content retargets an animation which is already moving.
 middle = bar.value()
 content.setMinimumHeight(2200)
-QTest.qWait(60)
+advance(60)
 assert middle < bar.value() < bar.maximum()
 # A real wheel event interrupts immediately and no queued update drags us down.
 wheel = QWheelEvent(QPointF(200, 100), QPointF(200, 100), QPoint(), QPoint(0, 120),
                     Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
                     Qt.ScrollPhase.NoScrollPhase, False)
 QApplication.sendEvent(scroll.viewport(), wheel)
-QTest.qWait(30)
+advance(30)
 paused = bar.value()
 assert not scroll.following and not scroll.animation.isActive()
 assert scroll.latest_button.isVisible()
 content.setMinimumHeight(2600)
 scroll.content_changed()
-QTest.qWait(150)
+advance(150)
 assert bar.value() == paused and not scroll.following
 QTest.mouseClick(scroll.latest_button, Qt.MouseButton.LeftButton)
-QTest.qWait(70)
+advance(70)
 assert scroll.following and paused < bar.value() < bar.maximum()
-QTest.qWait(1000)
+advance(1000)
 assert bar.value() == bar.maximum() and not scroll.latest_button.isVisible()
 # Keyboard navigation and manually reaching the bottom update the same state.
 scroll.setFocus()
 QTest.keyClick(scroll, Qt.Key.Key_PageUp)
-QTest.qWait(30)
+advance(30)
 assert not scroll.following
 QTest.keyClick(scroll, Qt.Key.Key_End, Qt.KeyboardModifier.ControlModifier)
 bar.setValue(bar.maximum())
@@ -67,11 +80,11 @@ assert scroll.following
 app.setProperty('reduceMotion', True)
 content.setMinimumHeight(2800)
 scroll.content_changed()
-QTest.qWait(40)
+advance(40)
 assert bar.value() == bar.maximum() and not scroll.animation.isActive(), (bar.value(), bar.maximum(), scroll.following, scroll.animation.isActive())
 bar.setValue(100)
 scroll.reset_follow()
-QTest.qWait(40)
+advance(40)
 assert scroll.following and bar.value() == bar.maximum()
 scroll.close()
 ''', tmp_path)

@@ -24,6 +24,25 @@ def test_reopen_keeps_revisions_and_exports_only_final(tmp_path):
     assert len(updated) == 1 and updated[0].source == "corrected"
 
 
+def test_default_recording_name_does_not_pass_chinese_through_locale_formatting(tmp_path, monkeypatch):
+    from datetime import datetime
+
+    import linguaflow.library as module
+
+    class LocaleLimitedClock(datetime):
+        @classmethod
+        def now(cls):
+            return cls(2026, 10, 3, 9, 7)
+
+        def strftime(self, format):
+            format.encode('ascii')  # Reproduce Python 3.11 with an ASCII locale.
+            return super().strftime(format)
+
+    monkeypatch.setattr(module, 'datetime', LocaleLimitedClock)
+    library = Library(tmp_path)
+    assert library.create('inbox', {})['name'] == '录音 10月03日 09时07分'
+
+
 def test_failed_atomic_save_keeps_original(tmp_path, monkeypatch):
     library = Library(tmp_path)
     item = library.create("inbox", {})

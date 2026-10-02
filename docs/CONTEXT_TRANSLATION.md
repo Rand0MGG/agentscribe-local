@@ -41,7 +41,7 @@ HY-MT2 的 PyTorch 路线使用 Transformers；Apple Silicon 的 GGUF / Metal �
 
 2026-10-03 配置统一与增量调度：上下文默认值、偏好范围、界面选项与后台缺省配置共用 `translation_config.py`，已有有效选择不变。实时 worker 改用规划器的 `update_changes()`，维护有序位置及定稿索引，按字幕变化更新，不在每次规划时遍历整段会话。空原文删除、早期历史纠正、重新提交/定稿及位置变化均更新索引，原有冻结背景和批量相邻规则保留。
 
-Windows 11 / AMD64 / Python 3.12.8：`.venv\Scripts\python.exe scripts/test_no_audio.py -q` 为 389 passed、5 skipped，没有原生音频导入尝试；`.venv\Scripts\python.exe -m ruff check linguaflow scripts tests` 全部通过，清理了历史 41 项问题。Qt 保存测试使用延迟/失败写入和临时文件，覆盖后台线程、版本合并、失败重试、超时所有权及不同录音的迟到结果；界面测试为 offscreen，没有真实音频或模型推理。
+Windows 11 / AMD64 / Python 3.12.8：`.venv\Scripts\python.exe scripts/test_no_audio.py -q` 为 391 passed、5 skipped，没有原生音频导入尝试；`.venv\Scripts\python.exe -m ruff check linguaflow scripts tests` 全部通过，清理了历史 41 项问题。Qt 保存测试使用延迟/失败写入和临时文件，覆盖后台线程、版本合并、失败重试、超时所有权、不同录音的迟到结果，以及保存结束后再释放信号发送者；界面测试为 offscreen，没有真实音频或模型推理。
 
 独立模拟对照使用 `d2ca932` 规划器基线，1,000 次固定种子的历史增删改/位置变化中，请求、冻结背景和相邻判断与增量实现一致。100 次单条尾部修订的中位耗时：200 段历史为 0.084 → 0.007 ms，2,000 段为 0.843 → 0.009 ms，10,000 段为 4.537 → 0.016 ms。证据在 `.work/cache/code-maintenance-20261003/check_planner.py` 和 `planner-results.json`。这是规划器本身的局部计时，不代表 ASR、翻译模型、完整会话延迟或 Mac 性能。
 

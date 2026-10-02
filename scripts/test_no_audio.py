@@ -30,6 +30,7 @@ def main():
         (folder / 'sitecustomize.py').write_text(GUARD, encoding='utf-8')
         log = folder / 'blocked.log'
         env = {**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'PYTEST_DISABLE_PLUGIN_AUTOLOAD': '1',
+               'PYTHONFAULTHANDLER': '1',
                'AGENTSCRIBE_AUDIO_GUARD_LOG': str(log),
                'PYTHONPATH': os.pathsep.join([str(folder), str(root), os.environ.get('PYTHONPATH', '')])}
         print('Native audio imports blocked; tests use simulated PCM/devices only.', flush=True)

@@ -12,6 +12,12 @@ from .core import Caption, export_srt
 from .recording_document import read_recording_document
 
 
+def default_recording_name(now: datetime | None = None) -> str:
+    """Keep Chinese literals outside locale-dependent strftime on Python 3.11."""
+    now = datetime.now() if now is None else now
+    return f'录音 {now.month:02d}月{now.day:02d}日 {now.hour:02d}时{now.minute:02d}分'
+
+
 class Library:
     folder_file = ".folder.json"
     trash_name = ".最近删除"
@@ -159,7 +165,7 @@ class Library:
 
     def create(self, folder_id, settings, name=None):
         base = self.directory(folder_id)
-        name = datetime.now().strftime("录音 %m月%d日 %H时%M分") if name is None else name
+        name = default_recording_name() if name is None else name
         directory = self._destination(base, name, unique=True)
         directory.mkdir()
         item = {"id": uuid4().hex, "folder": folder_id, "name": directory.name,

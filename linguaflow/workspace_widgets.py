@@ -1,7 +1,5 @@
 """Quiet navigation, explicit recording creation and the full-page settings view."""
 
-from datetime import datetime
-
 from PySide6.QtCore import QEasingCurve, QRectF, QSize, Qt, QVariantAnimation, Signal
 from PySide6.QtGui import QColor, QKeySequence, QLinearGradient, QPainter, QPixmap
 from PySide6.QtWidgets import (
@@ -23,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .library import default_recording_name
 from .qt_controls import text_label
 from .ui_components import ChoiceBox as QComboBox
 from .ui_components import PageTransition, SurfaceDialog, motion_enabled
@@ -170,7 +169,7 @@ class RecordingDialog(SurfaceDialog):
         layout.addWidget(text_label('本地保存 · 原文与译文自动记录', 'stepBadge'))
         layout.addSpacing(6)
         layout.addWidget(text_label("录音名称", 'settingsLabel'))
-        self.name = QLineEdit(datetime.now().strftime("录音 %m月%d日 %H时%M分"))
+        self.name = QLineEdit(default_recording_name())
         self.name.setMaxLength(64)
         self.name.selectAll()
         self.name.setPlaceholderText('例如：第 02 讲 · 梯度与优化')
