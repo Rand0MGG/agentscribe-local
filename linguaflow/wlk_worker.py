@@ -16,6 +16,19 @@ from types import SimpleNamespace
 
 
 async def serve(settings, emit, read_message):
+    client = None
+    try:
+        if settings.get('backend') == 'qwen3-mlx':
+            from .mlx_asr import begin_mlx_loading
+            client = begin_mlx_loading(settings, lambda text: emit({'type': 'status', 'text': text}))
+        await _serve(settings, emit, read_message, client)
+    finally:
+        # Also own the preload during SaT/frontend/WLK initialization failures.
+        if client is not None:
+            client.close()
+
+
+async def _serve(settings, emit, read_message, mlx_client=None):
     import numpy as np
 
     from .audio_processing.pipeline import AudioPipeline, select_backend
@@ -128,7 +141,7 @@ async def serve(settings, emit, read_message):
             processor.transcription = build_mlx_online(config.model_path,
                 settings.get('source'), draft_seconds,
                 lambda text: emit({'type': 'status', 'text': text}),
-                window_seconds=settings.get('qwen_window_seconds', 30.))
+                window_seconds=settings.get('qwen_window_seconds', 30.), client=mlx_client)
         else:
             from .qwen_accurate import build_official_online
             emit({"type": "status", "text": "加载 Qwen 官方原始编码器 · 准确优先；近期原文可整体修订…"})
