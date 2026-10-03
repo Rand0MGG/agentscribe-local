@@ -6,7 +6,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from threading import Event
+from threading import Event, Lock
 from types import SimpleNamespace
 
 import numpy as np
@@ -14,6 +14,7 @@ import pytest
 from PySide6.QtCore import QCoreApplication
 
 import linguaflow.runtime_preparation as preparation
+import linguaflow.wlk_session as session_module
 from linguaflow.core import Settings
 from linguaflow.wlk_session import Session
 
@@ -44,6 +45,7 @@ def pool(monkeypatch, tmp_path, program=PROGRAM):
         calls.append(command)
         return original([sys.executable, '-u', str(path)], **kwargs)
     monkeypatch.setattr(preparation, 'runtime_python', lambda: Path(sys.executable))
+    monkeypatch.setattr(session_module, 'runtime_python', lambda: Path(sys.executable))
     monkeypatch.setattr(preparation.subprocess, 'Popen', spawn)
     runtime=preparation.RuntimePreparation()
     runtime.prepare()
@@ -137,6 +139,36 @@ def test_idle_preparation_timeout_is_bounded_without_a_session(monkeypatch,tmp_p
         assert worker.process.poll() is not None and '超时' in str(worker.error)
     finally:
         runtime.close()
+
+
+@pytest.mark.parametrize('woken', [False, True])
+def test_timeout_cleanup_after_wait_keeps_the_failure_reason(woken):
+    # The watchdog may close between Event.wait timing out and the state check.
+    worker=object.__new__(preparation.PreparedWorker)
+    worker.error=None
+    worker.closed=Event()
+    def wait(timeout):
+        worker.error=RuntimeError('运行环境准备超时')
+        worker.closed.set()
+        return woken
+    worker.ready=SimpleNamespace(wait=wait)
+    with pytest.raises(RuntimeError, match='超时') as caught:
+        worker.wait(Event())
+    assert caught.value.__cause__ is worker.error
+
+
+@pytest.mark.parametrize('completed', ['cancelled', 'ready'])
+def test_watchdog_does_not_overwrite_completion_at_timeout(completed):
+    worker=object.__new__(preparation.PreparedWorker)
+    worker.error=None
+    worker.lock=Lock()
+    worker.closed=Event()
+    if completed=='cancelled':
+        worker.closed.set()
+    worker.ready=SimpleNamespace(wait=lambda timeout:False, is_set=lambda:completed=='ready')
+    worker.close=lambda:pytest.fail('completed preparation must not be timed out')
+    worker.watch_startup()
+    assert worker.error is None
 
 
 def test_missing_dependency_is_reported_and_next_attempt_is_fresh(monkeypatch,tmp_path):

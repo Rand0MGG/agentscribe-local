@@ -29,7 +29,10 @@ class PreparedWorker:
 
     def watch_startup(self):
         if not self.ready.wait(self.timeout):
-            self.error = RuntimeError('运行环境准备超时，请在模型管理中检查运行环境。')
+            with self.lock:
+                if self.closed.is_set() or self.ready.is_set():
+                    return
+                self.error = RuntimeError('运行环境准备超时，请在模型管理中检查运行环境。')
             self.close()
 
     def start(self, python):
@@ -73,8 +76,11 @@ class PreparedWorker:
         import time
         deadline = time.monotonic() + self.timeout
         while not self.ready.wait(.05):
-            if cancelled.is_set() or self.closed.is_set():
+            if cancelled.is_set():
                 raise RuntimeError('运行环境准备已取消。')
+            if self.closed.is_set():
+                # Watchdog cleanup must preserve its recorded failure reason.
+                break
             if time.monotonic() >= deadline:
                 raise RuntimeError('运行环境准备超时，请在模型管理中检查运行环境。')
         if self.error:
@@ -104,8 +110,9 @@ class PreparedWorker:
         self.wait(self.closed)
 
     def close(self):
-        self.closed.set()
-        self.ready.set()
+        with self.lock:
+            self.closed.set()
+            self.ready.set()
         with self.close_lock:
             with self.lock:
                 process = self.process
