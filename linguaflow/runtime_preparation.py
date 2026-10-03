@@ -129,7 +129,7 @@ class PreparedWorker:
 
 class RuntimePreparation:
     """One exclusive lease; successful sessions release weights and retain imports."""
-    idle_timeout = 300.
+    idle_timeout = 30 * 60.
 
     def __init__(self):
         self.lock = Lock()
