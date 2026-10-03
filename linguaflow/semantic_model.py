@@ -105,6 +105,14 @@ class SemanticModel:
         options.intra_op_num_threads = 2
         options.inter_op_num_threads = 1
         provider = "CUDAExecutionProvider" if device == "cuda" else "CPUExecutionProvider"
+        if device == 'cpu':
+            from .semantic_cache import cached_cpu_model
+            cached = cached_cpu_model(model, ort.__version__)
+            if cached is not None:
+                model = cached
+                options.add_session_config_entry('session.load_model_format', 'ORT')
+                options.add_session_config_entry('session.use_memory_mapped_ort_model', '1')
+                options.add_session_config_entry('session.use_ort_model_bytes_for_initializers', '1')
         self.model = SaT(model, tokenizer_name_or_path=tokenizer, ort_providers=[provider],
                          ort_kwargs={"sess_options": options}, from_pretrained_kwargs={"local_files_only": True})
         if provider not in self.model.model.ort_session.get_providers():
@@ -134,7 +142,12 @@ class SemanticModel:
 
 if __name__ == "__main__":
     print("准备 SaT 分句模型与分词器…", flush=True)
-    paths(prepare=True)
+    source, _ = paths(prepare=True)
+    import onnxruntime as ort
+
+    from .semantic_cache import prepare_cpu_model
+    if prepare_cpu_model(source, ort, force=True) is not None:
+        print("SaT CPU 启动优化缓存已准备；载入时直接映射权重。", flush=True)
     model = SemanticModel()
     print(model.boundaries("这是第一段内容 我们接着看第二个例子"), flush=True)
     print("SaT 分句模型已准备好；下一次聆听自动使用。", flush=True)

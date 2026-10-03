@@ -24,7 +24,7 @@
 | 推理装配 | `wlk_worker.py` | ASR 初始化、音频和字幕事件协调；不依赖桌面模块 |
 | 字幕边界与修订 | `wlk_captions.py`、`qwen_revisions.py` | 文本边界、稳定性、版本保留；与 UI 独立 |
 | 翻译调度 | `translation_queue.py`、`translation_service.py` | 合并排队版本、缓存、错误、过期结果拒绝；后端通过工厂注入 |
-| 模型适配 | `backends.py`、`semantic_model.py`、`runtime_compat.py` | 实际模型及上游兼容接口；按需加载依赖 |
+| 模型适配 | `backends.py`、`semantic_model.py`、`semantic_cache.py`、`runtime_compat.py` | 实际模型、SaT 本地优化缓存及上游兼容接口；按需加载依赖 |
 | Mac ASR 适配 | `mlx_asr.py`、`mlx_asr_worker.py` | WLK → 独立 MLX 环境，仅传递本地 PCM；复用 Qwen 窗口、字幕和翻译流程，不访问音频设备 |
 | GGUF 翻译 | `llama_translation.py` | 两端共用认证 HTTP、请求、设备确认和结果校验；复用翻译队列与提示词 |
 | 本地服务与平台配置 | `llama_assets.py`、`managed_process.py`、`process_platform.py` | 固定运行组件、GGUF 校验；平台差异限于设备、路径、父进程监测和进程树清理 |
