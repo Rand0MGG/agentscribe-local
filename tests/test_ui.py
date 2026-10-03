@@ -3,6 +3,38 @@ import subprocess
 import sys
 
 
+def test_main_prepares_runtime_after_show_and_closes_on_quit():
+    code = """
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication, QWidget
+import linguaflow.app as module
+calls=[]
+class Runtime:
+    def prepare(self):
+        assert calls==['shown']
+        calls.append('prepared')
+        QTimer.singleShot(0,QApplication.instance().quit)
+    def close(self,wait=True):
+        assert not wait
+        calls.append('closed')
+class Window(QWidget):
+    def __init__(self,runtime):
+        super().__init__()
+        assert isinstance(runtime,Runtime)
+    def show(self):
+        super().show()
+        calls.append('shown')
+module.RuntimePreparation=Runtime
+module.Window=Window
+try: module.main()
+except SystemExit as exc: assert exc.code==0
+assert calls==['shown','prepared','closed'],calls
+"""
+    result=subprocess.run([sys.executable,'-c',code],capture_output=True,text=True,timeout=10,
+                          env={**os.environ,'QT_QPA_PLATFORM':'offscreen'})
+    assert result.returncode==0,result.stderr
+
+
 def test_background_autosave_keeps_new_revisions_dirty_and_rejects_other_recording_results(tmp_path):
     code = """
 import os
@@ -385,7 +417,7 @@ class FakeSession(QObject):
     level = Signal(float)
     failure = Signal(str)
     finished = Signal()
-    def __init__(self, settings, parent, recording_path):
+    def __init__(self, settings, parent, recording_path, runtime=None):
         super().__init__(parent)
         self.settings = settings
         self.model_ready = Event()

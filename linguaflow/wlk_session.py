@@ -1,4 +1,4 @@
-"""Qt session owns a disposable local WLK process and continuous audio capture."""
+"""Qt session owns capture and an exclusive lease of a local WLK process."""
 import base64
 import json
 import os
@@ -31,7 +31,8 @@ class Session(QThread):
     paused = Signal(bool)
     stage = Signal(str, str)
 
-    def __init__(self, settings, parent=None, capture_fn=capture, diagnostic=False, recording_path=None):
+    def __init__(self, settings, parent=None, capture_fn=capture, diagnostic=False, recording_path=None,
+                 runtime=None):
         super().__init__(parent)
         self.settings = settings
         self.diagnostic = diagnostic
@@ -40,10 +41,12 @@ class Session(QThread):
         self.capture_done = Event()
         self.abort = Event()
         self.process = None
+        self.process_owned = Event()
         self.model_ready = Event()
         self.last_error = ""
         self.recording_path = recording_path
         self.capture_control = CaptureControl()
+        self.runtime = runtime
 
     def pause(self):
         if not self.model_ready.is_set() or self.stop_capture.is_set():
@@ -56,9 +59,9 @@ class Session(QThread):
     def stop(self, discard=False):
         self.stop_capture.set()
         self.capture_control.stop()
-        if discard or (self.process is not None and not self.model_ready.is_set()):
+        if discard or ((self.process is not None or self.runtime is not None) and not self.model_ready.is_set()):
             self.abort.set()
-            if self.process and self.process.poll() is None:
+            if self.process and self.process_owned.is_set() and self.process.poll() is None:
                 self.process.terminate()
 
     def fail(self, text):
@@ -69,13 +72,18 @@ class Session(QThread):
     def run(self):
         workers = []
         journal = None
+        prepared = None
+        completed = False
         try:
             python = runtime_python()
             if not python.is_file():
                 raise RuntimeError("请先运行 scripts/install_runtime.py 安装 WhisperLiveKit 推理环境。")
             self.stage.emit("识别", "加载 WhisperLiveKit")
             self.status.emit("正在启动本地推理进程…首次导入运行库可能需要较长时间，可点击停止取消。")
-            self.process = subprocess.Popen(
+            if self.runtime is not None:
+                self.status.emit('正在等待后台准备的运行环境…')
+                prepared = self.runtime.acquire(self.abort)
+            self.process = prepared.process if prepared else subprocess.Popen(
                 [str(python), "-u", "-m", "linguaflow.wlk_worker"],
                 cwd=str(Path(__file__).resolve().parents[1]), stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
@@ -83,6 +91,9 @@ class Session(QThread):
                      "LINGUAFLOW_TRACE_REVISIONS": "1" if self.diagnostic else "0"},
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
+            self.process_owned.set()
+            if self.abort.is_set():
+                raise RuntimeError('启动已取消。')
 
             def send(message):
                 self.process.stdin.write(json.dumps(message) + "\n")
@@ -92,6 +103,15 @@ class Session(QThread):
             recent_errors = deque(maxlen=12)
 
             def diagnostics():
+                if prepared:
+                    cursor = 0
+                    while not self.abort.wait(.05):
+                        for serial, text in prepared.recent_logs(cursor):
+                            cursor = serial
+                            last_progress[0] = time.monotonic()
+                            recent_errors.append(text)
+                            self.status.emit(text)
+                    return
                 for line in self.process.stderr:
                     if line.strip():
                         last_progress[0] = time.monotonic()
@@ -114,7 +134,11 @@ class Session(QThread):
             diagnostics_thread = Thread(target=diagnostics)
             diagnostics_thread.start()
             workers.append(diagnostics_thread)
-            send(asdict(self.settings))
+            settings = asdict(self.settings)
+            if prepared:
+                settings['_diagnostic'] = self.diagnostic
+                self.status.emit('运行环境已准备；正在加载本次会话模型…')
+            send(settings)
             journal = AudioJournal(self.settings.input_sample_rate)
 
             def record():
@@ -225,18 +249,33 @@ class Session(QThread):
                     self.fail(event["text"])
                 elif kind == "done":
                     completed = True
-            code = self.process.wait()
+                    if prepared:
+                        break
+            code = self.process.poll() if prepared else self.process.wait()
             if not completed and not self.abort.is_set():
                 raise RuntimeError(f"推理进程提前退出（{code}）。\n" + "\n".join(recent_errors)[-1200:])
         except Exception as exc:
-            self.fail(str(exc))
+            if not self.abort.is_set():
+                self.fail(str(exc))
         finally:
+            reusable = completed and not self.abort.is_set() and not self.last_error
             self.abort.set()
             self.stop_capture.set()
             self.capture_control.stop()
-            if self.process and self.process.poll() is None:
+            # Old Session objects must never terminate a worker leased again.
+            self.process_owned.clear()
+            if prepared:
+                try:
+                    self.runtime.release(prepared, reusable)
+                except Exception as exc:
+                    self.fail('会话模型释放失败：' + str(exc))
+            elif self.process and self.process.poll() is None:
                 self.process.terminate()
-                self.process.wait()
+                try:
+                    self.process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait(timeout=2)
             for thread in workers:
                 thread.join()
             if journal:

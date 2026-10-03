@@ -50,6 +50,7 @@ from .qt_controls import data_index
 from .qt_controls import text_label as label
 from .recording_save import RecordingSaver
 from .recording_state import RecordingState
+from .runtime_preparation import RuntimePreparation
 from .settings_binding import SettingsBinding
 from .ui_components import ActionMenu, Disclosure, NameDialog
 from .ui_components import ChoiceBox as QComboBox
@@ -517,7 +518,7 @@ class CaptionCard(QFrame):
 
 
 class Window(QMainWindow):
-    def __init__(self, discover=True, library_root=None, prefs=None, library=None):
+    def __init__(self, discover=True, library_root=None, prefs=None, library=None, runtime=None):
         super().__init__()
         self._backdrop_applied = False
         self._backdrop_attempted = False
@@ -527,6 +528,7 @@ class Window(QMainWindow):
         self.resize(1280, 840)
         self.setMinimumSize(900, 650)
         self.session = None
+        self.runtime = runtime
         self.recording_lock = None
         self.last_error = ""
         self.recording_state = RecordingState.IDLE
@@ -1521,7 +1523,7 @@ class Window(QMainWindow):
 
     def launch_session(self, settings):
         self.session = Session(settings, self, recording_path=
-                               self.library.directory(self.current_item["id"]) / "录音.wav")
+                               self.library.directory(self.current_item["id"]) / "录音.wav", runtime=self.runtime)
         self.session.status.connect(self.on_status)
         self.session.stage.connect(self.on_stage)
         self.session.ready.connect(self.on_ready)
@@ -1649,6 +1651,8 @@ class Window(QMainWindow):
         self.on_stage("会话", "失败，详见诊断" if self.last_error else "已结束")
         if self.closing:
             self.close()
+        elif self.runtime is not None:
+            self.runtime.prepare()
 
     def on_caption(self, caption):
         previous = self.captions.get(caption.id)
@@ -1788,6 +1792,8 @@ class Window(QMainWindow):
             self.player.stop()
         self.save()
         self.overlay.close()
+        if self.runtime is not None:
+            self.runtime.close(wait=False)
         event.accept()
 
 
@@ -1795,6 +1801,9 @@ def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setStyleSheet(STYLE)
-    window = Window()
+    runtime = RuntimePreparation()
+    window = Window(runtime=runtime)
     window.show()
+    QTimer.singleShot(0, runtime.prepare)
+    app.aboutToQuit.connect(lambda: runtime.close(wait=False))
     sys.exit(app.exec())

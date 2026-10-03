@@ -339,11 +339,6 @@ async def _serve(settings, emit, read_message, mlx_client=None):
 def main():
     protocol = sys.stdout
     sys.stdout = sys.stderr  # Upstream prints must never corrupt the protocol.
-    first = sys.stdin.readline()
-    settings = json.loads(first)
-    if settings.get("offline"):
-        os.environ["HF_HUB_OFFLINE"] = "1"
-
     output_lock = Lock()
     def emit(message):
         with output_lock:
@@ -355,12 +350,61 @@ def main():
         return json.loads(line) if line else None
 
     try:
-        asyncio.run(serve(settings, emit, read_message))
+        prepared = '--prepared' in sys.argv
+        original_offline = os.environ.get('HF_HUB_OFFLINE')
+        if prepared:
+            os.environ['HF_HUB_OFFLINE'] = '1'
+            try:
+                prepare_runtime()
+            finally:
+                if original_offline is None:
+                    os.environ.pop('HF_HUB_OFFLINE', None)
+                else:
+                    os.environ['HF_HUB_OFFLINE'] = original_offline
+            emit({'type': 'runtime_ready'})
+        while first := sys.stdin.readline():
+            settings = json.loads(first)
+            if settings.get('offline'):
+                os.environ['HF_HUB_OFFLINE'] = '1'
+            elif prepared:
+                if original_offline is None:
+                    os.environ.pop('HF_HUB_OFFLINE', None)
+                else:
+                    os.environ['HF_HUB_OFFLINE'] = original_offline
+            if prepared:
+                os.environ['LINGUAFLOW_TRACE_REVISIONS'] = '1' if settings.pop('_diagnostic', False) else '0'
+            asyncio.run(serve(settings, emit, read_message))
+            if not prepared:
+                break
+            release_runtime_models()
+            emit({'type': 'runtime_ready'})
     except Exception as exc:
         import traceback
         traceback.print_exc()
         emit({"type": "error", "text": str(exc)})
         sys.exit(1)
+
+
+def prepare_runtime():
+    """Import the common CPU runtime without model construction or device access."""
+    import importlib
+    # Keep wtpsplit's required skops-before-transformers order.
+    for module in ('onnxruntime', 'wtpsplit', 'torch', 'whisperlivekit'):
+        importlib.import_module(module)
+
+
+def release_runtime_models():
+    """No overlapping sessions: discard WLK's singleton before new settings arrive."""
+    import gc
+
+    import torch
+    from whisperlivekit import TranscriptionEngine
+    # WLK ordinarily runs one configuration per process. We own sequential
+    # sessions and reset only after asyncio.run has joined tasks and executors.
+    TranscriptionEngine.reset()
+    gc.collect()
+    if torch.cuda.is_initialized():
+        torch.cuda.empty_cache()
 
 
 if __name__ == "__main__":
