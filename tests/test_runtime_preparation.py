@@ -42,6 +42,8 @@ def pool(monkeypatch, tmp_path, program=PROGRAM):
     original=subprocess.Popen
     calls=[]
     def spawn(command, **kwargs):
+        if 'linguaflow.wlk_worker' not in command:
+            return original(command, **kwargs)
         calls.append(command)
         return original([sys.executable, '-u', str(path)], **kwargs)
     monkeypatch.setattr(preparation, 'runtime_python', lambda: Path(sys.executable))
@@ -58,7 +60,8 @@ def execute(runtime, source, count):
     def capture(settings, stopped, block):
         for _ in range(count):
             block(np.full(1600, .01, dtype=np.float32))
-    session=Session(Settings('fixture', source=source, translate=False), capture_fn=capture, runtime=runtime)
+    session=Session(Settings('fixture', source=source, translate=False),
+                    capture_fn=capture, runtime=runtime)
     session.caption.connect(captions.append)
     session.failure.connect(failures.append)
     session.start()
@@ -81,7 +84,7 @@ def test_successful_sessions_reuse_process_with_fresh_language_and_audio(monkeyp
         assert not failures and captions[-1].source=='zh:3200'
         assert first.process is second.process and first.process.poll() is None
         assert len(calls)==1 and not runtime.busy
-        assert calls[0][-1]=='--prepared'
+        assert calls[0][-1]=='linguaflow.wlk_worker'
     finally:
         worker=runtime.worker
         runtime.close()
@@ -197,7 +200,8 @@ def test_missing_runtime_does_not_spawn(monkeypatch,tmp_path):
     runtime=preparation.RuntimePreparation()
     try:
         runtime.prepare()
-        assert runtime.acquire(Event()) is None
+        with pytest.raises(RuntimeError, match='未安装'):
+            runtime.acquire(Event())
     finally:
         runtime.close()
 
@@ -282,18 +286,53 @@ def test_platform_spawn_keeps_utf8_and_hides_windows_console(monkeypatch,windows
     assert flags[0]['env']['PYTHONIOENCODING']=='utf-8'
 
 
-def test_persistent_worker_restores_each_sessions_offline_and_trace_settings(monkeypatch):
+def test_preparation_preserves_network_and_resets_each_sessions_trace(monkeypatch):
     import linguaflow.wlk_worker as worker
     seen=[]
     async def serve(settings,emit,read):
         seen.append((os.environ.get('HF_HUB_OFFLINE'),os.environ.get('LINGUAFLOW_TRACE_REVISIONS')))
     monkeypatch.delenv('HF_HUB_OFFLINE',raising=False)
     monkeypatch.setattr(worker,'serve',serve)
-    monkeypatch.setattr(worker,'prepare_runtime',lambda:seen.append(os.environ['HF_HUB_OFFLINE']))
+    monkeypatch.setattr(worker,'prepare_runtime',lambda:seen.append(os.environ.get('HF_HUB_OFFLINE')))
     monkeypatch.setattr(worker,'release_runtime_models',lambda:None)
     monkeypatch.setattr(worker.sys,'argv',['worker','--prepared'])
     monkeypatch.setattr(worker.sys,'stdin',io.StringIO(
         '{"offline":true,"_diagnostic":true}\n{"offline":false,"_diagnostic":false}\n'))
     monkeypatch.setattr(worker.sys,'stdout',io.StringIO())
     worker.main()
-    assert seen==['1',('1','1'),(None,'0')]
+    assert seen==[None,(None,'1'),(None,'0')]
+
+
+def test_compatible_preparation_is_reused_without_a_device_profile(monkeypatch, tmp_path):
+    runtime, calls = pool(monkeypatch, tmp_path)
+    try:
+        original = runtime.worker
+        runtime.prepare()
+        assert runtime.worker is original and len(calls) <= 1
+        leased = runtime.acquire(Event())
+        runtime.prepare()
+        assert runtime.worker is leased and leased.process.poll() is None
+        with pytest.raises(RuntimeError, match='另一会话'):
+            runtime.acquire(Event())
+        runtime.release(leased, reusable=False)
+    finally:
+        runtime.close()
+
+
+def test_worker_ignores_retired_onnx_device_and_preserves_asr_device(monkeypatch):
+    import linguaflow.wlk_worker as worker
+    seen = []
+    async def serve(settings, emit, read):
+        seen.append(settings)
+        emit({'type': 'done'})
+    monkeypatch.setattr(worker, 'prepare_runtime', lambda: None)
+    monkeypatch.setattr(worker, 'release_runtime_models', lambda: None)
+    monkeypatch.setattr(worker, 'serve', serve)
+    monkeypatch.setattr(worker.sys, 'stdin', io.StringIO(
+        '{"semantic_device":"cuda","asr_device":"cuda"}\n'))
+    output = io.StringIO()
+    monkeypatch.setattr(worker.sys, 'stdout', output)
+    worker.main()
+    assert seen[0]['asr_device'] == 'cuda'
+    assert [json.loads(line)['type'] for line in output.getvalue().splitlines()] == [
+        'runtime_ready', 'done', 'runtime_ready']

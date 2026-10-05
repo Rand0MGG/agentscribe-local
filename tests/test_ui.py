@@ -189,13 +189,22 @@ def test_preferences_roundtrip_and_recording_guards(tmp_path):
     code = """
 import os
 from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QApplication, QMessageBox, QInputDialog
+from PySide6.QtWidgets import QApplication, QMessageBox, QInputDialog, QCheckBox
 import linguaflow.app as module
 app = QApplication([])
 path = os.environ['AGENTSCRIBE_LIBRARY'] + '/prefs.ini'
 def window():
     return module.Window(discover=False, prefs=QSettings(path, QSettings.Format.IniFormat))
+# Previously enabled offline preferences must not reappear in controls or sessions.
+prefs = QSettings(path, QSettings.Format.IniFormat)
+prefs.setValue('offline', True)
+prefs.setValue('semantic_device', 'cuda')
+prefs.setValue('semantic_lookahead', 12)
+prefs.setValue('audio_processing', '{"deepfilter": true, "output_db": 10}')
+prefs.sync()
 w = window()
+assert not hasattr(w, 'offline')
+assert not any('严格离线' in control.text() for control in w.findChildren(QCheckBox))
 w.asr.setCurrentText('fixture-model')
 w.translation.setCurrentText('fixture-translator')
 w.translation.setCurrentText('tencent/Hy-MT2-1.8B')
@@ -203,27 +212,33 @@ assert w.model_manager.translation_before.isEnabled()
 w.model_manager.translation_before.setCurrentIndex(2)
 w.model_manager.translation_after.setCurrentIndex(2)
 w.translate.setChecked(False)
-w.offline.setChecked(True)
 w.model_manager.update_seconds.setValue(1.75)
-w.model_manager.semantic_lookahead.setValue(4.5)
+assert not hasattr(w.model_manager, "semantic_device")
+assert not hasattr(w.model_manager, "semantic_lookahead")
 w.device.addItem('fixture', ('device-id', True))
-w.audio_config['output_db'] = -3
 w.close()
 w = window()
 assert w.asr.currentText() == 'fixture-model'
 assert w.translation.currentText() == 'tencent/Hy-MT2-1.8B'
 assert w.model_manager.translation_before.currentData() == 2
 assert w.model_manager.translation_after.currentData() == 2
-settings = w.settings_binding.session_settings(('fixture', True), {})
+settings = w.settings_binding.session_settings(('fixture', True))
 assert settings.translation_before == 2 and settings.translation_after == 2
+assert not hasattr(settings, 'offline')
 w.translation.setCurrentText('facebook/nllb-200-distilled-600M')
 assert not w.model_manager.translation_before.isEnabled()
 w.translation.setCurrentText('tencent/Hy-MT2-1.8B')
 assert w.model_manager.translation_after.isEnabled()
-assert not w.translate.isChecked() and w.offline.isChecked()
+assert not w.translate.isChecked()
 assert w.model_manager.update_seconds.value() == 1.75
-assert w.model_manager.semantic_lookahead.value() == 4.5
-assert w.audio_config['output_db'] == -3
+assert not hasattr(settings, "semantic_device")
+assert not hasattr(settings, "semantic_lookahead")
+assert not any("SaT" in button.text() for button in w.findChildren(module.QPushButton))
+from linguaflow.audio_processing.config import automatic_audio_config
+assert settings.audio_processing == automatic_audio_config()
+assert not hasattr(w, 'audio_config') and not hasattr(w, 'manage_audio')
+assert '音频处理' not in w.settings_workspace.categories
+assert not any('音频实验室' in button.text() for button in w.findChildren(module.QPushButton))
 from types import SimpleNamespace
 module.list_devices = lambda: [SimpleNamespace(name='fixture', id='device-id', loopback=True)]
 w.refresh_devices()
@@ -335,21 +350,6 @@ w.on_finished()
 assert 'cublas64_12.dll' in w.status.text()
 assert w.start_button.isEnabled()
 assert 'cublas64_12.dll' in w.empty.text()
-from linguaflow.audio_processing.lab import AudioLab
-from linguaflow.audio_processing.config import PRESETS
-lab = AudioLab(parent=w)
-assert not lab.record.isEnabled()
-lab.preset.setCurrentText('课堂远场 · 去混响')
-assert lab.config() == PRESETS['课堂远场 · 去混响'].to_dict()
-lab.original = 'fixture.wav'
-lab.processed = 'processed.wav'
-lab.refresh()
-assert lab.play_processed.isEnabled()
-lab.controls['df_mix'].setValue(.4)
-assert lab.processed is None and not lab.play_processed.isEnabled()
-assert lab.preset.currentText() == '自定义'
-lab.apply_config()
-assert lab.result_config['df_mix'] == .4
 w.close()
 """
     result = subprocess.run(
@@ -466,7 +466,8 @@ w.session.paused.emit(False)
 assert w.pause_button.text() == '暂停' and w.pause_button.isEnabled()
 assert w.current_item['id'] == identifier
 before = w.session.settings.audio_processing['output_db']
-w.audio_config['output_db'] = before + 1
+next_settings = w.settings_binding.session_settings(w.device.currentData())
+next_settings.audio_processing['output_db'] = before + 1
 assert w.session.settings.audio_processing['output_db'] == before
 w.on_caption(Caption(1, 0, 1, 'saved', 'en'))
 w.stop()

@@ -117,22 +117,6 @@ class ModelManager(QDialog):
         classroom = QPushButton("课堂逐词草稿 · 保留短停顿")
         classroom.clicked.connect(self.classroom_drafts)
         self.advanced_form.addRow(classroom)
-        self.advanced_form.addRow(text_label('SaT 上下文分句 · 必需', 'settingsSection'))
-        self.semantic_device = QComboBox()
-        self.semantic_device.addItem("CPU", "cpu")
-        if sys.platform != "darwin":
-            self.semantic_device.addItem("NVIDIA CUDA", "cuda")
-        self.advanced_form.addRow("分句模型设备", self.semantic_device)
-        prepare_semantic = QPushButton("准备 / 检查 SaT 分句模型")
-        prepare_semantic.clicked.connect(lambda: self.prepare(lambda: self.run_preparation(
-            [sys.executable, "scripts/install_semantic.py"])))
-        self.advanced_form.addRow(prepare_semantic)
-        self.semantic_lookahead = QDoubleSpinBox()
-        self.semantic_lookahead.setRange(1, 12)
-        self.semantic_lookahead.setValue(3)
-        self.semantic_lookahead.setSuffix(" 秒")
-        self.advanced_form.addRow("稳定尾部首次提交等待", self.semantic_lookahead)
-        self.hint(self.advanced_form, "SaT 整理字幕分段。原文提交后仍可修订，识别段结束后独立定稿。首次聆听前需要准备模型。")
         self.behavior_hint = QLabel()
         self.behavior_hint.setWordWrap(True)
         self.advanced_form.addRow(self.behavior_hint)
@@ -253,7 +237,6 @@ class ModelManager(QDialog):
             self.hy_metal_button.clicked.connect(select_hy_metal)
             self.translation_form.addRow(self.hy_metal_button)
         self.update_translation_engine()
-        self.hint(self.advanced_form, "没有分句边界时，稳定尾部达到等待时长即可首次提交。定稿由识别段结束触发，不受翻译状态影响。")
         self.backend.currentIndexChanged.connect(self.update_backend)
         self.update_backend()
 
@@ -296,7 +279,7 @@ class ModelManager(QDialog):
         if mlx:
             self.behavior_hint.setText('Apple GPU / MLX 4-bit：短窗口识别，近期草稿可修订；停止时处理剩余音频。8GB Mac 可先关闭翻译；实际更新速度取决于音频与模型负载。')
         self.qwen_hint.setText(
-            'MLX 4-bit 使用 Apple GPU。当前为试验功能。请选择原文语言；8GB Mac 可用下方按钮关闭翻译，分句使用 SaT。'
+            'MLX 4-bit 使用 Apple GPU。当前为试验功能。请选择原文语言；8GB Mac 可用下方按钮关闭翻译。'
             if mlx else
             'Qwen 在本机识别，近期原文可随语音修订。请选择原文语言。0.6B 占用较少内存，1.7B 需要更多资源。')
         self.whisper_page.setVisible(not qwen)
@@ -341,7 +324,9 @@ class ModelManager(QDialog):
     def prepare_whisper(self, model):
         def action():
             from .runtime_paths import runtime_python
-            return self.run_preparation([str(runtime_python()), "-m", "linguaflow.wlk_prepare", "whisper", model])
+            result = self.run_preparation([str(runtime_python()), "-m", "linguaflow.wlk_prepare", "whisper", model])
+            self.prepare_segmentation()
+            return result
         self.prepare(action)
 
     def run_preparation(self, command):
@@ -379,11 +364,16 @@ class ModelManager(QDialog):
             return
         def action():
             from .model_cache import has_weights, resolve_translation
-            path = resolve_translation(model, False, lambda message: None)
+            path = resolve_translation(model, lambda message: None)
             if not has_weights(path):
                 raise ValueError("翻译权重不完整")
             return f"翻译模型文件已就绪：{path}"
         self.prepare(action)
+
+    def prepare_segmentation(self):
+        """Prepare the required internal CPU model through the cancellable worker."""
+        from .runtime_paths import runtime_python
+        return self.run_preparation([str(runtime_python()), '-u', '-m', 'linguaflow.semantic_model'])
 
     def prepare_qwen(self, model):
         def action():
@@ -392,7 +382,9 @@ class ModelManager(QDialog):
             from huggingface_hub import snapshot_download
             if Path(model).is_dir():
                 from .model_cache import resolve_qwen_cached
-                return f"Qwen 模型文件已就绪：{resolve_qwen_cached(model)}"
+                path = resolve_qwen_cached(model)
+                self.prepare_segmentation()
+                return f"Qwen 模型文件已就绪：{path}"
             options = {}
             if model == 'mlx-community/Qwen3-ASR-1.7B-4bit':
                 from .mlx_asr import MLX_REVISION
@@ -402,6 +394,7 @@ class ModelManager(QDialog):
                                      max_workers=1, **options)
             from .model_cache import resolve_qwen_cached
             resolve_qwen_cached(path)
+            self.prepare_segmentation()
             return f"Qwen 模型已下载：{path}"
         self.prepare(action)
 

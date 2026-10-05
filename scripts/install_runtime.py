@@ -29,6 +29,7 @@ def main():
                    "GIT_CONFIG_VALUE_0": "true"}
     subprocess.run([str(python), "-m", "pip", "install", "-r", str(root / "requirements-runtime.txt")],
                    check=True, env=install_env)
+    subprocess.run([str(python), "-u", "-m", "linguaflow.semantic_model"], cwd=root, check=True, timeout=600)
     print("WhisperLiveKit / Qwen runtime installed:", python)
 
 

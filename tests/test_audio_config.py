@@ -1,20 +1,28 @@
 import pytest
 
-from linguaflow.audio_processing.config import PRESETS, AudioConfig
+from linguaflow.audio_processing.config import AudioConfig, automatic_audio_config
 
 
 def test_reject_invalid_audio_settings():
-    for data in [{"df_mix": float("nan")}, {"wpe_alpha": 1}, {"df_device": "auto"}, {"apm_level": 4},
-                 {"wpe_taps": 3.5}, {"apm": "false"}, {"output_db": None}, []]:
+    for data in [{"peak_db": float("nan")}, {"peak_db": 1}, {"limiter": "false"},
+                 {"output_db": None}, {"output_db": True}, []]:
         with pytest.raises(ValueError):
             AudioConfig.from_dict(data)
 
 
-def test_default_bypasses_enhancement_and_presets_are_valid():
-    config = AudioConfig()
-    assert not any([config.apm, config.wpe, config.deepfilter, config.gain, config.eq, config.limiter])
-    for preset in PRESETS.values():
-        assert AudioConfig.from_dict(preset.to_dict()) == preset
+def test_legacy_enhancement_keys_cannot_restore_retired_features():
+    data = {'deepfilter': True, 'df_device': 'cuda', 'apm': True, 'wpe': True, 'gain': True}
+    assert AudioConfig.from_dict(data).to_dict() == AudioConfig().to_dict()
+    assert set(automatic_audio_config()) == {'output_db', 'limiter', 'peak_db'}
+
+
+def test_automatic_audio_sessions_have_independent_configs():
+    first = automatic_audio_config()
+    first['output_db'] = 10
+    first['deepfilter'] = True
+    second = automatic_audio_config()
+    assert second['output_db'] == 3 and second['limiter']
+    assert 'deepfilter' not in second
 
 
 def test_silence_and_invalid_input_are_distinguished():

@@ -12,8 +12,8 @@ import pytest
 from linguaflow.preferences import read_preferences
 
 
-@pytest.mark.parametrize('platform, expected', [('darwin', 'cpu'), ('win32', 'cuda')])
-def test_windows_audio_preferences_are_portable(monkeypatch, platform, expected):
+@pytest.mark.parametrize('platform', ['darwin', 'win32'])
+def test_old_audio_preferences_are_ignored_on_both_platforms(monkeypatch, platform):
     data = {'deepfilter': True, 'df_device': 'cuda', 'df_mix': .4, 'output_db': 3}
 
     class Store:
@@ -21,23 +21,8 @@ def test_windows_audio_preferences_are_portable(monkeypatch, platform, expected)
             return json.dumps(data) if key == 'audio_processing' else default
 
     monkeypatch.setattr(sys, 'platform', platform)
-    config = read_preferences(Store())['audio_processing']
-    assert config['df_device'] == expected
-    assert config['deepfilter'] and config['df_mix'] == .4 and config['output_db'] == 3
+    assert 'audio_processing' not in read_preferences(Store())
     assert data['df_device'] == 'cuda'
-
-
-def test_mac_cuda_installer_rejects_before_subprocess_or_session_changes(monkeypatch):
-    path = Path(__file__).resolve().parents[1] / 'scripts' / 'install_audio.py'
-    spec = importlib.util.spec_from_file_location('install_audio', path)
-    installer = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(installer)
-    monkeypatch.setattr(sys, 'platform', 'darwin')
-    monkeypatch.setattr(sys, 'argv', [str(path), '--device', 'cuda'])
-    monkeypatch.setattr(subprocess, 'run', lambda *a, **kw: pytest.fail('installer must not run'))
-    monkeypatch.setattr(os, 'setsid', lambda: pytest.fail('must not change process session'), raising=False)
-    with pytest.raises(SystemExit, match='macOS'):
-        installer.main()
 
 
 @pytest.mark.parametrize('system, machine, cpu, suffix, index', [
@@ -84,7 +69,6 @@ import os, sys, json
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication
 from linguaflow.app import Window
-from linguaflow.audio_processing.lab import AudioLab
 app = QApplication([])
 sys.platform = 'darwin'
 prefs = QSettings(os.environ['AGENTSCRIBE_LIBRARY'] + '/prefs.ini', QSettings.Format.IniFormat)
@@ -95,8 +79,9 @@ prefs.setValue('audio_processing', json.dumps({'deepfilter': True, 'df_device': 
 w = Window(discover=False, prefs=prefs)
 assert w.compute.currentData() == 'cpu'
 assert w.model_manager.translation_device.currentData() == 'cpu'
-assert w.model_manager.semantic_device.currentData() == 'cpu'
-assert w.audio_config['df_device'] == 'cpu' and w.audio_config['deepfilter']
+assert not hasattr(w.model_manager, 'semantic_device')
+assert not hasattr(w.model_manager, 'semantic_lookahead')
+assert not hasattr(w, 'audio_config')
 # Simulated CoreAudio inputs must retain their IDs and non-loopback flag in
 # both selectors, including after a refresh, reorder or device disconnection.
 import linguaflow.app as desktop
@@ -108,7 +93,7 @@ desktop.list_devices = lambda: devices
 w.refresh_devices()
 w.quick_device.setCurrentIndex(1)
 assert w.device.currentData() == ('coreaudio:blackhole', False)
-snapshot = w.settings_binding.session_settings(w.device.currentData(), w.audio_config)
+snapshot = w.settings_binding.session_settings(w.device.currentData())
 assert snapshot.device_id == 'coreaudio:blackhole' and not snapshot.loopback
 devices.reverse()
 w.refresh_devices()
@@ -124,44 +109,7 @@ devices.pop(0)
 w.refresh_devices()
 assert w.device.currentIndex() == w.quick_device.currentIndex() == -1
 assert w.quick_device.currentData() is None
-lab = AudioLab({'deepfilter': True, 'df_device': 'cuda', 'df_mix': .4}, parent=w)
-assert lab.df_device.findData('cuda') == -1
-assert lab.config()['df_device'] == 'cpu' and lab.config()['df_mix'] == .4
-assert lab.player is None and lab.audio_output is None
 assert 'soundcard' not in sys.modules and 'PySide6.QtMultimedia' not in sys.modules
-# Exercise lazy playback with QObject fakes, without importing native multimedia.
-from types import SimpleNamespace
-from PySide6.QtCore import QObject, Signal
-class Player(QObject):
-    positionChanged = Signal(int)
-    durationChanged = Signal(int)
-    errorOccurred = Signal()
-    def setAudioOutput(self, output): self.output = output
-    def setSource(self, source): self.source = source
-    def play(self): self.playing = True
-    def stop(self): self.playing = False
-    def setPosition(self, position): self.position = position
-class Output(QObject):
-    def setVolume(self, volume): self.volume = volume
-sys.modules['PySide6.QtMultimedia'] = SimpleNamespace(QAudioOutput=Output, QMediaPlayer=Player)
-lab.volume.setValue(35)
-lab.play('fixture.wav')
-player = lab.player
-assert player.playing and lab.audio_output.volume == .35
-assert player.source.toLocalFile() == 'fixture.wav'
-lab.volume.setValue(65)
-assert lab.audio_output.volume == .65
-player.durationChanged.emit(2000)
-player.positionChanged.emit(500)
-assert lab.seek.maximum() == 2000 and lab.seek.value() == 500
-lab.seek.sliderMoved.emit(750)
-assert player.position == 750
-lab.controls['df_mix'].setValue(.5)
-assert not player.playing
-lab.play('fixture-2.wav')
-assert lab.player is player and player.playing
-lab.reject()
-assert not player.playing and player.source.isEmpty()
 w.close()
 '''
     result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=20,

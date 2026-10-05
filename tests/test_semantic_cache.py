@@ -139,6 +139,6 @@ def test_semantic_adapter_maps_only_prepared_graphs(source, monkeypatch, prepare
             get_providers=lambda: ort_providers)))
     monkeypatch.setitem(sys.modules, 'onnxruntime', SimpleNamespace(__version__='1.30.0', SessionOptions=Options))
     monkeypatch.setitem(sys.modules, 'wtpsplit', SimpleNamespace(SaT=sat))
-    semantic.SemanticModel('cpu')
+    semantic.SemanticModel()
     assert entries == ({'session.load_model_format': 'ORT', 'session.use_memory_mapped_ort_model': '1',
                         'session.use_ort_model_bytes_for_initializers': '1'} if prepared else {})

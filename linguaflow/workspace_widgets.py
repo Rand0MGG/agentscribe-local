@@ -32,7 +32,6 @@ PAGE_DESCRIPTIONS = {
     '识别模型': '把声音变成原文。选择引擎和计算设备，再准备模型。',
     '翻译模型': '提交后先看初译，识别定稿后再结合上下文生成最终译文。',
     '字幕与延迟': '让听写更连贯，让分句与定稿的节奏适合你。',
-    '音频处理': '先听原声，再决定是否需要降噪、去混响或响度调整。',
     '运行环境': '首次使用时准备本地组件；遇到依赖问题时在这里修复。',
     '使用指南': '从第一次聆听，到整理和分享你的录音。',
 }
@@ -216,7 +215,6 @@ class SettingsWorkspace(QWidget):
     choose_storage_requested = Signal()
     deleted_requested = Signal()
     refresh_devices_requested = Signal()
-    audio_requested = Signal()
 
     def __init__(self, frame_factory, *, storage_root, controls, manager, parent=None):
         super().__init__(parent)
@@ -245,7 +243,7 @@ class SettingsWorkspace(QWidget):
         nav.addWidget(text_label("工作空间", "section"))
         self.navigation = QListWidget()
         self.navigation.setObjectName("settingsNavigation")
-        self.categories = ["常规", "聆听", "识别模型", "翻译模型", "字幕与延迟", "音频处理", "运行环境", '使用指南']
+        self.categories = ["常规", "聆听", "识别模型", "翻译模型", "字幕与延迟", "运行环境", '使用指南']
         self.navigation.addItems(self.categories)
         nav.addWidget(self.navigation, 1)
         nav.addWidget(text_label("更改将用于下一次录音", "timestamp"))
@@ -268,7 +266,7 @@ class SettingsWorkspace(QWidget):
         empty_layout = QVBoxLayout(self.no_results)
         empty_layout.addStretch()
         empty_layout.addWidget(text_label('没有找到这个设置', 'dialogTitle'))
-        empty_layout.addWidget(text_label('试试「SaT」「GPU」「保存位置」或「翻译」。', 'muted'))
+        empty_layout.addWidget(text_label('试试「字幕」「GPU」「保存位置」或「翻译」。', 'muted'))
         clear = QPushButton('清除搜索')
         clear.clicked.connect(self.search.clear)
         empty_layout.addWidget(clear, 0, Qt.AlignmentFlag.AlignLeft)
@@ -319,21 +317,11 @@ class SettingsWorkspace(QWidget):
         self.row(rows, "显示翻译", "关闭后仅保存原文字幕与录音。", controls['translate'])
         body.addWidget(card)
         body.addStretch()
-        _, body = self.page("音频处理")
-        body.addWidget(text_label("增强与回听", "settingsSection"))
-        card, rows = self.group()
-        lab = QPushButton("打开音频实验室")
-        lab.clicked.connect(self.audio_requested.emit)
-        self.row(rows, "音频实验室", "先回听，再调整降噪、去混响与响度。", lab)
-        rows.addWidget(controls['audio_summary'])
-        body.addWidget(card)
-        body.addStretch()
-        self.audio_page = self.pages.widget(self.mapping["音频处理"])
         _, body = self.page('使用指南')
         body.addWidget(text_label('第一次使用', 'settingsSection'))
         card, rows = self.group()
         for title, detail, category, action in [
-            ('01  准备本地模型', '首次安装运行环境，下载识别模型，并准备必需的 SaT 分句模型。', '运行环境', '准备环境'),
+            ('01  准备本地模型', '首次安装运行环境，再下载 / 检查识别模型；必要组件会一起准备。', '运行环境', '准备环境'),
             ('02  选择音频与语言', '选择麦克风或系统声音。使用 Qwen 时，指定原文语言。', '聆听', '设置聆听'),
             ('03  按需开启翻译', '选择翻译模型和目标语言；只需要原文时，可关闭显示翻译。', '翻译模型', '设置翻译'),
         ]:
@@ -463,7 +451,7 @@ class SettingsWorkspace(QWidget):
     def filter(self, query):
         aliases = {"常规": "文件 存储 目录 路径 删除 恢复 跟随", "聆听": "设备 输入 语言",
                    "识别模型": "Qwen Whisper GPU CPU MLX 下载", "翻译模型": "NLLB HY-MT2 前文 后文 GPU CPU 下载 译文",
-                   "字幕与延迟": "SaT 分句 草稿 刷新 停顿", "音频处理": "降噪 响度 增强 回听",
+                   "字幕与延迟": "字幕 草稿 刷新 停顿",
                    "运行环境": "安装 修复", '使用指南': '首次 使用 帮助 入门 导出 SRT 开始 说明'}
         aliases['常规'] += ' 动画 减少动态效果 快捷键'
         query = query.strip().casefold()

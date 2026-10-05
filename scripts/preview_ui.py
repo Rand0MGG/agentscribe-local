@@ -12,7 +12,6 @@ sys.path.insert(0, str(ROOT))
 
 def main():
     from linguaflow.app import STYLE, Window
-    from linguaflow.audio_processing.lab import AudioLab
     from linguaflow.core import Caption
     from linguaflow.deleted_dialog import DeletedDialog
     from linguaflow.recording_state import RecordingState
@@ -55,10 +54,10 @@ def main():
     capture('home', window.leave_settings)
     for category, name in [('常规', 'general'), ('聆听', 'listening'), ('识别模型', 'models'),
                            ('翻译模型', 'translation'), ('字幕与延迟', 'captions'),
-                           ('音频处理', 'audio'), ('运行环境', 'runtime'), ('使用指南', 'guide')]:
+                           ('运行环境', 'runtime'), ('使用指南', 'guide')]:
         capture(name, lambda category=category: window.open_settings(category))
     capture('search-empty', lambda: window.settings_workspace.search.setText('不存在的设置'))
-    capture('search-sat', lambda: window.settings_workspace.search.setText('SaT'))
+    capture('search-caption', lambda: window.settings_workspace.search.setText('字幕'))
     capture('models-compact', lambda: (window.resize(900, 650), window.open_settings('识别模型')))
     capture('home-compact', window.leave_settings)
     def recording_state(state):
@@ -72,8 +71,7 @@ def main():
     steps.append(lambda: (window.leave_settings(), advance()))
     dialogs = []
     for name, make in [('new-recording', lambda: RecordingDialog(window.library, window.folder_id, window)),
-                       ('deleted', lambda: DeletedDialog(window.library, window)),
-                       ('audio-lab', lambda: AudioLab({}, parent=window))]:
+                       ('deleted', lambda: DeletedDialog(window.library, window))]:
         def setup(make=make):
             window.resize(1280, 840)
             dialog = make()

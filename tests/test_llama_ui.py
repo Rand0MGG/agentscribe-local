@@ -37,7 +37,7 @@ if sys.platform == 'win32':
     assert manager.translation_device.findData('vulkan') >= 0
     assert manager.translation_device.findData('metal') == -1
 w.translate.setChecked(True)
-settings = w.settings_binding.session_settings(('fixture', False), {})
+settings = w.settings_binding.session_settings(('fixture', False))
 assert settings.translation_engine == 'llama' and settings.translation_device == device
 assert settings.translation_initial_before == 0 and settings.translation_before == 10
 assert settings.llama_model.endswith('new-model-f16.gguf')
@@ -65,7 +65,7 @@ manager.translation_engine.setCurrentIndex(manager.translation_engine.findData('
 assert manager.llama_model.currentText() == settings.llama_model
 assert manager.translation_before.isEnabled()
 manager.llama_model.setCurrentText('models/custom-f16.gguf')
-assert Path(w.settings_binding.session_settings(('fixture', False), {}).llama_model).is_absolute()
+assert Path(w.settings_binding.session_settings(('fixture', False)).llama_model).is_absolute()
 w.device.addItem('fixture', ('fixture', False))
 import linguaflow.llama_assets as assets
 def missing(settings): raise ValueError('fixture missing assets')

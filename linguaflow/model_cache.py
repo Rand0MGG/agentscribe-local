@@ -1,4 +1,4 @@
-"""Resolve exactly one weight format, then load offline to avoid auto-conversion."""
+"""Reuse local weights and resolve one format before loading to avoid auto-conversion."""
 
 import json
 from pathlib import Path
@@ -47,7 +47,7 @@ def validate_mlx_model(path):
         raise ValueError('Apple GPU 识别需要 Qwen3-ASR 的 MLX 4-bit 权重；请选择对应模型。')
 
 
-def resolve_translation(model, offline, report):
+def resolve_translation(model, report):
     from huggingface_hub import HfApi, snapshot_download
 
     if Path(model).is_dir():
@@ -69,8 +69,6 @@ def resolve_translation(model, offline, report):
             return cached
     except OSError:
         pass
-    if offline:
-        raise RuntimeError("离线缓存不完整，请取消严格离线下载一次，或选择完整模型目录。")
     files = HfApi().list_repo_files(model)
     safe = any(f.endswith(".safetensors") for f in files)
     patterns = ["*.json", "*.model", "*.txt", "*.jinja", "*.safetensors" if safe else "*.bin"]

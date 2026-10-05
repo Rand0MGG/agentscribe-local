@@ -7,6 +7,7 @@ from collections import deque
 from pathlib import Path
 from threading import Event, Lock, Thread, Timer
 
+from .process_platform import stop_tree
 from .runtime_paths import runtime_python
 
 
@@ -40,12 +41,14 @@ class PreparedWorker:
             with self.lock:
                 if self.closed.is_set():
                     return
+                command = [str(python), '-u', '-m', 'linguaflow.wlk_worker']
                 self.process = subprocess.Popen(
-                    [str(python), '-u', '-m', 'linguaflow.wlk_worker', '--prepared'],
+                    command,
                     cwd=str(Path(__file__).resolve().parents[1]), stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
                     env={**os.environ, 'PYTHONIOENCODING': 'utf-8'},
-                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
+                    start_new_session=os.name != 'nt')
             self.diagnostics = Thread(target=self.read_logs, daemon=True)
             self.diagnostics.start()
             self.read_ready()
@@ -119,11 +122,13 @@ class PreparedWorker:
             if process is None:
                 return
             if process.poll() is None:
-                process.terminate()
+                # Windows venv launchers have a native Python child. Stopping
+                # only the launcher can leave imports/inference running.
+                stop_tree(process)
                 try:
                     process.wait(timeout=3)
                 except subprocess.TimeoutExpired:
-                    process.kill()
+                    stop_tree(process, force=True)
                     process.wait(timeout=2)
             self.reader.join(timeout=2)
             diagnostics = getattr(self, 'diagnostics', None)
@@ -147,13 +152,29 @@ class RuntimePreparation:
         atexit.register(self.close)
 
     def prepare(self):
+        """Prepare imports asynchronously without changing user inference devices."""
         with self.lock:
-            if self.closed or self.worker is not None:
+            if self.closed or self.busy:
                 return
-            python = runtime_python()
-            if python.is_file():
-                self.worker = PreparedWorker(python)
-                self.arm_idle(self.worker)
+            previous = self._prepare_locked()
+        if previous:
+            Thread(target=previous.close).start()
+
+    def _prepare_locked(self):
+        """Return a replaced idle worker; caller cleans up outside the lock."""
+        if (self.worker is not None
+                and self.worker.error is None and not self.worker.closed.is_set()
+                and (self.worker.process is None or self.worker.process.poll() is None)):
+            return None
+        previous, self.worker = self.worker, None
+        if self.idle_timer:
+            self.idle_timer.cancel()
+            self.idle_timer = None
+        python = runtime_python()
+        if python.is_file():
+            self.worker = PreparedWorker(python)
+            self.arm_idle(self.worker)
+        return previous
 
     def arm_idle(self, worker):
         # Called under the pool lock. An active session always cancels this timer.
@@ -172,20 +193,25 @@ class RuntimePreparation:
         worker.close()
 
     def acquire(self, cancelled):
-        self.prepare()
+        """Lease the prepared process, replacing a failed or exited worker."""
         with self.lock:
             if self.closed:
                 raise RuntimeError('推理运行环境已关闭。')
             if self.busy:
                 raise RuntimeError('推理运行环境正在处理另一会话。')
+            previous = self._prepare_locked()
             worker = self.worker
             if worker is None:
-                return None
+                if previous:
+                    Thread(target=previous.close).start()
+                raise RuntimeError('推理运行环境未安装，请在识别模型设置中准备运行环境。')
             self.busy = True
             if self.idle_timer:
                 self.idle_timer.cancel()
                 self.idle_timer = None
         try:
+            if previous:
+                previous.close()
             worker.wait(cancelled)
             return worker
         except BaseException:

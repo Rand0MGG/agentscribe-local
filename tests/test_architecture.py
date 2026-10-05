@@ -50,7 +50,7 @@ def test_domain_and_storage_have_no_transitive_qt_or_model_dependency():
 def test_runtime_does_not_depend_on_desktop_and_package_has_no_import_cycles():
     graph, _ = dependencies()
     desktop = {'linguaflow.' + name for name in ('app', 'management', 'workspace_widgets',
-               'settings_binding', 'deleted_dialog', 'wlk_session', 'recording_save', 'audio_processing.lab')}
+               'settings_binding', 'deleted_dialog', 'wlk_session', 'recording_save')}
     for module in ('wlk_worker', 'backends', 'semantic_model', 'audio_processing.pipeline'):
         assert not reachable(graph, 'linguaflow.' + module) & desktop
     for module, imports in graph.items():

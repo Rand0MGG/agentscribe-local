@@ -1,13 +1,10 @@
 """Qt session owns capture and an exclusive lease of a local WLK process."""
 import base64
 import json
-import os
-import subprocess
 import time
 import wave
 from collections import deque
 from dataclasses import asdict
-from pathlib import Path
 from threading import Event, Thread
 
 import numpy as np
@@ -17,7 +14,9 @@ from .audio import capture
 from .capture_control import CaptureControl
 from .core import Caption
 from .journal import AudioJournal
+from .process_platform import stop_tree
 from .runtime_paths import runtime_python
+from .runtime_preparation import RuntimePreparation
 
 
 class Session(QThread):
@@ -46,7 +45,8 @@ class Session(QThread):
         self.last_error = ""
         self.recording_path = recording_path
         self.capture_control = CaptureControl()
-        self.runtime = runtime
+        self.owns_runtime = runtime is None
+        self.runtime = runtime if runtime is not None else RuntimePreparation()
 
     def pause(self):
         if not self.model_ready.is_set() or self.stop_capture.is_set():
@@ -62,7 +62,9 @@ class Session(QThread):
         if discard or ((self.process is not None or self.runtime is not None) and not self.model_ready.is_set()):
             self.abort.set()
             if self.process and self.process_owned.is_set() and self.process.poll() is None:
-                self.process.terminate()
+                self.process_owned.clear()  # Repeated cancellation must not spawn more cleanup tasks.
+                # Cancel the owned launcher and Python child off the UI thread.
+                Thread(target=stop_tree, args=(self.process,)).start()
 
     def fail(self, text):
         self.last_error = text
@@ -80,17 +82,9 @@ class Session(QThread):
                 raise RuntimeError("请先运行 scripts/install_runtime.py 安装 WhisperLiveKit 推理环境。")
             self.stage.emit("识别", "加载 WhisperLiveKit")
             self.status.emit("正在启动本地推理进程…首次导入运行库可能需要较长时间，可点击停止取消。")
-            if self.runtime is not None:
-                self.status.emit('正在等待后台准备的运行环境…')
-                prepared = self.runtime.acquire(self.abort)
-            self.process = prepared.process if prepared else subprocess.Popen(
-                [str(python), "-u", "-m", "linguaflow.wlk_worker"],
-                cwd=str(Path(__file__).resolve().parents[1]), stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
-                env={**os.environ, "PYTHONIOENCODING": "utf-8",
-                     "LINGUAFLOW_TRACE_REVISIONS": "1" if self.diagnostic else "0"},
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-            )
+            self.status.emit('正在等待后台准备的运行环境…')
+            prepared = self.runtime.acquire(self.abort)
+            self.process = prepared.process
             self.process_owned.set()
             if self.abort.is_set():
                 raise RuntimeError('启动已取消。')
@@ -103,20 +97,13 @@ class Session(QThread):
             recent_errors = deque(maxlen=12)
 
             def diagnostics():
-                if prepared:
-                    cursor = 0
-                    while not self.abort.wait(.05):
-                        for serial, text in prepared.recent_logs(cursor):
-                            cursor = serial
-                            last_progress[0] = time.monotonic()
-                            recent_errors.append(text)
-                            self.status.emit(text)
-                    return
-                for line in self.process.stderr:
-                    if line.strip():
+                cursor = 0
+                while not self.abort.wait(.05):
+                    for serial, text in prepared.recent_logs(cursor):
+                        cursor = serial
                         last_progress[0] = time.monotonic()
-                        recent_errors.append(line.strip())
-                        self.status.emit(line.strip())
+                        recent_errors.append(text)
+                        self.status.emit(text)
 
             def watch_startup():
                 while not self.abort.wait(1):
@@ -135,9 +122,8 @@ class Session(QThread):
             diagnostics_thread.start()
             workers.append(diagnostics_thread)
             settings = asdict(self.settings)
-            if prepared:
-                settings['_diagnostic'] = self.diagnostic
-                self.status.emit('运行环境已准备；正在加载本次会话模型…')
+            settings['_diagnostic'] = self.diagnostic
+            self.status.emit('运行环境已准备；正在加载本次会话模型…')
             send(settings)
             journal = AudioJournal(self.settings.input_sample_rate)
 
@@ -249,9 +235,10 @@ class Session(QThread):
                     self.fail(event["text"])
                 elif kind == "done":
                     completed = True
-                    if prepared:
-                        break
-            code = self.process.poll() if prepared else self.process.wait()
+                    break
+            code = self.process.poll()
+            if not completed and not self.abort.is_set() and code is None:
+                code = self.process.wait(timeout=2)
             if not completed and not self.abort.is_set():
                 raise RuntimeError(f"推理进程提前退出（{code}）。\n" + "\n".join(recent_errors)[-1200:])
         except Exception as exc:
@@ -266,16 +253,11 @@ class Session(QThread):
             self.process_owned.clear()
             if prepared:
                 try:
-                    self.runtime.release(prepared, reusable)
+                    self.runtime.release(prepared, reusable and not self.owns_runtime)
                 except Exception as exc:
                     self.fail('会话模型释放失败：' + str(exc))
-            elif self.process and self.process.poll() is None:
-                self.process.terminate()
-                try:
-                    self.process.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    self.process.kill()
-                    self.process.wait(timeout=2)
+            if self.owns_runtime:
+                self.runtime.close()
             for thread in workers:
                 thread.join()
             if journal:

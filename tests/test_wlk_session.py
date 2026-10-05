@@ -11,13 +11,19 @@ from linguaflow.wlk_session import Session
 
 
 def execute(monkeypatch, tmp_path, program, capture, stopped=False, cancel_loading=False, setup=None, tick=None):
+    import linguaflow.runtime_preparation as preparation
     import linguaflow.wlk_session as module
     script = tmp_path / "worker.py"
-    script.write_text(program, encoding="utf8")
+    script.write_text("import json; print(json.dumps({'type':'runtime_ready'}), flush=True)\n" + program,
+                      encoding="utf8")
     original = subprocess.Popen
     monkeypatch.setattr(module, "runtime_python", lambda: __import__("pathlib").Path(sys.executable))
-    monkeypatch.setattr(module.subprocess, "Popen", lambda command, **kw: original(
-        [sys.executable, "-u", str(script)], **kw))
+    monkeypatch.setattr(preparation, "runtime_python", lambda: __import__("pathlib").Path(sys.executable))
+    def spawn(command, **kwargs):
+        if 'linguaflow.wlk_worker' in command:
+            return original([sys.executable, '-u', str(script)], **kwargs)
+        return original(command, **kwargs)
+    monkeypatch.setattr(preparation.subprocess, 'Popen', spawn)
     app = QCoreApplication.instance() or QCoreApplication([])
     session = Session(Settings("fixture", translate=False), capture_fn=capture,
                       recording_path=tmp_path / "recording.wav")
@@ -79,7 +85,7 @@ def test_stop_before_ready_does_not_open_audio(monkeypatch, tmp_path):
     captions, failures = execute(monkeypatch, tmp_path, PROGRAM,
                                  lambda *args: opened.append(True), stopped=True)
     assert not opened and not failures
-    assert captions[0].source == "0"
+    assert not captions  # Cancelling before startup must not create a session.
 
 
 def test_crashed_worker_reports_failure_without_hanging(monkeypatch, tmp_path):

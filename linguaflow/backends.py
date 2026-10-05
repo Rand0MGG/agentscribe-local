@@ -39,7 +39,7 @@ class HyMtTranslator:
         self.torch, self.target, self.source = torch, settings.target, settings.source_nllb
         self.report = report
         torch.set_num_threads(4)
-        path = resolve_translation(settings.translation_model, settings.offline, report)
+        path = resolve_translation(settings.translation_model, report)
         device = settings.translation_device
         dtype = torch.bfloat16 if device == 'cuda' and torch.cuda.is_bf16_supported() else (
             torch.float16 if device == 'cuda' else torch.float32)
@@ -114,7 +114,7 @@ class NllbTranslator:
         self.source = settings.source_nllb
         from .model_cache import resolve_translation
 
-        model_path = resolve_translation(settings.translation_model, settings.offline, report)
+        model_path = resolve_translation(settings.translation_model, report)
         report(f"翻译权重已就绪，正在加载到 {getattr(settings, 'translation_device', 'cpu').upper()}…")
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_path,

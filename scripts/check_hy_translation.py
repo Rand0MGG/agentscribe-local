@@ -18,12 +18,16 @@ def main():
     parser.add_argument('--device', choices=('cpu', 'cuda'), default='cuda')
     parser.add_argument('--output', default='.work/hy-translation-smoke.json')
     args = parser.parse_args()
+    model = args.model
+    if not Path(model).is_dir():
+        from huggingface_hub import snapshot_download
+        model = snapshot_download(model, local_files_only=True)
     import torch
     import transformers
 
     started = time.monotonic()
-    translator = create_translator(Settings('smoke', translation_model=args.model,
-                                            translation_device=args.device, offline=True), print)
+    translator = create_translator(Settings('smoke', translation_model=model,
+                                            translation_device=args.device), print)
     load_seconds = time.monotonic() - started
     cases = [
         ('The crane was moving slowly.', TranslationContext()),

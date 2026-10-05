@@ -34,7 +34,6 @@ def main():
         translation_model="facebook/nllb-200-distilled-1.3B",
         source="en",
         source_nllb="eng_Latn",
-        offline=True,
         translation_device="cuda",
     )
     session = Session(settings)

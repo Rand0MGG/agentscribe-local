@@ -21,7 +21,7 @@ w.show()
 app.processEvents()
 w.open_settings('常规')
 s = w.settings_workspace
-s.search.setText('  SaT  ')
+s.search.setText('  草稿  ')
 assert s.title.text() == '字幕与延迟'
 assert not s.pages.isHidden()
 s.search.setText('HY-MT2 前文')

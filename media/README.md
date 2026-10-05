@@ -9,6 +9,6 @@
 .venv/Scripts/python.exe scripts/smoke_wlk.py --backend qwen3-streaming --qwen-model Qwen/Qwen3-ASR-1.7B --audio .work/classroom.wav --reference media/test.txt --comparison --draft-seconds .5 --endpoint-seconds 1.5 --output .work/classroom-draft.json
 ```
 
-脚本保存文件哈希、转换规则、带接收时间的字幕事件和最终原文。按实际音频速度送入相同 worker。默认不加音频增强和翻译，以便隔离识别变量；应用中的增强配置不能由此测试推断。`--translate` 可另测完整翻译链路。
+脚本保存文件哈希、转换规则、带接收时间的字幕事件和最终原文。按实际音频速度送入相同 worker，与应用一样自动执行 +3 dB 增益和 -1 dB 峰值保护。默认关闭翻译；`--translate` 可另测完整翻译链路。
 
 对照文本的编辑距离只表示两份结果的分歧，不能称为真实错误率。检查原文修订次数、更新间隔、错误分段合并、最终漏词和术语；判断准确性仍须回听。音频和参考文本仅保留本地，不自动提交到 Git。

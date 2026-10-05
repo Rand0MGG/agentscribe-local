@@ -27,9 +27,13 @@ def frozen_settings(path=None):
     settings = Settings('file-replay', input_sample_rate=48000, backend='qwen3-streaming',
                         qwen_model='Qwen/Qwen3-ASR-1.7B', qwen_mode='fast', asr_device='cuda',
                         source='en', source_nllb='eng_Latn', translate=False,
-                        endpoint_seconds=1.5, draft_seconds=.5, offline=True)
+                        endpoint_seconds=1.5, draft_seconds=.5)
     if path:
-        settings = Settings(**json.loads(Path(path).read_text(encoding='utf-8-sig')))
+        saved = json.loads(Path(path).read_text(encoding='utf-8-sig'))
+        for retired in ('semantic_device', 'semantic_lookahead'):
+            saved.pop(retired, None)
+        saved.pop('offline', None)  # Retired setting in historical benchmark snapshots.
+        settings = Settings(**saved)
     if (settings.backend != 'qwen3-streaming' or settings.qwen_mode != 'fast'
             or settings.input_sample_rate != 48000 or settings.source != 'en' or settings.translate):
         raise ValueError('AMI protocol requires qwen3-streaming fast, English, 48k input, translation off')

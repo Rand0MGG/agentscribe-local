@@ -31,17 +31,15 @@ async def serve(settings, emit, read_message):
 async def _serve(settings, emit, read_message, mlx_client=None):
     import numpy as np
 
-    from .audio_processing.pipeline import AudioPipeline, select_backend
+    from .audio_processing.pipeline import AudioPipeline
     audio_config = settings.get("audio_processing", {})
-    if audio_config.get("deepfilter"):
-        select_backend(audio_config.get("df_device", "cpu"))
-    emit({"type": "status", "text": "加载本地 SaT 上下文分句模型…"})
+    emit({"type": "status", "text": "加载本地字幕分句组件…"})
     try:
         from .semantic_model import SemanticModel
-        semantic = await asyncio.to_thread(SemanticModel, settings.get("semantic_device", "cpu"))
+        semantic = await asyncio.to_thread(SemanticModel)
     except Exception as exc:
-        raise RuntimeError("SaT 分句模型加载失败，请在‘字幕与延迟’中准备 / 检查模型：" + str(exc)) from exc
-    emit({"type": "status", "text": "SaT 上下文分句已就绪；近期原文和译文可修订"})
+        raise RuntimeError("字幕分句组件加载失败，请在‘识别模型’中下载 / 检查模型：" + str(exc)) from exc
+    emit({"type": "status", "text": "字幕分句已就绪；近期原文和译文可修订"})
 
     emit({"type": "status", "text": "正在准备音频处理链…"})
     # Legacy 16 kHz clients keep their original PCM route. Desktop captures 48 kHz.
@@ -114,11 +112,10 @@ async def _serve(settings, emit, read_message, mlx_client=None):
         model = settings.get("asr_model", "large-v3")
         if Path(model).exists():
             config.model_path = str(Path(model).resolve())
-        elif settings.get("offline"):
+        else:
             checkpoint = Path.home() / ".cache" / "whisper" / (model + ".pt")
-            if not checkpoint.is_file():
-                raise ValueError("离线 Whisper 权重不存在，请先在模型管理中下载。")
-            config.model_path = str(checkpoint)
+            if checkpoint.is_file():
+                config.model_path = str(checkpoint)
     emit({"type": "status", "text": "正在加载 WhisperLiveKit / " + config.backend})
     if accurate_qwen:
         # Reuse WLK capture, VAC, queues and events without loading a second ASR.
@@ -178,7 +175,7 @@ async def _serve(settings, emit, read_message, mlx_client=None):
     results = await processor.create_tasks()
     from .wlk_captions import CaptionMapper, caption_snapshot
     mapper = CaptionMapper(config.lan, predictor=semantic.boundaries,
-                           lookahead=settings.get("semantic_lookahead", 3.))
+                           lookahead=3.)
     from .translation_queue import TranslationQueue
     from .translation_service import publish_translation_batch, publish_translation_result, run_translations
     translation_queue = TranslationQueue()
@@ -350,32 +347,12 @@ def main():
         return json.loads(line) if line else None
 
     try:
-        prepared = '--prepared' in sys.argv
-        original_offline = os.environ.get('HF_HUB_OFFLINE')
-        if prepared:
-            os.environ['HF_HUB_OFFLINE'] = '1'
-            try:
-                prepare_runtime()
-            finally:
-                if original_offline is None:
-                    os.environ.pop('HF_HUB_OFFLINE', None)
-                else:
-                    os.environ['HF_HUB_OFFLINE'] = original_offline
-            emit({'type': 'runtime_ready'})
+        prepare_runtime()
+        emit({'type': 'runtime_ready'})
         while first := sys.stdin.readline():
             settings = json.loads(first)
-            if settings.get('offline'):
-                os.environ['HF_HUB_OFFLINE'] = '1'
-            elif prepared:
-                if original_offline is None:
-                    os.environ.pop('HF_HUB_OFFLINE', None)
-                else:
-                    os.environ['HF_HUB_OFFLINE'] = original_offline
-            if prepared:
-                os.environ['LINGUAFLOW_TRACE_REVISIONS'] = '1' if settings.pop('_diagnostic', False) else '0'
+            os.environ['LINGUAFLOW_TRACE_REVISIONS'] = '1' if settings.pop('_diagnostic', False) else '0'
             asyncio.run(serve(settings, emit, read_message))
-            if not prepared:
-                break
             release_runtime_models()
             emit({'type': 'runtime_ready'})
     except Exception as exc:
@@ -386,21 +363,20 @@ def main():
 
 
 def prepare_runtime():
-    """Import the common CPU runtime without model construction or device access."""
+    """Warm the shared CPU ONNX runtime without weights or network changes."""
     import importlib
-    # Keep wtpsplit's required skops-before-transformers order.
+    # SaT/skops must precede Transformers. ASR and translation still choose
+    # their own PyTorch/Metal devices; SaT and VAD use CPU ONNX only.
     for module in ('onnxruntime', 'wtpsplit', 'torch', 'whisperlivekit'):
         importlib.import_module(module)
 
 
 def release_runtime_models():
-    """No overlapping sessions: discard WLK's singleton before new settings arrive."""
+    """Release session model state while retaining compatible imports."""
     import gc
 
     import torch
     from whisperlivekit import TranscriptionEngine
-    # WLK ordinarily runs one configuration per process. We own sequential
-    # sessions and reset only after asyncio.run has joined tasks and executors.
     TranscriptionEngine.reset()
     gc.collect()
     if torch.cuda.is_initialized():

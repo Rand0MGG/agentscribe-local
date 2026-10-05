@@ -41,12 +41,10 @@ def main():
     parser.add_argument("--reference", help="Reference text for a non-repeated long fixture")
     parser.add_argument("--max-wer", type=float, default=0.05)
     parser.add_argument("--output", default=".work/wlk-smoke.json")
-    parser.add_argument("--audio-preset", help="Enable the 48 kHz desktop enhancement route using this preset name")
-    parser.add_argument("--audio-device", choices=["cpu", "cuda"], default="cpu")
     args = parser.parse_args()
-    from linguaflow.audio_processing.config import PRESETS
-    audio_config = ({**PRESETS[args.audio_preset].to_dict(), "df_device": args.audio_device} if args.audio_preset else {})
-    rate = 48000 if args.audio_preset else 16000
+    from linguaflow.audio_processing.config import automatic_audio_config
+    audio_config = automatic_audio_config()
+    rate = 48000
     settings = Settings("fixture", backend=args.backend, asr_model=args.model, asr_device="cuda",
                         qwen_model=args.qwen_model, update_seconds=args.update_seconds, draft_seconds=args.draft_seconds,
                         qwen_mode=args.qwen_mode, qwen_window_seconds=args.qwen_window_seconds,
@@ -94,6 +92,8 @@ def main():
             event = json.loads(line)
             event["received_monotonic"] = time.monotonic()
             events.append(event)
+            if event['type'] == 'done':
+                process.stdin.close()
             if event["type"] == "ready":
                 feeder = threading.Thread(target=feed)
                 feeder.start()
@@ -105,7 +105,7 @@ def main():
         watchdog.cancel()
     Path(args.output).write_text(json.dumps(events, ensure_ascii=False, indent=2), encoding="utf-8")
     finals = [e["data"] for e in events if e["type"] == "caption"]
-    assert code == 0 and events[-1]["type"] == "done", f"Worker failed; see {errors}"
+    assert code == 0 and any(e['type'] == 'done' for e in events), f"Worker failed; see {errors}"
     import re
     # Validate all fixture words, not merely one greeting from a truncated row.
     rows = {}
