@@ -24,8 +24,5 @@ No model weights are distributed in this repository. Dependency and model licens
 
 ## Optional audio front end
 
-- pywebrtc-audio 0.2.0: https://github.com/strands-labs/pywebrtc-audio — Apache-2.0 bindings to WebRTC APM.
-- nara-wpe 0.0.11: https://github.com/fgnt/nara_wpe — MIT; OnlineWPE is wrapped with streaming STFT and numerical safeguards.
-- deepfilter-stream 0.1.0: https://github.com/wuxuedaifu/deepfilter-stream — MIT; stateful ONNX adaptation of DeepFilterNet3. `audio_processing/onnx_model.py` adapts its model initialization to configure CUDA and expand an unsupported fused operator. Denoiser state handling remains upstream.
 - DeepFilterNet: https://github.com/Rikorose/DeepFilterNet — upstream project and model notices are retained in the dependency distribution. The downloaded community export is not an official LinguaFlow-trained model.
 - ONNX / ONNX Runtime: https://github.com/onnx/onnx and https://github.com/microsoft/onnxruntime — Apache-2.0 / MIT.

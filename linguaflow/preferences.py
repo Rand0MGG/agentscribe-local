@@ -2,7 +2,6 @@
 import json
 from dataclasses import dataclass
 
-from .audio_processing.config import AudioConfig
 from .translation_config import CONTEXT_COUNTS, context_count
 
 
@@ -16,7 +15,7 @@ class Preference:
 PREFERENCES = (
     Preference('asr', 'editable'), Preference('translation', 'editable'),
     Preference('source', 'text'), Preference('target', 'text'), Preference('compute', 'text'),
-    Preference('offline', 'bool', False), Preference('translate', 'bool', True),
+    Preference('translate', 'bool', True),
     Preference('backend', 'data', 'wlk-whisper'),
     Preference('qwen_model', 'editable', 'Qwen/Qwen3-ASR-0.6B'),
     Preference('llama_model', 'editable', 'tencent/Hy-MT2-1.8B-GGUF'),
@@ -24,9 +23,7 @@ PREFERENCES = (
     Preference('translation_device', 'data'),
     *(Preference(key, 'data', default) for key, (default, _maximum) in CONTEXT_COUNTS.items()),
     Preference('update_seconds', 'float', 1.), Preference('endpoint_seconds', 'float', .5),
-    Preference('semantic_lookahead', 'float', 3.),
     Preference('draft_seconds', 'float', .5),
-    Preference('semantic_device', 'data', 'cpu'),
     Preference('reduce_motion', 'bool', False),
 )
 
@@ -45,18 +42,12 @@ def read_preferences(store):
         values['translation_engine'] = 'llama'
     values['backend'] = {'whisper-live': 'wlk-whisper', 'qwen-stream': 'qwen3-streaming'}.get(
         values['backend'], values['backend'])
-    try:
-        values['audio_processing'] = AudioConfig.from_dict(
-            json.loads(store.value('audio_processing', '{}'))).for_platform().to_dict()
-    except (ValueError, TypeError, AttributeError):
-        values['audio_processing'] = AudioConfig().to_dict()
     return values
 
 
 def write_preferences(store, values):
     for pref in PREFERENCES:
         store.setValue(pref.key, values[pref.key])
-    store.setValue('audio_processing', json.dumps(values['audio_processing']))
     if values.get('audio_device') is not None:
         store.setValue('audio_device', json.dumps(values['audio_device']))
 

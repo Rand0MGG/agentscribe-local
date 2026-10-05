@@ -86,13 +86,4 @@ if len(sys.argv) == 1:
     app.processEvents()
     window.grab().save("docs/semantic-preview.png")
     window.leave_settings()
-    from linguaflow.audio_processing.lab import AudioLab
-    lab = AudioLab(parent=window)
-    lab.show()
-    app.processEvents()
-    lab.grab().save("docs/audio-preview.png")
-    lab.tabs.setCurrentIndex(1)
-    app.processEvents()
-    lab.grab().save("docs/audio-advanced-preview.png")
-    lab.close()
 window.close()

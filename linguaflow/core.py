@@ -34,7 +34,6 @@ class Settings:
     source_nllb: str | None = None
     target: str = "zho_Hans"
     translate: bool = True
-    offline: bool = False
     backend: str = "wlk-whisper"
     qwen_model: str = "Qwen/Qwen3-ASR-0.6B"
     qwen_mode: str = "fast"
@@ -47,8 +46,6 @@ class Settings:
     translation_after: int = DEFAULT_CONTEXT_AFTER
     input_sample_rate: int = 16000
     audio_processing: dict = field(default_factory=dict)
-    semantic_device: str = "cpu"
-    semantic_lookahead: float = 3.0
     translation_engine: str | None = None
     llama_model: str = ""
     translation_initial_before: int = DEFAULT_INITIAL_CONTEXT_BEFORE

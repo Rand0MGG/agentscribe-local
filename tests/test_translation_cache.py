@@ -22,11 +22,11 @@ def test_hy_incomplete_template_triggers_download_including_jinja(tmp_path, monk
     hub = SimpleNamespace(snapshot_download=snapshot,
                           HfApi=lambda: SimpleNamespace(list_repo_files=lambda _: ['model.safetensors']))
     monkeypatch.setitem(sys.modules, 'huggingface_hub', hub)
-    assert model_cache.resolve_translation(HY_MODEL, False, lambda _: None) == str(cache)
+    assert model_cache.resolve_translation(HY_MODEL, lambda _: None) == str(cache)
     assert '*.jinja' in downloads[0]['allow_patterns']
     (cache / 'chat_template.jinja').write_text('template')
     downloads.clear()
-    model_cache.resolve_translation(HY_MODEL, True, lambda _: None)
+    model_cache.resolve_translation(HY_MODEL, lambda _: None)
     assert not downloads
 
 
@@ -43,4 +43,4 @@ def test_builtin_hy_choice_reuses_complete_project_local_package(tmp_path, monke
 
     monkeypatch.setitem(sys.modules, 'huggingface_hub',
                         SimpleNamespace(snapshot_download=unexpected, HfApi=unexpected))
-    assert model_cache.resolve_translation(HY_MODEL, True, lambda _: None) == str(bundle)
+    assert model_cache.resolve_translation(HY_MODEL, lambda _: None) == str(bundle)

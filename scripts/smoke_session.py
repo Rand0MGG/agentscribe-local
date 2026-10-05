@@ -36,7 +36,7 @@ def main():
     app = QCoreApplication([])
     session = Session(Settings("fixture", backend=args.backend, asr_model=args.model,
                                asr_device=args.device, translation_device="cuda", source="en",
-                               source_nllb="eng_Latn", offline=True), capture_fn=capture)
+                               source_nllb="eng_Latn"), capture_fn=capture)
     # Use the already cached model rather than download a second NLLB variant.
     from dataclasses import replace
     session.settings = replace(session.settings, translation_model="facebook/nllb-200-distilled-1.3B")

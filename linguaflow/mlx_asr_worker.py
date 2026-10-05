@@ -53,7 +53,6 @@ def serve(read, emit):
 def main():
     protocol = sys.stdout
     sys.stdout = sys.stderr
-    os.environ['HF_HUB_OFFLINE'] = '1'
     os.environ['TOKENIZERS_PARALLELISM'] = 'false'
     threading.Thread(target=watch_parent, args=(os.getppid(),), daemon=True).start()
 

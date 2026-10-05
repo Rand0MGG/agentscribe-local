@@ -14,7 +14,6 @@ docs/testing/     benchmark protocols and scoring documentation
 requirements-runtime.txt  isolated WhisperLiveKit/Qwen runtime
 requirements-mlx.txt      isolated Apple GPU / MLX runtime (experimental)
 .runtime/         downloaded native HY Metal runtime (ignored by Git)
-requirements-audio.txt    optional APM/WPE/DF3 dependencies
 pyproject.toml    desktop package and development dependencies
 ```
 
@@ -26,7 +25,7 @@ All working artifacts stay inside this project, in ordinary directories: no junc
 - `.work/cache/test-runs` and `.work/cache/audition`: historical temporary test and audition directories.
 - `.work/browser`: browser session records and screenshots.
 - `.work/ami`, `.work/macwhinney`, `.work/revisions-short`: original evaluation evidence. Keep these paths and contents intact because frozen manifests reference them.
-- Other existing `.work` files include historical experiments and prepared audio referenced by scripts. They remain in place for compatibility.
+- User-authorized cleanup on 2026-10-05 removed abandoned audio enhancement experiments and redundant processed audio. Written results and original recordings remain; historical manifests may reference artifacts that have been removed.
 
 Future agent screenshots and scratch files should be placed under `.work/browser` or `.work/cache`, not at the project root. `.venv`, `.venv-wlk`, `.git`, `media`, and `srt` retain their existing roles and locations.
 
@@ -40,12 +39,14 @@ GGUF translation uses `llama_translation.py` with a session-owned llama.cpp serv
 
 `wlk_session.py` owns the process boundary, `wlk_worker.py` assembles the streaming pipeline, `translation_service.py` owns revision-aware translation consumption, and `backends.py` contains translation adapters. Shared environment paths live in `runtime_paths.py`, so other desktop tools do not import the recording session merely to locate Python.
 
+`runtime_preparation.py` owns one prepared worker and exclusive session leases. It prepares the shared CPU ONNX runtime and retains imports after releasing session model state; ASR and translation keep their own device choices. Startup preparation runs outside the UI thread; idle expiry, cancellation and application exit reap the owned process tree. It does not change networking or open audio devices.
+
 `translation_config.py` owns shared context defaults/ranges and input limits. The live worker passes caption deltas to `translation_context.py`; its ordered source/finalized indexes preserve history edits without rescanning every saved caption for each update. `recording_save.py` owns serial background writes and copied recording snapshots; the desktop checks recording generation/version before applying completion results.
 
 `.github/workflows/checks.yml` runs Ruff and no-audio tests for pushes/pull requests on `windows`, `mac`, and `main`. The unit matrix covers Windows/macOS and Python 3.11–3.13, installs desktop/development dependencies only, and neither prepares models nor opens audio devices. These jobs do not certify GPU inference or real recording hardware.
 
-`audio_processing/` separates serializable configuration, stateful DSP, ONNX compatibility, signal health checks, bounded sample recording (`recorder.py`) and the Qt audition workspace. File audition and the live worker use the same front end. `scripts/install_audio.py` manages its optional dependencies; `scripts/smoke_audio.py` exercises actual CPU/CUDA processing.
+`audio_processing/` contains only internal gain/peak settings, stateful processing, resampling and signal health checks. The worker applies +3 dB gain and peak protection in the background. APM, WPE, DeepFilterNet3, enhancement presets, installers and comparison scripts have been removed.
 
-`semantic_model.py` loads the required local SaT boundary predictor prepared by `scripts/install_semantic.py`. `wlk_captions.py` owns provisional boundaries, stability and revisions; `translation_queue.py` coalesces pending caption revisions. See `docs/SEMANTIC_SEGMENTATION.md` for the state transitions and limitations.
+`semantic_model.py` loads the required local SaT boundary predictor on CPU. Runtime installation and recognition-model preparation automatically prepare its assets; it has no independent user settings. `wlk_captions.py` owns provisional boundaries, stability and revisions; `translation_queue.py` coalesces pending caption revisions. See `docs/SEMANTIC_SEGMENTATION.md` for the state transitions and limitations.
 
 `caption_changes.py` is a legacy revision-description utility; the live UI no longer displays change explanations or calls it. `media/README.md` defines the local classroom regression fixture; `scripts/prepare_classroom.py`, `smoke_wlk.py` and `compare_classroom.py` provide reproducible decoding, paced inference and update/revision measurements. The other app's text is an unverified comparison, never injected as a model prompt.

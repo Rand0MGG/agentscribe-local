@@ -1,1 +1,1 @@
-"""Configurable audio front end, shared by live ASR and the listening lab."""
+"""Automatic gain, peak protection and recognition resampling."""

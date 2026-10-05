@@ -107,12 +107,12 @@ def test_sat_rejects_changed_text_and_reports_inference_failure():
 
 def test_worker_requires_sat_before_accepting_audio(monkeypatch):
     import linguaflow.semantic_model as module
-    def unavailable(device):
+    def unavailable():
         raise FileNotFoundError('missing weights')
     monkeypatch.setattr(module, 'SemanticModel', unavailable)
     async def read_message():
         pytest.fail('worker must initialize SaT before accepting audio')
     events = []
-    with pytest.raises(RuntimeError, match='SaT 分句模型加载失败'):
+    with pytest.raises(RuntimeError, match='字幕分句组件加载失败'):
         asyncio.run(serve({}, events.append, read_message))
     assert not any(event['type'] in {'ready', 'caption', 'done'} for event in events)

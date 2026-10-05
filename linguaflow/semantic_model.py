@@ -86,29 +86,23 @@ def paths(prepare=False):
         "tokenizer_config.json", "special_tokens_map.json", "sentencepiece.bpe.model"],
         local_files_only=not prepare, revision=TOKENIZER_REVISION)
     if not (Path(model) / "model_optimized.onnx").is_file():
-        raise ValueError("SaT 权重不完整，请在模型管理的‘字幕与延迟’中准备分句模型。")
+        raise ValueError("字幕分句文件不完整，请在‘识别模型’中下载 / 检查识别模型。")
     return model, tokenizer
 
 
 class SemanticModel:
-    def __init__(self, device="cpu"):
-        if device == "cuda":
-            from .audio_processing.pipeline import select_backend
-            select_backend(device)
-            import torch
-            if not torch.cuda.is_available():
-                raise RuntimeError("SaT CUDA 不可用")
+    def __init__(self):
         import onnxruntime as ort
         from wtpsplit import SaT
         model, tokenizer = paths()
         options = ort.SessionOptions()
         options.intra_op_num_threads = 2
         options.inter_op_num_threads = 1
-        provider = "CUDAExecutionProvider" if device == "cuda" else "CPUExecutionProvider"
+        provider = "CPUExecutionProvider"
         self.model = SaT(model, tokenizer_name_or_path=tokenizer, ort_providers=[provider],
                          ort_kwargs={"sess_options": options}, from_pretrained_kwargs={"local_files_only": True})
         if provider not in self.model.model.ort_session.get_providers():
-            raise RuntimeError("所选 SaT 设备未成功初始化，没有静默切换设备。")
+            raise RuntimeError("字幕分句 CPU 组件未成功初始化，请检查识别运行环境。")
 
     def boundaries(self, text):
         # The model predicts each character's boundary probability using context.

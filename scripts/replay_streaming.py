@@ -77,7 +77,7 @@ def prepare(source, destination):
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
 
 
-def replay(manifest_path, output, settings_path=None, pause_at=(), pause_seconds=2.):
+def replay(manifest_path, output, settings_path=None, pause_at=(), pause_seconds=2., runtime=None):
     import numpy as np
     from PySide6.QtCore import QCoreApplication
 
@@ -96,9 +96,13 @@ def replay(manifest_path, output, settings_path=None, pause_at=(), pause_seconds
     settings = Settings('file-replay', input_sample_rate=48000, backend='qwen3-streaming',
                         qwen_model='Qwen/Qwen3-ASR-1.7B', asr_device='cuda',
                         source='en', source_nllb='eng_Latn', translate=False,
-                        endpoint_seconds=1.5, draft_seconds=.5, offline=True)
+                        endpoint_seconds=1.5, draft_seconds=.5)
     if settings_path:
-        settings = Settings(**json.loads(Path(settings_path).read_text(encoding='utf-8')))
+        saved = json.loads(Path(settings_path).read_text(encoding='utf-8'))
+        for retired in ('semantic_device', 'semantic_lookahead'):
+            saved.pop(retired, None)
+        saved.pop('offline', None)  # Retired setting in historical replay snapshots.
+        settings = Settings(**saved)
     if settings.input_sample_rate != 48000:
         raise ValueError('Replay uses the 48k desktop input route')
     if settings.qwen_mode != 'fast':
@@ -133,11 +137,11 @@ def replay(manifest_path, output, settings_path=None, pause_at=(), pause_seconds
                 name: float(np.quantile(delivery_lateness, q))
                 for name, q in [('p50', .5), ('p95', .95), ('p99', .99)]}
     app = QCoreApplication.instance() or QCoreApplication([])
-    session = Session(settings, capture_fn=capture, diagnostic=True)
+    session = Session(settings, capture_fn=capture, diagnostic=True, runtime=runtime)
     failures = []
     pending_pauses = sorted(pause_at)
     resume_at = [None]
-    code_files = ['wlk_session.py', 'wlk_worker.py', 'journal.py', 'runtime_compat.py',
+    code_files = ['wlk_session.py', 'wlk_worker.py', 'journal.py', 'runtime_compat.py', 'runtime_preparation.py',
                   'wlk_captions.py', 'qwen_revisions.py', 'revision_audit.py', 'translation_queue.py',
                   'semantic_model.py', 'audio_processing/pipeline.py', 'core.py', 'capture_control.py',
                   'translation_service.py', 'translation_context.py', 'backends.py',

@@ -205,10 +205,10 @@ app = QApplication([])
 prefs = QSettings(os.environ['AGENTSCRIBE_LIBRARY'] + '/prefs.ini', QSettings.Format.IniFormat)
 w = Window(discover=False, prefs=prefs)
 w.use_mac_profile()
-settings = w.settings_binding.session_settings(('file', False), {})
+settings = w.settings_binding.session_settings(('file', False))
 assert settings.backend == 'qwen3-mlx' and settings.asr_device == 'mlx'
 assert settings.qwen_model.endswith('1.7B-4bit')
-assert settings.semantic_device == 'cpu' and not settings.translate
+assert not hasattr(settings, 'semantic_device') and not settings.translate
 w.save()
 w.model_manager.backend.setCurrentIndex(0)
 assert w.compute.currentData() == 'cpu' and w.compute.isEnabled()

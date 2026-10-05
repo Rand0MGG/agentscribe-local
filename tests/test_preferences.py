@@ -21,22 +21,36 @@ def test_legacy_defaults_and_corrupt_values():
     values = read_preferences(Store(backend='qwen-stream', draft_seconds='bad', audio_processing='bad'))
     assert values['backend'] == 'qwen3-streaming'
     assert values['draft_seconds'] == .5
-    assert values['translate'] is True and values['offline'] is False
+    assert values['translate'] is True
     assert values['translation_device'] is None  # UI falls back to selected compute device.
-    assert isinstance(values['audio_processing'], dict)
+    assert 'audio_processing' not in values
 
 
 def test_all_keys_roundtrip_and_missing_device_does_not_erase_selection():
     store = Store(audio_device=json.dumps(['microphone', False]))
     values = read_preferences(store)
-    values.update(asr='local-checkpoint', update_seconds=1.5, offline=True)
+    values.update(asr='local-checkpoint', update_seconds=1.5)
     write_preferences(store, values)
     restored = read_preferences(store)
     assert {p.key: restored[p.key] for p in PREFERENCES} == {p.key: values[p.key] for p in PREFERENCES}
-    assert restored['audio_processing'] == values['audio_processing']
     assert read_audio_device(store) == ('microphone', False)
     for invalid in ('bad', '[]', '"abc"', '["device", "False"]'):
         assert read_audio_device(Store(audio_device=invalid)) is None
+
+
+def test_retired_offline_preference_is_ignored():
+    values = read_preferences(Store(offline=True, translate=False))
+    assert 'offline' not in values
+    assert values['translate'] is False
+
+
+def test_retired_manual_audio_settings_do_not_return_or_get_saved():
+    store = Store(audio_processing=json.dumps({'deepfilter': True, 'output_db': 10}))
+    values = read_preferences(store)
+    assert 'audio_processing' not in values
+    destination = Store()
+    write_preferences(destination, values)
+    assert 'audio_processing' not in destination.values
 
 
 def test_legacy_metal_migrates_to_llama_without_overriding_explicit_engine():

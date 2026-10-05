@@ -50,6 +50,7 @@ from .qt_controls import data_index
 from .qt_controls import text_label as label
 from .recording_save import RecordingSaver
 from .recording_state import RecordingState
+from .runtime_preparation import RuntimePreparation
 from .settings_binding import SettingsBinding
 from .ui_components import ActionMenu, Disclosure, NameDialog
 from .ui_components import ChoiceBox as QComboBox
@@ -517,7 +518,7 @@ class CaptionCard(QFrame):
 
 
 class Window(QMainWindow):
-    def __init__(self, discover=True, library_root=None, prefs=None, library=None):
+    def __init__(self, discover=True, library_root=None, prefs=None, library=None, runtime=None):
         super().__init__()
         self._backdrop_applied = False
         self._backdrop_attempted = False
@@ -527,6 +528,7 @@ class Window(QMainWindow):
         self.resize(1280, 840)
         self.setMinimumSize(900, 650)
         self.session = None
+        self.runtime = runtime
         self.recording_lock = None
         self.last_error = ""
         self.recording_state = RecordingState.IDLE
@@ -688,12 +690,10 @@ class Window(QMainWindow):
         self.model_manager.choose_translation = choose_translation
         self.translate = Switch("同时显示翻译")
         self.translate.setChecked(True)
-        self.offline = QCheckBox("严格离线 · 只使用已下载模型")
         form_outer.addWidget(self.translate)
-        self.model_manager.advanced_form.addRow(self.offline)
         models.addRow(
             label(
-                "建议先在这里下载模型，再启用严格离线。音频和字幕只在本机处理。",
+                "建议先在这里下载模型；已下载模型可在断网时使用。音频和字幕只在本机处理。",
                 "muted",
             )
         )
@@ -705,12 +705,6 @@ class Window(QMainWindow):
         manage.setObjectName("secondary")
         manage.clicked.connect(self.manage_models)
         form_outer.addWidget(manage)
-        audio_lab = QPushButton("音频实验室 · 增强与回听")
-        audio_lab.clicked.connect(self.manage_audio)
-        form_outer.addWidget(audio_lab)
-        self.audio_summary = label("音频：原声直通", "muted")
-        self.audio_summary.setWordWrap(True)
-        form_outer.addWidget(self.audio_summary)
         form_outer.addWidget(label("原文提交后先显示初译。\n识别定稿后，再生成最终译文。", "muted"))
         form_outer.addStretch()
         self.legacy_settings_panel = self.settings_panel
@@ -898,15 +892,14 @@ class Window(QMainWindow):
         self.settings_workspace = SettingsWorkspace(WorkspaceFrame,
             storage_root=self.library.root, manager=self.model_manager,
             controls={key: getattr(self, key) for key in
-                      ('device', 'source', 'target', 'translate', 'audio_summary', 'reduce_motion')})
+                      ('device', 'source', 'target', 'translate', 'reduce_motion')})
         self.settings_panel = self.settings_workspace.listening_page
         for signal, action in (
                 (self.settings_workspace.back_requested, self.leave_settings),
                 (self.settings_workspace.open_storage_requested, self.reveal_library),
                 (self.settings_workspace.choose_storage_requested, self.choose_library),
                 (self.settings_workspace.deleted_requested, self.show_deleted),
-                (self.settings_workspace.refresh_devices_requested, self.refresh_devices),
-                (self.settings_workspace.audio_requested, self.manage_audio)):
+                (self.settings_workspace.refresh_devices_requested, self.refresh_devices)):
             signal.connect(action)
         self.pages.addWidget(self.settings_workspace)
         self.source.currentTextChanged.connect(self.update_quick_settings)
@@ -1324,8 +1317,6 @@ class Window(QMainWindow):
         values = read_preferences(self.prefs)
         self.settings_binding.restore(values)
         self.sync_asr_device()
-        self.audio_config = values['audio_processing']
-        self.update_audio_summary()
 
     def sync_asr_device(self):
         manager = self.model_manager
@@ -1353,33 +1344,10 @@ class Window(QMainWindow):
         manager.draft_seconds.setValue(1.)
         manager.endpoint_seconds.setValue(1.)
         self.translate.setChecked(False)
-        manager.status.setText('已选择 Apple GPU、4-bit 识别和 SaT 分句，并关闭翻译。准备识别与 SaT 模型后可开始；翻译可在设置中单独开启。')
+        manager.status.setText('已选择 Apple GPU、4-bit 识别，并关闭翻译。下载 / 检查识别模型后可开始；翻译可在设置中单独开启。')
 
     def manage_models(self):
         self.open_settings("识别模型")
-
-    def manage_audio(self):
-        from .audio_processing.lab import AudioLab
-        dialog = AudioLab(self.audio_config, self.device.currentData(), self, discover=True)
-        if dialog.exec():
-            self.audio_config = dialog.result_config
-            index = data_index(self.device, dialog.device)
-            if index < 0 and dialog.device is not None:
-                self.device.addItem(dialog.source.currentText(), dialog.device)
-                index = self.device.count() - 1
-            if index >= 0:
-                self.device.setCurrentIndex(index)
-            self.save()
-            self.update_audio_summary()
-        dialog.deleteLater()
-
-    def update_audio_summary(self):
-        enabled = [name for key, name in [("apm", "APM"), ("highpass", "低频清理"),
-                                          ("wpe", "WPE"), ("deepfilter", "DF3"),
-                                          ("gain", "响度"), ("eq", "均衡"), ("limiter", "峰值保护")]
-                   if self.audio_config.get(key)]
-        self.audio_summary.setText("音频：" + (" / ".join(enabled) if enabled else "原声直通")
-                                   + (" · 输出增益已调整" if self.audio_config.get("output_db") else ""))
 
     def update_model_summary(self):
         manager = self.model_manager
@@ -1393,7 +1361,7 @@ class Window(QMainWindow):
 
     def save(self):
         values = self.settings_binding.snapshot()
-        values.update(audio_processing=self.audio_config, audio_device=self.device.currentData())
+        values.update(audio_device=self.device.currentData())
         write_preferences(self.prefs, values)
 
     def choose_model(self, combo):
@@ -1439,7 +1407,7 @@ class Window(QMainWindow):
         if self.translate.isChecked() and self.model_manager.translation_engine.currentData() == 'llama':
             from .llama_assets import resolve_assets
             try:
-                resolve_assets(self.settings_binding.session_settings(self.device.currentData(), self.audio_config))
+                resolve_assets(self.settings_binding.session_settings(self.device.currentData()))
             except (ValueError, OSError) as exc:
                 QMessageBox.warning(self, "翻译模型尚未准备好", str(exc))
                 return
@@ -1477,7 +1445,7 @@ class Window(QMainWindow):
         self.diagnostics.clear()
         self.on_status("正在启动本地推理环境…可点击停止取消加载。")
         self.empty.setText("正在准备模型和验证推理环境…\n准备好后自动开始录音，加载进度显示在下方。")
-        settings = self.settings_binding.session_settings(self.device.currentData(), self.audio_config)
+        settings = self.settings_binding.session_settings(self.device.currentData())
         self.save()
         self.set_recording_state(RecordingState.STARTING)
         try:
@@ -1507,7 +1475,7 @@ class Window(QMainWindow):
 
     def set_recording_state(self, state):
         self.recording_state = state
-        for control in (self.settings_panel, self.model_manager, self.settings_workspace.audio_page,
+        for control in (self.settings_panel, self.model_manager,
                         self.library_tree, self.new_button, self.folder_button, self.quick_device, self.refresh_source):
             control.setEnabled(not state.active)
         self.start_button.setEnabled(not state.active)
@@ -1521,7 +1489,7 @@ class Window(QMainWindow):
 
     def launch_session(self, settings):
         self.session = Session(settings, self, recording_path=
-                               self.library.directory(self.current_item["id"]) / "录音.wav")
+                               self.library.directory(self.current_item["id"]) / "录音.wav", runtime=self.runtime)
         self.session.status.connect(self.on_status)
         self.session.stage.connect(self.on_stage)
         self.session.ready.connect(self.on_ready)
@@ -1649,6 +1617,8 @@ class Window(QMainWindow):
         self.on_stage("会话", "失败，详见诊断" if self.last_error else "已结束")
         if self.closing:
             self.close()
+        elif self.runtime is not None:
+            self.runtime.prepare()
 
     def on_caption(self, caption):
         previous = self.captions.get(caption.id)
@@ -1788,6 +1758,8 @@ class Window(QMainWindow):
             self.player.stop()
         self.save()
         self.overlay.close()
+        if self.runtime is not None:
+            self.runtime.close(wait=False)
         event.accept()
 
 
@@ -1795,6 +1767,9 @@ def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setStyleSheet(STYLE)
-    window = Window()
+    runtime = RuntimePreparation()
+    window = Window(runtime=runtime)
     window.show()
+    QTimer.singleShot(0, runtime.prepare)
+    app.aboutToQuit.connect(lambda: runtime.close(wait=False))
     sys.exit(app.exec())

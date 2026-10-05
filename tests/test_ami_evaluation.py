@@ -19,6 +19,16 @@ from scripts.benchmark_ami import frozen_settings
 from scripts.benchmark_ami import run as benchmark
 
 
+def test_historical_settings_ignore_retired_offline_flag(tmp_path):
+    settings = frozen_settings()
+    settings['offline'] = True
+    path = tmp_path / 'settings.json'
+    path.write_text(json.dumps(settings), encoding='utf-8')
+    restored = frozen_settings(path)
+    assert 'offline' not in restored
+    assert restored['qwen_model'] == settings['qwen_model']
+
+
 def test_xml_word_pointer_coverage_and_nonlexical_annotations():
     w = '''<root xmlns:nite="http://nite.sourceforge.net/">
     <w nite:id="a0" starttime="0" endtime=".1">We</w>

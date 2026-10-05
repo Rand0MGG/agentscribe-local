@@ -18,7 +18,7 @@ def test_cached_weights_reused_without_network(tmp_path, monkeypatch):
     monkeypatch.setitem(
         sys.modules, "huggingface_hub", SimpleNamespace(snapshot_download=snapshot, HfApi=lambda: None)
     )
-    assert resolve_translation("facebook/test", False, lambda s: None) == str(tmp_path)
+    assert resolve_translation("facebook/test", lambda s: None) == str(tmp_path)
 
 
 def test_sharded_model_requires_all_shards(tmp_path):
@@ -29,6 +29,19 @@ def test_sharded_model_requires_all_shards(tmp_path):
     assert not has_weights(tmp_path)
     (tmp_path / "two.safetensors").touch()
     assert has_weights(tmp_path)
+
+
+def test_model_manager_can_still_prepare_translation(tmp_path, monkeypatch):
+    from linguaflow.management import ModelManager
+
+    (tmp_path / 'model.safetensors').touch()
+    monkeypatch.setitem(sys.modules, 'huggingface_hub',
+                        SimpleNamespace(snapshot_download=None, HfApi=None))
+    completed = []
+    manager = SimpleNamespace(translation_engine=SimpleNamespace(currentData=lambda: 'pytorch'),
+                              prepare=lambda action: completed.append(action()))
+    ModelManager.prepare_translation(manager, str(tmp_path))
+    assert completed == [f'翻译模型文件已就绪：{tmp_path}']
 
 
 def test_download_selects_one_weight_format(monkeypatch):
@@ -44,7 +57,7 @@ def test_download_selects_one_weight_format(monkeypatch):
     monkeypatch.setitem(
         sys.modules, "huggingface_hub", SimpleNamespace(snapshot_download=snapshot, HfApi=lambda: api)
     )
-    assert resolve_translation("test/model", False, lambda s: None) == "downloaded"
+    assert resolve_translation("test/model", lambda s: None) == "downloaded"
     assert "*.safetensors" in calls[-1]["allow_patterns"]
     assert "*.bin" not in calls[-1]["allow_patterns"]
 
