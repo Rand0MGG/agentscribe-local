@@ -10,20 +10,12 @@ from threading import Event, Lock, Thread, current_thread
 
 import numpy as np
 
+from .asr_stability import choose_cut
 from .qwen_accurate import LANGUAGE_NAMES, QwenAccurateOnline
 from .runtime_paths import mlx_python
 
 MLX_MODEL = 'mlx-community/Qwen3-ASR-1.7B-4bit'
 MLX_REVISION = '78a389c776a5483b2d0d4ea5494e11012e0d6159'
-
-
-def choose_cut(audio, seconds):
-    """Cut at quiet 100 ms near the window end, with bounded linear work."""
-    target = round(seconds * 16000)
-    lo, hi = max(16000, target - 16000), min(len(audio), target + 16000)
-    frame = 1600
-    candidates = range(lo, max(lo + 1, hi - frame + 1), frame)
-    return min(candidates, key=lambda i: float(np.mean(audio[i:i+frame] ** 2)))
 
 
 class MLXClient:

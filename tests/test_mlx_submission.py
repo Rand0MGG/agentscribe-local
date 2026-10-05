@@ -27,7 +27,8 @@ def test_short_pause_retains_pcm_and_later_speech_corrects_original_phrase():
     asr.insert_audio_chunk(first, 1)
     assert asr.start_silence()[0] == []
     snapshot = asr.augment_snapshot({'lines': [], 'buffer_transcription': asr.text})
-    assert snapshot['lines'][0]['text'] == 'This is soft mass.'
+    assert snapshot['lines'] == []
+    assert snapshot['buffer_transcription'] == 'This is soft mass.'
     assert asr.start_silence()[0] == [] and len(calls) == 1
     asr.end_silence(.75, 1)
     asr.insert_audio_chunk(second, 2.75)
@@ -71,7 +72,7 @@ def test_backlog_at_vad_endpoint_keeps_every_sample_and_decode_bounded():
     audio = np.arange(50 * 16000, dtype=np.float32)
     asr.insert_audio_chunk(audio, 50)
     committed, _ = asr.start_silence()
-    assert committed
+    assert committed == []
     held = asr.audio_buffer.copy()
     assert len(held) <= 17 * 16000
     asr.end_silence(5, 50)
@@ -82,7 +83,8 @@ def test_backlog_at_vad_endpoint_keeps_every_sample_and_decode_bounded():
     assert all(len(part) <= 17 * 16000 for part in calls)
     # The silence decode is retained as the final hypothesis, without
     # discarding or decoding its PCM again when the long pause is confirmed.
-    np.testing.assert_array_equal(np.concatenate(calls[:-1]), audio)
+    # Overlaps are recognized again, but every original sample is covered.
+    np.testing.assert_array_equal(np.unique(np.concatenate(calls[:-1])), audio)
     assert final[0].start == 55 and final[-1].end == 56
 
 
@@ -98,7 +100,7 @@ def test_mlx_uses_requested_window_and_retains_short_pauses(monkeypatch):
     assert asr.update_seconds == .5
 
 
-def test_window_cut_keeps_draft_prefix_timestamps_inside_final_audio_interval():
+def test_capacity_rollover_does_not_close_or_shrink_the_asr_interval():
     asr = online(lambda audio: 'First sentence. Extra.' if len(audio) > 8 * 16000
                  else 'First sentence.', window=8)
     asr.choose_cut = lambda audio, seconds: 8 * 16000
@@ -108,15 +110,17 @@ def test_window_cut_keeps_draft_prefix_timestamps_inside_final_audio_interval():
     assert store.rows[0]['end'] == 12
     asr.insert_audio_chunk(np.ones(16000), 13)
     asr.process_iter()
-    assert store.rows[0]['closed'] and store.rows[0]['end'] == 8
-    assert all(0 <= a <= b <= 8 for a, b in store.times[0])
+    assert not store.rows[0]['closed'] and store.rows[0]['end'] == 13
+    assert store.rows[0]['stable_end'] == 0
+    assert all(0 <= a <= b <= 13 for a, b in store.times[0])
     snapshot = {}
     store.augment_snapshot(snapshot)
     mapper = CaptionMapper('en', predictor=lambda text: [])
     caption = mapper.update(snapshot)[0]
-    assert caption.final and caption.end <= 8
+    assert not caption.final and caption.end <= 13
     asr.finish()
-    assert min(a for a, b in store.times[1]) >= 8
+    assert list(store.rows) == [0] and store.rows[0]['closed']
+    assert store.rows[0]['end'] == 13
 
 
 def test_short_vad_pause_uses_existing_store_without_publishing_closed_source():
@@ -142,7 +146,7 @@ def test_short_vad_pause_uses_existing_store_without_publishing_closed_source():
     assert not changed.final
     asr.finish()
     store.augment_snapshot(snapshot)
-    assert captions.update(snapshot)[0].final
+    assert captions.update(snapshot, done=True)[0].final
     assert events[-1]['data']['closed']
 
 
@@ -160,7 +164,9 @@ def test_silent_pcm_closes_utterance_through_shared_strategy_without_caption_tim
     asr.get_buffer()
     snapshot = {}
     store.augment_snapshot(snapshot)
-    assert captions.update(snapshot)[0].final
+    tail = captions.update(snapshot)[0]
+    assert tail.asr_final and not tail.boundary_final and not tail.final
+    assert captions.update(snapshot, done=True)[0].final
     # WLK still receives its scheduling tokens once; caption data already came
     # from the full-hypothesis store, which never waits for append-only tokens.
     tokens, _ = asr.finish()
@@ -239,26 +245,33 @@ def test_shared_submission_retranslates_corrected_source_then_finalizes():
     store = install_revision_bridge(asr)
     mapper = CaptionMapper('en', predictor=lambda text: [], lookahead=1, clock=lambda: clock[0])
     planner = ContextPlanner()
-    def publish():
+    def publish(done=False):
         snapshot = {}
         store.augment_snapshot(snapshot)
-        mapper.update(snapshot)
+        mapper.update(snapshot, done=done)
         return planner.update(mapper.previous.values())
     asr.insert_audio_chunk(np.ones(16000), 1)
     asr.start_silence()
     assert publish() == []
     clock[0] = 2
+    # A single recognition plus wall time is not ASR agreement. Actual silent
+    # PCM may close ASR, after which the independent SaT submission delay runs.
+    assert publish() == []
+    asr.observe_capture_event('silence_started', 1)
+    asr.observe_capture_event('audio_advanced', 4)
+    asr.get_buffer()
+    assert publish() == []
+    clock[0] = 4
     first = publish()
     assert len(first) == 1 and first[0].translation_phase == 'initial'
-    asr.end_silence(.75, 1)
-    asr.insert_audio_chunk(np.ones(16000), 2.75)
-    asr.process_iter()
+    # Reopen an ASR interval with a revised full hypothesis, as the common
+    # store does when later recognition corrects previously submitted words.
+    store.update(0, 0, 2.75, 'The value is six.', len('The value is six.'))
     revised = publish()
     assert len(revised) == 1 and revised[0].translation_phase == 'initial'
     assert revised[0].id == first[0].id and revised[0].source == 'The value is six.'
     assert not planner.accepts(first[0]) and planner.accepts(revised[0])
     assert publish() == []
-    asr.finish()
-    final = publish()
+    final = publish(done=True)
     assert len(final) == 1 and final[0].translation_phase == 'final'
     assert final[0].id == first[0].id and final[0].source == 'The value is six.'

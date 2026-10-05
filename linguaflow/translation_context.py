@@ -2,6 +2,7 @@
 from bisect import bisect_left, bisect_right, insort
 from dataclasses import dataclass, replace
 
+from .core import source_is_final
 from .translation_config import (
     DEFAULT_CONTEXT_AFTER,
     DEFAULT_CONTEXT_BEFORE,
@@ -77,7 +78,7 @@ class ContextPlanner:
         Index all changes before freezing request backgrounds. Only changed rows
         are planned; unchanged neighbours never trigger another translation.
         """
-        incoming = {c.id: c for c in captions}
+        incoming = {c.id: replace(c, final=source_is_final(c)) for c in captions}
         for cid, caption in incoming.items():
             if not caption.source:
                 self._remove(cid)
@@ -106,7 +107,8 @@ class ContextPlanner:
             if not caption.final and not (old or caption.ready):
                 continue
             if (old and old.final == caption.final
-                    and (old.source, old.language) == (caption.source, caption.language)):
+                    and (old.source, old.language, old.segmentation_revision)
+                    == (caption.source, caption.language, caption.segmentation_revision)):
                 continue
             position = (caption.start, caption.id)
             count = self.before if caption.final else self.initial_before
@@ -127,8 +129,11 @@ class ContextPlanner:
 
     def accepts(self, request):
         current = self.requests.get(request.id)
-        return bool(current and (current.revision, current.source, current.language, current.translation_phase)
-                    == (request.revision, request.source, request.language, request.translation_phase))
+        return bool(current and (current.revision, current.source, current.language,
+                                 current.translation_phase, current.segmentation_revision)
+                    == (request.revision, request.source, request.language,
+                        request.translation_phase, request.segmentation_revision)
+                    and (request.translation_phase != 'final' or source_is_final(current)))
 
     def get(self, caption_id):
         return self.contexts.get(caption_id)

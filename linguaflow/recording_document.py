@@ -21,7 +21,7 @@ def read_recording_document(data):
             if not isinstance(row, dict):
                 raise ValueError('字幕条目必须是对象')
             caption = Caption(**row)
-            for key in ('id', 'revision'):
+            for key in ('id', 'revision', 'segmentation_revision'):
                 if type(getattr(caption, key)) is not int or getattr(caption, key) < 0:
                     raise ValueError(f'字幕 {key} 必须是非负整数')
             if caption.id in identifiers:
@@ -41,6 +41,9 @@ def read_recording_document(data):
                 raise ValueError('译文阶段无效')
             if any(type(getattr(caption, key)) is not bool for key in ('final', 'ready')):
                 raise ValueError('字幕状态必须是布尔值')
+            if any(getattr(caption, key) is not None and type(getattr(caption, key)) is not bool
+                   for key in ('asr_final', 'boundary_final')):
+                raise ValueError('识别与分句状态必须是布尔值')
             captions.append(caption)
         return data, captions
     except (KeyError, TypeError, ValueError) as exc:

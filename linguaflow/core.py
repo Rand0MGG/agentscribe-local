@@ -67,12 +67,22 @@ class Caption:
     boundary_reason: str = ""
     translation_phase: str = ""  # initial / final; empty for older saved captions
     translation_source: str = ""
+    # None keeps older recording documents compatible with their saved final.
+    asr_final: bool | None = None
+    boundary_final: bool | None = None
+    segmentation_revision: int = 0
+
+
+def source_is_final(caption):
+    """SaT closure requires confirmed ASR text; both gate final translation."""
+    return bool(caption.final and caption.asr_final is not False
+                and caption.boundary_final is not False)
 
 
 def translation_status(caption):
     if caption.error:
         return "最终翻译失败" if caption.final else "初译失败"
-    if caption.translation_phase == "final" and caption.translation:
+    if caption.translation_phase == "final" and caption.translation and source_is_final(caption):
         return "译文已定稿"
     if not caption.translation_phase and caption.translation and caption.final:
         return "已保存译文"
@@ -95,7 +105,7 @@ def srt_time(seconds: float) -> str:
 
 def export_srt(captions: list[Caption]) -> str:
     rows = []
-    for index, caption in enumerate((c for c in captions if c.final and c.source.strip()), 1):
+    for index, caption in enumerate((c for c in captions if source_is_final(c) and c.source.strip()), 1):
         text = caption.source.strip()
         if caption.translation:
             prefix = '[初译] ' if caption.translation_phase == 'initial' else ''

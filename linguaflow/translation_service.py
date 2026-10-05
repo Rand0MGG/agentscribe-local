@@ -9,7 +9,14 @@ from collections import OrderedDict
 from dataclasses import replace
 from threading import Lock
 
+from .core import source_is_final
 from .translation_queue import translation_is_current
+
+
+def matches_source(current, caption):
+    return bool(current and current.source == caption.source and current.language == caption.language
+                and current.segmentation_revision == caption.segmentation_revision
+                and (caption.translation_phase != 'final' or source_is_final(current)))
 
 
 async def publish_translation_result(caption, current_caption, lock, publish,
@@ -17,7 +24,7 @@ async def publish_translation_result(caption, current_caption, lock, publish,
     """Apply only translation fields to the current revision, atomically."""
     async with lock:
         current = current_caption(caption.id)
-        valid = (bool(current and current.source) and planner.accepts(caption)
+        valid = (matches_source(current, caption) and planner.accepts(caption)
                  if planner else translation_is_current(current, caption))
         if (valid
                 and (current_context is None or current_context(caption.id) == expected_context)):
@@ -30,7 +37,7 @@ async def publish_translation_batch(captions, contexts, current_caption, lock, p
     """Publish a shared-context response atomically, or reject the entire block."""
     async with lock:
         current = [current_caption(c.id) for c in captions]
-        if any(not row or not row.source or not planner.accepts(caption)
+        if any(not matches_source(row, caption) or not planner.accepts(caption)
                or planner.get(caption.id) != context
                for row, caption, context in zip(current, captions, contexts, strict=True)):
             return False
@@ -83,6 +90,9 @@ async def _consume_translations(queue, create_translator, current_caption, publi
         try:
             if item is None:
                 return
+            # Finish pending SaT revisions before starting another HY request.
+            # In-flight inference is not interrupted; its result is rechecked.
+            await queue.source_ready.wait()
             caption, queued_at = item
             if not (planner.accepts(caption) if planner else translation_is_current(current_caption(caption.id), caption)):
                 continue
@@ -96,8 +106,8 @@ async def _consume_translations(queue, create_translator, current_caption, publi
             try:
                 if load_error:
                     raise RuntimeError(load_error)
-                key = (('batch', tuple((c.source, c.language) for c in captions), context)
-                       if len(batch) > 1 else (caption.source, caption.language, context))
+                key = (('batch', tuple((c.source, c.language, c.segmentation_revision) for c in captions), context)
+                       if len(batch) > 1 else (caption.source, caption.language, caption.segmentation_revision, context))
                 if key in cache:
                     texts = cache[key]
                     cache.move_to_end(key)

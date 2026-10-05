@@ -216,3 +216,16 @@ NLLB 600M 的官方权重约 2.46GB；下载启动后，因上述资源事件取
 真实回放使用 `scripts/replay_streaming.py run --prepared ... --settings ... --output ...`，暂停测试另传 `--pause-at 25 --pause-seconds 2`。证据保存在 `.work/mac-file-tests/shared-submission-xai-90s/` 与 `.work/mac-file-tests/shared-submission-xai-60s-pause/`，各含完整事件、配置、摘要和资源记录；暂停验证另记录相关识别源文件哈希，已核对与该阶段被测实现一致。后续超时、更新间隔及时间边界修复的 299 项回归与最新代码的 40 秒 GPU 实测，见 [适配复核](MACOS_SUPPORT.md#课堂录音与适配复核2026-09-30)。
 
 这些验证证明近期原文通过共用修订记录更新、分段减少以及暂停/EOF 正常收尾。课堂片段仍存在术语、公式与否定词错误；没有人工逐词参考，不报告 WER，也不声称整堂课准确率已达标。未重跑全部约 24 分钟录音，中文与 Windows 实机待验证。较长上下文增加内存和处理成本，90 秒回放期间整个系统交换空间增长约 1.44 GiB，不能全部归因于本次识别进程。
+
+
+## 2026-10-06：共享 ASR / SaT / HY 定稿规则
+
+Windows / PyTorch 与 macOS / MLX Qwen 现共用多轮确认和重叠窗口处理器，窗口容量不再关闭话语。SaT 收尾必须先满足对应 ASR 确认；最终翻译还须匹配当前切分版本。SaT 更新优先于下一项 HY 请求，改字/重切合并待处理版本，删除范围与迟到结果失效。行为见 [语义分段](SEMANTIC_SEGMENTATION.md)。
+
+M2 / 8GB、Python 3.12.14：完整无音频测试 **479 passed**，全仓 Ruff 与差异空白检查通过。模拟覆盖 Windows 的旧快/准确配置及两种模型适配入口；这不能代替 Windows GPU 实测。
+
+最终源码通过 101.176 秒标准文件的实际 MLX / SaT CPU / HY Metal 回放：20 条原文和译文全部完成，逐字保存审计一致，标准稿 256/256 词、WER 0；首条字幕 1.45 秒，停止收尾 9.50 秒。旧 main 同样本记录为 1.43 / 6.32 秒，保守确认增加了收尾等待。MLX 分配峰值 2.64 GiB，系统交换空间增长约 1.48 GiB；资源结果受其他程序影响，不作为独立性能对比。
+
+实施过程另用 GenAI6 77:30–79:00 的 90 秒问题片段验证新的共享 ASR 与优先队列：5 条原文和译文完成，模型到字幕无丢字，“So we want to. | Go through...”变为一段；仍有“What we can do is”错断和 96 词长段。后续确认撤回、导出与同文字边界版本细化由当前标准文件及回归验证；不同快照的文件哈希保留在报告中。课堂无人工参考稿，不报告 WER，也不声称整节课或 Windows GPU 已验收。
+
+本地证据 `.work/shared-finalization-20261006/summary.json`、`验证报告.txt`、`fixture-current-replay/` 和 `genai6-final-replay/`；均有事件、源码哈希、保存审计及资源记录。无音频设备访问、无时间线；原始录音未修改。

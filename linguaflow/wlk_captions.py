@@ -3,6 +3,7 @@ import time
 from dataclasses import replace
 from difflib import SequenceMatcher
 
+from .asr_stability import units
 from .core import Caption
 
 DIFF_CONTEXT_ROWS = 10
@@ -37,11 +38,6 @@ def separator(left, right):
     if right[0] in ".,!?;:。！，？；：…" or ("\u3400" <= left[-1] <= "\u9fff" and "\u3400" <= right[0] <= "\u9fff"):
         return ""
     return " "
-
-
-def sentence_end(text):
-    """Conservative fallback for an ASR endpoint, not a replacement for SaT."""
-    return text.rstrip().rstrip('\"\'”’」』）)]').endswith(('.', '!', '?', '。', '！', '？'))
 
 
 class BoundaryPolicy:
@@ -85,8 +81,8 @@ class CaptionMapper:
         self.next_id = 1
         self.observed = {}
         self.last_text = ''
-        self.submitted = []  # (id, start, end, open tail); protect against repeat splits
         self.ranges = {}  # Row identity follows source spans when boundaries merge.
+        self.boundary_observed = {}
 
     def update(self, snapshot, done=False):
         text, spans = "", []
@@ -127,7 +123,10 @@ class CaptionMapper:
                          if b <= snapshot['closed_audio_time'] + .001 and hi <= stable_end]
             if completed:
                 closed_ends.append(max(completed))
-        closed_end = max(closed_ends, default=0)
+        # ASR's acoustic completion confirms characters, never a sentence cut.
+        # Authoritative revision snapshots already express this in stable_end.
+        if 'revision_text' not in snapshot and closed_ends:
+            stable_end = max(stable_end, max(closed_ends))
 
         def at(pos):
             for lo, hi, start, end, _language in spans:
@@ -138,7 +137,7 @@ class CaptionMapper:
         # An actual upstream correction reopens affected rows instead of losing it.
         keep = 0
         for _id, _end, prefix in self.fixed:
-            if not text.startswith(prefix):
+            if not text.startswith(prefix) or _end > stable_end:
                 break
             keep += 1
         # A decoder endpoint can be a breath in the middle of one sentence.
@@ -147,10 +146,11 @@ class CaptionMapper:
         if keep:
             _cid, end, prefix = self.fixed[keep-1]
             begin = self.fixed[keep-2][1] if keep > 1 else 0
-            if text[end:].strip() and not sentence_end(prefix):
+            if text[end:].strip():
                 context_boundaries = self.policy.split(text[begin:])
-                if not any(text[begin:begin+p].rstrip() == text[begin:end].rstrip()
-                           for p, reason in context_boundaries if reason == '上下文分句'):
+                cuts = [begin + p for p, reason in context_boundaries if reason == '上下文分句']
+                if (not any(text[:p].rstrip() == text[:end].rstrip() for p in cuts)
+                        or any(begin < p < end and text[p:end].strip() for p in cuts)):
                     keep -= 1
         self.active = [row[0] for row in self.fixed[keep:]] + self.active
         self.fixed = self.fixed[:keep]
@@ -178,22 +178,11 @@ class CaptionMapper:
                     return c + pos - a if tag == 'equal' else (d if pos == b else c)
             return len(text)
 
-        # Submission freezes the initial translation, not a mistaken boundary.
-        # Let SaT withdraw old cuts, but don't split already submitted material
-        # into more first-translation requests on every partial hypothesis.
-        submitted_ranges = [(mapped(begin), mapped(end)) for _cid, begin, end, _tail in self.submitted]
-        boundaries = [(p, r) for p, r in boundaries if r == '等待后文' or not any(
-            begin < offset+p < end for begin, end in submitted_ranges)]
-        # A completed acoustic segment alone must not cut a continuing clause.
-        # At an idle tail, the normal tail boundary still finalizes immediately.
-        for stop in closed_ends:
-            if (offset < stop <= len(text) and sentence_end(text[:stop])
-                    and all(offset+p != stop for p, _r in boundaries)):
-                boundaries.append((stop-offset, '识别段结束'))
-        boundaries.sort()
+        # SaT may revise submitted rows. Acoustic ends and ASR punctuation must
+        # not manufacture a text boundary or protect an incorrect old cut.
         events, next_active, new_observed = [], [], {}
         now, start = self.clock(), offset
-        submitted = []
+        new_boundary_observed = {}
         fixed_ids = {row[0] for row in self.fixed}
         assigned = set(fixed_ids)
         candidates = [(cid, mapped(self.ranges[cid][0]), mapped(self.ranges[cid][1]))
@@ -214,9 +203,20 @@ class CaptionMapper:
             since, count = self.observed.get(key, (now, 0))
             new_observed[key] = (since, count + 1)
             stable = end <= stable_end or not text[stable_end:end].strip()
-            # Only ASR completion (or session EOF) finalizes source text. Elapsed
-            # time can submit a stable tail, never make it immutable.
-            final = done or end <= closed_end
+            boundary_key = (start, end, source)
+            observations = self.boundary_observed.get(boundary_key, 0)
+            if reason == '上下文分句' and text != self.last_text:
+                observations += 1
+            new_boundary_observed[boundary_key] = observations
+            asr_final = stable
+            # The tail has no following evidence: even a closed ASR utterance
+            # only submits an initial translation until SaT sees more context
+            # or an explicit session EOF closes its last row. Heartbeats do not
+            # count as independent boundary observations.
+            boundary_final = asr_final and (done or (
+                reason == '上下文分句' and observations >= 2
+                and len(units(text[end:stable_end])) >= 4))
+            final = asr_final and boundary_final
             old = self.previous.get(cid)
             ready = bool(old and old.ready) or (stable and (
                 reason != '等待后文' or now - since >= self.lookahead))
@@ -226,16 +226,25 @@ class CaptionMapper:
             visible_end = end - len(raw) + len(raw.rstrip())
             caption = Caption(cid, at(visible_start), at(visible_end), source, language, final=final,
                               stable_source=text[start:min(end, stable_end)].strip(),
-                              ready=ready or final, boundary_reason=reason)
+                              ready=ready or final, boundary_reason=reason,
+                              asr_final=asr_final, boundary_final=boundary_final)
+            # Position-only timestamp updates do not change segmentation.
+            structural_change = (old is None or self.ranges.get(cid) != (start, end)
+                                 or old.boundary_reason != reason)
+            caption.segmentation_revision = ((old.segmentation_revision + int(structural_change))
+                                             if old else 1)
             if old:
                 caption.translation = old.translation
                 caption.error = old.error
                 caption.translation_source = old.translation_source
                 caption.translation_phase = old.translation_phase
-                if old.translation_phase == 'final' and (old.source != source or not final):
+                if old.translation_phase == 'final' and (old.source != source or not final
+                        or old.segmentation_revision != caption.segmentation_revision):
                     caption.translation_phase = 'initial'
-            same = old and (old.source, old.final, old.start, old.end, old.ready, old.stable_source, old.boundary_reason) == (
-                caption.source, caption.final, caption.start, caption.end, caption.ready, caption.stable_source, caption.boundary_reason)
+            same = old and (old.source, old.final, old.start, old.end, old.ready, old.stable_source,
+                           old.boundary_reason, old.asr_final, old.boundary_final, old.segmentation_revision) == (
+                caption.source, caption.final, caption.start, caption.end, caption.ready, caption.stable_source,
+                caption.boundary_reason, caption.asr_final, caption.boundary_final, caption.segmentation_revision)
             if not same:
                 caption.revision = old.revision + 1 if old else 1
                 self.previous[cid] = caption
@@ -244,8 +253,6 @@ class CaptionMapper:
                 self.fixed.append((cid, end, text[:end]))
             else:
                 next_active.append(cid)
-                if caption.ready:
-                    submitted.append((cid, start, end, reason == '等待后文'))
             start = end
         used = fixed_ids | {row[0] for row in self.fixed} | set(next_active)
         for cid in self.active:
@@ -254,7 +261,7 @@ class CaptionMapper:
                 events.append(replace(old, source="", translation="", final=True, revision=old.revision + 1))
         self.active = next_active
         self.observed = new_observed
-        self.submitted = submitted
+        self.boundary_observed = new_boundary_observed
         self.ranges = new_ranges
         self.last_text = text
         return events

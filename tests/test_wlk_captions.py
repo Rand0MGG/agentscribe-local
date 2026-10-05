@@ -43,18 +43,23 @@ def test_elapsed_time_submits_stable_tail_but_does_not_finalize():
     assert not events[0].final and not events[0].ready
 
 
-def test_later_context_never_finalizes_without_asr_completion():
+def test_boundary_needs_fresh_context_and_confirmed_asr_characters():
     clock = [0.]
     mapper = CaptionMapper("zh", predictor=lambda text: [9] if len(text) > 9 else [], clock=lambda: clock[0])
-    snapshot = {"lines": [line("这是第一个知识点。", 0, 2), line("接下来我们详细解释它的应用条件。", 2, 8)]}
+    value = "这是第一个知识点。接下来我们详细解释它的应用条件。"
+    snapshot = {'revision_text': value, 'stable_end': 0, 'revision_spans': [], 'closed_ends': []}
     first = mapper.update(snapshot)
     assert not any(c.final for c in first)
     assert mapper.update(snapshot) == []
     clock[0] = 1
     assert mapper.update(snapshot) == []
-    snapshot['closed_audio_time'] = 2.
+    snapshot['revision_text'] += '然后举例'
+    mapper.update(snapshot)
+    assert not any(c.boundary_final for c in mapper.previous.values())
+    snapshot['stable_end'] = len(snapshot['revision_text'])
     final = mapper.update(snapshot)
-    assert len(final) == 1 and final[0].final and final[0].id == first[0].id
+    finalized = [c for c in final if c.final]
+    assert len(finalized) == 1 and finalized[0].id == first[0].id
     assert not mapper.previous[first[1].id].final
 
 

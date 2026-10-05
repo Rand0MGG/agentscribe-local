@@ -6,7 +6,6 @@ The application owns local model services and their ports.
 import asyncio
 import base64
 import json
-import math
 import os
 import sys
 from dataclasses import asdict
@@ -66,7 +65,6 @@ async def _serve(settings, emit, read_message, mlx_client=None):
 
     mlx = settings["backend"] == "qwen3-mlx"
     qwen = settings["backend"] in ("qwen3-streaming", "qwen3-mlx")
-    accurate_qwen = mlx or (qwen and settings.get("qwen_mode", "fast") == "accurate")
     if mlx and (sys.platform != 'darwin' or settings.get('asr_device') != 'mlx'):
         raise ValueError('MLX 后端需要 macOS 和 Apple GPU 识别设备。')
     if not mlx and settings.get('asr_device') == 'mlx':
@@ -94,9 +92,6 @@ async def _serve(settings, emit, read_message, mlx_client=None):
         qwen3_streaming_device=settings.get("asr_device", "cuda"),
         qwen3_streaming_audio_backend="windowed",
         qwen3_streaming_chunk_sec=draft_seconds,
-        # Keep at least the original 2 x 2-second observation horizon when
-        # requesting faster drafts; more UI updates must not imply early commit.
-        qwen3_streaming_stable_iterations=max(2, math.ceil(4. / draft_seconds)),
     )
     if qwen and config.lan == "auto":
         raise ValueError("Qwen 流式模式请选择原文语言。")
@@ -117,11 +112,9 @@ async def _serve(settings, emit, read_message, mlx_client=None):
             if checkpoint.is_file():
                 config.model_path = str(checkpoint)
     emit({"type": "status", "text": "正在加载 WhisperLiveKit / " + config.backend})
-    if accurate_qwen:
+    if qwen:
         # Reuse WLK capture, VAC, queues and events without loading a second ASR.
         config.transcription = False
-        engine = TranscriptionEngine(config=config)
-    elif qwen:
         engine = TranscriptionEngine(config=config)
     else:
         from .runtime_compat import create_whisper_engine
@@ -131,7 +124,7 @@ async def _serve(settings, emit, read_message, mlx_client=None):
     processor = AudioProcessor(transcription_engine=engine, stream_event_queue=stream_events)
     from .runtime_compat import configure_vad_float32
     configure_vad_float32(processor)
-    if accurate_qwen:
+    if qwen:
         if mlx:
             from .mlx_asr import build_mlx_online
             emit({"type": "status", "text": "加载 Qwen 4-bit · Apple GPU / Metal…"})
@@ -141,7 +134,7 @@ async def _serve(settings, emit, read_message, mlx_client=None):
                 window_seconds=settings.get('qwen_window_seconds', 30.), client=mlx_client)
         else:
             from .qwen_accurate import build_official_online
-            emit({"type": "status", "text": "加载 Qwen 官方原始编码器 · 准确优先；近期原文可整体修订…"})
+            emit({"type": "status", "text": "加载 Qwen 原始编码器；共享流式修订策略…"})
             processor.transcription = build_official_online(config.model_path,
                 settings.get("asr_device", "cpu"), settings.get("source"), draft_seconds,
                 settings.get("qwen_window_seconds", 30.))
@@ -168,7 +161,7 @@ async def _serve(settings, emit, read_message, mlx_client=None):
         if os.environ.get("LINGUAFLOW_TRACE_REVISIONS") == "1":
             emit(event)
         event_loop.call_soon_threadsafe(revision_changed.set)
-    if qwen and (not accurate_qwen or mlx):
+    if qwen:
         from .qwen_revisions import install_revision_bridge
         revisions = install_revision_bridge(processor.transcription,
             revision_event)
@@ -197,17 +190,24 @@ async def _serve(settings, emit, read_message, mlx_client=None):
     closed_audio_time = -1.
 
     async def publish(snapshot, done=False):
-        async with caption_lock:
-            if revisions is not None:
-                revisions.augment_snapshot(snapshot, config.lan)
-            elif closed_audio_time >= 0:
-                snapshot['closed_audio_time'] = max(snapshot.get('closed_audio_time', -1), closed_audio_time)
-            captions = await asyncio.to_thread(mapper.update, snapshot, done=done)
-            for caption in captions:
-                emit({"type": "caption", "data": asdict(caption)})
-            if settings.get('translate'):
-                for caption in context_planner.update_changes(captions):
-                    translation_queue.put_nowait(caption)
+        translation_queue.begin_source_update()
+        try:
+            async with caption_lock:
+                if revisions is not None:
+                    revisions.augment_snapshot(snapshot, config.lan)
+                elif closed_audio_time >= 0:
+                    snapshot['closed_audio_time'] = max(snapshot.get('closed_audio_time', -1), closed_audio_time)
+                captions = await asyncio.to_thread(mapper.update, snapshot, done=done)
+                for caption in captions:
+                    emit({"type": "caption", "data": asdict(caption)})
+                if settings.get('translate'):
+                    for caption in captions:
+                        if not caption.source:
+                            translation_queue.discard(caption.id)
+                    for caption in context_planner.update_changes(captions):
+                        translation_queue.put_nowait(caption)
+        finally:
+            translation_queue.end_source_update()
 
     def apply_translation(current):
         mapper.previous[current.id] = current
@@ -238,8 +238,6 @@ async def _serve(settings, emit, read_message, mlx_client=None):
         async for snapshot in results_with_final_snapshot(processor, results):
             latest.clear()
             latest.update(caption_snapshot(snapshot))
-            if accurate_qwen and revisions is None:
-                processor.transcription.augment_snapshot(latest)
             if os.environ.get("LINGUAFLOW_TRACE_SNAPSHOTS") == "1":
                 emit({"type": "snapshot", "data": latest.copy()})
             await publish(latest)
@@ -263,7 +261,7 @@ async def _serve(settings, emit, read_message, mlx_client=None):
             ended = False
             try:
                 event = await asyncio.wait_for(stream_events.get(), .25)
-                if mlx:
+                if qwen:
                     processor.transcription.observe_capture_event(event.kind, event.timestamp)
                 if event.kind == 'silence_transcription_ready':
                     # WLK emits this only after final decoding and its snapshot,

@@ -33,10 +33,11 @@ def test_bounded_windows_preserve_every_sample_and_flush_once():
         return str(len(audio))
     online = QwenAccurateOnline(decode, choose_cut, 'en', window_seconds=12,
                                token_type=SimpleNamespace, transcript_type=SimpleNamespace)
-    audio = np.ones(40 * 16000, np.float32)
+    audio = np.arange(40 * 16000, dtype=np.float32)
     online.insert_audio_chunk(audio, 40.)
     tokens, _ = online.finish()
-    assert sum(len(part) for part in decoded) == len(audio)
+    np.testing.assert_array_equal(np.unique(np.concatenate(decoded)), audio)
+    assert sum(len(part) for part in decoded) > len(audio)
     assert all(0 < len(part) <= 17 * 16000 for part in decoded)
     assert tokens[0].start == 0 and tokens[-1].end == 40
     assert online.finish()[0] == []

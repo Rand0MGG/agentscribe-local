@@ -105,8 +105,6 @@ def replay(manifest_path, output, settings_path=None, pause_at=(), pause_seconds
         settings = Settings(**saved)
     if settings.input_sample_rate != 48000:
         raise ValueError('Replay uses the 48k desktop input route')
-    if settings.qwen_mode != 'fast':
-        raise ValueError('This benchmark validates the released streaming path; experimental windowed mode is excluded')
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=True)
     if (output / 'events.jsonl').exists():
@@ -145,6 +143,7 @@ def replay(manifest_path, output, settings_path=None, pause_at=(), pause_seconds
                   'wlk_captions.py', 'qwen_revisions.py', 'revision_audit.py', 'translation_queue.py',
                   'semantic_model.py', 'semantic_cache.py', 'audio_processing/pipeline.py', 'core.py', 'capture_control.py',
                   'translation_service.py', 'translation_context.py', 'backends.py',
+                  'qwen_accurate.py', 'asr_stability.py', 'mlx_asr.py',
                   'llama_translation.py', 'llama_assets.py', 'managed_process.py', 'process_platform.py',
                   'translation_models.py']
     code_files = sorted(set(code_files) | {
