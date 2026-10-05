@@ -2,18 +2,29 @@
 import asyncio
 import sys
 from dataclasses import asdict
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
 
-from linguaflow import model_cache, qwen_accurate, qwen_revisions, runtime_compat, semantic_model, wlk_worker
-from linguaflow.core import Settings
+from linguaflow import (
+    backends,
+    model_cache,
+    qwen_accurate,
+    qwen_revisions,
+    runtime_compat,
+    semantic_model,
+    wlk_captions,
+    wlk_worker,
+)
+from linguaflow.core import Caption, Settings
 from linguaflow.qwen_accurate import QwenAccurateOnline
 from linguaflow.qwen_revisions import install_revision_bridge
+from linguaflow.translation_models import HY_MODEL
+from linguaflow.translation_queue import TranslationQueue
 
 
-@pytest.mark.parametrize('old_mode', ['fast', 'accurate'])
-def test_windows_worker_installs_the_same_qwen_revision_pipeline(monkeypatch, old_mode):
+def stub_worker(monkeypatch):
     configured, online, stores = [], [], []
     monkeypatch.setattr(sys, 'platform', 'win32')
     monkeypatch.setitem(sys.modules, 'torch', SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False)))
@@ -59,6 +70,12 @@ def test_windows_worker_installs_the_same_qwen_revision_pipeline(monkeypatch, ol
         stores.append(store)
         return store
     monkeypatch.setattr(qwen_revisions, 'install_revision_bridge', bridge)
+    return configured, online, stores
+
+
+@pytest.mark.parametrize('old_mode', ['fast', 'accurate'])
+def test_windows_worker_installs_the_same_qwen_revision_pipeline(monkeypatch, old_mode):
+    configured, online, stores = stub_worker(monkeypatch)
     async def read_message():
         return {'type': 'stop'}
     events = []
@@ -71,3 +88,75 @@ def test_windows_worker_installs_the_same_qwen_revision_pipeline(monkeypatch, ol
     assert online[0].pause_context_seconds == 3
     assert any(event['type'] == 'ready' for event in events)
     assert events[-1]['type'] == 'done'
+
+
+def test_source_lock_waiters_do_not_starve_live_translation(monkeypatch):
+    _, online, _ = stub_worker(monkeypatch)
+    entered, release = Event(), Event()
+    queues = []
+
+    class Queue(TranslationQueue):
+        def __init__(self):
+            super().__init__()
+            queues.append(self)
+
+    class Mapper:
+        def __init__(self, *args, **kwargs):
+            self.previous = {1: Caption(1, 0, 1, 'Source words.', 'en', ready=True)}
+            self.calls = 0
+
+        def update(self, snapshot, done=False):
+            self.calls += 1
+            if self.calls == 1:
+                entered.set()
+                assert release.wait(3)
+                return [self.previous[1]]
+            return []
+
+    monkeypatch.setattr(wlk_captions, 'CaptionMapper', Mapper)
+    import linguaflow.translation_queue as queue_module
+    monkeypatch.setattr(queue_module, 'TranslationQueue', Queue)
+
+    async def exercise():
+        stopped, translated = asyncio.Event(), asyncio.Event()
+        events = []
+
+        class Translator:
+            def translate(self, text, language, context):
+                return '译文'
+
+        monkeypatch.setattr(backends, 'create_translator', lambda *args: Translator())
+
+        def emit(event):
+            events.append(event)
+            if event['type'] == 'caption' and event['data']['translation']:
+                translated.set()
+
+        async def read():
+            await stopped.wait()
+            return {'type': 'stop'}
+
+        settings = Settings('fake', backend='qwen3-streaming', asr_device='cpu', source='en',
+                            translate=True, translation_model=HY_MODEL)
+        task = asyncio.create_task(wlk_worker.serve(asdict(settings), emit, read))
+        try:
+            assert await asyncio.to_thread(entered.wait, 2)
+            # A real revision producer queues a second publish behind the held
+            # caption lock. It is waiting work, not active SaT inference.
+            online[0].revisions.update(0, 0., 1., 'New source.', len('New source.'), False)
+            await asyncio.sleep(.02)
+            assert queues[0].source_updates == 1
+            assert not queues[0].source_ready.is_set() and not translated.is_set()
+            release.set()
+            await asyncio.wait_for(translated.wait(), 2)
+            assert not task.done() and not stopped.is_set()
+            stopped.set()
+            await asyncio.wait_for(task, 3)
+            assert events[-1]['type'] == 'done'
+        finally:
+            release.set()
+            stopped.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(exercise())

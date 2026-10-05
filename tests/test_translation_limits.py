@@ -80,7 +80,8 @@ def test_long_history_model_requests_only_include_selected_neighbours(engine, be
         for job in planner.update(latest.values()):
             queue.put_nowait(job)
         queue.put_nowait(None)
-        output = json.dumps({str(c.id): f'Translation {c.id}' for c in rows}) if batch_size > 1 else 'Translation'
+        output = (json.dumps({str(c.id): f'Translation {c.id}' for c in rows})
+                  if engine == 'llama' and batch_size > 1 else 'Translation')
         translator, prompts, generated = translator_fixture(engine, output)
         published = []
 
@@ -95,15 +96,20 @@ def test_long_history_model_requests_only_include_selected_neighbours(engine, be
         await run_translations(queue, lambda: translator, latest.get, single, lambda _: None,
                                lambda _: None, planner.get, planner, batch)
         await asyncio.wait_for(queue.join(), 1)
-        assert len(generated) == 1 and len(published) == batch_size
+        expected_calls = 1 if engine == 'llama' else batch_size
+        assert len(generated) == expected_calls and len(published) == batch_size
         count = before if final else initial_before
-        prompt = generated[0]
         assert prompts == generated
-        assert '[Source Text]\n' in prompt
-        assert 'HISTORY_MARKER_0000' not in prompt
-        for i in range(500):
-            assert (f'HISTORY_MARKER_{i:04d}' in prompt) == (i >= 500 - count)
-        assert all(c.source in prompt for c in rows)
+        for index, prompt in enumerate(generated):
+            assert '[Source Text]\n' in prompt and 'HISTORY_MARKER_0000' not in prompt
+            history_count = max(0, count - index) if engine == 'pytorch' and final else count
+            for i in range(500):
+                assert (f'HISTORY_MARKER_{i:04d}' in prompt) == (i >= 500 - history_count)
+            if engine == 'llama':
+                assert all(c.source in prompt for c in rows)
+            else:
+                assert prompt.endswith('[Source Text]\n' + rows[index].source)
+                assert 'JSON object' not in prompt
         assert all(c.source == latest[c.id].source and not c.error for c in published)
 
     asyncio.run(exercise())
@@ -113,8 +119,7 @@ def test_long_history_model_requests_only_include_selected_neighbours(engine, be
                                      TranslationContext((), ('row', 'row', 'row')),
                                      TranslationContext(('x' * 601,)),
                                      TranslationContext((), ('x' * 601,))])
-@pytest.mark.parametrize('engine', ['pytorch', 'llama'])
-@pytest.mark.parametrize('batch', [False, True])
+@pytest.mark.parametrize(('engine', 'batch'), [('pytorch', False), ('llama', False), ('llama', True)])
 def test_model_boundary_rejects_oversized_background_before_tokenization_or_generation(context, engine, batch):
     translator, prompts, generated = translator_fixture(engine, '{"1":"Translation"}')
     with pytest.raises(ValueError, match='翻译背景'):

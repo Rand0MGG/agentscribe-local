@@ -143,8 +143,7 @@ class MLXClient:
 
 def begin_mlx_loading(settings, report):
     """Overlap only cached CPU SaT and isolated MLX; keep old paths serial."""
-    if (sys.platform != 'darwin' or settings.get('asr_device') != 'mlx'
-            or settings.get('semantic_device', 'cpu') != 'cpu'):
+    if sys.platform != 'darwin' or settings.get('asr_device') != 'mlx':
         return None
     from .semantic_cache import cached_cpu_model
     from .semantic_model import paths
@@ -153,7 +152,7 @@ def begin_mlx_loading(settings, report):
         semantic, _ = paths()
         cached = cached_cpu_model(semantic, ort.__version__)
     except Exception as exc:
-        raise RuntimeError('SaT 分句模型加载失败，请在‘字幕与延迟’中准备 / 检查模型：' + str(exc)) from exc
+        raise RuntimeError('字幕分句组件加载失败，请在‘识别模型’中下载 / 检查模型：' + str(exc)) from exc
     if cached is None:
         return None
     canonical = LANGUAGE_NAMES.get(settings.get('source'))

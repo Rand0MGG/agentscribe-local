@@ -7,7 +7,7 @@ from collections import deque
 from pathlib import Path
 from threading import Event, Lock, Thread, Timer
 
-from .process_platform import stop_tree
+from .process_platform import spawn_options, stop_tree
 from .runtime_paths import runtime_python
 
 
@@ -47,8 +47,7 @@ class PreparedWorker:
                     cwd=str(Path(__file__).resolve().parents[1]), stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
                     env={**os.environ, 'PYTHONIOENCODING': 'utf-8'},
-                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
-                    start_new_session=os.name != 'nt')
+                    **spawn_options())
             self.diagnostics = Thread(target=self.read_logs, daemon=True)
             self.diagnostics.start()
             self.read_ready()

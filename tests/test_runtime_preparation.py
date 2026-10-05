@@ -270,18 +270,24 @@ def test_cleanup_does_not_initialize_unused_cuda(monkeypatch):
 
 @pytest.mark.parametrize('windows',[False,True])
 def test_platform_spawn_keeps_utf8_and_hides_windows_console(monkeypatch,windows):
+    import linguaflow.process_platform as platform
     flags=[]
     def spawn(command,**kwargs):
         flags.append(kwargs)
         return SimpleNamespace(stdout=io.StringIO('{"type":"runtime_ready"}\n'),stderr=io.StringIO(),
                                stdin=io.StringIO(),poll=lambda:0)
-    monkeypatch.setattr(preparation,'os',SimpleNamespace(name='nt' if windows else 'posix',environ=os.environ))
+    monkeypatch.setattr(platform.sys,'platform','win32' if windows else 'darwin')
     monkeypatch.setattr(preparation.subprocess,'CREATE_NO_WINDOW',123,raising=False)
     monkeypatch.setattr(preparation.subprocess,'Popen',spawn)
     worker=preparation.PreparedWorker(Path(sys.executable))
     assert worker.ready.wait(2) and worker.error is None
     worker.close()
-    assert flags[0]['creationflags']==(123 if windows else 0)
+    if windows:
+        assert flags[0]['creationflags']==123
+        assert 'start_new_session' not in flags[0]
+    else:
+        assert flags[0]['start_new_session'] is True
+        assert 'creationflags' not in flags[0]
     assert flags[0]['encoding']=='utf-8'
     assert flags[0]['env']['PYTHONIOENCODING']=='utf-8'
 

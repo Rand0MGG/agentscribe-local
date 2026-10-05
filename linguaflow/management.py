@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .process_platform import spawn_options
 from .qt_controls import text_label
 from .translation_config import CONTEXT_COUNTS
 from .ui_components import ChoiceBox as QComboBox
@@ -335,8 +336,7 @@ class ModelManager(QDialog):
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               text=True, encoding="utf-8", errors="replace",
                               env={**os.environ, "PYTHONIOENCODING": "utf-8"},
-                              start_new_session=sys.platform != "win32",
-                              creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0) as process:
+                              **spawn_options()) as process:
             self.worker.process = process
             if self.worker.cancelled:
                 self.worker.cancel()

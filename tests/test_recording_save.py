@@ -95,3 +95,53 @@ def test_timeout_retains_job_and_ignores_older_revision_of_active_save(tmp_path)
         assert saver.flush(3000)
     app.processEvents()
     assert len(results) == 1 and results[0][0].revision == 3
+
+
+def test_rapid_saves_leave_no_writer_alive_when_idle(tmp_path):
+    app = QCoreApplication.instance() or QCoreApplication([])
+    saver, threads, results = RecordingSaver(), [], []
+    main_thread = get_ident()
+    saver.completed.connect(lambda *values: results.append((get_ident(), values)))
+
+    def write(item, captions, state):
+        assert get_ident() != main_thread
+        item['state'] = state
+
+    for revision in range(100):
+        saver.submit(write, (1, 'one'), revision, {'id': 'one'},
+                     [Caption(1, 0, 1, str(revision), 'en')], 'complete')
+        threads.append(saver.job)
+        assert saver.flush(3000)
+        assert not saver.busy and not threads[-1].is_alive()
+    assert len(results) == 100 and all(thread == main_thread for thread, _ in results)
+    assert all(not job.is_alive() for job in threads)
+    app.processEvents()
+
+
+def test_writer_start_failure_reports_unsaved_snapshot_and_allows_retry(tmp_path, monkeypatch):
+    from linguaflow.recording_save import _SaveJob
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    library = Library(tmp_path)
+    item = library.create('inbox', {})
+    caption = Caption(1, 0, 1, 'saved', 'en')
+    library.save(item, [caption])
+    saver, results = RecordingSaver(), []
+    saver.completed.connect(lambda *values: results.append(values))
+    requested = replace(caption, source='new', revision=2)
+
+    def fail(job):
+        raise RuntimeError('cannot start thread')
+
+    with monkeypatch.context() as patch:
+        patch.setattr(_SaveJob, 'start', fail)
+        saver.submit(library.save, (1, item['id']), 2, item, [requested], 'complete')
+        assert saver.flush(3000) and not saver.busy
+    snapshot, state, error = results[-1]
+    assert snapshot.captions[0].source == 'new' and not state
+    assert 'cannot start thread' in error
+    assert library.load(item)[1][0].source == 'saved'
+    saver.submit(library.save, (1, item['id']), 2, item, [requested], 'complete')
+    assert saver.flush(3000) and not results[-1][2]
+    assert library.load(item)[1][0].source == 'new'
+    app.processEvents()

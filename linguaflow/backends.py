@@ -3,10 +3,8 @@
 from .core import WHISPER_TO_NLLB, Settings
 from .translation_models import (
     HY_GENERATION,
-    batch_translation_prompt,
     fit_translation_prompt,
     is_hy_model,
-    parse_batch_translation,
     translation_engine,
     translation_prompt,
 )
@@ -28,7 +26,11 @@ def create_translator(settings, report=lambda text: None):
 
 
 class HyMtTranslator:
-    """HY-MT2 dense model, with bounded context and target-only generation."""
+    """Translate individual source strings with bounded context.
+
+    Unconstrained HY generation cannot reliably map JSON subtitle IDs. The
+    shared queue uses single requests here; llama.cpp owns constrained batching.
+    """
 
     def __init__(self, settings, report=lambda text: None):
         import torch
@@ -55,12 +57,6 @@ class HyMtTranslator:
         if (self.source or WHISPER_TO_NLLB.get(language)) == self.target:
             return text
         return self.complete(lambda background: translation_prompt(text, self.target, background), context)
-
-    def translate_batch(self, captions, context=None):
-        if (self.source or WHISPER_TO_NLLB.get(captions[0].language)) == self.target:
-            return {c.id: c.source for c in captions}
-        output = self.complete(lambda background: batch_translation_prompt(captions, self.target, background), context)
-        return parse_batch_translation(output, captions)
 
     def complete(self, build_prompt, context):
         inputs = None

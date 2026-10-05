@@ -82,16 +82,16 @@ def test_adapter_reuses_loaded_client_and_closes_on_construction_failure(monkeyp
     assert calls == ['ready', 'close']
 
 
-@pytest.mark.parametrize(('platform', 'device', 'semantic'), [('win32', 'mlx', 'cpu'),
-                         ('darwin', 'cpu', 'cpu'), ('darwin', 'mlx', 'cuda')])
-def test_other_routes_do_not_import_or_start_preload(monkeypatch, platform, device, semantic):
+@pytest.mark.parametrize(('platform', 'device'), [('win32', 'mlx'), ('darwin', 'cpu')])
+def test_other_routes_do_not_import_or_start_preload(monkeypatch, platform, device):
     monkeypatch.setattr(mlx.sys, 'platform', platform)
     monkeypatch.setitem(sys.modules, 'onnxruntime', None)
-    assert mlx.begin_mlx_loading(dict(asr_device=device, semantic_device=semantic), lambda _: None) is None
+    assert mlx.begin_mlx_loading(dict(asr_device=device), lambda _: None) is None
 
 
 @pytest.mark.parametrize('cached', [False, True])
-def test_only_prepared_cpu_cache_enables_overlap(monkeypatch, cached):
+@pytest.mark.parametrize('retired_semantic', ['cpu', 'cuda'])
+def test_only_prepared_cpu_cache_enables_overlap(monkeypatch, cached, retired_semantic):
     import linguaflow.model_cache as models
     import linguaflow.semantic_cache as cache
     import linguaflow.semantic_model as semantic
@@ -105,7 +105,7 @@ def test_only_prepared_cpu_cache_enables_overlap(monkeypatch, cached):
         calls.append((model, language, background))
         return 'client'
     monkeypatch.setattr(mlx, 'MLXClient', create)
-    result = mlx.begin_mlx_loading(dict(asr_device='mlx', source='en'), lambda _: None)
+    result = mlx.begin_mlx_loading(dict(asr_device='mlx', source='en', semantic_device=retired_semantic), lambda _: None)
     assert result == ('client' if cached else None)
     assert calls == ([('qwen', 'English', True)] if cached else [])
 
@@ -114,7 +114,7 @@ def test_missing_semantic_runtime_reports_preparation_without_spawning_mlx(monke
     monkeypatch.setattr(mlx.sys, 'platform', 'darwin')
     monkeypatch.setitem(sys.modules, 'onnxruntime', None)
     monkeypatch.setattr(mlx, 'MLXClient', lambda *args, **kwargs: pytest.fail('must not spawn'))
-    with pytest.raises(RuntimeError, match='SaT 分句模型加载失败.*准备 / 检查'):
+    with pytest.raises(RuntimeError, match='字幕分句组件加载失败.*识别模型.*下载 / 检查'):
         mlx.begin_mlx_loading(dict(asr_device='mlx'), lambda _: None)
 
 

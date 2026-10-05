@@ -90,7 +90,7 @@ async def _consume_translations(queue, create_translator, current_caption, publi
         try:
             if item is None:
                 return
-            # Finish pending SaT revisions before starting another HY request.
+            # Finish active SaT work before starting another HY request.
             # In-flight inference is not interrupted; its result is rechecked.
             await queue.source_ready.wait()
             caption, queued_at = item

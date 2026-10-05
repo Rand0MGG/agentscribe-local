@@ -101,6 +101,12 @@ assert w.new_recording(name='finish ordering')
 w.caption_translation = False
 w.on_caption(Caption(1, 0, 1, 'source', 'en'))
 saved, original = Event(), w.library.save
+emitting = False
+submit = w.recording_saver.submit
+def submit_after_signal(*args):
+    assert not emitting, 'Save worker started inside finished.emit()'
+    return submit(*args)
+w.recording_saver.submit = submit_after_signal
 def write(*args):
     original(*args)
     saved.set()
@@ -114,9 +120,26 @@ class Session(QObject):
 session = Session(w)
 w.session = session
 session.finished.connect(w.on_finished)
+emitting = True
 session.finished.emit()
+session.finished.emit()  # Duplicate completion cannot dispose/save twice.
+emitting = False
+assert not saved.is_set() and w.session is session
+assert not w.start_button.isEnabled()
+app.processEvents()
 assert saved.is_set() and not w.session_dirty and w.session is None
 assert w.start_button.isEnabled()
+assert w.new_recording(name='next session')
+w.on_caption(Caption(1, 0, 1, 'new source', 'en'))
+next_session = Session(w)
+w.session = next_session
+next_session.finished.connect(w.on_finished)
+session.finished.emit()  # A late sender cannot finish the replacement session.
+app.processEvents()
+assert w.session is next_session and w.captions[1].source == 'new source'
+next_session.finished.emit()
+app.processEvents()
+assert w.session is None and w.library.load(w.current_item)[1][0].source == 'new source'
 w.close()
 """
     result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=20,
@@ -152,6 +175,7 @@ w.on_caption(Caption(3, 2, 3, 'final source', 'en', translation='initial transla
 w.translate.setChecked(False)  # Completion uses the recorded session settings.
 w.session = SimpleNamespace(deleteLater=lambda: None)
 w.on_finished()
+app.processEvents()
 data, captions = w.library.load(w.current_item)
 assert data['session']['state'] == 'incomplete'
 assert captions[0].translation == 'usable translation'
@@ -164,6 +188,7 @@ w.on_caption(Caption(3, 2, 3, 'final source', 'en', translation='final translati
                      translation_phase='final', translation_source='final source'))
 w.session = SimpleNamespace(deleteLater=lambda: None)
 w.on_finished()
+app.processEvents()
 assert w.library.load(w.current_item)[0]['session']['state'] == 'complete'
 path = w.library.directory(w.current_item['id'])/'session.json'
 data = json.loads(path.read_text(encoding='utf8'))
@@ -347,6 +372,7 @@ w.on_failure('GPU 运行库缺失: cublas64_12.dll')
 w.on_status('音频队列已满')
 assert 'cublas64_12.dll' in w.status.text()
 w.on_finished()
+app.processEvents()
 assert 'cublas64_12.dll' in w.status.text()
 assert w.start_button.isEnabled()
 assert 'cublas64_12.dll' in w.empty.text()
@@ -471,12 +497,14 @@ next_settings.audio_processing['output_db'] = before + 1
 assert w.session.settings.audio_processing['output_db'] == before
 w.on_caption(Caption(1, 0, 1, 'saved', 'en'))
 w.stop()
+app.processEvents()
 assert w.session is None and w.settings_panel.isEnabled() and w.model_manager.isEnabled()
 assert w.library.load(w.current_item)[1][0].source == 'saved'
 assert not (w.library.directory(identifier) / '.recording.lock').exists()
 assert w.new_recording(name='取消的录音')
 w.start()
 w.stop()
+app.processEvents()
 assert w.current_item['state'] == 'draft'
 assert w.new_recording(name='另一个课堂')
 # Failed begin restores all controls rather than leaving settings disabled.
@@ -512,6 +540,7 @@ w.update_activity()
 assert '正在停止' in w.status.text() and not w.stop_button.isEnabled()
 assert not w.start_button.isEnabled() and not w.model_manager.isEnabled()
 w.on_finished()
+app.processEvents()
 # Closing a paused recording follows the same drain/save path as Stop.
 assert w.new_recording(name='暂停后关闭')
 w.start()
@@ -520,6 +549,7 @@ w.session.paused.emit(True)
 from PySide6.QtGui import QCloseEvent
 event = QCloseEvent()
 w.closeEvent(event)
+app.processEvents()
 assert w.session is None and w.recording_lock is None
 assert not w.pause_button.isEnabled()
 w.closing = False

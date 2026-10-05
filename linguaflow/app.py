@@ -14,6 +14,7 @@ from PySide6.QtCore import (
     Qt,
     QTimer,
     QUrl,
+    Slot,
 )
 from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QShortcut
 from PySide6.QtWidgets import (
@@ -1466,7 +1467,7 @@ class Window(QMainWindow):
         except (OSError, RuntimeError) as exc:
             self.on_failure(f"无法启动录音：{exc}")
             if self.session is not None:
-                self.on_finished()
+                self._finish_session(self.session)
             else:
                 self.persist_session('incomplete')
                 self.recording_lock.unlock()
@@ -1585,12 +1586,24 @@ class Window(QMainWindow):
         if not self.captions:
             self.empty.setText(message)
 
+    @Slot()
     def on_finished(self):
+        finished_session = self.session
+        sender = self.sender()
+        if finished_session is None or (sender is not None and sender is not finished_session):
+            return
+        self.set_recording_state(RecordingState.STOPPING)
+        # Leave finished.emit() before starting the save worker or entering
+        # its nested wait. Keep the session identity across the queued callback.
+        QTimer.singleShot(0, lambda: self._finish_session(finished_session))
+
+    def _finish_session(self, finished_session):
+        if self.session is not finished_session:
+            return
         if self.caption_translation:
             for caption in list(self.captions.values()):
                 if caption.final and (not caption.translation or caption.translation_phase == 'initial') and not caption.error:
                     self.on_caption(replace(caption, error="会话已结束，此条翻译未完成"))
-        finished_session = self.session
         self.session = None
         self.set_recording_state(RecordingState.STOPPING)
         translation_incomplete = self.caption_translation and any(
@@ -1603,8 +1616,7 @@ class Window(QMainWindow):
             except (OSError, ValueError):
                 state = "incomplete"
         saved = self.persist_session(state)
-        # Saving dispatches a nested Qt loop. Deleting a synchronous signal's
-        # sender before that loop can destroy it while finished.emit() is active.
+        # The sender's emission has returned; the saver owns any timed-out job.
         finished_session.deleteLater()
         self.set_recording_state(RecordingState.IDLE)
         self.release_recording_lock()

@@ -190,9 +190,11 @@ async def _serve(settings, emit, read_message, mlx_client=None):
     closed_audio_time = -1.
 
     async def publish(snapshot, done=False):
-        translation_queue.begin_source_update()
-        try:
-            async with caption_lock:
+        async with caption_lock:
+            # Only active SaT work blocks HY. Counting lock waiters can keep
+            # the gate closed for an entire live recording under steady input.
+            translation_queue.begin_source_update()
+            try:
                 if revisions is not None:
                     revisions.augment_snapshot(snapshot, config.lan)
                 elif closed_audio_time >= 0:
@@ -206,8 +208,8 @@ async def _serve(settings, emit, read_message, mlx_client=None):
                             translation_queue.discard(caption.id)
                     for caption in context_planner.update_changes(captions):
                         translation_queue.put_nowait(caption)
-        finally:
-            translation_queue.end_source_update()
+            finally:
+                translation_queue.end_source_update()
 
     def apply_translation(current):
         mapper.previous[current.id] = current
