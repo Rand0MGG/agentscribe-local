@@ -90,8 +90,8 @@ def test_backlog_at_vad_endpoint_keeps_every_sample_and_decode_bounded():
 
 def test_mlx_uses_requested_window_and_retains_short_pauses(monkeypatch):
     import linguaflow.mlx_asr as module
-    monkeypatch.setattr(module, 'MLXClient', lambda *args: SimpleNamespace(
-        decode=lambda audio: 'text', close=lambda: None, wait_ready=lambda: None))
+    monkeypatch.setattr(module, 'MLXClient', lambda *args, **kwargs: SimpleNamespace(
+        decode=lambda audio: 'text', close=lambda: None))
     monkeypatch.setattr(module, 'QwenAccurateOnline', lambda *args, **kwargs:
         QwenAccurateOnline(*args, **kwargs, token_type=SimpleNamespace,
                           transcript_type=SimpleNamespace))

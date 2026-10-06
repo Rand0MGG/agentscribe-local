@@ -106,7 +106,11 @@ def test_sat_rejects_changed_text_and_reports_inference_failure():
 
 
 def test_worker_requires_sat_before_accepting_audio(monkeypatch):
+    from test_shared_qwen_worker import stub_worker
+
     import linguaflow.semantic_model as module
+    from linguaflow.core import Settings
+    stub_worker(monkeypatch)
     def unavailable():
         raise FileNotFoundError('missing weights')
     monkeypatch.setattr(module, 'SemanticModel', unavailable)
@@ -114,5 +118,6 @@ def test_worker_requires_sat_before_accepting_audio(monkeypatch):
         pytest.fail('worker must initialize SaT before accepting audio')
     events = []
     with pytest.raises(RuntimeError, match='字幕分句组件加载失败'):
-        asyncio.run(serve({}, events.append, read_message))
+        settings = Settings('file', backend='qwen3-streaming', asr_device='cpu', source='en', translate=False)
+        asyncio.run(serve(asdict(settings), events.append, read_message))
     assert not any(event['type'] in {'ready', 'caption', 'done'} for event in events)

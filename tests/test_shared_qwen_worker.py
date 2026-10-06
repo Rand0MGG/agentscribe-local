@@ -2,7 +2,7 @@
 import asyncio
 import sys
 from dataclasses import asdict
-from threading import Event
+from threading import Event, get_ident
 from types import SimpleNamespace
 
 import pytest
@@ -24,9 +24,9 @@ from linguaflow.translation_models import HY_MODEL
 from linguaflow.translation_queue import TranslationQueue
 
 
-def stub_worker(monkeypatch):
+def stub_worker(monkeypatch, platform='win32'):
     configured, online, stores = [], [], []
-    monkeypatch.setattr(sys, 'platform', 'win32')
+    monkeypatch.setattr(sys, 'platform', platform)
     monkeypatch.setitem(sys.modules, 'torch', SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False)))
     monkeypatch.setattr(semantic_model, 'SemanticModel', lambda: SimpleNamespace(boundaries=lambda text: []))
     monkeypatch.setattr(model_cache, 'resolve_qwen_cached', lambda model: 'local-model')
@@ -88,6 +88,81 @@ def test_windows_worker_installs_the_same_qwen_revision_pipeline(monkeypatch, ol
     assert online[0].pause_context_seconds == 3
     assert any(event['type'] == 'ready' for event in events)
     assert events[-1]['type'] == 'done'
+
+
+@pytest.mark.parametrize('backend', ['qwen3-streaming', 'qwen3-mlx'])
+@pytest.mark.parametrize('failure', ['', 'semantic', 'session'])
+def test_worker_uses_shared_startup_and_owns_backend_resource(monkeypatch, backend, failure):
+    import linguaflow.mlx_asr as mlx
+    platform = 'darwin' if backend == 'qwen3-mlx' else 'win32'
+    _, online, _ = stub_worker(monkeypatch, platform)
+    entered, closed, main_thread = Event(), [], get_ident()
+    build = qwen_accurate.build_official_online
+
+    def create(*args, **kwargs):
+        assert get_ident() != main_thread
+        if backend == 'qwen3-mlx':
+            kwargs['own'](SimpleNamespace(close=lambda: closed.append(True)))
+            model, language, interval = args[:3]
+            value = build(model, 'mlx', language, interval, kwargs['window_seconds'])
+        else:
+            value = build(*args, **kwargs)
+        entered.set()
+        return value
+    monkeypatch.setattr(qwen_accurate, 'build_official_online', create)
+    monkeypatch.setattr(mlx, 'build_mlx_online', create)
+
+    def semantic():
+        assert entered.wait(2)
+        if failure == 'semantic':
+            raise ValueError('damaged SaT')
+        return SimpleNamespace(boundaries=lambda _: [])
+    monkeypatch.setattr(semantic_model, 'SemanticModel', semantic)
+    if failure == 'session':
+        async def fail(*args):
+            raise ValueError('audio frontend failed')
+        monkeypatch.setattr(wlk_worker, '_run_session', fail)
+    async def read():
+        return {'type': 'stop'}
+    settings = Settings('file', backend=backend, asr_device='mlx' if platform == 'darwin' else 'cpu',
+                        source='en', translate=False)
+    data, events = asdict(settings), []
+    data['semantic_device'] = 'cuda'  # Retired settings cannot select a second startup policy.
+    if failure:
+        with pytest.raises(RuntimeError if failure == 'semantic' else ValueError):
+            asyncio.run(wlk_worker.serve(data, events.append, read))
+        assert not any(event['type'] == 'ready' for event in events)
+    else:
+        asyncio.run(wlk_worker.serve(data, events.append, read))
+        assert events[-1]['type'] == 'done'
+    assert len(online) == 1
+    assert closed == ([True] if backend == 'qwen3-mlx' else [])
+
+
+@pytest.mark.parametrize(('platform', 'device'), [('win32', 'cuda'), ('darwin', 'cpu')])
+def test_whisper_uses_shared_startup_and_preserves_device(monkeypatch, platform, device):
+    stub_worker(monkeypatch, platform)
+    monkeypatch.setattr(sys.modules['torch'].cuda, 'is_available', lambda: True)
+    recognition_entered, semantic_entered = Event(), Event()
+    engine, model, received = SimpleNamespace(), SimpleNamespace(), []
+
+    def create(factory, config, selected):
+        assert config.backend == 'whisper' and selected == device
+        recognition_entered.set()
+        assert semantic_entered.wait(2)
+        return engine
+    def semantic():
+        semantic_entered.set()
+        assert recognition_entered.wait(2)
+        return model
+    monkeypatch.setattr(runtime_compat, 'create_whisper_engine', create)
+    monkeypatch.setattr(semantic_model, 'SemanticModel', semantic)
+    async def run(settings, emit, read, config, loaded_engine, online, loaded_semantic):
+        received.append((loaded_engine, online, loaded_semantic))
+    monkeypatch.setattr(wlk_worker, '_run_session', run)
+    settings = Settings('file', backend='whisper', asr_device=device, source='en', translate=False)
+    asyncio.run(wlk_worker.serve(asdict(settings), lambda _: None, None))
+    assert received == [(engine, None, model)]
 
 
 def test_source_lock_waiters_do_not_starve_live_translation(monkeypatch):

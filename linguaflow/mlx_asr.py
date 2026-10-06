@@ -3,10 +3,9 @@ import atexit
 import base64
 import json
 import subprocess
-import sys
 from pathlib import Path
 from queue import Empty, Queue
-from threading import Event, Lock, Thread, current_thread
+from threading import Lock, Thread
 
 import numpy as np
 
@@ -22,7 +21,7 @@ class MLXClient:
     startup_timeout = 180.
     inference_timeout = 90.
 
-    def __init__(self, model, language, report, background=False):
+    def __init__(self, model, language, report, own=lambda resource: None):
         python = mlx_python()
         if not python.is_file():
             raise RuntimeError('请在模型管理 → 运行环境安装 Apple GPU / MLX 识别环境。')
@@ -31,39 +30,20 @@ class MLXClient:
         self.close_lock = Lock()
         self.closed = False
         self.exchange = None
-        self.loaded = Event()
-        self.load_error = None
         self.process = subprocess.Popen([str(python), '-u', '-m', 'linguaflow.mlx_asr_worker'],
             cwd=Path(__file__).resolve().parents[1], stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, text=True, encoding='utf-8')
         atexit.register(self.close)
-        self.loading = Thread(target=self.load, args=(model, language), daemon=True)
-        self.loading.start()
-        if not background:
-            self.wait_ready()
-
-    def load(self, model, language):
-        """Initialize in the owned worker while CPU-only setup can proceed."""
         try:
+            # Shared startup owns cancellation before this handshake can block.
+            own(self)
             ready = self.request({'model': model, 'language': language}, self.startup_timeout)
             if ready.get('type') != 'ready' or 'gpu' not in ready.get('device', ''):
                 raise RuntimeError('MLX 未确认 Apple GPU 已加载。')
             self.report(f"Qwen 4-bit · Apple GPU / Metal · 加载 {ready['load_seconds']:.1f}s")
-        except BaseException as exc:
-            self.load_error = exc
+        except BaseException:
             self.close()
-        finally:
-            self.loaded.set()
-
-    def wait_ready(self):
-        # request() has its own deadline; allow its bounded close to finish too.
-        if not self.loaded.wait(self.startup_timeout + 10):
-            self.close()
-            raise RuntimeError('MLX 模型加载超时，已结束识别进程。')
-        if self.load_error is not None:
-            raise self.load_error
-        if self.closed:
-            raise RuntimeError('MLX 识别进程已关闭，请重新开始聆听。')
+            raise
 
     def request(self, message, timeout=None):
         """Bound both pipe writes and reads; close can interrupt stalled IO."""
@@ -136,42 +116,16 @@ class MLXClient:
                 self.exchange.join(timeout=2)
             self.process.stdin.close()
             self.process.stdout.close()
-        loading = getattr(self, 'loading', None)
-        if loading is not None and loading is not current_thread():
-            loading.join(timeout=2)
 
 
-def begin_mlx_loading(settings, report):
-    """Overlap only cached CPU SaT and isolated MLX; keep old paths serial."""
-    if sys.platform != 'darwin' or settings.get('asr_device') != 'mlx':
-        return None
-    from .semantic_cache import cached_cpu_model
-    from .semantic_model import paths
-    try:
-        import onnxruntime as ort
-        semantic, _ = paths()
-        cached = cached_cpu_model(semantic, ort.__version__)
-    except Exception as exc:
-        raise RuntimeError('字幕分句组件加载失败，请在‘识别模型’中下载 / 检查模型：' + str(exc)) from exc
-    if cached is None:
-        return None
-    canonical = LANGUAGE_NAMES.get(settings.get('source'))
-    if canonical is None:
-        raise ValueError('MLX 识别需要选择支持的原文语言。')
-    from .model_cache import resolve_qwen_cached
-    model = resolve_qwen_cached(settings.get('qwen_model', MLX_MODEL))
-    report('并行准备 Qwen 4-bit · Apple GPU / Metal 与 SaT 分句模型…')
-    return MLXClient(model, canonical, report, background=True)
-
-
-def build_mlx_online(model, language, update_seconds, report, window_seconds=30., client=None):
+def build_mlx_online(model, language, update_seconds, report, window_seconds=30.,
+                     own=lambda resource: None):
     canonical = LANGUAGE_NAMES.get(language)
     if canonical is None:
         raise ValueError('MLX 识别需要选择支持的原文语言。')
-    client = client if client is not None else MLXClient(model, canonical, report)
+    client = MLXClient(model, canonical, report, own=own)
     # Honor the session's bounded window instead of silently forcing 12 s.
     try:
-        client.wait_ready()
         online = QwenAccurateOnline(client.decode, choose_cut, language,
                                    update_seconds, window_seconds=window_seconds,
                                    pause_context_seconds=3.)

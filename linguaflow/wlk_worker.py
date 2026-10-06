@@ -15,52 +15,12 @@ from types import SimpleNamespace
 
 
 async def serve(settings, emit, read_message):
-    client = None
-    try:
-        if settings.get('backend') == 'qwen3-mlx':
-            from .mlx_asr import begin_mlx_loading
-            client = begin_mlx_loading(settings, lambda text: emit({'type': 'status', 'text': text}))
-        await _serve(settings, emit, read_message, client)
-    finally:
-        # Also own the preload during SaT/frontend/WLK initialization failures.
-        if client is not None:
-            client.close()
-
-
-async def _serve(settings, emit, read_message, mlx_client=None):
-    import numpy as np
-
-    from .audio_processing.pipeline import AudioPipeline
-    audio_config = settings.get("audio_processing", {})
-    emit({"type": "status", "text": "加载本地字幕分句组件…"})
-    try:
-        from .semantic_model import SemanticModel
-        semantic = await asyncio.to_thread(SemanticModel)
-    except Exception as exc:
-        raise RuntimeError("字幕分句组件加载失败，请在‘识别模型’中下载 / 检查模型：" + str(exc)) from exc
-    emit({"type": "status", "text": "字幕分句已就绪；近期原文和译文可修订"})
-
-    emit({"type": "status", "text": "正在准备音频处理链…"})
-    # Legacy 16 kHz clients keep their original PCM route. Desktop captures 48 kHz.
-    frontend = (AudioPipeline(audio_config, settings.get("input_sample_rate", 16000))
-                if audio_config or settings.get("input_sample_rate", 16000) != 16000 else None)
-
-    async def process_pcm(pcm=None):
-        if frontend is None:
-            if pcm:
-                await processor.process_audio(pcm)
-            return
-        audio = (await asyncio.to_thread(frontend.flush) if pcm is None else
-                 await asyncio.to_thread(frontend.process, np.frombuffer(pcm, "<i2").astype(np.float32) / 32767))
-        if len(audio):
-            await processor.process_audio((np.clip(audio, -1, 1) * 32767).astype("<i2").tobytes())
-
     emit({"type": "status", "text": "正在导入 PyTorch 运行库…"})
     import torch
     if settings.get("asr_device") == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("推理环境没有可用 CUDA；请运行 scripts/install_runtime.py 安装 GPU 版本。")
     emit({"type": "status", "text": "正在导入 WhisperLiveKit 及语音检测组件…"})
-    from whisperlivekit import AudioProcessor, TranscriptionEngine
+    from whisperlivekit import TranscriptionEngine
     from whisperlivekit.config import WhisperLiveKitConfig
 
     mlx = settings["backend"] == "qwen3-mlx"
@@ -111,36 +71,80 @@ async def _serve(settings, emit, read_message, mlx_client=None):
             checkpoint = Path.home() / ".cache" / "whisper" / (model + ".pt")
             if checkpoint.is_file():
                 config.model_path = str(checkpoint)
-    emit({"type": "status", "text": "正在加载 WhisperLiveKit / " + config.backend})
-    if qwen:
-        # Reuse WLK capture, VAC, queues and events without loading a second ASR.
-        config.transcription = False
-        engine = TranscriptionEngine(config=config)
-    else:
-        from .runtime_compat import create_whisper_engine
-        engine = create_whisper_engine(TranscriptionEngine, config, settings.get("asr_device", "cpu"))
+    def load_recognition(own):
+        emit({"type": "status", "text": "正在加载 WhisperLiveKit / " + config.backend})
+        if qwen:
+            # The common engine supplies scheduling, not a second ASR model.
+            config.transcription = False
+            engine = TranscriptionEngine(config=config)
+        else:
+            from .runtime_compat import create_whisper_engine
+            engine = create_whisper_engine(TranscriptionEngine, config, settings.get("asr_device", "cpu"))
+            return engine, None
+        if mlx:
+            from .mlx_asr import build_mlx_online
+            emit({"type": "status", "text": "加载 Qwen 4-bit · Apple GPU / Metal…"})
+            online = build_mlx_online(config.model_path,
+                settings.get('source'), draft_seconds,
+                lambda text: emit({'type': 'status', 'text': text}),
+                window_seconds=settings.get('qwen_window_seconds', 30.), own=own)
+        else:
+            from .qwen_accurate import build_official_online
+            emit({"type": "status", "text": "加载 Qwen 原始编码器；共享流式修订策略…"})
+            online = build_official_online(config.model_path,
+                settings.get("asr_device", "cpu"), settings.get("source"), draft_seconds,
+                settings.get("qwen_window_seconds", 30.))
+        return engine, online
+
+    def load_semantic():
+        emit({"type": "status", "text": "加载本地字幕分句组件…"})
+        try:
+            from .semantic_model import SemanticModel
+            semantic = SemanticModel()
+        except Exception as exc:
+            raise RuntimeError("字幕分句组件加载失败，请在‘识别模型’中下载 / 检查模型：" + str(exc)) from exc
+        emit({"type": "status", "text": "字幕分句已就绪；近期原文和译文可修订"})
+        return semantic
+
+    from .inference_startup import load_components
+    async with load_components(load_recognition, load_semantic) as (recognition, semantic):
+        engine, online = recognition
+        await _run_session(settings, emit, read_message, config, engine, online, semantic)
+
+
+async def _run_session(settings, emit, read_message, config, engine, online, semantic):
+    import numpy as np
+    import torch
+    from whisperlivekit import AudioProcessor
+
+    from .audio_processing.pipeline import AudioPipeline
+    qwen = online is not None
+    audio_config = settings.get("audio_processing", {})
+    emit({"type": "status", "text": "正在准备音频处理链…"})
+    frontend = (AudioPipeline(audio_config, settings.get("input_sample_rate", 16000))
+                if audio_config or settings.get("input_sample_rate", 16000) != 16000 else None)
     emit({"type": "status", "text": "识别模型已加载，正在创建流式解码任务…"})
     stream_events = asyncio.Queue()
+    # All model loading has finished before VAD's tensor state is initialized.
+    # Concurrent Transformers loading can temporarily change Torch's dtype.
     processor = AudioProcessor(transcription_engine=engine, stream_event_queue=stream_events)
     from .runtime_compat import configure_vad_float32
     configure_vad_float32(processor)
     if qwen:
-        if mlx:
-            from .mlx_asr import build_mlx_online
-            emit({"type": "status", "text": "加载 Qwen 4-bit · Apple GPU / Metal…"})
-            processor.transcription = build_mlx_online(config.model_path,
-                settings.get('source'), draft_seconds,
-                lambda text: emit({'type': 'status', 'text': text}),
-                window_seconds=settings.get('qwen_window_seconds', 30.), client=mlx_client)
-        else:
-            from .qwen_accurate import build_official_online
-            emit({"type": "status", "text": "加载 Qwen 原始编码器；共享流式修订策略…"})
-            processor.transcription = build_official_online(config.model_path,
-                settings.get("asr_device", "cpu"), settings.get("source"), draft_seconds,
-                settings.get("qwen_window_seconds", 30.))
+        processor.transcription = online
         processor.args.transcription = True
         processor.transcription_queue = asyncio.Queue()
         processor.sep = " "
+
+    async def process_pcm(pcm=None):
+        if frontend is None:
+            if pcm:
+                await processor.process_audio(pcm)
+            return
+        audio = (await asyncio.to_thread(frontend.flush) if pcm is None else
+                 await asyncio.to_thread(frontend.process, np.frombuffer(pcm, "<i2").astype(np.float32) / 32767))
+        if len(audio):
+            await processor.process_audio((np.clip(audio, -1, 1) * 32767).astype("<i2").tobytes())
     # WLK's pause_segmentation_seconds only marks presentation boundaries.
     # Its Silero iterator otherwise ends speech after just 100 ms, invoking
     # Qwen start_silence(), which flushes and resets the decoder. Configure
@@ -329,8 +333,6 @@ async def _serve(settings, emit, read_message, mlx_client=None):
         output_task.cancel()
         translation_task.cancel()
         await processor.cleanup()
-        if mlx:
-            processor.transcription.close()
 
 
 def main():

@@ -5,7 +5,6 @@ import os
 import platform
 import re
 import shutil
-import sys
 import tempfile
 from pathlib import Path
 
@@ -20,9 +19,10 @@ def _identity(model, version):
 
 
 def _directory(model, version):
-    # mmap ORT initializers were verified on 1.30. Older runtimes retain ONNX.
+    # CPU mmap loading is available in the verified Windows 1.29 / Mac 1.30
+    # runtimes. Cache format/runtime/architecture checks are shared, not OS gates.
     match = re.match(r'(\d+)\.(\d+)\.(\d+)', version)
-    if sys.platform != 'darwin' or not match or tuple(map(int, match.groups())) < (1, 30, 0):
+    if not match or tuple(map(int, match.groups())) < (1, 29, 0):
         return None
     identity = _identity(model, version)
     key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:24]

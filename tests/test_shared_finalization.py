@@ -186,10 +186,10 @@ def test_both_model_adapters_use_identical_online_policy(monkeypatch, backend):
     monkeypatch.setattr(official, 'QwenAccurateOnline', construct)
     monkeypatch.setattr(mlx, 'QwenAccurateOnline', construct)
     if backend == 'mlx':
-        client = SimpleNamespace(decode=lambda audio: 'shared words', close=lambda: None,
-                                 wait_ready=lambda: None)
+        client = SimpleNamespace(decode=lambda audio: 'shared words', close=lambda: None)
+        monkeypatch.setattr(mlx, 'MLXClient', lambda *args, **kwargs: client)
         asr = mlx.build_mlx_online('local', 'en', .5, lambda text: None,
-                                  window_seconds=8, client=client)
+                                  window_seconds=8)
     else:
         model = SimpleNamespace(model=SimpleNamespace(generation_config=SimpleNamespace()),
                                 transcribe=lambda *a, **kw: [SimpleNamespace(text='shared words')])

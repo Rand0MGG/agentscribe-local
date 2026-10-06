@@ -143,7 +143,7 @@ def replay(manifest_path, output, settings_path=None, pause_at=(), pause_seconds
                   'wlk_captions.py', 'qwen_revisions.py', 'revision_audit.py', 'translation_queue.py',
                   'semantic_model.py', 'semantic_cache.py', 'audio_processing/pipeline.py', 'core.py', 'capture_control.py',
                   'translation_service.py', 'translation_context.py', 'backends.py',
-                  'qwen_accurate.py', 'asr_stability.py', 'mlx_asr.py',
+                  'qwen_accurate.py', 'asr_stability.py', 'mlx_asr.py', 'inference_startup.py',
                   'llama_translation.py', 'llama_assets.py', 'managed_process.py', 'process_platform.py',
                   'translation_models.py']
     code_files = sorted(set(code_files) | {

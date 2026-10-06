@@ -10,7 +10,6 @@ import linguaflow.semantic_cache as cache
 
 @pytest.fixture
 def source(tmp_path, monkeypatch):
-    monkeypatch.setattr(cache.sys, 'platform', 'darwin')
     monkeypatch.setattr(cache.platform, 'machine', lambda: 'arm64')
     monkeypatch.setattr(cache, '__file__', str(tmp_path / 'linguaflow' / 'semantic_cache.py'))
     model = tmp_path / 'source'
@@ -20,7 +19,7 @@ def source(tmp_path, monkeypatch):
     return model
 
 
-def runtime(load=None):
+def runtime(load=None, version='1.30.0'):
     class Options:
         def add_session_config_entry(self, key, value):
             assert (key, value) == ('session.save_model_format', 'ORT')
@@ -32,7 +31,7 @@ def runtime(load=None):
             load(path)
         Path(sess_options.optimized_model_filepath).write_bytes(b'prepared ORT weights')
         return SimpleNamespace(get_providers=lambda: providers)
-    return SimpleNamespace(__version__='1.30.0', SessionOptions=Options, InferenceSession=create)
+    return SimpleNamespace(__version__=version, SessionOptions=Options, InferenceSession=create)
 
 
 def test_preparation_preserves_original_and_reuses_complete_graph(source):
@@ -103,15 +102,21 @@ def test_interrupted_publish_leaves_no_complete_cache(source, monkeypatch):
     assert not list((source.parent / '.work/cache/sat-ort').glob('prepare-*'))
 
 
-@pytest.mark.parametrize(('system', 'version'), [('win32', '1.30.0'), ('linux', '1.30.0'),
-                                             ('darwin', '1.29.0'), ('darwin', 'unknown')])
-def test_other_platforms_and_old_runtimes_do_not_read_or_prepare(tmp_path, monkeypatch, system, version):
-    monkeypatch.setattr(cache.sys, 'platform', system)
+@pytest.mark.parametrize('version', ['1.28.0', 'unknown'])
+def test_old_runtimes_do_not_read_or_prepare(tmp_path, version):
     model = tmp_path / 'missing'
     assert cache.cached_cpu_model(model, version) is None
     ort = SimpleNamespace(__version__=version, SessionOptions=lambda: pytest.fail('must not load'))
     assert cache.prepare_cpu_model(model, ort) is None
     assert not model.exists()
+
+
+@pytest.mark.parametrize(('system', 'version'), [('win32', '1.29.0'), ('darwin', '1.30.0')])
+def test_supported_runtimes_share_preparation_and_cache_selection(source, monkeypatch, system, version):
+    monkeypatch.setattr(sys, 'platform', system)
+    directory = cache.prepare_cpu_model(source, runtime(version=version))
+    assert directory is not None and cache.cached_cpu_model(source, version) == directory
+    assert cache.cached_cpu_model(source, '1.28.0') is None
 
 
 def test_cache_is_specific_to_machine(source, monkeypatch):
