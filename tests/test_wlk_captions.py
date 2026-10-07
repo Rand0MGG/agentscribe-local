@@ -146,6 +146,45 @@ def test_growing_stream_preserves_all_text_across_many_commits():
     assert all(c.final for c in mapper.previous.values())
 
 
+@pytest.mark.parametrize('position', [0, 12, 1023, 1024, 2048, 4095])
+def test_committed_history_reopens_at_first_changed_character(position):
+    from linguaflow.wlk_captions import _common_prefix_end
+    history = 'a' * 4096
+    assert _common_prefix_end(history, history[:position] + 'b' + history[position+1:]) == position
+    assert _common_prefix_end(history, history[:position]) == position
+    assert _common_prefix_end(history, history + 'next') == len(history)
+
+
+def test_confirmation_withdrawal_reopens_exact_boundary_without_text_change():
+    mapper = CaptionMapper('en', predictor=lambda value: [i+1 for i, char in enumerate(value) if char == '.'])
+    original = 'First sentence. Second sentence. Third sentence.'
+    snapshot = {'revision_text': original, 'stable_end': len(original), 'revision_spans': []}
+    mapper.update(snapshot, done=True)
+    ids = list(mapper.previous)
+    snapshot['stable_end'] = len('First sentence.')
+    events = mapper.update(snapshot)
+    assert mapper.previous[ids[0]].final
+    assert not mapper.previous[ids[1]].asr_final
+    assert not mapper.previous[ids[2]].asr_final
+    assert {caption.id for caption in events} == set(ids[1:])
+
+
+def test_committed_history_storage_grows_linearly():
+    import sys
+    sizes = []
+    for count in (1000, 2000, 4000):
+        mapper = CaptionMapper('en', predictor=lambda value: [i+1 for i, char in enumerate(value) if char == '.'])
+        history = ' '.join(f'Statement {index}.' for index in range(count))
+        mapper.update({'lines': [line(history)]}, done=True)
+        assert len(mapper.fixed) == count
+        # Account for every retained value in the committed-row structure.
+        size = sys.getsizeof(mapper.fixed) + sys.getsizeof(mapper.last_text)
+        size += sum(sys.getsizeof(row) + sum(sys.getsizeof(value) for value in row) for row in mapper.fixed)
+        sizes.append(size)
+    assert sizes[1] < sizes[0] * 2.1
+    assert sizes[2] < sizes[1] * 2.1
+
+
 def test_long_session_diffs_with_ten_stable_context_rows(monkeypatch):
     import linguaflow.wlk_captions as module
     mapper = CaptionMapper('en', predictor=lambda text: [

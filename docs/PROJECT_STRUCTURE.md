@@ -15,6 +15,7 @@ requirements-runtime.txt  isolated WhisperLiveKit/Qwen runtime
 requirements-mlx.txt      isolated Apple GPU / MLX runtime (experimental)
 .runtime/         downloaded native HY Metal runtime (ignored by Git)
 pyproject.toml    desktop package and development dependencies
+linguaflow/knowledge/  optional course materials, reviewed ASR context and cited notes
 ```
 
 ## Local working artifacts
@@ -46,6 +47,10 @@ GGUF translation uses `llama_translation.py` with a session-owned llama.cpp serv
 `translation_config.py` owns shared context defaults/ranges and input limits. The live worker passes caption deltas to `translation_context.py`; its ordered source/finalized indexes preserve history edits without rescanning every saved caption for each update. `recording_save.py` owns serial background writes and copied recording snapshots; the desktop checks recording generation/version before applying completion results.
 
 `.github/workflows/checks.yml` runs Ruff and no-audio tests for pushes/pull requests on `windows`, `mac`, and `main`. The unit matrix covers Windows/macOS and Python 3.11–3.13, installs desktop/development dependencies only, and neither prepares models nor opens audio devices. These jobs do not certify GPU inference or real recording hardware.
+
+The optional `knowledge` extra pins Deep Agents, ChatDeepSeek, pypdf and keyring in the desktop environment. A separate owned Python process imports SDKs only when text tasks run; `.venv-wlk` and `.venv-mlx` keep their original dependencies. The optional SDK CI job covers Windows/macOS Python 3.12 with fake models and in-memory HTTP, without real credentials or provider calls.
+
+Course files live under each library folder's `.agentscribe/`: stable `course.json`, content-addressed material originals and `blocks.json`, plus a validated term cache. Recording `knowledge/manifest.json` binds a course ID and reviewed context; `state.sqlite` stores source versions, note patches and processing state, and `last_usage.json` stores the last task's returned/reserved usage. The recording's `session.json` remains authoritative for saved captions and actual ASR settings. `课堂笔记.md` is the readable export. These companion files are user data and are never included in source synchronization; the library itself still uses ordinary directory scanning rather than a database index.
 
 `audio_processing/` contains only internal gain/peak settings, stateful processing, resampling and signal health checks. The worker applies +3 dB gain and peak protection in the background. APM, WPE, DeepFilterNet3, enhancement presets, installers and comparison scripts have been removed.
 

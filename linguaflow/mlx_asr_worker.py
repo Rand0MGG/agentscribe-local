@@ -26,6 +26,10 @@ def serve(read, emit):
     mx.set_cache_limit(128 * 1024**2)
     mx.set_memory_limit(3 * 1024**3)
     settings = read()
+    from .knowledge.schemas import MAX_CONTEXT_BYTES
+    context = settings.get('context', '')
+    if not isinstance(context, str) or len(context.encode('utf-8')) > MAX_CONTEXT_BYTES:
+        raise ValueError('课程术语上下文无效或超长。')
     path = Path(settings['model'])
     from .model_cache import validate_mlx_model
     validate_mlx_model(path)
@@ -41,7 +45,8 @@ def serve(read, emit):
             raise ValueError('MLX 识别音频必须是 0–45 秒的有限值 16 kHz 单声道 PCM。')
         started = time.perf_counter()
         result = model.generate(pcm, language=settings['language'], temperature=0.,
-                                max_tokens=512, prefill_step_size=256, verbose=False)
+                                max_tokens=512, prefill_step_size=256, verbose=False,
+                                **({'system_prompt': context} if context else {}))
         mx.synchronize()
         emit({'type': 'result', 'text': result.text.strip(),
               'compute_seconds': time.perf_counter() - started,

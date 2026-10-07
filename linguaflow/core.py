@@ -49,6 +49,7 @@ class Settings:
     translation_engine: str | None = None
     llama_model: str = ""
     translation_initial_before: int = DEFAULT_INITIAL_CONTEXT_BEFORE
+    asr_context: dict = field(default_factory=dict)
 
 
 @dataclass

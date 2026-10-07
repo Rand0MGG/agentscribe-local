@@ -1,5 +1,6 @@
 """Context boundaries, mutable presentation rows and separately committed text."""
 import time
+from bisect import bisect_right
 from dataclasses import replace
 from difflib import SequenceMatcher
 
@@ -7,6 +8,23 @@ from .asr_stability import units
 from .core import Caption
 
 DIFF_CONTEXT_ROWS = 10
+
+
+def _common_prefix_end(previous, current):
+    """Locate a correction without storing one history copy per caption."""
+    if current.startswith(previous):
+        return len(previous)
+    limit = min(len(previous), len(current))
+    start = 0
+    # Native chunk comparisons keep long, unchanged classroom history cheap.
+    while start < limit:
+        end = min(start + 1024, limit)
+        if previous[start:end] != current[start:end]:
+            while start < end and previous[start] == current[start]:
+                start += 1
+            return start
+        start = end
+    return limit
 
 
 def seconds(value):
@@ -77,7 +95,7 @@ class CaptionMapper:
         self.lookahead, self.clock = lookahead, clock
         self.previous = {}
         self.active = []
-        self.fixed = []  # (id, end character, exact committed prefix)
+        self.fixed = []  # (id, end character); last_text owns the common history.
         self.next_id = 1
         self.observed = {}
         self.last_text = ''
@@ -135,16 +153,13 @@ class CaptionMapper:
             return spans[-1][3] if spans else 0.
 
         # An actual upstream correction reopens affected rows instead of losing it.
-        keep = 0
-        for _id, _end, prefix in self.fixed:
-            if not text.startswith(prefix) or _end > stable_end:
-                break
-            keep += 1
+        valid_end = min(stable_end, _common_prefix_end(self.last_text, text))
+        keep = bisect_right(self.fixed, valid_end, key=lambda row: row[1])
         # A decoder endpoint can be a breath in the middle of one sentence.
         # Reconsider only the last completed row when continuation arrives.
         # Completion still releases translation immediately while input is idle.
         if keep:
-            _cid, end, prefix = self.fixed[keep-1]
+            _cid, end = self.fixed[keep-1]
             begin = self.fixed[keep-2][1] if keep > 1 else 0
             if text[end:].strip():
                 context_boundaries = self.policy.split(text[begin:])
@@ -250,7 +265,7 @@ class CaptionMapper:
                 self.previous[cid] = caption
                 events.append(caption)
             if final:
-                self.fixed.append((cid, end, text[:end]))
+                self.fixed.append((cid, end))
             else:
                 next_active.append(cid)
             start = end

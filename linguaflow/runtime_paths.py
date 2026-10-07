@@ -12,6 +12,11 @@ def mlx_python():
     return Path(__file__).resolve().parents[1] / '.venv-mlx' / 'bin/python'
 
 
+def knowledge_python():
+    """Optional text SDKs run outside Qt, using the compatible desktop environment."""
+    return Path(sys.executable)
+
+
 def llama_server(device='cpu'):
     root = Path(__file__).resolve().parents[1] / '.runtime' / 'llama-b11254'
     if sys.platform == 'win32':

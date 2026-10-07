@@ -26,3 +26,15 @@ No model weights are distributed in this repository. Dependency and model licens
 
 - DeepFilterNet: https://github.com/Rikorose/DeepFilterNet — upstream project and model notices are retained in the dependency distribution. The downloaded community export is not an official LinguaFlow-trained model.
 - ONNX / ONNX Runtime: https://github.com/onnx/onnx and https://github.com/microsoft/onnxruntime — Apache-2.0 / MIT.
+
+## Optional course text processing
+
+The `knowledge` extra installs SDK/parser/credential libraries into the desktop environment; no new model weights are bundled. Installed metadata checked on 2026-10-08 identifies:
+
+- Deep Agents 0.7.23: https://github.com/langchain-ai/deepagents — MIT, Python >=3.11.
+- langchain-deepseek 1.1.1 and LangChain/LangGraph: https://github.com/langchain-ai/langchain and https://github.com/langchain-ai/langgraph — MIT.
+- pypdf 6.19.0: https://github.com/py-pdf/pypdf — BSD-3-Clause.
+- keyring 25.7.0: https://github.com/jaraco/keyring — MIT.
+- Transitive OpenAI SDK 3.26.0 uses Apache-2.0; Pydantic 2.13.5 and LangSmith 0.14.4 use MIT. They are SDK dependencies; their presence does not enable OpenAI model calls or LangSmith tracing.
+
+Upstream distributions retain their license files. The optional group's root versions are pinned in `pyproject.toml`; this is not a complete transitive lockfile. Supplier service terms and API charges are separate from code licenses. Only explicitly allowed course text is sent to DeepSeek; raw audio remains local.

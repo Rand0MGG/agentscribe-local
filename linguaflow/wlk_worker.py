@@ -25,6 +25,8 @@ async def serve(settings, emit, read_message):
 
     mlx = settings["backend"] == "qwen3-mlx"
     qwen = settings["backend"] in ("qwen3-streaming", "qwen3-mlx")
+    from .knowledge.glossary import context_text
+    asr_context = context_text(settings.get('asr_context', {}))
     if mlx and (sys.platform != 'darwin' or settings.get('asr_device') != 'mlx'):
         raise ValueError('MLX 后端需要 macOS 和 Apple GPU 识别设备。')
     if not mlx and settings.get('asr_device') == 'mlx':
@@ -87,13 +89,15 @@ async def serve(settings, emit, read_message):
             online = build_mlx_online(config.model_path,
                 settings.get('source'), draft_seconds,
                 lambda text: emit({'type': 'status', 'text': text}),
-                window_seconds=settings.get('qwen_window_seconds', 30.), own=own)
+                window_seconds=settings.get('qwen_window_seconds', 30.), own=own,
+                **({'context': asr_context} if asr_context else {}))
         else:
             from .qwen_accurate import build_official_online
             emit({"type": "status", "text": "加载 Qwen 原始编码器；共享流式修订策略…"})
             online = build_official_online(config.model_path,
                 settings.get("asr_device", "cpu"), settings.get("source"), draft_seconds,
-                settings.get("qwen_window_seconds", 30.))
+                settings.get("qwen_window_seconds", 30.),
+                **({'context': asr_context} if asr_context else {}))
         return engine, online
 
     def load_semantic():

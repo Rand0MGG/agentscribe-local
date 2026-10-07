@@ -304,7 +304,10 @@ class QwenAccurateOnline:
         return snapshot
 
 
-def build_official_online(model_path, device, language, update_seconds, window_seconds):
+def build_official_online(model_path, device, language, update_seconds, window_seconds, context=''):
+    from .knowledge.schemas import MAX_CONTEXT_BYTES
+    if not isinstance(context, str) or len(context.encode('utf-8')) > MAX_CONTEXT_BYTES:
+        raise ValueError('课程术语上下文无效或超长，请重新审核术语。')
     import torch
     from qwen_asr import Qwen3ASRModel
     canonical = LANGUAGE_NAMES.get(language)
@@ -317,6 +320,6 @@ def build_official_online(model_path, device, language, update_seconds, window_s
         max_new_tokens=512)
     model.model.generation_config.do_sample = False
     def decode(audio):
-        return model.transcribe((audio, 16000), language=canonical, context='')[0].text
+        return model.transcribe((audio, 16000), language=canonical, context=context)[0].text
     return QwenAccurateOnline(decode, choose_cut, language, update_seconds, window_seconds,
                               pause_context_seconds=3.)

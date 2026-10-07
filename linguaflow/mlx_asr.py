@@ -21,7 +21,10 @@ class MLXClient:
     startup_timeout = 180.
     inference_timeout = 90.
 
-    def __init__(self, model, language, report, own=lambda resource: None):
+    def __init__(self, model, language, report, own=lambda resource: None, context=''):
+        from .knowledge.schemas import MAX_CONTEXT_BYTES
+        if not isinstance(context, str) or len(context.encode('utf-8')) > MAX_CONTEXT_BYTES:
+            raise ValueError('课程术语上下文无效或超长，请重新审核术语。')
         python = mlx_python()
         if not python.is_file():
             raise RuntimeError('请在模型管理 → 运行环境安装 Apple GPU / MLX 识别环境。')
@@ -37,7 +40,8 @@ class MLXClient:
         try:
             # Shared startup owns cancellation before this handshake can block.
             own(self)
-            ready = self.request({'model': model, 'language': language}, self.startup_timeout)
+            ready = self.request({'model': model, 'language': language,
+                                  **({'context': context} if context else {})}, self.startup_timeout)
             if ready.get('type') != 'ready' or 'gpu' not in ready.get('device', ''):
                 raise RuntimeError('MLX 未确认 Apple GPU 已加载。')
             self.report(f"Qwen 4-bit · Apple GPU / Metal · 加载 {ready['load_seconds']:.1f}s")
@@ -119,11 +123,11 @@ class MLXClient:
 
 
 def build_mlx_online(model, language, update_seconds, report, window_seconds=30.,
-                     own=lambda resource: None):
+                     own=lambda resource: None, context=''):
     canonical = LANGUAGE_NAMES.get(language)
     if canonical is None:
         raise ValueError('MLX 识别需要选择支持的原文语言。')
-    client = MLXClient(model, canonical, report, own=own)
+    client = MLXClient(model, canonical, report, own=own, **({'context': context} if context else {}))
     # Honor the session's bounded window instead of silently forcing 12 s.
     try:
         online = QwenAccurateOnline(client.decode, choose_cut, language,

@@ -42,6 +42,9 @@ from .audio import list_devices
 from .caption_view import CaptionScrollArea
 from .core import LANGUAGES, export_srt, translation_status
 from .deleted_dialog import DeletedDialog
+from .knowledge.client import KnowledgeClient
+from .knowledge.panel import KnowledgePanel
+from .knowledge.session import read_manifest, session_context
 from .library import Library
 from .library_access import acquire_recording_lock, check_library_access
 from .library_startup import LibrarySelectionCancelled, open_library
@@ -541,6 +544,8 @@ class Window(QMainWindow):
         self.overlay = Overlay()
         self.prefs = prefs if prefs is not None else QSettings("LinguaFlow", "LocalCaptions")
         self.library = library if library is not None else self.open_recording_library(library_root)
+        self.knowledge_client = KnowledgeClient(self)
+        self.knowledge_panel = None
         self.session_dirty = False
         self.save_generation = 0
         self.caption_version = 0
@@ -724,6 +729,10 @@ class Window(QMainWindow):
         self.workspace_title = label("新录音")
         self.workspace_title.setStyleSheet("font-size: 14px; font-weight: 600;")
         toolbar.addWidget(self.workspace_title, 1)
+        self.knowledge_button = QPushButton("课程资料与笔记")
+        self.knowledge_button.setObjectName("quiet")
+        self.knowledge_button.clicked.connect(self.open_knowledge)
+        toolbar.addWidget(self.knowledge_button)
         overlay_button = QPushButton("悬浮字幕")
         overlay_button.setObjectName("quiet")
         overlay_button.clicked.connect(self.toggle_overlay)
@@ -1040,6 +1049,8 @@ class Window(QMainWindow):
             self.status.setToolTip(error)
             return
         self.current_item['state'] = state
+        if self.knowledge_client.identifier == self.current_item['id']:
+            self.knowledge_client.saved(snapshot.captions, final=state in ('complete', 'incomplete'))
         if snapshot.revision == self.caption_version:
             self.session_dirty = False
 
@@ -1066,6 +1077,7 @@ class Window(QMainWindow):
         self.playback.hide()
 
     def reset_recording_view(self):
+        self.close_knowledge()
         self.release_playback()
         self.autosave.stop()
         self.current_item = None
@@ -1136,7 +1148,50 @@ class Window(QMainWindow):
         self.status.setText(states.get(item["state"], "未完整结束 · 已保留录音与草稿"))
         self.empty.setText("准备好时，开始聆听。" if item["state"] == "draft" else "这段录音还没有字幕")
         self.export_button.setEnabled(any(c.final and c.source for c in captions))
+        self.attach_knowledge()
         self.prepare_playback()
+
+    def open_knowledge(self):
+        if not self.current_item:
+            QMessageBox.information(self, "选择录音", "请先新建或选择一段录音，再关联课程资料。")
+            return
+        if self.knowledge_panel is None:
+            self.knowledge_panel = KnowledgePanel(self.knowledge_client, self.cancel_knowledge, self.persist_session, self)
+            self.knowledge_panel.seekRequested.connect(self.seek_knowledge_source)
+        self.knowledge_panel.set_recording(self.recording_state.active)
+        self.knowledge_panel.show()
+        self.knowledge_panel.raise_()
+        self.attach_knowledge(force=True)
+
+    def attach_knowledge(self, force=False):
+        if not self.current_item:
+            return
+        try:
+            if force or read_manifest(self.library, self.current_item['id'])['notes_cloud']:
+                if self.knowledge_panel and self.knowledge_client.identifier != self.current_item['id']:
+                    self.knowledge_panel.reset()
+                self.knowledge_client.open(self.library, self.current_item, self.captions.values())
+        except (OSError, ValueError) as exc:
+            self.status.setText(f"课程资料未就绪：{exc}")
+
+    def close_knowledge(self):
+        self.knowledge_client.close()
+        if self.knowledge_panel:
+            self.knowledge_panel.hide()
+            self.knowledge_panel.reset()
+
+    def cancel_knowledge(self):
+        # API calls are cancellable in the worker; a blocked parser requires owned-process termination.
+        if self.knowledge_panel and self.knowledge_panel.busy:
+            self.knowledge_client.send('cancel')
+            if self.knowledge_panel.operation == 'import':
+                self.close_knowledge()
+                self.status.setText('课件导入已取消，已保存内容保留。')
+
+    def seek_knowledge_source(self, seconds):
+        if self.player and not self.recording_state.active:
+            self.player.setPosition(int(seconds * 1000))
+        self.status.setText(f"笔记引用：录音约 {seconds:.1f} 秒")
 
     def rename_current(self):
         if self.current_item:
@@ -1235,6 +1290,7 @@ class Window(QMainWindow):
     def can_edit_library(self, item=None):
         if self.session is not None or not self.persist_session():
             return False
+        self.close_knowledge()
         return item is None or self.file_operation_ready(item)
 
     def file_operation_ready(self, item):
@@ -1447,6 +1503,18 @@ class Window(QMainWindow):
         self.on_status("正在启动本地推理环境…可点击停止取消加载。")
         self.empty.setText("正在准备模型和验证推理环境…\n准备好后自动开始录音，加载进度显示在下方。")
         settings = self.settings_binding.session_settings(self.device.currentData())
+        try:
+            context = session_context(self.library, self.current_item['id'])
+            if settings.backend in ('qwen3-streaming', 'qwen3-mlx'):
+                settings = replace(settings, asr_context=context)
+        except (OSError, ValueError) as exc:
+            self.on_failure(f"课程术语无效：{exc}")
+            return
+        if self.knowledge_client.identifier == self.current_item['id']:
+            self.knowledge_client.close()
+            self.attach_knowledge(force=True)
+        else:
+            self.attach_knowledge()
         self.save()
         self.set_recording_state(RecordingState.STARTING)
         try:
@@ -1476,6 +1544,8 @@ class Window(QMainWindow):
 
     def set_recording_state(self, state):
         self.recording_state = state
+        if self.knowledge_panel:
+            self.knowledge_panel.set_recording(state.active)
         for control in (self.settings_panel, self.model_manager,
                         self.library_tree, self.new_button, self.folder_button, self.quick_device, self.refresh_source):
             control.setEnabled(not state.active)
@@ -1640,6 +1710,8 @@ class Window(QMainWindow):
         if self.current_item and not self.loading_saved:
             self.session_dirty = True
             self.caption_version += 1
+            if self.knowledge_client.identifier == self.current_item['id']:
+                self.knowledge_client.observe(caption)
         self.scroll.prepare_update()
         if not caption.source:
             self.captions.pop(caption.id, None)
@@ -1766,6 +1838,7 @@ class Window(QMainWindow):
         if not self.persist_session():
             event.ignore()
             return
+        self.close_knowledge()
         if self.player:
             self.player.stop()
         self.save()

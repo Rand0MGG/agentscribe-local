@@ -1,3 +1,23 @@
+## 2026-10-08 课程资料、静态上下文与来源笔记（工作区试验实现）
+
+环境：Windows 11 x64，Python 3.12.8；分支 `windows`，基础提交 `6a41ed08db2fc8a1d11732e0a52fb736994b8d1b`，本轮修改尚未提交。未访问、枚举或播放音频设备，未下载新模型、调用真实云 API 或运行 GPU 推理。
+
+| 验证 | 结果 | 边界 |
+| --- | --- | --- |
+| `.venv\Scripts\python.exe scripts/test_no_audio.py -q --tb=short` | 516 passed、5 skipped，58.32 秒；无原生音频导入尝试 | 包括模拟设备/模型，不能替代两端真实设备验收 |
+| `.venv\Scripts\python.exe -m ruff check linguaflow scripts tests` | 通过 | 静态代码检查 |
+| 固定 SDK 实际请求路径/JSON/用量与释放 | 内存 HTTP 与占位测试密钥通过 | 未读取真实密钥、未请求供应商；模拟 usage 不是真实账单 |
+| Deep Agents 工具往返与越权工具拒绝 | 真实框架 + 脚本模型通过 | SDK/执行层兼容证据，不是 DeepSeek 服务质量 |
+| 课件/术语/保存/后台进程/界面闭环 | 生成 PDF/PPTX、真实 Qt 与自有进程通过 | 未评价真实课程、扫描页、OCR 或视觉解析 |
+| PyTorch context / MLX system_prompt | 同一审核快照传到实际适配函数，模拟模型检查通过 | 未测实际识别提升、GPU、Metal/MLX 运行 |
+| 来源版本与发布 | ABA 修订、迟到保存、撤回/重开、新证据、原子引用、个人编辑、后台代次与取消通过 | 词项相关性仍可能漏掉远距离或跨语言纠正 |
+| 文件管理与恢复 | 外部移动拒绝旧结果、原件/缓存校验、课程恢复与共享删除保护通过 | 不自动移动或清理用户材料/录音 |
+| Windows 窗口 | 125% 缩放、640×540 窄布局与三页显示检查通过 | `.work/implementation-20261008/ui/`；未做 Mac 原生窗口验收 |
+
+依赖安装限定桌面 `.venv`，根版本为 Deep Agents 0.7.23、langchain-deepseek 1.1.1、pypdf 6.19.0、keyring 25.7.0；未更改 WLK/MLX 环境和应用版本。许可证/Python 范围核对来自已安装分发元数据，根版本固定不等于完整传递依赖锁定。原 CI 之外新增两平台 Python 3.12 的可选 SDK 模拟检查，尚未推送运行。
+
+M1 的 6,000 次差分与存储/耗时测量仍仅对应合成 CaptionMapper，详见 [实施状态](AgentScribe_软件开发设计文档.md#132-当前实施状态2026-10-08)。剩余验收为真实供应商/凭据、授权课程质量、Mac Apple GPU 与 Windows 设备分别实测，以及长会话总资源/预算表现。历史 GPU 数字不作为本轮新功能已通过的证据。
+
 # 0.3 集成验证记录（2026-09-07）
 
 环境：Windows、Python 3.12、RTX 5070 Ti 16303 MiB、驱动 595.79。

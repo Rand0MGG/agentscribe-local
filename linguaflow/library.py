@@ -279,8 +279,24 @@ class Library:
         box = self._safe(trash / token)
         if box.parent != trash:
             raise ValueError("只能清理最近删除内的条目")
+        self._check_course_references(box)
         # The absolute target is checked before recursive removal.
         shutil.rmtree(box)
+
+    def _check_course_references(self, box):
+        """Do not destroy shared materials still referenced outside this exact deletion scope."""
+        courses = set()
+        for path in box.rglob('course.json'):
+            if path.parent.name == '.agentscribe':
+                courses.add(self._read(self._safe(path))['id'])
+        if not courses:
+            return
+        for path in self.root.rglob('manifest.json'):
+            if path.parent.name != 'knowledge' or box in path.parents:
+                continue
+            data = self._read(self._safe(path))
+            if data.get('course_id') in courses:
+                raise ValueError('这份课程资料仍被其他录音引用，请恢复课程资料；不会连带删除其他录音。')
 
     def import_legacy(self, source):
         """Copy v1 once and retain originals, including after a partial migration."""

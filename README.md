@@ -15,7 +15,7 @@ Qt 界面与模型运行环境隔离；应用自行启动、停止推理进程�
 ## 安装
 
 需要 Python 3.11–3.13（建议 3.12）、Git、Windows 建议 16GB 系统内存（最低 CPU 尚未系统评测；Apple Silicon 8GB 的短文件测试范围见下文）。GPU 环境及大模型会占用十余 GB 磁盘，请留足空间。
-首次安装与下载需要网络；模型准备完整后可在断网时使用。应用不提供严格离线开关，也不在启动推理时强制禁止联网；旧的离线设置不再生效。录音与字幕不上传到云端。
+首次安装与下载需要网络；模型准备完整后可在断网时使用。应用不提供严格离线开关，也不在启动推理时强制禁止联网；旧的离线设置不再生效。录音不上传；字幕默认在本地处理。只有明确开启课程云端处理后，才将限定的课件、定稿和笔记文字发送给 DeepSeek。
 
 ### Windows
 
@@ -69,6 +69,18 @@ Mac 适配进展、已验证范围和待实机测试项目见 [macOS 适配记�
 
 应用打开后在后台准备共享运行库，缩短开始聆听时的导入等待；不会提前加载识别权重、访问音频设备或修改联网行为。桌面与文件识别使用同一启动流程，保留已准备进程。开始聆听时，PyTorch / MLX / Whisper 复用同一识别与分句加载协调，全部就绪后才创建音频处理链；失败和取消统一回收自有资源。SaT 与语音活动检测固定使用 CPU ONNX，兼容运行环境复用准备好的 SaT 内存映射缓存；识别与翻译仍按用户选择使用 CPU / CUDA / Apple GPU。Windows 课堂片段对照、双语流程与缓存成本见 [最新验证记录](docs/VALIDATION.md#2026-10-06-统一识别与-sat-启动)，预热内存代价见该文历史记录；本轮 Mac 实机仍待复核。
 
+## 课程资料与笔记（工作区试验实现）
+
+选择或新建录音后，点击顶部“课程资料与笔记”。在本机导入 PDF / PPTX，可预览带页码的原生文本；图片、公式和提取不完整的页面标为待核对。无需云端即可手工录入、审核术语。
+
+可选云端功能需要在桌面环境安装额外依赖：Windows 运行 `.venv\Scripts\python.exe -m pip install -e ".[knowledge]"`；Mac 使用 `.venv/bin/python -m pip install -e '.[knowledge]'`。安装不改变 `.venv-wlk` / `.venv-mlx` 或识别设备。PDF 提取也使用此可选依赖中的 pypdf；PPTX 原生文本提取使用标准库。
+
+勾选术语并保存审核结果后，下一次 Qwen 录音会固定课程上下文；PyTorch 使用 `context`，MLX 使用 `system_prompt`。Whisper 保持原有行为。当前是参数接入与模拟验证，尚未证明术语改善识别质量，也没有完成本轮 Mac GPU 实测。
+
+“配置 DeepSeek 密钥”使用系统凭据存储，不将密钥写入课程文件。课件提词按课程开启；笔记与问答按录音另行开启。开启后，成功保存的定稿原文分批生成带引用笔记，课后可按章节整理或提问。字幕变化会使相关笔记待核对或失效；个人编辑不会被模型覆盖。引用可定位课件页或录音位置，点击引用不自动播放。详见 [工作区说明](docs/WORKSPACE.md#课程资料与笔记) 和 [设计与实施状态](docs/AgentScribe_软件开发设计文档.md#132-当前实施状态2026-10-08)。
+
+目前通过 Windows 本地与模拟服务回归；真实 DeepSeek、系统凭据写入、课件质量和两端模型实测仍待验收。云端默认关闭，失败、取消或预算耗尽保留已保存内容；实时识别继续运行。
+
 ## 翻译引擎
 
 设置 → 翻译模型可独立选择 **PyTorch** 或 **llama.cpp · GGUF**，再选择 CPU / GPU。
@@ -111,10 +123,10 @@ NLLB 权重遵循 [CC-BY-NC-4.0](https://huggingface.co/facebook/nllb-200-distil
 
 实际运行证据及适用范围见 [VALIDATION](docs/VALIDATION.md)。设计见 [STREAMING_DESIGN](docs/STREAMING_DESIGN.md)，依赖来源见 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md)。
 
-音频临时缓冲约 690MB/小时（48 kHz float32），会话结束删除。没有云端 API、语音合成或独立安装包；不声称达到商业软件所有场景的准确率。
+音频临时缓冲约 690MB/小时（48 kHz float32），会话结束删除。课程云端处理为可选试验功能；没有语音合成或独立安装包，不声称达到商业软件所有场景的准确率。
 
 项目目录说明见 [PROJECT_STRUCTURE](docs/PROJECT_STRUCTURE.md)。
 
 参与开发前阅读 [开发规范](AGENTS.md) 和 [模块职责与依赖约束](docs/ARCHITECTURE.md)。开发规范集中维护于 `AGENTS.md`，功能行为及验证证据保留在各自文档中。
 
-固定开发分支的提交和 Pull Request 配置了 [自动代码检查](.github/workflows/checks.yml)：Ruff 与 Windows/macOS、Python 3.11–3.13 的无音频单元测试。自动检查不下载模型、不访问音频设备，也不替代 GPU 推理及真实录音验收。
+固定开发分支的提交和 Pull Request 配置了 [自动代码检查](.github/workflows/checks.yml)：Ruff 与 Windows/macOS、Python 3.11–3.13 的无音频单元测试；可选课程 SDK 另在两端 Python 3.12 使用模拟模型和 HTTP 检查。本地修改尚未触发远程 CI。自动检查不下载模型、不访问音频设备，也不替代真实供应商、GPU 推理及录音验收。
