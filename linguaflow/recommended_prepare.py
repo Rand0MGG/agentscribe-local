@@ -69,4 +69,11 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    import argparse
+    import json
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--check', action='store_true', help='Only inspect local files; never download or load models')
+    if parser.parse_args().check:
+        print(json.dumps(missing_assets(), ensure_ascii=False), flush=True)
+    else:
+        main()

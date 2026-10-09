@@ -3,7 +3,6 @@ import sys
 import time
 from dataclasses import asdict, replace
 from pathlib import Path
-from threading import Thread
 
 from PySide6.QtCore import (
     QEvent,
@@ -15,7 +14,6 @@ from PySide6.QtCore import (
     Qt,
     QTimer,
     QUrl,
-    Signal,
     Slot,
 )
 from PySide6.QtGui import (
@@ -536,8 +534,6 @@ class CaptionCard(QFrame):
 
 
 class Window(QMainWindow):
-    model_assets_checked = Signal(int, list)
-    startup_update_checked = Signal(dict)
 
     def __init__(self, discover=True, library_root=None, prefs=None, library=None, runtime=None):
         super().__init__()
@@ -562,7 +558,7 @@ class Window(QMainWindow):
         self.asset_check_generation = 0
         self.asset_check_closed = False
         self.startup_update_job = None
-        self.startup_update_checked.connect(self.on_startup_update_checked)
+        self.background_checks = set()
         self.overlay = Overlay()
         self.prefs = prefs if prefs is not None else QSettings("LinguaFlow", "LocalCaptions")
         self.library = library if library is not None else self.open_recording_library(library_root)
@@ -983,7 +979,6 @@ class Window(QMainWindow):
         if discover:
             QTimer.singleShot(0, self.refresh_devices)
         if sys.platform == 'darwin':
-            self.model_assets_checked.connect(self.on_model_assets_checked)
             self.model_manager.preparation_changed.connect(self.refresh_model_assets_after_preparation)
             QTimer.singleShot(0, self.check_model_assets)
             self.setup_application_menu()
@@ -1024,28 +1019,29 @@ class Window(QMainWindow):
         self.open_settings('运行环境')
         self.model_manager.check_updates()
 
+    def start_background_check(self, module, callback, *arguments):
+        from .ui_checks import BackgroundCheck
+        check = BackgroundCheck(module, arguments, self)
+        self.background_checks.add(check)
+        check.result.connect(callback)
+        def finished():
+            self.background_checks.discard(check)
+            check.deleteLater()
+            if self.asset_check_closed:
+                QTimer.singleShot(0, self.close)
+        check.completed.connect(finished)
+        check.begin()
+        return check
+
     def check_startup_updates(self):
-        """Check in a separate bounded worker without occupying model preparation."""
+        """Keep dependency imports and Python GC out of the Qt process's workers."""
         if self.asset_check_closed or self.startup_update_job is not None:
             return
-        def check():
-            from .updates import check_updates
-            try:
-                result = check_updates()
-            except Exception:
-                return  # Startup stays quiet offline; manual checks report errors.
-            try:
-                self.startup_update_checked.emit(result)
-            except RuntimeError:
-                pass
-        self.startup_update_job = Thread(target=check, daemon=True)
-        try:
-            self.startup_update_job.start()
-        except RuntimeError:
-            self.startup_update_job = None
+        self.startup_update_job = self.start_background_check(
+            'linguaflow.updates', self.on_startup_update_checked)
 
     def on_startup_update_checked(self, result):
-        if self.asset_check_closed or result.get('kind') not in ('package', 'source'):
+        if self.asset_check_closed or not isinstance(result, dict) or result.get('kind') not in ('package', 'source'):
             return
         from .updates import trusted_release_url
         if not trusted_release_url(result.get('url')):
@@ -1071,27 +1067,15 @@ class Window(QMainWindow):
     def check_model_assets(self):
         if self.asset_check_closed or self.model_manager.worker is not None:
             return
-        if self.asset_check is not None and self.asset_check.is_alive():
+        if self.asset_check is not None and self.asset_check in self.background_checks:
             QTimer.singleShot(200, self.check_model_assets)
             return
         self.asset_check_generation += 1
         generation = self.asset_check_generation
-        def check():
-            try:
-                from .recommended_prepare import missing_assets
-                missing = missing_assets()
-            except Exception:
-                missing = ['本地模型检查失败，请点击准备按钮重新检查']
-            try:
-                self.model_assets_checked.emit(generation, missing)
-            except RuntimeError:
-                pass  # The window may have closed during a local cache read.
-        self.asset_check = Thread(target=check, daemon=True)
-        try:
-            self.asset_check.start()
-        except RuntimeError:
-            self.asset_check = None
-            self.on_model_assets_checked(generation, ['本地检查暂不可用，请点击准备按钮重试'])
+        def checked(value):
+            missing = value if isinstance(value, list) else ['本地模型检查失败，请点击准备按钮重试']
+            self.on_model_assets_checked(generation, missing)
+        self.asset_check = self.start_background_check('linguaflow.recommended_prepare', checked, '--check')
 
     def on_model_assets_checked(self, generation, missing):
         if self.asset_check_closed or generation != self.asset_check_generation:
@@ -2070,6 +2054,11 @@ class Window(QMainWindow):
         if self.runtime is not None:
             self.runtime.close(wait=False)
         self.asset_check_closed = True
+        if self.background_checks:
+            for check in tuple(self.background_checks):
+                check.kill()
+            event.ignore()
+            return
         event.accept()
 
 

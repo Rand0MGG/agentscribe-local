@@ -53,12 +53,14 @@ from linguaflow.app import Window
 from linguaflow import updates
 app = QApplication([])
 w = Window(discover=False, prefs=QSettings(os.environ['AGENTSCRIBE_LIBRARY']+'/prefs.ini', QSettings.Format.IniFormat))
-release, calls = Event(), []
-def check():
-    calls.append(1)
-    release.wait(2)
-    return {'kind': 'none'}
-updates.check_updates = check
+calls = []
+def check(module, callback, *arguments):
+    if module == 'linguaflow.updates':
+        calls.append(callback)
+    else:
+        QTimer.singleShot(0, lambda: callback([]))
+    return object()
+w.start_background_check = check
 w.check_startup_updates()
 w.check_startup_updates()
 ticks = []
@@ -69,9 +71,8 @@ deadline = time.monotonic()+1
 while len(ticks)<3 and time.monotonic()<deadline:
     app.processEvents()
     time.sleep(.005)
-assert len(ticks)>=3 and calls == [1] and w.model_manager.worker is None
-release.set()
-w.startup_update_job.join(timeout=2)
+assert len(ticks)>=3 and len(calls) == 1 and w.model_manager.worker is None
+calls[0]({'kind': 'none'})
 app.processEvents()
 assert not hasattr(w, 'update_dialog')
 w.on_startup_update_checked({'kind':'package', 'version':'0.6.0-beta.2',
@@ -105,12 +106,10 @@ prefs.setValue('translation_after', 2)
 prefs.setValue('translation_initial_before', 0)
 w = Window(discover=False, prefs=prefs)
 workspace, manager = w.settings_workspace, w.model_manager
-checked = Event()
-import linguaflow.recommended_prepare as preparation
-def missing_assets():
-    checked.wait(2)
-    return ['Qwen3-ASR 1.7B · MLX 4-bit', 'HY-MT2 1.8B · Q4_K_M']
-preparation.missing_assets = missing_assets
+def check(module, callback, *arguments):
+    QTimer.singleShot(20, lambda: callback(['Qwen3-ASR 1.7B · MLX 4-bit', 'HY-MT2 1.8B · Q4_K_M']))
+    return object()
+w.start_background_check = check
 visible = [workspace.categories[i] for i in range(workspace.navigation.count())
            if not workspace.navigation.item(i).isHidden()]
 assert visible == ['常规', '聆听', '使用指南']
@@ -141,7 +140,6 @@ assert manager.tabs.isEnabled() and manager.done_button.isEnabled()
 assert manager.progress_bar.value() == 500
 assert '50' not in manager.status.text() or 'MB' in manager.status.text()
 release.set()
-checked.set()
 while manager.worker is not None and time.monotonic() < deadline:
     app.processEvents()
     time.sleep(.005)
