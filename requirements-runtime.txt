@@ -1,7 +1,8 @@
 # Pinned upstream source, with full streaming pipeline and Qwen windowed backend.
-whisperlivekit @ git+https://github.com/QuentinFuxa/WhisperLiveKit.git@94a2ac6f1b7a4a54b9dd1218039ee09bc78ccb7e
-qwen3-asr-causal[streaming] @ git+https://github.com/QuentinFuxa/Qwen3-ASR-causal.git@89752586ca978d72773732422b81bf03eea2e5e2
+whisperlivekit @ https://github.com/QuentinFuxa/WhisperLiveKit/archive/94a2ac6f1b7a4a54b9dd1218039ee09bc78ccb7e.zip#sha256=3bc264634a84007a7c3f6ce13c368259038ba63dcc12c6dbd61fb07cdcf1cea1
+qwen3-asr-causal[streaming] @ https://github.com/QuentinFuxa/Qwen3-ASR-causal/archive/89752586ca978d72773732422b81bf03eea2e5e2.zip#sha256=accb4a5ba3df8f058eec30a56a840910bb82852cc55075320fd5fd92de884861
 transformers==4.57.6
+qwen-asr==0.0.6
 sentencepiece>=0.2,<0.3
 wtpsplit==2.2.1
 safetensors>=0.4

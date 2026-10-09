@@ -970,7 +970,8 @@ class Window(QMainWindow):
             QMessageBox.warning(self, "旧录音仍保留在原位置",
                 f"迁移未完成，可稍后重试。\n{root}\n{error}")
 
-        install_root = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1]
+        from .runtime_paths import resource_root
+        install_root = resource_root()
         legacy_root = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.GenericDataLocation)) / "AgentScribe" / "library"
         try:
             return open_library(self.prefs, install_root,
@@ -1347,7 +1348,7 @@ class Window(QMainWindow):
         self.library = library
         self.folder_id = library.index["folders"][0]["id"]
         self.prefs.setValue("library_directory", str(library.root))
-        self.settings_workspace.storage_path.setText(str(library.root))
+        self.settings_workspace.set_storage_root(library.root)
         self.refresh_library()
         self.status.setText("已切换保存目录 · 旧录音仍保留在原目录，可切换回去查看")
 
@@ -1469,7 +1470,8 @@ class Window(QMainWindow):
     def start(self):
         if self.session is not None:
             return
-        if self.model_manager.worker is not None:
+        if (self.model_manager.worker is not None
+                and self.model_manager.worker.affects_runtime):
             QMessageBox.information(self, "模型准备中", "请等待模型准备完成，或在设置中取消准备。")
             return
         if self.device.currentData() is None:

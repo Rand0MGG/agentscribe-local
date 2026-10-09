@@ -32,7 +32,7 @@ PAGE_DESCRIPTIONS = {
     '识别模型': '把声音变成原文。选择引擎和计算设备，再准备模型。',
     '翻译模型': '提交后先看初译，识别定稿后再结合上下文生成最终译文。',
     '字幕与延迟': '让听写更连贯，让分句与定稿的节奏适合你。',
-    '运行环境': '首次使用时准备本地组件；遇到依赖问题时在这里修复。',
+    '运行环境': '准备本地组件、修复运行环境和检查软件更新。',
     '使用指南': '从第一次聆听，到整理和分享你的录音。',
 }
 
@@ -289,6 +289,9 @@ class SettingsWorkspace(QWidget):
             buttons.addWidget(button)
         self.row(rows, "录音保存位置", "录音与定稿按文件夹、录音名称保存，随时可以直接打开。", storage_controls)
         rows.addWidget(self.storage_path)
+        self.storage_warning = text_label('录音仍在程序目录内。升级或清理程序前，请复制备份整个录音目录，再更改保存位置；软件不会搬移或删除旧文件。', 'infoBanner')
+        rows.addWidget(self.storage_warning)
+        self.set_storage_root(storage_root)
         deleted = QPushButton("查看最近删除")
         deleted.clicked.connect(self.deleted_requested.emit)
         self.row(rows, "最近删除", "删除的文件先保留在原保存目录，可随时恢复。", deleted)
@@ -393,6 +396,13 @@ class SettingsWorkspace(QWidget):
         margin = max(24, (self.right.width() - 850) // 2)
         self.content_layout.setContentsMargins(margin, 32, margin, 24)
 
+    def set_storage_root(self, root):
+        from pathlib import Path
+
+        from .runtime_paths import resource_root
+        self.storage_path.setText(str(root))
+        self.storage_warning.setVisible(Path(root).resolve().is_relative_to(resource_root().resolve()))
+
     def page(self, name):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -453,7 +463,7 @@ class SettingsWorkspace(QWidget):
         aliases = {"常规": "文件 存储 目录 路径 删除 恢复 跟随", "聆听": "设备 输入 语言",
                    "识别模型": "Qwen Whisper GPU CPU MLX 下载", "翻译模型": "NLLB HY-MT2 前文 后文 GPU CPU 下载 译文",
                    "字幕与延迟": "字幕 草稿 刷新 停顿",
-                   "运行环境": "安装 修复", '使用指南': '首次 使用 帮助 入门 导出 SRT 开始 说明'}
+                   "运行环境": "安装 修复 更新 版本 GitHub", '使用指南': '首次 使用 帮助 入门 导出 SRT 开始 说明'}
         aliases['常规'] += ' 动画 减少动态效果 快捷键'
         query = query.strip().casefold()
         visible = []

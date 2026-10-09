@@ -1,12 +1,12 @@
 """Model preparation lives outside the listening flow."""
-import os
-import signal
+import json
 import subprocess
 import sys
 from collections import deque
-from pathlib import Path
+from threading import Event, Thread
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QThread, QUrl, Signal, Slot
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDialog,
     QDoubleSpinBox,
@@ -21,8 +21,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .process_platform import spawn_options
+from .process_platform import spawn_options, stop_tree
 from .qt_controls import text_label
+from .runtime_paths import installation_command, python_environment, resource_root
 from .translation_config import CONTEXT_COUNTS
 from .ui_components import ChoiceBox as QComboBox
 
@@ -31,33 +32,27 @@ class Preparation(QThread):
     result = Signal(str)
     progress = Signal(str)
 
-    def __init__(self, action, parent):
+    def __init__(self, action, parent, *, affects_runtime=True):
         super().__init__(parent)
         self.action = action
+        self.affects_runtime = affects_runtime
         self.process = None
         self.cancelled = False
 
     def cancel(self):
         self.cancelled = True
-        if self.process and self.process.poll() is None:
-            if sys.platform == "win32":
-                subprocess.Popen(["taskkill", "/PID", str(self.process.pid), "/T", "/F"],
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                 creationflags=subprocess.CREATE_NO_WINDOW)
-            else:
-                try:
-                    os.killpg(self.process.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
 
     def run(self):
         try:
-            self.result.emit(self.action())
+            result = self.action()
+            self.result.emit('准备已取消；已完成文件保留。' if self.cancelled else result)
         except Exception as exc:
             self.result.emit(f"未完成：{exc}")
 
 
 class ModelManager(QDialog):
+    update_checked = Signal(dict)
+
     def __init__(self, parent=None, *, compute_device=lambda: "cpu"):
         super().__init__(parent)
         self.compute_device = compute_device
@@ -127,8 +122,12 @@ class ModelManager(QDialog):
         from .runtime_paths import runtime_python
         self.runtime_status = QLabel()
         self.runtime_status.setWordWrap(True)
-        self.runtime_status.setText(("推理环境已创建" if runtime_python().is_file() else "尚未安装推理环境")
-                                   + f"\n{runtime_python()}\n文件存在不代表依赖和 GPU 已通过检查；启动时会显示各阶段进度。")
+        try:
+            python = runtime_python()
+            self.runtime_status.setText(("推理环境已创建" if python.is_file() else "尚未安装推理环境")
+                                       + f"\n{python}\n文件存在不代表依赖和 GPU 已通过检查；启动时会显示各阶段进度。")
+        except RuntimeError as exc:
+            self.runtime_status.setText(str(exc))
         environment_form.addRow(text_label('本地推理组件', 'settingsSection'))
         environment_form.addRow(self.runtime_status)
         install = QPushButton("安装 / 修复本地推理环境")
@@ -137,9 +136,20 @@ class ModelManager(QDialog):
         if sys.platform == 'darwin':
             install_mlx = QPushButton('安装 / 修复 Apple GPU · MLX 识别环境')
             install_mlx.clicked.connect(lambda: self.prepare(lambda: self.run_preparation(
-                [sys.executable, 'scripts/install_mlx.py'])))
+                installation_command('linguaflow.runtime_install', 'mlx'))))
             environment_form.addRow(install_mlx)
         self.hint(environment_form, "桌面界面与模型推理使用独立环境。无需手动启动服务。安装后请先到识别模型和翻译模型页下载所需权重，再开始聆听。")
+        update = QPushButton('检查软件更新')
+        update.clicked.connect(self.check_updates)
+        self.update_url = ''
+        self.update_link = QPushButton('查看发行页')
+        self.update_link.hide()
+        self.update_link.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(self.update_url)))
+        self.update_checked.connect(self.show_update)
+        environment_form.addRow(text_label('软件更新', 'settingsSection'))
+        environment_form.addRow(update)
+        environment_form.addRow(self.update_link)
+        self.hint(environment_form, '点击后才连接 GitHub 检查当前平台的发布版本。源码版查看源码更新；未发布的安装包不会显示为可安装更新。')
         self.add_page(environment, "运行环境")
         self.status = QLabel("下载只准备文件；开始聆听时才加载模型。")
         self.status.setObjectName('preparationStatus')
@@ -290,7 +300,8 @@ class ModelManager(QDialog):
         for widget in [self.qwen_model]:
             widget.setEnabled(qwen)
 
-    def prepare(self, action):
+    def prepare(self, action, *, message='正在准备，请保留此窗口。下载进度见启动终端；已存在的权重会复用。',
+                affects_runtime=True):
         if self.worker is not None:
             return
         self.tabs.setEnabled(False)
@@ -298,8 +309,8 @@ class ModelManager(QDialog):
         self.cancel_button.setEnabled(True)
         self.cancel_button.show()
         self.progress_bar.show()
-        self.status.setText("正在准备，请保留此窗口。下载进度见启动终端；已存在的权重会复用。")
-        self.worker = Preparation(action, self)
+        self.status.setText(message)
+        self.worker = Preparation(action, self, affects_runtime=affects_runtime)
         self.worker.result.connect(self.status.setText)
         self.worker.progress.connect(self.status.setText)
         self.worker.finished.connect(self.prepared)
@@ -313,6 +324,13 @@ class ModelManager(QDialog):
         self.cancel_button.setEnabled(False)
         self.cancel_button.hide()
         self.progress_bar.hide()
+        from .runtime_paths import runtime_python
+        try:
+            python = runtime_python()
+            self.runtime_status.setText(('推理环境已创建' if python.is_file() else '尚未安装推理环境')
+                                       + f'\n{python}\n依赖与设备以实际启动检查为准。')
+        except RuntimeError as exc:
+            self.runtime_status.setText(str(exc))
         if self.close_requested:
             self.close_requested = False
             self.reject()
@@ -330,44 +348,77 @@ class ModelManager(QDialog):
             return result
         self.prepare(action)
 
-    def run_preparation(self, command):
+    def run_preparation(self, command, *, show_progress=True):
+        if self.worker.cancelled:
+            raise RuntimeError('准备已取消。')
         tail = deque(maxlen=20)
-        with subprocess.Popen(command, cwd=str(Path(__file__).resolve().parents[1]),
+        # The supervisor owns descendants even when the desktop exits unexpectedly.
+        command = installation_command('linguaflow.managed_process', *command)
+        with subprocess.Popen(command, cwd=resource_root(), stdin=subprocess.PIPE,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               text=True, encoding="utf-8", errors="replace",
-                              env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+                              env=python_environment(),
                               **spawn_options()) as process:
             self.worker.process = process
-            if self.worker.cancelled:
-                self.worker.cancel()
-            for line in process.stdout:
-                if line.strip():
-                    tail.append(line.strip())
-                    self.worker.progress.emit(line.strip()[-350:])
-            if process.wait():
-                raise RuntimeError("\n".join(tail)[-1500:])
+            finished = Event()
+            def watch():
+                while not finished.wait(.05):
+                    if self.worker.cancelled:
+                        process.stdin.close()  # EOF lets the supervisor reap its tree.
+                        try:
+                            process.wait(timeout=8)
+                        except subprocess.TimeoutExpired:
+                            stop_tree(process, force=True)
+                        return
+            watcher = Thread(target=watch, daemon=True)
+            watcher.start()
+            try:
+                for line in process.stdout:
+                    if line.strip():
+                        tail.append(line.strip())
+                        if show_progress:
+                            self.worker.progress.emit(line.strip()[-350:])
+                code = process.wait(timeout=10)
+                if self.worker.cancelled:
+                    raise RuntimeError('准备已取消；已有文件保留，可稍后继续。')
+                if code:
+                    raise RuntimeError("\n".join(tail)[-1500:])
+            finally:
+                finished.set()
+                watcher.join(timeout=10)
+                self.worker.process = None
         return tail[-1] if tail else "准备完成"
 
     def install_runtime(self):
-        command = [sys.executable, "scripts/install_runtime.py"]
-        if (self.compute_device() == "cpu"
-                and self.translation_device.currentData() == "cpu"):
-            command.append("--cpu")
+        command = installation_command('linguaflow.runtime_install', 'wlk')
         self.prepare(lambda: self.run_preparation(command))
+
+    def check_updates(self):
+        def action():
+            result = json.loads(self.run_preparation(installation_command('linguaflow.updates'), show_progress=False))
+            self.update_checked.emit(result)
+            return result['message']
+        self.update_url = ''
+        self.update_link.hide()
+        self.prepare(action, message='正在检查已发布的软件版本…', affects_runtime=False)
+
+    @Slot(dict)
+    def show_update(self, result):
+        if self.worker is not None and self.worker.cancelled:
+            return
+        from .updates import trusted_release_url
+        self.update_url = result.get('url', '')
+        self.update_link.setVisible(bool(self.update_url) and trusted_release_url(self.update_url))
 
     def prepare_translation(self, model):
         if self.translation_engine.currentData() == 'llama':
-            command = [sys.executable, 'scripts/install_llama.py',
+            command = installation_command('linguaflow.llama_install',
                        '--device', self.translation_device.currentData(),
-                       '--model', self.llama_model.currentText().strip()]
+                       '--model', self.llama_model.currentText().strip())
             self.prepare(lambda: self.run_preparation(command))
             return
         def action():
-            from .model_cache import has_weights, resolve_translation
-            path = resolve_translation(model, lambda message: None)
-            if not has_weights(path):
-                raise ValueError("翻译权重不完整")
-            return f"翻译模型文件已就绪：{path}"
+            return self.run_preparation(installation_command('linguaflow.model_prepare', 'translation', model))
         self.prepare(action)
 
     def prepare_segmentation(self):
@@ -377,25 +428,9 @@ class ModelManager(QDialog):
 
     def prepare_qwen(self, model):
         def action():
-            from pathlib import Path
-
-            from huggingface_hub import snapshot_download
-            if Path(model).is_dir():
-                from .model_cache import resolve_qwen_cached
-                path = resolve_qwen_cached(model)
-                self.prepare_segmentation()
-                return f"Qwen 模型文件已就绪：{path}"
-            options = {}
-            if model == 'mlx-community/Qwen3-ASR-1.7B-4bit':
-                from .mlx_asr import MLX_REVISION
-                options = {'revision': MLX_REVISION, 'local_dir': str(
-                    Path(__file__).resolve().parents[1] / 'models' / 'Qwen3-ASR-1.7B-4bit')}
-            path = snapshot_download(model, allow_patterns=["*.json", "*.safetensors", "*.txt", "*.model", "*.jinja"],
-                                     max_workers=1, **options)
-            from .model_cache import resolve_qwen_cached
-            resolve_qwen_cached(path)
+            result = self.run_preparation(installation_command('linguaflow.model_prepare', 'qwen', model))
             self.prepare_segmentation()
-            return f"Qwen 模型已下载：{path}"
+            return result
         self.prepare(action)
 
     def reject(self):

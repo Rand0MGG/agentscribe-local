@@ -25,22 +25,29 @@ def test_old_audio_preferences_are_ignored_on_both_platforms(monkeypatch, platfo
     assert data['df_device'] == 'cuda'
 
 
-@pytest.mark.parametrize('system, machine, cpu, suffix, index', [
-    ('darwin', 'arm64', False, '', None),
-    ('darwin', 'arm64', True, '', None),
-    ('win32', 'AMD64', False, '+cu128', 'cu128'),
-    ('win32', 'AMD64', True, '+cpu', 'cpu'),
+@pytest.mark.parametrize('target, suffix, index', [
+    ('macos-arm64', '', None), ('windows-x64', '+cu128', 'cu128'),
 ])
-def test_runtime_install_plan_is_platform_specific(monkeypatch, system, machine, cpu, suffix, index):
+def test_runtime_install_plan_is_platform_specific(monkeypatch, tmp_path, target, suffix, index):
+    from linguaflow import runtime_install
     path = Path(__file__).resolve().parents[1] / 'scripts' / 'install_runtime.py'
     spec = importlib.util.spec_from_file_location('install_runtime', path)
     installer = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(installer)
-    monkeypatch.setattr(sys, 'platform', system)
-    monkeypatch.setattr(platform, 'machine', lambda: machine)
-    monkeypatch.setattr(sys, 'argv', [str(path), *(['--cpu'] if cpu else [])])
+    monkeypatch.setattr(runtime_install, 'check_installation', lambda: target)
+    monkeypatch.setattr(runtime_install, 'runtime_root', lambda: tmp_path)
+    monkeypatch.setattr(runtime_install, 'cache_root', lambda: tmp_path / 'cache')
+    monkeypatch.setattr(runtime_install, 'prepare_sources', lambda requirements, _: requirements)
+    monkeypatch.setattr(sys, 'argv', [str(path)])
     calls = []
-    monkeypatch.setattr(subprocess, 'run', lambda command, **kw: calls.append(command))
+    def run(command, **kw):
+        calls.append(command)
+        if 'venv' in command:
+            from linguaflow.runtime_paths import environment_python
+            python = environment_python(command[-1])
+            python.parent.mkdir(parents=True)
+            python.write_bytes(b'fixture interpreter')
+    monkeypatch.setattr(runtime_install, 'run_command', run)
     installer.main()
     torch = calls[1]
     assert f'torch==2.11.0{suffix}' in torch and f'torchaudio==2.11.0{suffix}' in torch
@@ -59,7 +66,7 @@ def test_mac_intel_or_rosetta_rejected_before_environment_creation(monkeypatch):
     monkeypatch.setattr(platform, 'machine', lambda: 'x86_64')
     monkeypatch.setattr(sys, 'argv', [str(path)])
     monkeypatch.setattr(subprocess, 'run', lambda *a, **kw: pytest.fail('must not create an environment'))
-    with pytest.raises(SystemExit, match='Apple Silicon'):
+    with pytest.raises(ValueError, match='Apple Silicon'):
         installer.main()
 
 

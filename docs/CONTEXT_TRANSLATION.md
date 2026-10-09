@@ -48,7 +48,7 @@ Windows 11 / AMD64 / Python 3.12.8：`.venv\Scripts\python.exe scripts/test_no_a
 2026-10-03 背景范围与偏好修复验证：Windows 11 / AMD64 / Python 3.12.8，在 `0402383` 加本次补丁的隔离源码中运行项目无音频入口，完整测试 372 passed、6 skipped；实际工作区使用 `.venv\Scripts\python.exe scripts/test_no_audio.py -q` 再次验证，373 passed、5 skipped，额外覆盖已有本地 Silero ONNX / Float32 回归，跳过项均为 Mac 专属测试。两次均没有原生音频导入尝试。新增回归使用 500 段历史，覆盖前文 0 / 1 / 3 / 10 段、初译与定稿、单段与合并请求，经 PyTorch HY 与 llama.cpp 的实际提示词构建和生成入口检查输入；翻译模型与服务 IO 使用替身。超界背景在分词和生成前拒绝，已有译文保留、队列正常释放。已有 0–10 段设置保留，缺失设置默认 10 段；全部改动文件 Ruff 通过，全库 41 项既有问题与合并前 `main` 的诊断一致。证据在 `.work/cache/translation-context-fix/`，其中 `working-tree-tests.log`、`working-tree-ruff.json` 为实际工作区结果；此验证没有执行 ASR / 翻译模型的 CUDA / Metal 真实推理或音频设备测试。
 
 2026-10-03，M2 / 8GB、macOS 26.6.2、Python 3.12.14：完整无音频设备测试 327 项通过，修改文件 Ruff 与差异格式检查通过。全库 Ruff 仍有 41 项既有问题，均位于未修改文件。Qt offscreen 检查新增上下文控件及使用指南，覆盖 900 × 650 窗口。HY 1.8B Q4_K_M / Metal 确认 33 层 GPU：人工文本单段带 1 段背景翻译约 0.356 秒；3 段合并带 10 段背景，10 个固定种子均返回完整 ID 映射，中位约 0.561 秒、范围 0.542–0.969 秒，不含加载。测试服务退出码 0、日志线程结束，没有音频访问尝试。证据在 `.work/cache/translation-phases/`；这是短文本格式与链路检查，不能代替 50 分钟课堂性能、内存曲线、翻译质量或 Windows 实机验收。
-真实模型快速检查：`.venv-wlk\Scripts\python.exe scripts/check_hy_translation.py --model models/Hy-MT2-1.8B --device cuda`。
+真实模型快速检查：使用共享路径模块选择的 WLK Python 运行 `scripts/check_hy_translation.py --device cuda`（已有环境可用 `.venv-wlk\Scripts\python.exe`）。默认内置 HY 模型名，由生产适配器复用旧目录、用户模型目录或 Hub 缓存；也可用 `--model` 指定已有目录。
 它仅使用人工歧义句，不录音、不联网下载；结果保存在 `.work/hy-translation-smoke.json`。这种检查不等于完整翻译质量评测。
 
 官方参考：[Hy-MT2 指令和推理说明](https://github.com/Tencent-Hunyuan/Hy-MT2/blob/main/README_CN.md)、[1.8B 模型](https://huggingface.co/tencent/Hy-MT2-1.8B)。

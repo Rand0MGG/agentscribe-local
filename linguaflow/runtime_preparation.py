@@ -1,20 +1,19 @@
 """Own one prepared inference process; desktop code never imports model libraries."""
 import atexit
 import json
-import os
 import subprocess
 from collections import deque
-from pathlib import Path
 from threading import Event, Lock, Thread, Timer
 
 from .process_platform import spawn_options, stop_tree
-from .runtime_paths import runtime_python
+from .runtime_paths import python_environment, resource_root, runtime_python
 
 
 class PreparedWorker:
     timeout = 180.
 
     def __init__(self, python):
+        self.python = python
         self.process = None
         self.error = None
         self.ready = Event()
@@ -44,9 +43,9 @@ class PreparedWorker:
                 command = [str(python), '-u', '-m', 'linguaflow.wlk_worker']
                 self.process = subprocess.Popen(
                     command,
-                    cwd=str(Path(__file__).resolve().parents[1]), stdin=subprocess.PIPE,
+                    cwd=resource_root(), stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
-                    env={**os.environ, 'PYTHONIOENCODING': 'utf-8'},
+                    env=python_environment(),
                     **spawn_options())
             self.diagnostics = Thread(target=self.read_logs, daemon=True)
             self.diagnostics.start()
@@ -169,7 +168,8 @@ class RuntimePreparation:
 
     def _prepare_locked(self):
         """Return a replaced idle worker; caller cleans up outside the lock."""
-        if (self.worker is not None
+        python = runtime_python()
+        if (self.worker is not None and self.worker.python == python
                 and self.worker.error is None and not self.worker.closed.is_set()
                 and (self.worker.process is None or self.worker.process.poll() is None)):
             return None
@@ -177,7 +177,6 @@ class RuntimePreparation:
         if self.idle_timer:
             self.idle_timer.cancel()
             self.idle_timer = None
-        python = runtime_python()
         if python.is_file():
             self.worker = PreparedWorker(python)
             self.arm_idle(self.worker)

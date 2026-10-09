@@ -54,6 +54,24 @@ def pool(monkeypatch, tmp_path, program=PROGRAM):
     return runtime, calls
 
 
+def test_new_environment_is_used_after_current_session_release(monkeypatch, tmp_path):
+    runtime, calls = pool(monkeypatch, tmp_path)
+    active = runtime.acquire(Event())
+    alternative = tmp_path / 'new-python'
+    alternative.write_bytes(b'fixture path; spawn uses the real interpreter')
+    monkeypatch.setattr(preparation, 'runtime_python', lambda: alternative)
+    try:
+        runtime.prepare()  # The active session keeps its original process.
+        assert runtime.worker is active and active.process.poll() is None
+        runtime.release(active, reusable=False)
+        replacement = runtime.acquire(Event())
+        assert replacement is not active and replacement.python == alternative
+        assert len(calls) == 2
+        runtime.release(replacement, reusable=False)
+    finally:
+        runtime.close()
+
+
 def execute(runtime, source, count):
     app=QCoreApplication.instance() or QCoreApplication([])
     captions, failures=[], []

@@ -23,7 +23,9 @@ assert commands[1][-1] == 'linguaflow.semantic_model'
 commands.clear()
 cache.resolve_qwen_cached = lambda model: Path(model)
 manager.prepare_qwen('.')
-assert len(commands) == 1 and commands[0][-1] == 'linguaflow.semantic_model'
+assert len(commands) == 2
+assert commands[0][-3:] == ['linguaflow.model_prepare', 'qwen', '.']
+assert commands[1][-1] == 'linguaflow.semantic_model'
 assert not hasattr(manager, 'semantic_device') and not hasattr(manager, 'semantic_lookahead')
 def fail(command):
     raise RuntimeError('required model missing')

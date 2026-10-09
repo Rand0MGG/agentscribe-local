@@ -3,7 +3,6 @@ import atexit
 import base64
 import json
 import subprocess
-from pathlib import Path
 from queue import Empty, Queue
 from threading import Lock, Thread
 
@@ -11,7 +10,7 @@ import numpy as np
 
 from .asr_stability import choose_cut
 from .qwen_accurate import LANGUAGE_NAMES, QwenAccurateOnline
-from .runtime_paths import mlx_python
+from .runtime_paths import mlx_python, python_environment, resource_root
 
 MLX_MODEL = 'mlx-community/Qwen3-ASR-1.7B-4bit'
 MLX_REVISION = '78a389c776a5483b2d0d4ea5494e11012e0d6159'
@@ -34,7 +33,7 @@ class MLXClient:
         self.closed = False
         self.exchange = None
         self.process = subprocess.Popen([str(python), '-u', '-m', 'linguaflow.mlx_asr_worker'],
-            cwd=Path(__file__).resolve().parents[1], stdin=subprocess.PIPE,
+            cwd=resource_root(), env=python_environment(), stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, text=True, encoding='utf-8')
         atexit.register(self.close)
         try:

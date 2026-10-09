@@ -9,7 +9,6 @@ import json
 import os
 import sys
 from dataclasses import asdict
-from pathlib import Path
 from threading import Lock
 from types import SimpleNamespace
 
@@ -66,13 +65,8 @@ async def serve(settings, emit, read_message):
         emit({"type": "status", "text": "检查 Qwen 模型文件；已缓存权重复用"})
         config.model_path = resolve_qwen_cached(model)
     if not qwen:
-        model = settings.get("asr_model", "large-v3")
-        if Path(model).exists():
-            config.model_path = str(Path(model).resolve())
-        else:
-            checkpoint = Path.home() / ".cache" / "whisper" / (model + ".pt")
-            if checkpoint.is_file():
-                config.model_path = str(checkpoint)
+        from .model_cache import resolve_whisper_cached
+        config.model_path = resolve_whisper_cached(settings.get("asr_model", "large-v3"))
     def load_recognition(own):
         emit({"type": "status", "text": "正在加载 WhisperLiveKit / " + config.backend})
         if qwen:

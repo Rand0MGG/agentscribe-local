@@ -4,7 +4,7 @@ import platform
 import sys
 from pathlib import Path
 
-from .runtime_paths import llama_server
+from .runtime_paths import llama_server, model_directory
 from .translation_models import HY_MODEL
 
 HY_GGUF = 'tencent/Hy-MT2-1.8B-GGUF'
@@ -36,7 +36,7 @@ def runtime_archives(device):
 
 
 def model_path():
-    return Path(__file__).resolve().parents[1] / 'models' / 'Hy-MT2-1.8B-GGUF' / MODEL_FILE
+    return model_directory('Hy-MT2-1.8B-GGUF') / MODEL_FILE
 
 
 def selected_model(settings):

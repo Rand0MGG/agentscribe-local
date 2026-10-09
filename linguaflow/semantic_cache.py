@@ -8,6 +8,8 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from .runtime_paths import cache_root
+
 
 def _identity(model, version):
     files = {}
@@ -26,7 +28,7 @@ def _directory(model, version):
         return None
     identity = _identity(model, version)
     key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:24]
-    return Path(__file__).resolve().parents[1] / '.work' / 'cache' / 'sat-ort' / key
+    return cache_root() / 'sat-ort' / key
 
 
 def cached_cpu_model(model, version):

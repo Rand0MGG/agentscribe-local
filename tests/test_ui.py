@@ -311,7 +311,8 @@ w.asr.setCurrentText('')
 w.start()
 assert messages.pop() == '模型为空'
 w.asr.setCurrentText('small')
-w.model_manager.worker = object()
+from linguaflow.management import Preparation
+w.model_manager.worker = Preparation(lambda: 'ready', w.model_manager)
 w.start()
 assert messages.pop() == '模型准备中'
 w.model_manager.worker = None

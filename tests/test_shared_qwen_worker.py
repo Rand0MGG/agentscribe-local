@@ -142,12 +142,14 @@ def test_worker_uses_shared_startup_and_owns_backend_resource(monkeypatch, backe
 @pytest.mark.parametrize(('platform', 'device'), [('win32', 'cuda'), ('darwin', 'cpu')])
 def test_whisper_uses_shared_startup_and_preserves_device(monkeypatch, platform, device):
     stub_worker(monkeypatch, platform)
+    monkeypatch.setattr(model_cache, 'resolve_whisper_cached', lambda _: 'local-whisper.pt')
     monkeypatch.setattr(sys.modules['torch'].cuda, 'is_available', lambda: True)
     recognition_entered, semantic_entered = Event(), Event()
     engine, model, received = SimpleNamespace(), SimpleNamespace(), []
 
     def create(factory, config, selected):
         assert config.backend == 'whisper' and selected == device
+        assert config.model_path == 'local-whisper.pt'
         recognition_entered.set()
         assert semantic_entered.wait(2)
         return engine
@@ -163,6 +165,19 @@ def test_whisper_uses_shared_startup_and_preserves_device(monkeypatch, platform,
     settings = Settings('file', backend='whisper', asr_device=device, source='en', translate=False)
     asyncio.run(wlk_worker.serve(asdict(settings), lambda _: None, None))
     assert received == [(engine, None, model)]
+
+
+def test_whisper_missing_cache_is_rejected_before_model_loading(monkeypatch, tmp_path):
+    stub_worker(monkeypatch)
+    monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path))
+    monkeypatch.setattr(runtime_compat, 'create_whisper_engine',
+                        lambda *a: pytest.fail('model loading may not start a download'))
+    settings = Settings('file', backend='whisper', asr_model='tiny',
+                        asr_device='cpu', source='en', translate=False)
+    events = []
+    with pytest.raises(ValueError, match='开始聆听不会下载模型'):
+        asyncio.run(wlk_worker.serve(asdict(settings), events.append, None))
+    assert not any(event['type'] == 'ready' for event in events)
 
 
 def test_source_lock_waiters_do_not_starve_live_translation(monkeypatch):

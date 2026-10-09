@@ -14,12 +14,15 @@ Qt 界面与模型运行环境隔离；应用自行启动、停止推理进程�
 
 ## 安装
 
-需要 Python 3.11–3.13（建议 3.12）、Git、Windows 建议 16GB 系统内存（最低 CPU 尚未系统评测；Apple Silicon 8GB 的短文件测试范围见下文）。GPU 环境及大模型会占用十余 GB 磁盘，请留足空间。
+源码版需要 Python 3.11–3.13（建议 3.12）；运行环境安装使用固定提交的源码归档，无需系统 Git。Windows 仅允许 x64、兼容 NVIDIA 显卡：当前 PyTorch 2.11 / CUDA 12.8 需要计算能力 ≥ 7.5（Turing 或更新架构）、驱动 ≥ 570.65。Mac 仅允许原生 Apple Silicon / arm64，拒绝 Intel 和 Rosetta。Windows 建议 16GB 系统内存；Apple Silicon 8GB 的短文件测试范围见下文。GPU 环境及大模型会占用十余 GB 磁盘，请留足空间。
 首次安装与下载需要网络；模型准备完整后可在断网时使用。应用不提供严格离线开关，也不在启动推理时强制禁止联网；旧的离线设置不再生效。录音不上传；字幕默认在本地处理。只有明确开启课程云端处理后，才将授权的课件页面图像、文字、定稿和笔记发送给 DeepSeek。
+
+识别和翻译模型统一从设置中显式下载 / 检查，开始聆听只使用本地文件。准备任务可以取消；Whisper 分块校验下载，全部通过后才替换文件，不把整份权重读进内存做摘要。沿用已有 Whisper / Hugging Face 缓存及用户指定的缓存位置。
 
 ### Windows
 
 ```powershell
+py -3.12 -m linguaflow.hardware
 py -3.12 -m venv .venv
 .venv\Scripts\python.exe -m pip install -e ".[dev]"
 .venv\Scripts\python.exe scripts\install_runtime.py
@@ -27,12 +30,13 @@ py -3.12 -m venv .venv
 ```
 
 之后双击 `run-windows.cmd` 启动。`install-gpu-windows.cmd` 安装同一套推理环境。
-没有 NVIDIA 显卡时用 `scripts\install_runtime.py --cpu`，并在模型管理中将识别与翻译都设为 CPU。
-安装器仅修改项目虚拟环境，Git 长路径选项只对安装子进程生效，不更改系统配置。
+没有兼容显卡或驱动不符合要求时，准备脚本在创建环境、下载文件前拒绝安装，不提供 `--cpu` 绕过。已有兼容设备上的 CPU 推理选择仍供诊断使用。
+环境准备在独立目录安装依赖、运行 `pip check` 并执行小型 GPU 运算，全部成功后原子切换环境记录；失败或取消保留旧环境，不修改系统 Python。此检查不等于识别模型或实时音频验收。
 
 ### macOS（Apple Silicon）
 
 ```bash
+python3.12 -m linguaflow.hardware
 python3.12 -m venv .venv
 .venv/bin/python -m pip install -e '.[dev]'
 .venv/bin/python scripts/install_runtime.py
@@ -41,7 +45,7 @@ python3.12 -m venv .venv
 
 也可使用 `bash run-macos.command`。Whisper CPU 已通过文件识别测试；新增 Qwen3-ASR 1.7B / MLX 4-bit **试验入口**，已在 M2 / 8GB 上完成英文短音频和 101 秒连续音频的 GPU 字幕测试。中文、长会话和真实录音仍待验收。
 
-试用 Apple GPU 路线，另行执行 `.venv/bin/python scripts/install_mlx.py`（或模型管理 → 运行环境 → 安装 Apple GPU）。然后选择“试用 Mac 4-bit 设置”，下载 / 检查 Qwen 模型，并指定原文语言。此配置关闭翻译；下载 / 检查识别模型会一并准备必要的字幕分句组件，可按需要再开启翻译。MLX 单独使用 `.venv-mlx`，避免与现有 Windows / WLK 的 Transformers 版本冲突。
+试用 Apple GPU 路线，另行执行 `.venv/bin/python scripts/install_mlx.py`（或模型管理 → 运行环境 → 安装 Apple GPU）。然后选择“试用 Mac 4-bit 设置”，下载 / 检查 Qwen 模型，并指定原文语言。此配置关闭翻译；下载 / 检查识别模型会一并准备必要的字幕分句组件，可按需要再开启翻译。MLX 使用独立环境（兼容原有 `.venv-mlx`），避免与 Windows / WLK 的 Transformers 版本冲突。
 
 Windows / PyTorch 与 macOS / MLX 的 Qwen 共用一套识别确认和修订逻辑：短停顿保留音频，默认使用 30 秒窗口与重叠尾部；至少多轮识别一致后确认前文，窗口满了不确认整段。SaT 可以暂定切分，只有对应 ASR 文字已确认才能收尾；两者均确认后翻译才定稿。句尾先保留初译，等待后文或停止时收尾。详见 [语义分段](docs/SEMANTIC_SEGMENTATION.md)。
 
@@ -53,7 +57,9 @@ Mac 适配进展、已验证范围和待实机测试项目见 [macOS 适配记�
 
 ## 使用
 
-当前工作区新增真实文件夹、录音命名、删除恢复、自动保存与回听；默认存放在安装目录下的“录音”，可在设置中更改。详见 [工作区说明](docs/WORKSPACE.md)。
+录音按真实文件夹保存，提供命名、删除恢复、自动保存与回听。新用户默认使用独立用户目录：Windows `%LOCALAPPDATA%\AgentScribe\录音`，Mac `~/Library/Application Support/AgentScribe/录音`，可在设置中更改。已有保存位置和项目内旧录音继续使用，不自动搬移或删除。详见 [工作区说明](docs/WORKSPACE.md)。
+
+设置 → 运行环境 → 检查软件更新，仅在点击时连接 GitHub。源码版提示已发布的源码版本；后续安装版按 Windows x64 / macOS arm64 和当前稳定或 beta 渠道匹配具体产物，不能用另一平台的最新版本代替。当前尚无安装包，不提供自动替换程序或卸载器；新默认数据目录独立于程序，旧项目内录音在清理项目之前仍须备份。
 
 首页底部的语言与识别引擎按钮可直接打开对应设置。侧栏“使用指南”介绍首次准备、字幕修订和录音整理；设置支持搜索字幕、GPU、HY-MT2 等关键词。`Ctrl+,` 打开设置，`Ctrl+F` 聚焦设置搜索，`Ctrl+N` 新建录音，`Esc` 从设置返回录音。在“常规 → 减少动态效果”中可关闭切页、弹窗和开关动画。界面变更与验证范围见 [界面体验说明](docs/UI_EXPERIENCE.md)。
 
@@ -77,7 +83,7 @@ Mac 适配进展、已验证范围和待实机测试项目见 [macOS 适配记�
 
 允许课程云端处理后点击“完整阅读并提取术语”：全部页面图像逐页发送模型，包含无文字图形页和空白页；原生文字只作辅助。新增格式导入后即可在本地预览原页，无需密钥或上传。界面分别显示原页、模型视觉解读和已读页数，解读与原生文本分别保存和引用。已读完不表示模型理解无误；可手工录入和审核术语。
 
-可选云端功能需要在桌面环境安装额外依赖：Windows 运行 `.venv\Scripts\python.exe -m pip install -e ".[knowledge]"`；Mac 使用 `.venv/bin/python -m pip install -e '.[knowledge]'`。PDF/Office 页面渲染还需 Node.js 22.19 或更新版本，然后运行 `.venv\Scripts\python.exe scripts/install_documents.py`（Mac 使用 `.venv/bin/python`）。安装器在项目 `.runtime/document-renderer` 准备 DSH 的独立 LibreOffice Kit 0.1.3；Windows x64 安装约 197 MiB。网页、文本和图片复用既有 PySide6，不新增浏览器或 OCR 依赖；网页截图在自有子进程中使用 CPU。Mac 渲染尚待实机验证，安装不改变音频推理环境或识别设备。
+可选云端功能需要在桌面环境安装额外依赖：Windows 运行 `.venv\Scripts\python.exe -m pip install -e ".[knowledge]"`；Mac 使用 `.venv/bin/python -m pip install -e '.[knowledge]'`。PDF/Office 页面渲染还需 Node.js 22.19 或更新版本，然后运行 `.venv\Scripts\python.exe scripts/install_documents.py`（Mac 使用 `.venv/bin/python`）。安装器在项目 `.runtime/components/document-renderer` 的独立目录准备 DSH LibreOffice Kit 0.1.3，验证成功后切换；兼容旧 `.runtime/document-renderer`。历史 Windows x64 安装约 197 MiB。网页、文本和图片复用既有 PySide6，不新增浏览器或 OCR 依赖；网页截图在自有子进程中使用 CPU。Mac 渲染尚待实机验证，安装不改变音频推理环境或识别设备。
 
 勾选术语并保存审核结果后，下一次 Qwen 录音会固定课程上下文；PyTorch 使用 `context`，MLX 使用 `system_prompt`。Whisper 保持原有行为。当前是参数接入与模拟验证，尚未证明术语改善识别质量，也没有完成本轮 Mac GPU 实测。
 
@@ -107,13 +113,13 @@ Mac 适配进展、已验证范围和待实机测试项目见 [macOS 适配记�
 - 8GB 显存优先尝试 Whisper small 或 Qwen 0.6B，加 NLLB 600M。16GB 可使用 large-v3，但总占用受窗口、运行库及其他程序影响，软件没有强制显存配额。
 - 模型管理中的更新间隔是调度参数，不表示模型只计算该时长；上游流式后端负责窗口推进。停顿阈值控制话语边界，不是唯一提交依据。
 
-原始 Whisper 下载到 `~/.cache/whisper`；Qwen/NLLB 使用 Hugging Face 缓存，可通过 `HF_HOME` 设置后者位置。翻译下载只选择一种权重格式。
+原始 Whisper 沿用 `~/.cache/whisper`，并支持 `XDG_CACHE_HOME`；Qwen/NLLB 使用 Hugging Face 缓存，可通过 `HF_HOME` 设置后者位置。MLX / 内置 GGUF 新下载使用独立用户模型目录，已有项目内目录继续复用。翻译下载只选择一种权重格式。
 NLLB 权重遵循 [CC-BY-NC-4.0](https://huggingface.co/facebook/nllb-200-distilled-600M)，不默认适用于商业发行。
 
 ## 架构和验证
 
 - `.venv`：桌面界面、音频采集、模型下载管理。
-- `.venv-wlk`：固定版本 WhisperLiveKit、Qwen 适配、CUDA PyTorch 和翻译。
+- 推理环境：首次复用已有 `.venv-wlk` / `.venv-mlx`；修复后由共享路径模块选择 `.runtime/python/` 下已验证的独立目录，不重定位虚拟环境。
 - `wlk_session.py`：Qt 会话、连续音频临时缓冲、子进程通信。
 - `wlk_worker.py`：上游 AudioProcessor/VAC/ASR、字幕映射、异步翻译。
 - `wlk_captions.py`：已提交原文与可修订尾部映射，避免提前锁定增长中的上游行。

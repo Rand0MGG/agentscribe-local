@@ -1,5 +1,8 @@
 """Library discovery and legacy migration policy, with UI interactions injected."""
+from pathlib import Path
+
 from .library import Library
+from .runtime_paths import recordings_root
 
 
 class LibrarySelectionCancelled(Exception):
@@ -7,9 +10,23 @@ class LibrarySelectionCancelled(Exception):
 
 
 def open_library(store, install_root, *, explicit_root=None, legacy_root=None,
-                 choose_directory, migration_failed, factory=Library):
+                 choose_directory, migration_failed, factory=Library, default_root=None):
     saved_root = store.value('library_directory')
-    root = explicit_root or saved_root or install_root / '录音'
+    if not isinstance(saved_root, (str, Path)) or not str(saved_root).strip():
+        saved_root = None
+    old_default = install_root / '录音'
+    # Existing source users retain their library; never silently move recordings
+    # or open an empty new library in place of their old one.
+    existing = None
+    if not explicit_root and not saved_root:
+        try:
+            if old_default.is_dir() and any(old_default.iterdir()):
+                existing = old_default
+        except OSError:
+            # An unreadable old library must enter the normal selection/error
+            # flow, never be mistaken for no recordings and silently hidden.
+            existing = old_default
+    root = explicit_root or saved_root or existing or default_root or recordings_root()
     selected = False
     while True:
         try:
@@ -22,7 +39,7 @@ def open_library(store, install_root, *, explicit_root=None, legacy_root=None,
             if not root:
                 raise LibrarySelectionCancelled()
             selected = True
-    if selected:
+    if selected or (existing and not explicit_root and not saved_root):
         store.setValue('library_directory', str(root))
     if not explicit_root and not saved_root and legacy_root is not None:
         try:

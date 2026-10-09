@@ -5,12 +5,10 @@ import re
 import secrets
 import socket
 import subprocess
-import sys
 import time
 import urllib.error
 import urllib.request
 from collections import deque
-from pathlib import Path
 from threading import Lock, Thread
 
 from .core import WHISPER_TO_NLLB
@@ -59,8 +57,9 @@ class LlamaTranslator:
                    '--api-key', self.api_key]
         try:
             report(f'正在加载 {self.name} · llama.cpp / {self.device.upper()}…')
-            self.process = subprocess.Popen([sys.executable, '-u', '-m', 'linguaflow.managed_process', *command],
-                cwd=Path(__file__).resolve().parents[1], stdin=subprocess.PIPE,
+            from .runtime_paths import installation_command, python_environment, resource_root
+            self.process = subprocess.Popen(installation_command('linguaflow.managed_process', *command),
+                cwd=resource_root(), env=python_environment(), stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8',
                 errors='replace', **spawn_options())
             atexit.register(self.close)

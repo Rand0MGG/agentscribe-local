@@ -45,7 +45,7 @@ commands = []
 manager.prepare = lambda action: action()
 manager.run_preparation = lambda command: commands.append(command)
 manager.prepare_translation(HY_MODEL)
-assert commands[0][1] == 'scripts/install_llama.py' and commands[0][-1] == settings.llama_model
+assert 'linguaflow.llama_install' in commands[0] and commands[0][-1] == settings.llama_model
 w.close()
 w = window()
 manager = w.model_manager

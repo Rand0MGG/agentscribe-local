@@ -1,36 +1,14 @@
 """Install the isolated local inference runtime, without changing system Python."""
-import argparse
-import os
-import platform
-import subprocess
 import sys
 from pathlib import Path
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--cpu", action="store_true")
-    args = parser.parse_args()
-    if sys.platform == "darwin" and platform.machine().lower() != "arm64":
-        raise SystemExit("当前 macOS 推理环境仅支持原生 Apple Silicon Python。"
-                         "请使用 arm64 Python 3.11–3.13；Intel Mac / Rosetta 环境尚未支持。")
     root = Path(__file__).resolve().parents[1]
-    environment = root / ".venv-wlk"
-    subprocess.run([sys.executable, "-m", "venv", str(environment)], check=True)
-    python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    suffix = "" if sys.platform == "darwin" else ("+cpu" if args.cpu else "+cu128")
-    # An exact local-version suffix replaces an existing CPU build when the
-    # user repairs the GPU runtime; ==2.11.0 alone considers either satisfied.
-    command = [str(python), "-m", "pip", "install", f"torch==2.11.0{suffix}", f"torchaudio==2.11.0{suffix}"]
-    if sys.platform != "darwin":
-        command += ["--index-url", "https://download.pytorch.org/whl/" + ("cpu" if args.cpu else "cu128")]
-    subprocess.run(command, check=True)
-    install_env = {**os.environ, "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.longpaths",
-                   "GIT_CONFIG_VALUE_0": "true"}
-    subprocess.run([str(python), "-m", "pip", "install", "-r", str(root / "requirements-runtime.txt")],
-                   check=True, env=install_env)
-    subprocess.run([str(python), "-u", "-m", "linguaflow.semantic_model"], cwd=root, check=True, timeout=600)
-    print("WhisperLiveKit / Qwen runtime installed:", python)
+    sys.path.insert(0, str(root))
+    from linguaflow.runtime_install import main as install
+    sys.argv.insert(1, 'wlk')
+    install()
 
 
 if __name__ == "__main__":

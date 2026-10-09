@@ -3,14 +3,13 @@ import json
 import subprocess
 from collections import deque
 from dataclasses import asdict
-from pathlib import Path
 from threading import Condition, Thread
 from uuid import uuid4
 
 from PySide6.QtCore import QObject, Qt, Signal, Slot
 
 from ..process_platform import spawn_options, stop_tree
-from ..runtime_paths import knowledge_python
+from ..runtime_paths import knowledge_python, python_environment, resource_root
 
 
 class KnowledgeClient(QObject):
@@ -40,7 +39,7 @@ class KnowledgeClient(QObject):
         epoch = self.epoch = uuid4().hex
         self.identifier = item['id']
         self.process = subprocess.Popen([str(knowledge_python()), '-m', 'linguaflow.knowledge.worker'],
-            cwd=Path(__file__).resolve().parents[2], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            cwd=resource_root(), env=python_environment(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, text=True, encoding='utf-8', bufsize=1, **spawn_options())
         process = self.process
         def read():

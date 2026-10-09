@@ -1,3 +1,19 @@
+## 2026-10-09 安装包之前的共享运行基础
+
+环境：Windows 11 x64、桌面和既有 WLK Python 3.12.8；基于 `windows` / `813c134` 的共享运行基础改造。本节记录提交前的本地验证，提交与推送以 Git 记录为准；未制作 EXE/DMG、改动系统 Python、升级现有环境或下载识别权重，未合并或发布。
+
+- 硬件：`python -m linguaflow.hardware` 本机通过；模拟覆盖无 NVIDIA、驱动不足、Volta/Pascal、混合显卡、Windows ARM64、Mac Intel/Rosetta 与原生 arm64。门槛固定为当前 PyTorch 2.11 / CUDA 12.8 的计算能力 ≥ 7.5、驱动 ≥ 570.65；依据 [PyTorch 构建范围](https://dev-discuss.pytorch.org/t/dropping-volta-support-from-cuda-12-8-binaries-for-release-2-11/3290) 和 [NVIDIA CUDA 12.8 驱动表](https://docs.nvidia.com/cuda/archive/12.8.0/cuda-toolkit-release-notes/index.html)。这不是对所有满足预检查的电脑承诺实时性能，准备后还执行实际 GPU 运算。
+- 事务与数据：模拟 pip、GPU 检查、写入失败，验证旧环境指针及录音逐字节保留；覆盖损坏/越界指针、应用依赖版本不匹配、固定源码摘要失败、新用户外部目录与旧保存位置兼容。真实自有子进程及后代模拟下载，取消后全部关闭输出管道、线程退出，已下载部分保留。环境切换不结束活动会话，下一次使用新解释器；核心导入约束覆盖共享安装/更新模块，GPU 库仅在独立检查进程导入。
+- 最终完整回归：`.venv\Scripts\python.exe scripts/test_no_audio.py -q --basetemp=.work/cache/pkg-last`，**660 passed、5 skipped，128.57 秒**。覆盖有效保存位置不受不可读旧目录干扰、Whisper 缓存路径、更新检查期间的模拟录音和保存。Ruff 与 `git diff --check` 通过，测试保护报告零原生音频导入尝试。跳过仍不是平台验收。
+- Whisper 收尾：原加载路径缺少缓存时会交给上游下载，上游下载校验会读取完整权重。现改为分块下载/摘要、先校验后替换，并让 worker 只传本地模型路径。模型缓存、共享 worker 和导入约束 **28 passed，1.34 秒**（`whisper-prepare-fixed`），覆盖 XDG 旧缓存及别名、空文件、缺失分片、摘要失败保留旧权重、成功替换和有效缓存不联网；缺失模型在加载/ready 前拒绝。没有真实下载 Whisper 权重，不能将文件检查当模型识别验收。
+- 路径限制对照：补跑使用较长的 `--basetemp=.work/cache/pkg-readiness-with-whisper-final` 时，**3 failed、656 passed、5 skipped**；三项均为既有课件渲染测试，写入深层临时文件时报 Windows 路径错误。本机 `LongPathsEnabled=0`，未修改系统注册表或放宽断言；失败夹具保留。此次固定源码重打包已避开上游实验长文件名，但不据此声称任意长用户录音库路径或完整新环境安装已验收。
+- Windows 依赖构建：直接让 pip 解压原始 Qwen 固定源码归档，复现上游实验输出的长路径故障。准备器只保留原始声明的包目录、构建文件、README 和许可证，不修改源码、不改变提交；原始归档及派生归档均校验 SHA256。使用已缓存派生归档执行 `pip download --no-deps --no-build-isolation` 与 `pip wheel --no-deps --no-build-isolation`，两份依赖的安装元数据和 wheel 均构建成功。产物在 `.work/cache/runtime-source-check/`、`runtime-source-wheels/`；未安装到现有环境。这不是全新电脑或完整依赖安装的验收。
+- GPU 组件探针：`.venv-wlk\Scripts\python.exe .work/cache/runtime-probe-20261009/probe.py` 明确阻止原生音频导入，调用生产 `runtime_check.verify('wlk')`。NVIDIA GeForce RTX 5070 Ti、PyTorch **2.11.0+cu128 / CUDA 12.8** 的小型张量运算通过；没有加载 ASR/翻译权重、采集音频或评测字幕质量/延迟。
+- 更新：实际只读请求 GitHub 发布接口成功，当前应用 0.5.0 返回没有新的已发布版本，未把 `windows` 分支新提交当发布。模拟覆盖平台各自最新、稳定/beta、缺失摘要、未上传/无产物、恶意 URL 和禁止降级。仅点击时检查，源码态只链接源码发行页，没有自动替换程序或数据。复核发现更新后台误占模型准备互斥，新增独立 Qt 回归修复前 **1 failed**，修复后实际延迟的替身更新检查期间仍可开始/停止模拟会话并保存字幕；安装、UI、准备/取消和更新组合 **69 passed，13.28 秒**（`pkg-isolation`）。
+- Windows 界面：`AGENTSCRIBE_NATIVE_UI=1` 下运行独立 Qt 窗口，**2 passed，4.78 秒**；检查 1280×900 / 900×650 逻辑尺寸的更新入口、设置搜索和旧录音位置提示。截图在 `.work/browser/pkg-readiness-final-20261009/`，无音频访问。
+
+待验证：macOS arm64 实际新环境准备、MPS/MLX 组件检查、共享进程树取消；全新 Windows 电脑的完整依赖安装与驱动错误；真实录音生命周期。随包完整 Python/Node、签名、安装/卸载和程序替换尚未构建，不能称为独立安装包支持。新默认录音在独立用户目录；项目内旧录音不自动搬移，界面提醒清理项目之前备份，未来卸载器不得把它们当缓存删除。
+
 ## 2026-10-09 取消模型加载时的断管清理
 
 环境：Windows 11 x64、Python 3.12.8，既有 `windows` / `f8e830a` 之上的共享清理修复；没有新增依赖或修改模型、音频设备与录音格式。

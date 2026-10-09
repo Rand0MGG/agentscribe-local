@@ -3,12 +3,16 @@ import asyncio
 import hashlib
 import shutil
 import struct
-import sys
 import tempfile
 from pathlib import Path
 
 from ..process_platform import spawn_options, stop_tree
-from ..runtime_paths import DOCUMENT_RENDERER_VERSION, document_renderer
+from ..runtime_paths import (
+    DOCUMENT_RENDERER_VERSION,
+    document_renderer,
+    installation_command,
+    python_environment,
+)
 from .files import checked_path, material_cache, read_json, write_json
 
 RENDER_VERSION = 'libreoffice-kit-' + DOCUMENT_RENDERER_VERSION + '-144dpi-v1'
@@ -27,7 +31,8 @@ IMPORT_SUFFIXES = NATIVE_SUFFIXES + OFFICE_SUFFIXES + WEB_SUFFIXES + IMAGE_SUFFI
 async def run_renderer(arguments):
     """Own one helper and its descendants; EOF cancels, timeout/cancellation always reaps."""
     process = await asyncio.create_subprocess_exec(*map(str, arguments), stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL, **spawn_options())
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+        env=python_environment(), **spawn_options())
     try:
         if await asyncio.wait_for(process.wait(), 130):
             raise RuntimeError('课件页面生成失败，请检查文件、字体、资源和组件安装；原件与已保存内容保留。')
@@ -48,7 +53,7 @@ async def render_source(source, output, limit=1000, *, resource_source=None):
     if source.suffix.lower() in WEB_SUFFIXES + IMAGE_SUFFIXES:
         write_json(output.parent, request, {'source': str(source), 'output': str(output), 'limit': limit,
                                           'resource_source': str(resource_source or source)})
-        await run_renderer([sys.executable, '-m', 'linguaflow.knowledge.render_web', request])
+        await run_renderer(installation_command('linguaflow.knowledge.render_web', request))
         error = read_json(output.parent / 'error.json') if (output.parent / 'error.json').is_file() else {}
         if error:
             raise ValueError(error['message'])

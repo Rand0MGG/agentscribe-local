@@ -10,18 +10,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from linguaflow.backends import create_translator
 from linguaflow.core import Settings
 from linguaflow.translation_context import TranslationContext
+from linguaflow.translation_models import HY_MODEL
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', default='models/Hy-MT2-1.8B')
+    parser.add_argument('--model', default=HY_MODEL)
     parser.add_argument('--device', choices=('cpu', 'cuda'), default='cuda')
     parser.add_argument('--output', default='.work/hy-translation-smoke.json')
     args = parser.parse_args()
     model = args.model
-    if not Path(model).is_dir():
-        from huggingface_hub import snapshot_download
-        model = snapshot_download(model, local_files_only=True)
+    # The production adapter resolves legacy/user directories and Hub caches.
     import torch
     import transformers
 

@@ -11,7 +11,7 @@ import linguaflow.semantic_cache as cache
 @pytest.fixture
 def source(tmp_path, monkeypatch):
     monkeypatch.setattr(cache.platform, 'machine', lambda: 'arm64')
-    monkeypatch.setattr(cache, '__file__', str(tmp_path / 'linguaflow' / 'semantic_cache.py'))
+    monkeypatch.setattr(cache, 'cache_root', lambda: tmp_path / '.work/cache')
     model = tmp_path / 'source'
     model.mkdir()
     (model / 'model_optimized.onnx').write_bytes(b'original weights')
