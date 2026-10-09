@@ -47,7 +47,7 @@
 
 Windows 的设备选项、安装包组合、路径、进程启动/清理参数和管道检测使用模拟测试；尚未进行 Windows 实机安装或 GPU 推理验收。
 
-本地界面证据：`.work/cache/llama-desktop/`。完整文件链路证据：`.work/mac-file-tests/llama-shared/`；资源与音频保护记录：`llama-shared-observe/`。历史 HY 性能和质量限制见 [HY Metal 验证](testing/HY_METAL.md)。
+本地界面证据：`.work/cache/llama-desktop/`。完整文件链路证据：`.work/mac-file-tests/llama-shared/`；资源与音频保护记录：`llama-shared-observe/`。历史 HY 性能和质量限制见 [HY Metal 验证](archive/testing/HY_METAL.md)。
 
 ### 本轮结果
 

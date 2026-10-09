@@ -13,11 +13,13 @@ from uuid import uuid4
 
 from .hardware import CUDA_WHEEL, TORCH_VERSION, check_installation
 from .process_platform import spawn_options, stop_tree
+from .runtime_base import prepare_base, python_abi
 from .runtime_paths import (
     cache_root,
     environment_python,
     installation_command,
     knowledge_python,
+    packaged,
     python_environment,
     resource_root,
     runtime_root,
@@ -167,6 +169,22 @@ def install(kind):
         raise ValueError('安装内容缺少固定版本依赖清单，请重新安装完整版本。')
     base = runtime_root() / 'python' / kind
     with preparation_lock(base):
+        pointer = base / 'active.json'
+        previous_metadata = None
+        if pointer.exists():
+            try:
+                previous_metadata = json.loads(pointer.read_text(encoding='utf-8'))
+                if not isinstance(previous_metadata, dict):
+                    previous_metadata = None
+            except (OSError, ValueError):
+                pass  # Damaged pointers can be repaired without deleting old slots.
+        previous = (previous_metadata or {}).get('slot')
+        base_python, base_slot = knowledge_python(), None
+        if packaged():
+            with preparation_lock(runtime_root() / 'base-python'):
+                print('准备独立基础 Python；程序升级不会移除它。', flush=True)
+                base_python, base_slot = prepare_base(root / 'python', runtime_root() / 'base-python', base_python,
+                                                     preferred_slot=(previous_metadata or {}).get('base_slot'))
         slot = uuid4().hex
         destination = base / slot
         python = environment_python(destination)
@@ -180,7 +198,7 @@ def install(kind):
             run_command(command, env=environment, cwd=root)
 
         print('准备新环境；失败或取消不会替换现有环境。', flush=True)
-        run([str(knowledge_python()), '-m', 'venv', str(destination)])
+        run([str(base_python), '-m', 'venv', str(destination)])
         if kind == 'wlk':
             suffix = '+' + CUDA_WHEEL if target == 'windows-x64' else ''
             command = [str(python), '-m', 'pip', 'install', f'torch=={TORCH_VERSION}{suffix}',
@@ -194,16 +212,17 @@ def install(kind):
         run([str(python), '-m', 'linguaflow.runtime_install', kind, '--verify'])
         if not python.is_file():
             raise RuntimeError('新环境缺少 Python 解释器，未切换现有环境。')
-        pointer = base / 'active.json'
-        previous = None
-        if pointer.exists():
-            try:
-                previous = json.loads(pointer.read_text(encoding='utf-8')).get('slot')
-            except (OSError, ValueError, AttributeError):
-                pass  # Repair also works when the old pointer is damaged.
-        publish(pointer, {'slot': slot, 'previous': previous, 'platform': target,
-                          'torch_version': TORCH_VERSION if kind == 'wlk' else None,
-                          'requirements': requirements.read_text(encoding='utf-8')})
+        metadata = {'schema': 2, 'slot': slot, 'previous': previous, 'platform': target,
+                    'torch_version': TORCH_VERSION if kind == 'wlk' else None,
+                    'requirements': requirements.read_text(encoding='utf-8'),
+                    'python_abi': python_abi(), 'base_slot': base_slot}
+        publish(destination / 'environment.json', metadata)
+        if (isinstance(previous, str) and len(previous) == 32
+                and all(c in '0123456789abcdef' for c in previous)):
+            old_record = base / previous / 'environment.json'
+            if old_record.parent.is_dir() and not old_record.exists():
+                publish(old_record, previous_metadata)
+        publish(pointer, metadata)
     print('运行环境已就绪：' + str(python) + '\n请先下载 / 检查模型，再开始聆听。', flush=True)
 
 

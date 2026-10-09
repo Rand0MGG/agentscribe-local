@@ -1,63 +1,58 @@
-# Project structure
+# 项目目录与文档入口
 
-LinguaFlow keeps the desktop shell, model runtime, documentation, and verification fixtures separate so a release can be inspected without opening the large model caches.
-
-See [module boundaries and dependency contracts](ARCHITECTURE.md) for ownership, dependency rules, and refactor validation.
+模块职责、依赖方向与异步契约集中在 [ARCHITECTURE](ARCHITECTURE.md)；本文件只说明目录、数据位置和文档归属。
 
 ```text
-linguaflow/       PySide6 desktop UI and session orchestration
-scripts/          installers, smoke tests, and preview generation
-tests/            unit tests and small, authored audio fixtures
-docs/             architecture, validation, screenshots, and notices
-docs/testing/     benchmark protocols and scoring documentation
-.work/            local agent artifacts and test evidence (ignored by Git)
-requirements-runtime.txt  isolated WhisperLiveKit/Qwen runtime
-requirements-mlx.txt      isolated Apple GPU / MLX runtime (experimental)
-.runtime/         downloaded llama.cpp and document-rendering components (ignored by Git)
-pyproject.toml    desktop package and development dependencies
-linguaflow/knowledge/  optional course materials, reviewed ASR context and cited notes
+linguaflow/            桌面、业务规则与平台/模型适配
+linguaflow/knowledge/  按需启用的课程处理，不进入实时识别主链
+scripts/              生产准备入口、构建/探针与验证工具
+.github/workflows/    开发检查及后续发行自动化
+packaging/            平台构建锁、启动器与许可（Mac 分支待集成）
+tests/                回归与小型许可夹具
+docs/                 当前使用、架构、发行和证据
+docs/testing/         仍使用的测试协议与回归说明
+docs/archive/         不再更新的设计、版本与阶段实测
+.work/                忽略提交的临时产物、缓存与验证证据
+.runtime/             源码模式的运行组件与已验证环境
+requirements-*.txt    推理环境约束；桌面依赖见 pyproject.toml
 ```
 
-## Local working artifacts
+## 环境与用户数据
 
-All working artifacts stay inside this project, in ordinary directories: no junctions, symbolic links, or external directory mappings.
+`runtime_paths.py` 统一解释器、资源、运行组件和用户数据位置。桌面 `.venv` 与 WLK/MLX 环境隔离，兼容已有 `.venv-wlk`、`.venv-mlx`；新环境在最终独立路径创建，验证后才切换 `active.json`，不得搬动 venv。源码组件使用 `.runtime/`，安装态组件使用用户数据 `runtime/`。包内资源只读，不能把冻结 EXE 当 Python 解释器。当前实现及升级边界见 [架构](ARCHITECTURE.md) 和 [发行流程](RELEASING.md)。
 
-- `.work/cache/pytest` and `.work/cache/ruff`: tool caches; configured in `pyproject.toml`.
-- `.work/cache/test-runs` and `.work/cache/audition`: historical temporary test and audition directories.
-- `.work/browser`: browser session records and screenshots.
-- `.work/ami`, `.work/macwhinney`, `.work/revisions-short`: original evaluation evidence. Keep these paths and contents intact because frozen manifests reference them.
-- User-authorized cleanup on 2026-10-05 removed abandoned audio enhancement experiments and redundant processed audio. Written results and original recordings remain; historical manifests may reference artifacts that have been removed.
+默认录音位于 Windows `%LOCALAPPDATA%/AgentScribe/录音` 或 Mac `~/Library/Application Support/AgentScribe/录音`。已有偏好及非空旧库优先，不自动搬迁或删除；清理项目前保护其中的旧录音。具体文件结构、课程副本/快照、来源数据库、模型缓存和迁移说明由 [WORKSPACE](WORKSPACE.md) 维护。
 
-Future agent screenshots and scratch files should be placed under `.work/browser` or `.work/cache`, not at the project root. `.venv`, `.venv-wlk`, `.git`, `media`, and `srt` retain their existing roles and locations.
+模型权重、虚拟环境、个人录音、课程副本、密钥和本机配置不进 Git。安装包及其摘要/构建清单放 GitHub Release，生产构建结果留在 `.work/packaging/`。
 
-Benchmark documentation: [AMI protocol](testing/AMI_BENCHMARK.md), [audio presets](testing/AUDIO_PRESET_BENCHMARK.md), and [scoring system](testing/SCORING_SYSTEM.md).
+## 工作产物与证据
 
-The desktop `.venv` contains only UI and model-management dependencies. Existing `.venv-wlk` and `.venv-mlx` remain compatible. New preparations use `.runtime/python/<kind>/<slot>/` in source mode and the AgentScribe user-data `runtime/` in packaged mode; `active.json` is published only after verification. Venv directories are never relocated. `runtime_paths.py` owns interpreter/resource/data paths; workers inherit an explicit resource directory. Packaged mode requires a real bundled desktop interpreter and shared Python resources, which are not yet built. No model weights or user data are committed.
+源码工作产物留在项目普通目录，不建立外部目录映射。标准 `.app` 内部所需相对链接属于平台产物，不替代源码目录。
 
-The experimental Mac MLX backend keeps Transformers 5 separate from WLK's Transformers 4. Both installer scripts delegate to `runtime_install.py`; `hardware.py` rejects Intel/Rosetta and unsupported Windows GPUs before writes. `runtime_check.py` alone imports inference dependencies for GPU verification. Fixed upstream source archives retain original package/build/license files, omit long-path experiment outputs, and require SHA256 validation, avoiding system Git. `mlx_asr.py` adapts a PCM-only subprocess to the shared Qwen streaming contract; `mlx_asr_worker.py` owns model loading and inference. New explicitly installed MLX/GGUF weights use user-data `models/`; existing project-local weights are reused without moving them. Hugging Face/Whisper caches and `HF_HOME` remain compatible.
+- `.work/cache/pytest`、`.work/cache/ruff`：测试与静态检查缓存。
+- `.work/cache/`、`.work/browser/`：临时脚本、日志、浏览器记录和截图。
+- `.work/ami`、`.work/macwhinney`、`.work/revisions-short`：原始评测证据，冻结清单依赖这些位置，不改名、不自动清理。
+- 2026-10-05 经用户授权删除了放弃的音频增强试验与重复处理音频；书面结果及原录音保留，部分历史清单仍可能指向已删除产物。
 
-`inference_startup.py` coordinates recognition and CPU SaT initialization for both platforms. Synchronous factories load concurrently; successful initialization of both precedes VAD state and streaming tasks. The shared coordinator closes registered interruptible resources on failure, cancellation or session exit, rejects late resources, and joins loaders. `mlx_asr.py` retains only backend protocol and device checks, with no SaT cache policy or separate background loader lifecycle.
+保留原有 `media/`、`srt/` 和评测证据。清理前检查引用与授权，不将用户数据当缓存。基准协议见 [AMI](testing/AMI_BENCHMARK.md)、[音频处理](archive/testing/AUDIO_PRESET_BENCHMARK.md)、[评分](testing/SCORING_SYSTEM.md)。
 
-GGUF translation uses `llama_translation.py` with a session-owned llama.cpp service. `llama_assets.py` defines pinned runtime/model assets and validation. `process_platform.py` contains spawning, termination and parent-pipe differences; `managed_process.py` supervises only its owned process tree. `llama_install.py` prepares verified component slots under the shared runtime root; `scripts/install_llama.py` remains a compatibility entry. `scripts/check_llama.py` calls the production adapter for text checks; `replay_streaming.py` tests full sessions without replacing the translation factory.
+## 文档索引
 
-`runtime_preparation.py` owns the background WLK process and exclusive session handoff without importing inference libraries into the desktop. The prepared worker imports libraries before receiving settings, cleans up models and WLK's singleton after each successful session, and becomes reusable only after the cleanup marker; cancelled/failed workers are discarded. Idle workers expire after thirty minutes, allowing reuse across classroom breaks. `wlk_session.py` owns capture and the leased process protocol, `wlk_worker.py` assembles the streaming pipeline, `translation_service.py` owns revision-aware translation consumption, and `backends.py` contains translation adapters. Shared environment paths live in `runtime_paths.py`, so other desktop tools do not import the recording session merely to locate Python.
+| 要解决的问题 | 正文位置 |
+| --- | --- |
+| 产品能力、下载入口 | [README](../README.md) |
+| 安装、首次使用、录音与课程助手 | [WORKSPACE](WORKSPACE.md) |
+| 开发约束与授权边界 | [AGENTS](../AGENTS.md) |
+| 模块归属、状态与资源规则 | [ARCHITECTURE](ARCHITECTURE.md) |
+| 两端集成、打包、发布、自动升级 | [RELEASING](RELEASING.md) |
+| 当前平台的实测与限制 | [Windows 记录](VALIDATION.md)、[Mac 记录](MACOS_SUPPORT.md)及其专题链接 |
+| 识别分段、翻译模型和后台音频规则 | [语义分段](SEMANTIC_SEGMENTATION.md)、[上下文翻译](CONTEXT_TRANSLATION.md)、[llama.cpp](LLAMA_CPP.md)、[音频处理](AUDIO_PROCESSING.md) |
+| 可复用的测试协议 | [AMI](testing/AMI_BENCHMARK.md)、[评分](testing/SCORING_SYSTEM.md)、[暂停](testing/RECORDING_PAUSE.md) |
+| 已发行版本内容 | [GitHub Releases](https://github.com/Rand0MGG/agentscribe-local/releases)；旧源码版本说明见归档 |
+| 旧设计、实验、修复及阶段验证 | [历史归档索引](archive/README.md) |
 
-`runtime_preparation.py` owns one prepared worker and exclusive session leases. It prepares the shared CPU ONNX runtime and retains imports after releasing session model state; ASR and translation keep their own device choices. Startup preparation runs outside the UI thread; idle expiry, cancellation and application exit reap the owned process tree. It does not change networking or open audio devices.
+每项事实只在上述正文维护，其他文件链接引用。历史证据保留但不继续承担当前规范；新增工作不再向旧设计稿或目录说明追加一份实现描述。
 
-`translation_config.py` owns shared context defaults/ranges and input limits. The live worker passes caption deltas to `translation_context.py`; its ordered source/finalized indexes preserve history edits without rescanning every saved caption for each update. `recording_save.py` owns serial background writes and copied recording snapshots; the desktop checks recording generation/version before applying completion results.
+日常入口保持六份：README、AGENTS、本文、ARCHITECTURE、WORKSPACE、RELEASING。专题文档按任务读取；测试数量、旧实验与开发过程留在证据或归档，不要求每次开发全部加载。
 
-`.github/workflows/checks.yml` runs Ruff and no-audio tests for pushes/pull requests on `windows`, `mac`, and `main`. The unit matrix covers Windows/macOS and Python 3.11–3.13, installs desktop/development dependencies only, and neither prepares models nor opens audio devices. These jobs do not certify GPU inference or real recording hardware.
-
-The optional `knowledge` extra pins Deep Agents, ChatDeepSeek, pypdf and keyring in the desktop environment. A separate owned Python process imports SDKs only when text tasks run; `.venv-wlk` and `.venv-mlx` keep their original dependencies. The optional SDK CI job covers Windows/macOS Python 3.12 with fake models and in-memory HTTP, without real credentials or provider calls.
-
-Course files live under each library folder's `.agentscribe/`: stable `course.json` and content-addressed `materials/<id>/original.<suffix>`. New imports publish `blocks.json`, `pages/` (all PNGs and a source-bound manifest) and `resources/` inside `materials/<id>/snapshots/<snapshot>/`, then atomically update the descriptor in `course.json`. Snapshot directory names use 16 hex characters to limit Windows path growth; the full source/version/block hashes remain authoritative. Old descriptors without `snapshot` use the original material directory. Interrupted unpublished snapshots and previous versions are retained, not automatically pruned. `materials/<id>/readings/` retains one validated model reading and term candidates per page at its existing location. Worksheet sources retain sheet/A1/tile metadata; web sources retain screen rectangles and a separate static-layout version. Native text remains separate from generated visual readings. Recording `knowledge/manifest.json` binds a course ID and reviewed context; `state.sqlite` stores source versions, note patches and processing state, and `last_usage.json` stores the last task's returned/reserved usage. The recording's `session.json` remains authoritative for saved captions and actual ASR settings. `课堂笔记.md` is the readable export. These companion files are user data and are never included in source synchronization; the library itself still uses ordinary directory scanning rather than a database index.
-
-`scripts/install_documents.py` delegates to `document_install.py` to prepare independent `@deepseek-ai/libreoffice-kit@0.1.3` component slots using Node.js >=22.19; the legacy `.runtime/document-renderer` is still recognized. Source mode can use system Node; packaged mode requires the owned Node runtime, which is not yet distributed. Licenses, notices and engine sources remain; no DSH application/configuration is copied. The historical Windows x64 footprint is about 197 MiB. Office/PDF uses a cancellable Node helper; `knowledge/render_web.py` uses existing Qt in an offline CPU process for web/text/images. Mac rendering and peak RAM remain unverified. Licensed legacy Office fixtures remain under `tests/fixtures/course_formats/`.
-
-`audio_processing/` contains only internal gain/peak settings, stateful processing, resampling and signal health checks. The worker applies +3 dB gain and peak protection in the background. APM, WPE, DeepFilterNet3, enhancement presets, installers and comparison scripts have been removed.
-
-`semantic_model.py` loads the required local SaT boundary predictor on CPU. Recognition-model preparation prepares its assets; runtime installation prepares dependencies only. `semantic_cache.py` uses the shared cache root for machine/runtime-specific CPU ORT graphs, read without conversion during listening. Original ONNX loading remains when no compatible cache exists. `wlk_captions.py` owns provisional boundaries, independent SaT closure and revisions; `translation_queue.py` coalesces pending revisions. See `docs/SEMANTIC_SEGMENTATION.md` for limits.
-
-New recording libraries default to user data: `%LOCALAPPDATA%/AgentScribe/录音` on Windows and `~/Library/Application Support/AgentScribe/录音` on Mac. Existing preferences and nonempty project libraries are retained. No automatic migration/deletion or actual uninstaller exists; project-local recordings must be backed up before manually removing a project. `updates.py` performs explicit GitHub checks, distinguishing source releases from per-platform stable/beta installer assets; it never replaces code or data. Checks run through the existing cancellable preparation worker. Actual installers and self-replacement remain future release work.
-
-`caption_changes.py` is a legacy revision-description utility; the live UI no longer displays change explanations or calls it. `media/README.md` defines the local classroom regression fixture; `scripts/prepare_classroom.py`, `smoke_wlk.py` and `compare_classroom.py` provide reproducible decoding, paced inference and update/revision measurements. The other app's text is an unverified comparison, never injected as a model prompt.
+旧 `STREAMING_DESIGN.md`、`QWEN_STREAMING.md`、`OPEN_SOURCE_REVIEW.md` 的有效内容已归入 README、ARCHITECTURE 与第三方说明，删除过时的重复入口；旧内容仍可从 Git 历史回溯。不要重建同名说明重复维护。

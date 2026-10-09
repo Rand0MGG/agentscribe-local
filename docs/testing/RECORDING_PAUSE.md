@@ -33,7 +33,7 @@
 
 本次完整测试 239 项通过，未发现原生音频导入尝试。原生 Cocoa 界面使用独立示例库和设置验证，900 × 650 窗口中的暂停、继续和停止按钮显示完整。
 
-早期真实文件链路使用本机保留的 `.work/cache/check_hy_metal_prototype.py` 配合 `scripts/replay_streaming.py`，在 29 秒和 69 秒分别暂停约 2 秒。详细性能、完整性和证据路径见 [HY Metal 测试](HY_METAL.md)。这段输入来自项目英文测试 WAV，未读取声卡。
+早期真实文件链路使用本机保留的 `.work/cache/check_hy_metal_prototype.py` 配合 `scripts/replay_streaming.py`，在 29 秒和 69 秒分别暂停约 2 秒。详细性能、完整性和证据路径见 [HY Metal 测试](../archive/testing/HY_METAL.md)。这段输入来自项目英文测试 WAV，未读取声卡。
 
 ## 验收边界
 

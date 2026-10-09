@@ -5,6 +5,8 @@ import shutil
 import sys
 from pathlib import Path
 
+from .runtime_base import python_abi
+
 
 def packaged():
     return bool(getattr(sys, 'frozen', False) or '__compiled__' in globals()
@@ -72,20 +74,57 @@ def active_directory(base, fallback, *, python=False):
             slot = value['slot']
             if not isinstance(slot, str) or len(slot) != 32 or any(c not in '0123456789abcdef' for c in slot):
                 raise ValueError('invalid slot')
+            if python:
+                return compatible_environment(base, value)
             environment = base / slot
-            if not environment.is_dir() or (python and not environment_python(environment).is_file()):
-                raise ValueError('missing interpreter')
-            if python and 'requirements' in value:
-                from .hardware import TORCH_VERSION, platform_target
-                filename = 'requirements-runtime.txt' if base.name == 'wlk' else 'requirements-mlx.txt'
-                required = (resource_root() / filename).read_text(encoding='utf-8')
-                if (value['requirements'] != required or value.get('platform') != platform_target()
-                        or (base.name == 'wlk' and value.get('torch_version') != TORCH_VERSION)):
-                    raise RuntimeError('运行组件与当前软件版本或平台不匹配，请重新安装 / 修复环境；旧文件保留。')
+            if not environment.is_dir():
+                raise ValueError('missing component')
             return environment
         except (OSError, ValueError, KeyError, TypeError) as exc:
             raise RuntimeError('运行环境记录损坏，请在设置中重新安装 / 修复；旧环境仍保留。') from exc
     return fallback
+
+
+def compatible_environment(base, value):
+    """Select a previously published compatible slot after app upgrades/rollback.
+
+    Follow only the explicit bounded previous chain; never adopt an unfinished
+    directory or mutate the active pointer while resolving a session interpreter.
+    """
+    from .hardware import TORCH_VERSION, platform_target
+    filename = 'requirements-runtime.txt' if base.name == 'wlk' else 'requirements-mlx.txt'
+    required = (resource_root() / filename).read_text(encoding='utf-8') if 'requirements' in value else None
+    seen = set()
+    for _ in range(32):
+        slot = value['slot']
+        if (not isinstance(slot, str) or len(slot) != 32 or any(c not in '0123456789abcdef' for c in slot)
+                or slot in seen):
+            raise ValueError('invalid previous slot')
+        seen.add(slot)
+        environment = base / slot
+        matches = ('requirements' not in value or (
+            value['requirements'] == required and value.get('platform') == platform_target()
+            and (base.name != 'wlk' or value.get('torch_version') == TORCH_VERSION)))
+        if 'python_abi' in value:
+            matches = matches and value['python_abi'] == python_abi()
+        base_slot = value.get('base_slot')
+        if base_slot is not None:
+            if (not isinstance(base_slot, str) or len(base_slot) != 64
+                    or any(c not in '0123456789abcdef' for c in base_slot)):
+                raise ValueError('invalid base Python')
+            matches = matches and (runtime_root() / 'base-python' / base_slot / 'base.json').is_file()
+        if matches and environment_python(environment).is_file():
+            return environment
+        previous = value.get('previous')
+        if previous is None:
+            break
+        if not isinstance(previous, str) or len(previous) != 32 or any(c not in '0123456789abcdef' for c in previous):
+            raise ValueError('invalid previous slot')
+        record = base / previous / 'environment.json'
+        value = json.loads(record.read_text(encoding='utf-8'))
+        if value.get('slot') != previous:
+            raise ValueError('mismatched environment record')
+    raise RuntimeError('运行组件与当前软件版本或平台不匹配或已损坏，请重新安装 / 修复环境；旧文件保留。')
 
 
 def runtime_python():

@@ -1,6 +1,8 @@
+> 历史记录：保留原始方案、操作和测试结果用于回溯，不再维护。文中的版本、门槛、分支与已支持范围只适用于记录当时；当前使用见 [使用指南](../../WORKSPACE.md)，开发约束见 [AGENTS](../../../AGENTS.md)。
+
 # 课堂草稿与上下文回归 · 2026-09-09
 
-固定样本为用户提供的 `media/test.m4a`，约 289.9 秒；`media/test.txt` 是用户标记的 Qwen Scribe + 1.7B 输出，未经人工校对。参考没有进入模型提示词。执行入口见 [固定样本说明](../media/README.md)。
+固定样本为用户提供的 `media/test.m4a`，约 289.9 秒；`media/test.txt` 是用户标记的 Qwen Scribe + 1.7B 输出，未经人工校对。参考没有进入模型提示词。执行入口见 [固定样本说明](../../../media/README.md)。
 
 长录音试验均使用本机 NVIDIA GPU、Qwen3-ASR-1.7B、英文、SaT CPU，按真实时间输入同一份 16 kHz PCM，关闭增强与翻译以隔离识别变量。不能据此推断用户开启 DF3/EQ/增益后的效果，也不能证明 Windows 8 GB 或 macOS 性能。
 

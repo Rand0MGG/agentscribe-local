@@ -1,3 +1,5 @@
+> 历史记录：保留原始方案、操作和测试结果用于回溯，不再维护。文中的版本、门槛、分支与已支持范围只适用于记录当时；当前使用见 [使用指南](../../WORKSPACE.md)，开发约束见 [AGENTS](../../../AGENTS.md)。
+
 # AgentScribe v0.4.0 · 源码预览版
 
 AgentScribe（原 LinguaFlow）是由 Agent 协作开发的本地语音识别与双语字幕桌面应用。本版提供源码包及 Windows/macOS 安装脚本，不包含模型权重或独立 EXE/DMG。
