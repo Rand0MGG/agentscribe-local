@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import __version__
 from .audio import list_devices
 from .caption_view import CaptionScrollArea
 from .core import LANGUAGES, export_srt, translation_status
@@ -1862,6 +1863,8 @@ class Window(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
+    app.setApplicationName("AgentScribe")
+    app.setApplicationVersion(__version__)
     app.setStyle("Fusion")
     app.setStyleSheet(STYLE)
     runtime = RuntimePreparation()

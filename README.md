@@ -1,18 +1,28 @@
 # AgentScribe · Agent 协作开发的本地语音工作台
 
 Windows / macOS 桌面应用：麦克风或系统声音 → 本地原文字幕 → 本地翻译。
-v0.5.0 源码预览版，原名 LinguaFlow。使用完整 WhisperLiveKit 音频处理链路，提供 Whisper / AlignAtt 和 Qwen3-ASR 两个本地后端。
+v0.6.0-beta.1 Mac 安装包测试版，原名 LinguaFlow。使用完整 WhisperLiveKit 音频处理链路，提供 Whisper / AlignAtt 和 Qwen3-ASR 两个本地后端。
 Qt 界面与模型运行环境隔离；应用自行启动、停止推理进程，不需要 WSL、端口或手动服务。
 
 窗口显示后会在独立进程后台准备推理运行库，准备阶段不加载模型、不下载文件、不访问音频设备。开始聆听时复用该进程，并按当前设置加载模型；停止后释放模型与会话状态，运行环境闲置 30 分钟后释放，便于课间休息后继续使用，退出软件时彻底关闭。首次准备尚未完成或闲置环境已释放时，开始聆听仍需等待准备。这是 Windows / macOS 共用机制，平台实测范围见 [Mac 验证记录](docs/MACOS_SUPPORT.md)。
 
-本版加入 HY-MT2 前后文翻译、本地文件夹录音工作区，并修复重译失败丢失已有译文、错误标记完成及损坏元数据无法正常处理的问题。详见 [版本说明](docs/RELEASE_v0.5.0.md) 和 [上下文翻译](docs/CONTEXT_TRANSLATION.md)。当前提供源码及安装脚本，尚无独立 EXE/DMG 安装包。内部 `linguaflow` 模块名、旧启动命令和本地设置位置保留兼容。
+HY-MT2 前后文翻译、录音工作区及已有修复见 [0.5.0 说明](docs/RELEASE_v0.5.0.md) 和 [上下文翻译](docs/CONTEXT_TRANSLATION.md)。本次新增 Apple Silicon 的独立 DMG 预览版，安装包见 [GitHub Releases](https://github.com/Rand0MGG/agentscribe-local/releases)；Windows 仍为源码安装。内部 `linguaflow` 模块名、旧启动命令和本地设置位置保留兼容。
 
 当前版本已完成 WhisperLiveKit / Qwen3-ASR 本地流式链路和桌面回归验收；已通过项目及适用范围见 [验证记录](docs/VALIDATION.md)。
 
 ![界面示例](docs/preview.png)
 
 ## 安装
+
+### Mac DMG 测试包
+
+Apple Silicon / macOS 15 或更新版本：打开 `AgentScribe-0.6.0-beta.1-macos-arm64.dmg`，将应用拖入 Applications，弹出映像后启动。录音期间不要替换或重启正在使用的程序。
+
+包内含完整便携 Python 3.12、已固定的桌面及课件 SDK 依赖、Qt/回听/WebEngine、Node/npm、应用图标与第三方许可。无需系统 Python、Node、Homebrew 或 Git。识别/翻译运行环境、模型权重、Office/PDF 课件组件在设置中按需联网准备，建议至少预留 20 GB；不包含个人录音、开发虚拟环境或模型缓存。旧的库位置和设置继续兼容，不自动搬迁原数据。
+
+这是 ad-hoc 签名、未公证的测试包；网络下载后可能需在“系统设置 → 隐私与安全性 → 仍要打开”确认。检查更新后仍需下载新 DMG，退出应用并手动替换；用户数据目录保留，不在录音中自动更新。构建方法及验收边界见 [Mac 测试版说明](docs/RELEASE_v0.6.0-beta.1.md)。
+
+### 源码安装
 
 源码版需要 Python 3.11–3.13（建议 3.12）；运行环境安装使用固定提交的源码归档，无需系统 Git。Windows 仅允许 x64、兼容 NVIDIA 显卡：当前 PyTorch 2.11 / CUDA 12.8 需要计算能力 ≥ 7.5（Turing 或更新架构）、驱动 ≥ 570.65。Mac 仅允许原生 Apple Silicon / arm64，拒绝 Intel 和 Rosetta。Windows 建议 16GB 系统内存；Apple Silicon 8GB 的短文件测试范围见下文。GPU 环境及大模型会占用十余 GB 磁盘，请留足空间。
 首次安装与下载需要网络；模型准备完整后可在断网时使用。应用不提供严格离线开关，也不在启动推理时强制禁止联网；旧的离线设置不再生效。录音不上传；字幕默认在本地处理。只有明确开启课程云端处理后，才将授权的课件页面图像、文字、定稿和笔记发送给 DeepSeek。
@@ -59,7 +69,7 @@ Mac 适配进展、已验证范围和待实机测试项目见 [macOS 适配记�
 
 录音按真实文件夹保存，提供命名、删除恢复、自动保存与回听。新用户默认使用独立用户目录：Windows `%LOCALAPPDATA%\AgentScribe\录音`，Mac `~/Library/Application Support/AgentScribe/录音`，可在设置中更改。已有保存位置和项目内旧录音继续使用，不自动搬移或删除。详见 [工作区说明](docs/WORKSPACE.md)。
 
-设置 → 运行环境 → 检查软件更新，仅在点击时连接 GitHub。源码版提示已发布的源码版本；后续安装版按 Windows x64 / macOS arm64 和当前稳定或 beta 渠道匹配具体产物，不能用另一平台的最新版本代替。当前尚无安装包，不提供自动替换程序或卸载器；新默认数据目录独立于程序，旧项目内录音在清理项目之前仍须备份。
+设置 → 运行环境 → 检查软件更新，仅在点击时连接 GitHub。源码版提示已发布的源码版本；安装版按 Windows x64 / macOS arm64 和当前稳定或 beta 渠道匹配具体产物，不能用另一平台的最新版本代替。一条 Release 可包含两个平台的安装包，也可只有一个；当前 Mac 包支持下载新 DMG 后退出应用、手动替换，没有自动替换程序或卸载器。新默认数据目录独立于程序，旧项目内录音在清理项目之前仍须备份。
 
 首页底部的语言与识别引擎按钮可直接打开对应设置。侧栏“使用指南”介绍首次准备、字幕修订和录音整理；设置支持搜索字幕、GPU、HY-MT2 等关键词。`Ctrl+,` 打开设置，`Ctrl+F` 聚焦设置搜索，`Ctrl+N` 新建录音，`Esc` 从设置返回录音。在“常规 → 减少动态效果”中可关闭切页、弹窗和开关动画。界面变更与验证范围见 [界面体验说明](docs/UI_EXPERIENCE.md)。
 
@@ -83,7 +93,7 @@ Mac 适配进展、已验证范围和待实机测试项目见 [macOS 适配记�
 
 允许课程云端处理后点击“完整阅读并提取术语”：全部页面图像逐页发送模型，包含无文字图形页和空白页；原生文字只作辅助。新增格式导入后即可在本地预览原页，无需密钥或上传。界面分别显示原页、模型视觉解读和已读页数，解读与原生文本分别保存和引用。已读完不表示模型理解无误；可手工录入和审核术语。
 
-可选云端功能需要在桌面环境安装额外依赖：Windows 运行 `.venv\Scripts\python.exe -m pip install -e ".[knowledge]"`；Mac 使用 `.venv/bin/python -m pip install -e '.[knowledge]'`。PDF/Office 页面渲染还需 Node.js 22.19 或更新版本，然后运行 `.venv\Scripts\python.exe scripts/install_documents.py`（Mac 使用 `.venv/bin/python`）。安装器在项目 `.runtime/components/document-renderer` 的独立目录准备 DSH LibreOffice Kit 0.1.3，验证成功后切换；兼容旧 `.runtime/document-renderer`。历史 Windows x64 安装约 197 MiB。网页、文本和图片复用既有 PySide6，不新增浏览器或 OCR 依赖；网页截图在自有子进程中使用 CPU，并禁用真实音频输入/输出。macOS arm64 已通过生成夹具的本地格式导入回归；网页转换需要当前进程能访问 macOS 图形会话，受限环境会提示原因并保留原件。详见 [Mac 更新复核](docs/MACOS_SUPPORT.md#2026-10-09windows-更新的本机适配)。安装不改变识别设备。
+Mac DMG 已包含课件 SDK 和 Node.js/npm，PDF/Office 渲染引擎仍需在设置中安装/修复，组件保存于独立用户目录。源码版的可选云端功能需要额外依赖：Windows 运行 `.venv\Scripts\python.exe -m pip install -e ".[knowledge]"`；Mac 使用 `.venv/bin/python -m pip install -e '.[knowledge]'`。源码版还需 Node.js 22.19 或更新版本，然后运行 `.venv\Scripts\python.exe scripts/install_documents.py`（Mac 使用 `.venv/bin/python`）。安装器在项目 `.runtime/components/document-renderer` 的独立目录准备 DSH LibreOffice Kit 0.1.3，验证成功后切换；兼容旧 `.runtime/document-renderer`。历史 Windows x64 安装约 197 MiB。网页、文本和图片复用既有 PySide6，不新增浏览器或 OCR 依赖；网页截图在自有子进程中使用 CPU，并禁用真实音频输入/输出。macOS arm64 已通过生成夹具的本地格式导入回归；网页转换需要当前进程能访问 macOS 图形会话，受限环境会提示原因并保留原件。详见 [Mac 更新复核](docs/MACOS_SUPPORT.md#2026-10-09windows-更新的本机适配)。安装不改变识别设备。
 
 勾选术语并保存审核结果后，下一次 Qwen 录音会固定课程上下文；PyTorch 使用 `context`，MLX 使用 `system_prompt`。Whisper 保持原有行为。当前是参数接入与模拟验证，尚未证明术语改善识别质量，也没有完成本轮 Mac GPU 实测。
 
