@@ -36,6 +36,7 @@ from linguaflow.knowledge.files import write_json
 from linguaflow.knowledge.session import manifest_path
 from PySide6.QtWidgets import QTreeWidgetItem
 assert not w.beta_features.isChecked() and w.knowledge_button.isHidden()
+assert w.model_manager.install_documents_button.isHidden()
 assert w.new_recording(name='默认非 Beta 录音')
 identifier=w.current_item['id']
 manifest=manifest_path(w.library,identifier)
@@ -43,6 +44,8 @@ write_json(w.library.root,manifest,{'schema_version':1,'session_id':identifier,'
                                   'asr_context':{},'notes_cloud':True})
 original=manifest.read_bytes()
 def forbidden(*args,**kwargs): raise AssertionError('Disabled beta was invoked')
+w.model_manager.prepare=forbidden
+w.model_manager.install_documents()
 module.read_manifest=module.session_context=forbidden
 w.knowledge_client.open=forbidden
 row=QTreeWidgetItem(['recording']);row.setData(0,Qt.ItemDataRole.UserRole,('session',identifier))
@@ -89,6 +92,7 @@ from linguaflow.knowledge.session import manifest_path
 assert not w.beta_features.isChecked()
 w.beta_features.setChecked(True);w.prefs.sync()
 assert not w.knowledge_button.isHidden()
+assert not w.model_manager.install_documents_button.isHidden()
 reopened=window();assert reopened.beta_features.isChecked();reopened.close()
 assert w.new_recording(name='Beta 课程')
 w.open_knowledge();p=w.knowledge_panel
@@ -105,6 +109,7 @@ if os.environ.get('AGENTSCRIBE_SCREENSHOTS'):
     p.hide();w.show();app.processEvents();w.grab().save(str(output/'beta-on-main.png'));p.show()
 w.beta_features.setChecked(False);w.prefs.sync()
 assert w.knowledge_button.isHidden() and p.isHidden() and not p.view
+assert w.model_manager.install_documents_button.isHidden()
 assert process.poll() is not None and w.knowledge_client.process is None and not w.knowledge_client.threads
 w.knowledge_client._deliver(epoch,{'type':'view','course':{'terms':[]}})
 assert not p.view
@@ -115,4 +120,45 @@ assert read_json(course_manifest)['terms'][0]['canonical']=='gradient descent'
 w.close()
 reopened=window();assert not reopened.beta_features.isChecked() and reopened.knowledge_button.isHidden()
 reopened.close();app.processEvents()
+''', tmp_path)
+
+
+def test_disabling_beta_cancels_only_course_component_preparation(tmp_path):
+    run_ui('''
+from threading import Event
+w.beta_features.setChecked(True)
+started,finish=Event(),Event()
+def install(command,**kwargs):
+    assert command[-1]=='linguaflow.document_install'
+    started.set()
+    assert finish.wait(8)
+    return 'done'
+w.model_manager.run_preparation=install
+w.model_manager.install_documents()
+try:
+    wait(started.is_set)
+    worker=w.model_manager.worker
+    assert worker.beta_only and not worker.affects_runtime
+    w.beta_features.setChecked(False)
+    assert worker.cancelled and w.model_manager.install_documents_button.isHidden()
+finally:
+    finish.set();wait(lambda:w.model_manager.worker is None)
+    w.close();app.processEvents()
+''', tmp_path)
+
+
+def test_knowledge_close_reaps_exited_child_with_buffered_input(tmp_path):
+    run_ui('''
+import subprocess,sys
+from linguaflow.knowledge.client import KnowledgeClient
+client=KnowledgeClient()
+process=subprocess.Popen([sys.executable,'-c','pass'],stdin=subprocess.PIPE,
+                         stdout=subprocess.PIPE,text=True,encoding='utf-8')
+client.process=process
+process.stdin.write('unflushed command')
+process.wait(timeout=8)
+client.close();client.close()
+assert process.stdin.closed and process.stdout.closed
+assert client.process is None and not client.threads
+w.close();app.processEvents()
 ''', tmp_path)

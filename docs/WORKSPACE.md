@@ -90,7 +90,7 @@ MLX 环境与 WLK 环境隔离，也可在设置中按需准备。之后使用 `
 
 网页固定栏、吸顶栏在截图前放回静态排版，避免遮住滚动分片的正文；栏内内容仍保留。旧布局版本的网页快照需重新导入，重新阅读后才能用于笔记。
 
-源码版需向桌面环境安装可选依赖 `.[knowledge]`；PDF/Office 还需 Node.js 22.19 或更新版本，并用桌面解释器运行 `scripts/install_documents.py`。Mac DMG 已包含桌面可选依赖与 Node，PDF/Office 引擎仍需按对应发行说明准备。安装器在共享运行目录的 `components/document-renderer` 中准备独立 `@deepseek-ai/libreoffice-kit@0.1.3`，校验后才切换；兼容旧 `.runtime/document-renderer`。历史 Windows x64 组件及依赖约 197 MiB。网页、文本和图片复用已有 PySide6；Qt WebEngine 在私有、非持久化、禁止联网的自有子进程中使用 CPU 截图，不增加浏览器下载、OCR 或附件数据库。内存峰值尚未评测；Mac beta 已有包内网页与公开 PPT 样本渲染记录，具体范围见 [发行说明](https://github.com/Rand0MGG/agentscribe-local/releases/tag/v0.6.0-beta.1)，不等于所有格式或真实课件云端理解通过。
+源码版需向桌面环境安装可选依赖 `.[knowledge]`；PDF/Office 还需 Node.js 22.19 或更新版本。启用 Beta 后，在设置的“运行环境”页点击“安装 / 修复课件渲染组件”；也可用桌面解释器运行 `scripts/install_documents.py`。关闭 Beta 会隐藏此入口并取消尚在执行的组件安装，已完成文件保留。Mac DMG 已包含桌面可选依赖与 Node，PDF/Office 引擎仍需按对应发行说明准备；新入口属于本次源码改动，不会修改已发布的旧 DMG。安装器在共享运行目录的 `components/document-renderer` 中准备独立 `@deepseek-ai/libreoffice-kit@0.1.3`，校验后才切换；兼容旧 `.runtime/document-renderer`。历史 Windows x64 组件及依赖约 197 MiB。网页、文本和图片复用已有 PySide6；Qt WebEngine 在私有、非持久化、禁止联网的自有子进程中使用 CPU 截图，不增加浏览器下载、OCR 或附件数据库。内存峰值尚未评测；Mac beta 已有包内网页与公开 PPT 样本渲染记录，具体范围见 [发行说明](https://github.com/Rand0MGG/agentscribe-local/releases/tag/v0.6.0-beta.1)，不等于所有格式或真实课件云端理解通过。
 
 配置 DeepSeek 密钥，勾选“允许将本课程的页面图像和文字发送给 DeepSeek，完整阅读课件”，点击“完整阅读并提取术语”。模型逐页查看完整图像，原生文本作为辅助；扫描页、图表、公式、空白页均计入覆盖，不靠文字是否非空决定跳过。原页与“模型视觉解读”分别展示，解读单独保存、单独引用，不改写原生文字。含疑问的页明确标注；“已读 N/N 页”表示全部静态页/分片成功完成请求和结果校验，不保证理解无误。当前不读取 Office 动画、嵌入视频或任意网页交互状态。
 

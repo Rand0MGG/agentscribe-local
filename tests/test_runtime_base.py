@@ -106,3 +106,18 @@ def test_previous_chain_cannot_escape_runtime(tmp_path, monkeypatch):
                                                 'previous': '../../other'}))
     with pytest.raises(RuntimeError, match='记录损坏'):
         runtime_paths.active_directory(base, Path('unused'), python=True)
+
+
+def test_corrupt_previous_record_reports_repair_instead_of_crashing(tmp_path, monkeypatch):
+    resources = tmp_path / 'app'
+    resources.mkdir()
+    (resources / 'requirements-runtime.txt').write_text('library==2')
+    monkeypatch.setattr(runtime_paths, 'resource_root', lambda: resources)
+    base = tmp_path / 'runtime/python/wlk'
+    previous = base / ('b' * 32)
+    previous.mkdir(parents=True)
+    (previous / 'environment.json').write_text('[]')
+    (base / 'active.json').write_text(json.dumps({'slot': 'a' * 32, 'requirements': 'library==1',
+                                                'previous': 'b' * 32}))
+    with pytest.raises(RuntimeError, match='记录损坏.*修复'):
+        runtime_paths.active_directory(base, Path('unused'), python=True)

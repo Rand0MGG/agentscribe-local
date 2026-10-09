@@ -6,10 +6,39 @@ import platform
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from linguaflow.preferences import read_preferences
+
+
+def test_windows_web_session_guard_does_not_load_macos_frameworks(monkeypatch):
+    import ctypes
+
+    from linguaflow.process_platform import window_session_available
+    monkeypatch.setattr(sys, 'platform', 'win32')
+    monkeypatch.setattr(ctypes, 'CDLL', lambda *args: pytest.fail('Windows must not load Quartz'))
+    assert window_session_available()
+
+
+@pytest.mark.parametrize('session', [None, 12345])
+def test_quartz_probe_does_not_register_an_application_and_releases_session(monkeypatch, session):
+    import ctypes
+
+    from linguaflow.process_platform import window_session_available
+    released = []
+    class Function:
+        def __init__(self, fn):
+            self.fn = fn
+        def __call__(self, *args):
+            return self.fn(*args)
+    graphics = SimpleNamespace(CGSessionCopyCurrentDictionary=Function(lambda: session))
+    foundation = SimpleNamespace(CFRelease=Function(released.append))
+    monkeypatch.setattr(sys, 'platform', 'darwin')
+    monkeypatch.setattr(ctypes, 'CDLL', lambda path: graphics if 'CoreGraphics' in path else foundation)
+    assert window_session_available() is bool(session)
+    assert released == ([session] if session else [])
 
 
 @pytest.mark.parametrize('platform', ['darwin', 'win32'])

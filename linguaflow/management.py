@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .model_options import asr_backends, qwen_models, translation_devices
 from .process_platform import spawn_options, stop_tree
 from .qt_controls import text_label
 from .runtime_paths import installation_command, python_environment, resource_root
@@ -32,10 +33,11 @@ class Preparation(QThread):
     result = Signal(str)
     progress = Signal(str)
 
-    def __init__(self, action, parent, *, affects_runtime=True):
+    def __init__(self, action, parent, *, affects_runtime=True, beta_only=False):
         super().__init__(parent)
         self.action = action
         self.affects_runtime = affects_runtime
+        self.beta_only = beta_only
         self.process = None
         self.cancelled = False
 
@@ -64,10 +66,11 @@ class ModelManager(QDialog):
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
         self.backend = QComboBox()
-        self.backend.addItem("WhisperLiveKit · Whisper / AlignAtt", "wlk-whisper")
-        self.backend.addItem("WhisperLiveKit · Qwen3-ASR 流式", "qwen3-streaming")
-        if sys.platform == 'darwin':
-            self.backend.addItem('Qwen3-ASR · MLX 4-bit（试验）', 'qwen3-mlx')
+        backend_labels = {'wlk-whisper': 'WhisperLiveKit · Whisper / AlignAtt',
+                          'qwen3-streaming': 'WhisperLiveKit · Qwen3-ASR 流式',
+                          'qwen3-mlx': 'Qwen3-ASR · MLX 4-bit（试验）'}
+        for backend in asr_backends():
+            self.backend.addItem(backend_labels[backend], backend)
         self.asr_page = QWidget()
         self.asr_form = QFormLayout(self.asr_page)
         self.asr_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
@@ -122,10 +125,11 @@ class ModelManager(QDialog):
         from .runtime_paths import runtime_python
         self.runtime_status = QLabel()
         self.runtime_status.setWordWrap(True)
+        self.runtime_status.setToolTip('文件存在不代表依赖和 GPU 已通过检查；启动时会显示各阶段进度。')
         try:
             python = runtime_python()
             self.runtime_status.setText(("推理环境已创建" if python.is_file() else "尚未安装推理环境")
-                                       + f"\n{python}\n文件存在不代表依赖和 GPU 已通过检查；启动时会显示各阶段进度。")
+                                       + f"\n{python}")
         except RuntimeError as exc:
             self.runtime_status.setText(str(exc))
         environment_form.addRow(text_label('本地推理组件', 'settingsSection'))
@@ -133,6 +137,10 @@ class ModelManager(QDialog):
         install = QPushButton("安装 / 修复本地推理环境")
         install.clicked.connect(self.install_runtime)
         environment_form.addRow(install)
+        self.install_documents_button = QPushButton('安装 / 修复课件渲染组件')
+        self.install_documents_button.hide()
+        self.install_documents_button.clicked.connect(self.install_documents)
+        environment_form.addRow(self.install_documents_button)
         if sys.platform == 'darwin':
             install_mlx = QPushButton('安装 / 修复 Apple GPU · MLX 识别环境')
             install_mlx.clicked.connect(lambda: self.prepare(lambda: self.run_preparation(
@@ -193,9 +201,7 @@ class ModelManager(QDialog):
         self.whisper_form.addRow(download)
         self.qwen_model = QComboBox()
         self.qwen_model.setEditable(True)
-        self.qwen_model.addItems(["Qwen/Qwen3-ASR-0.6B", "Qwen/Qwen3-ASR-1.7B"])
-        if sys.platform == 'darwin':
-            self.qwen_model.addItem('mlx-community/Qwen3-ASR-1.7B-4bit')
+        self.qwen_model.addItems(qwen_models())
         self.qwen_form.addRow("Qwen 识别模型", self.qwen_model)
         check = QPushButton("下载 / 检查 Qwen 模型")
         check.clicked.connect(lambda: self.prepare_qwen(self.qwen_model.currentText()))
@@ -260,13 +266,12 @@ class ModelManager(QDialog):
         self.translation_initial_before.setEnabled(enabled)
 
     def update_translation_engine(self):
-        from .llama_assets import devices
         llama = self.translation_engine.currentData() == 'llama'
         selected = self.translation_device.currentData()
         self.translation_device.clear()
         labels = {'cpu': 'CPU', 'cuda': 'NVIDIA GPU · CUDA',
                   'metal': 'Apple GPU · Metal', 'vulkan': 'GPU · Vulkan'}
-        available = devices() if llama else (('cpu',) if sys.platform == 'darwin' else ('cpu', 'cuda'))
+        available = translation_devices(self.translation_engine.currentData())
         for device in available:
             self.translation_device.addItem(labels[device], device)
         self.translation_device.setCurrentIndex(max(0, self.translation_device.findData(selected)))
@@ -301,7 +306,7 @@ class ModelManager(QDialog):
             widget.setEnabled(qwen)
 
     def prepare(self, action, *, message='正在准备，请保留此窗口。下载进度见启动终端；已存在的权重会复用。',
-                affects_runtime=True):
+                affects_runtime=True, beta_only=False):
         if self.worker is not None:
             return
         self.tabs.setEnabled(False)
@@ -310,11 +315,23 @@ class ModelManager(QDialog):
         self.cancel_button.show()
         self.progress_bar.show()
         self.status.setText(message)
-        self.worker = Preparation(action, self, affects_runtime=affects_runtime)
+        self.worker = Preparation(action, self, affects_runtime=affects_runtime, beta_only=beta_only)
         self.worker.result.connect(self.status.setText)
         self.worker.progress.connect(self.status.setText)
         self.worker.finished.connect(self.prepared)
         self.worker.start()
+
+    def set_beta_enabled(self, enabled):
+        self.install_documents_button.setVisible(enabled)
+        if not enabled and self.worker is not None and self.worker.beta_only:
+            self.cancel_preparation()
+
+    def install_documents(self):
+        if self.install_documents_button.isHidden() or not self.isEnabled():
+            return
+        self.prepare(lambda: self.run_preparation(installation_command('linguaflow.document_install')),
+                     message='正在准备课件渲染组件；首次安装需要联网，可以取消。',
+                     affects_runtime=False, beta_only=True)
 
     def prepared(self):
         self.worker.deleteLater()
@@ -328,7 +345,7 @@ class ModelManager(QDialog):
         try:
             python = runtime_python()
             self.runtime_status.setText(('推理环境已创建' if python.is_file() else '尚未安装推理环境')
-                                       + f'\n{python}\n依赖与设备以实际启动检查为准。')
+                                       + f'\n{python}')
         except RuntimeError as exc:
             self.runtime_status.setText(str(exc))
         if self.close_requested:

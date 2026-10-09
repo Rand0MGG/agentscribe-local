@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from PySide6.QtCore import QObject, Qt, Signal, Slot
 
-from ..process_platform import spawn_options, stop_tree
+from ..process_platform import close_process_pipes, spawn_options, stop_tree
 from ..runtime_paths import knowledge_python, python_environment, resource_root
 
 
@@ -103,10 +103,11 @@ class KnowledgeClient(QObject):
                 except subprocess.TimeoutExpired:
                     stop_tree(process, force=True)
                     process.wait(timeout=5)
-            for stream in (process.stdin, process.stdout):
-                if stream is not None:
-                    stream.close()
         for thread in self.threads:
             thread.join(timeout=1)
-        self.threads = []
-        self.process = None
+        try:
+            if process is not None:
+                close_process_pipes(process)
+        finally:
+            self.threads = []
+            self.process = None

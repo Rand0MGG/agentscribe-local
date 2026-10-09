@@ -16,7 +16,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-from ..process_platform import parent_disconnected
+from ..process_platform import parent_disconnected, window_session_available
 from .files import checked_path
 from .rendering import MAX_IMAGE_BYTES, MAX_PIXELS, WEB_RENDER_VERSION
 
@@ -173,6 +173,10 @@ def render_image(source, output):
 
 
 def render_web(source, output, limit, resource_source=None):
+    # Chromium initializes AppKit even with Qt offscreen. A denied Quartz session
+    # otherwise aborts in HIServices before Python can report an import error.
+    if not window_session_available():
+        raise ValueError('课件页面生成需要 macOS 图形会话。请在已登录的桌面中运行；原件和已有课件保留。')
     from PySide6.QtCore import QEventLoop, QTimer, QUrl
     from PySide6.QtWebEngineCore import (
         QWebEnginePage,
@@ -319,7 +323,8 @@ def main():
     # No app window, no system audio, no persistent browser profile or downloads.
     os.environ['QT_QPA_PLATFORM'] = 'offscreen'
     # This isolated page converter uses CPU rasterization; avoid offscreen D3D failures and ASR GPU contention.
-    os.environ['QTWEBENGINE_CHROMIUM_FLAGS'] = '--disable-gpu'
+    os.environ['QTWEBENGINE_CHROMIUM_FLAGS'] = ('--disable-gpu --disable-audio-input --disable-audio-output '
+                                             '--use-fake-device-for-media-stream')
     os.environ['QT_OPENGL'] = 'software'
     os.environ['QT_SCALE_FACTOR'] = '1'
     request = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))

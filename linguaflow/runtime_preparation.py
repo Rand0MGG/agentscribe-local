@@ -5,7 +5,7 @@ import subprocess
 from collections import deque
 from threading import Event, Lock, Thread, Timer
 
-from .process_platform import spawn_options, stop_tree
+from .process_platform import close_process_pipes, spawn_options, stop_tree
 from .runtime_paths import python_environment, resource_root, runtime_python
 
 
@@ -132,17 +132,7 @@ class PreparedWorker:
             diagnostics = getattr(self, 'diagnostics', None)
             if diagnostics:
                 diagnostics.join(timeout=2)
-            try:
-                if not process.stdin.closed:
-                    try:
-                        process.stdin.close()
-                    except BrokenPipeError:
-                        # The child is already reaped; cancelled settings may remain buffered.
-                        pass
-            finally:
-                for pipe in (process.stdout, process.stderr):
-                    if not pipe.closed:
-                        pipe.close()
+            close_process_pipes(process)
 
 
 class RuntimePreparation:

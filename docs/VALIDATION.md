@@ -1,3 +1,15 @@
+## 2026-10-10 两端集成审查与独立 Python
+
+环境：Windows 11 x64（10.0.26200）、Python 3.12.8、PySide6 6.11.2。审查范围为 `main/6a41ed0` 之后的 Windows 代码、`mac/0782a9b` 的两个新增提交及本次运行环境和文档整理；最终来源以本节所在提交为准。没有启动普通应用入口、访问音频设备或运行模型推理，也没有创建或替换 Release。
+
+- 修复：补上 Beta 控制的课件组件安装入口，复用现有后台安装、取消和进程回收；关闭 Beta 隐藏入口并取消这类准备，不影响本地录音。课程后台关闭复用共享管道清理，覆盖实际子进程已退出但 stdin 尚有缓冲内容的情况。Windows 此场景可返回 `EINVAL`，仅对已退出子进程的 stdin 忽略；活进程、其他平台和输出管道的错误仍保留。旧环境记录类型损坏明确提示修复，修复时不把非法旧槽位写入回退链。
+- 全量回归：`.venv\Scripts\python.exe scripts/test_no_audio.py -q --tb=short --basetemp=.work/cache/full-review-final --junitxml=.work/cache/full-review-final.xml`，**687 passed、5 skipped，151.72 秒**，零原生音频导入尝试。Ruff 全库检查通过。前一轮有一次已有库目录外部改名 `WinError 5`，单项复查和后续两轮全量未复现；未放宽测试或在业务中添加重试，根因尚未确认。
+- 独立解释器实测：校验官方 python-build-standalone 20261003 / CPython 3.12.15 Windows x64 归档，复制基础 Python 到隔离运行目录并新建 venv，移除该实验的程序副本后 venv 仍可启动，`ssl`、`sqlite3`、`venv` 导入及 `pip check` 通过。只移除自建实验副本，既有环境、模型和录音未改动。基础 Python 损坏、复制中断、应用回退、依赖/ABI 不匹配和非法回退路径另有回归；未测试实际安装包自动升级。
+- 界面：真实 Windows Qt、生产主题、900×700 逻辑窗口（150% 缩放）检查安装入口、Beta 隐藏和横向布局，修正环境状态说明截断；最后整组原生 UI 回归 **8 passed，20.25 秒**。此前同组一次在隐藏窗口创建 QThread 时发生原生访问冲突，单项及整组复查未复现，不能视为已确认根因；证据保留。无音频全量使用默认 offscreen，不能替代所有原生窗口路径。
+- 文档：核对正文归属、归档原文摘要及相对链接；11 份历史文档原文保留，139 个本地链接/锚点无错误。旧完整课程设计归档，原路径保留导航；README 改为功能和下载说明。当前架构、使用和发行流程同步维护。
+
+本轮没有 Mac 实机、Apple GPU、真实采集/回听、云端视觉/笔记或 Windows 生产安装包验收；模拟平台及历史 Mac 包记录不证明这些当前候选路径已通过。安装包原生更新、签名、公证和发行 Actions 仍按 [发行流程](RELEASING.md#当前状态) 实施。证据保留在 `.work/cache/full-review-*.xml`、`.work/cache/docs-review/`、`.work/cache/review-ui-*` 和 `.work/cache/real-base-replacement/result.json`；这些缓存和便携解释器不提交。
+
 ## 2026-10-09 安装包之前的共享运行基础
 
 环境：Windows 11 x64、桌面和既有 WLK Python 3.12.8；基于 `windows` / `813c134` 的共享运行基础改造。本节记录提交前的本地验证，提交与推送以 Git 记录为准；未制作 EXE/DMG、改动系统 Python、升级现有环境或下载识别权重，未合并或发布。

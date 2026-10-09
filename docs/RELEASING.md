@@ -83,16 +83,16 @@ Pages 发布会替换整个静态站点，因此全仓订阅发布共用一个�
 
 ## 当前状态
 
-2026-10-10 核查：`windows` 为 `2ed03c1`，`mac` 为 `0782a9b`，后者包含前者并新增两个提交；`main` 为 `6a41ed0`。当前两端没有分叉冲突，尚未把这批代码合入主线。本次文档整理在 `windows`，不构成合并或发布授权。
+2026-10-10 集成审查：以 `windows/2ed03c1` 和 `mac/0782a9b` 为来源，合并两端代码并补充独立基础 Python、兼容环境选择和维护文档整理。用户已授权通过审查后集成并推送 `main`；具体主线提交和检查结果见 Git 历史及 [验证记录](VALIDATION.md)。这次源码集成不创建发布标签，也不替换已发行 DMG。
 
 | 能力 | 已有内容 | 尚需实施 |
 | --- | --- | --- |
 | 开发检查 | `checks.yml` 的两端无音频回归、SDK 检查与 Ruff | 安装包构建/升级验证不能由源码检查代替 |
-| Mac 包 | `mac/0782a9b` 的 `scripts/build_macos.py`、锁/许可/原生启动器及包探针；已有 `v0.6.0-beta.1` DMG | 集成主线、CI 构建、Developer ID/公证及目标机器验收 |
+| Mac 包 | 已集成 `scripts/build_macos.py`、锁/许可/原生启动器及包探针；此前已有 `v0.6.0-beta.1` DMG | CI 构建、Developer ID/公证及候选版本目标机器验收 |
 | Windows 包 | 共享环境准备、数据路径及硬件门槛 | 生产构建、Inno Setup 与包/升级探针 |
 | 更新 | `updates.py` 的显式 Release 检查 | Sparkle/WinSparkle、签名 appcast、Pages 发布与应用内安装 |
-| 运行环境 | 独立环境、验证后切换、旧文件保留 | 稳定基础 Python、完整兼容标识、自动升级与恢复协调 |
+| 运行环境 | 独立基础 Python、依赖/平台/ABI 标识、兼容旧环境选择、验证后切换、旧文件保留 | 安装包升级实测、自动升级与恢复协调 |
 
-落实顺序：先完成当前代码审查和主线同步；再补运行环境升级边界及两端构建/更新接入；随后用 Actions 生成草稿，测试旧版到新版；最后启用验收后的发布和订阅推送。已发行但没有更新器的 Mac beta 无法凭空自动更新，需要一次安装含更新器的新版本，后续走应用内更新。
+落实顺序：通过当前代码审查后同步主线；再补两端构建/更新接入及实际升级验证；随后用 Actions 生成草稿，测试旧版到新版；最后启用验收后的发布和订阅推送。已发行但没有更新器的 Mac beta 无法凭空自动更新，需要一次安装含更新器的新版本，后续走应用内更新。
 
 官方依据：[GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages)、[Release 资产](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases)、[发布环境](https://docs.github.com/en/actions/concepts/workflows-and-actions/deployment-environments)、[Sparkle](https://sparkle-project.org/documentation/)、[WinSparkle](https://winsparkle.org/guides/getting-started/)、[Inno Setup](https://jrsoftware.org/ishelp/topic_setupcmdline.htm)。

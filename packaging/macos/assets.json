@@ -1,0 +1,17 @@
+{
+  "python": {
+    "filename": "cpython-3.12.15+20261003-aarch64-apple-darwin-install_only.tar.gz",
+    "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261003/cpython-3.12.15%2B20261003-aarch64-apple-darwin-install_only.tar.gz",
+    "sha256": "316a463172740e71d8dca1f2730784e325f3f720941137b5d674d5801a632213"
+  },
+  "node": {
+    "filename": "node-v22.23.0-darwin-arm64.tar.gz",
+    "url": "https://nodejs.org/dist/v22.23.0/node-v22.23.0-darwin-arm64.tar.gz",
+    "sha256": "e0f383a215dd3093de6d2c74f87056dc2306a2e09ad494cbffdba28f89046f56"
+  },
+  "python-notices": {
+    "filename": "cpython-3.12.15+20261003-aarch64-apple-darwin-pgo+lto-full.tar.zst",
+    "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261003/cpython-3.12.15%2B20261003-aarch64-apple-darwin-pgo%2Blto-full.tar.zst",
+    "sha256": "a23a0baff73a5f10c820841cc1889a5b7fc12048fe8c0622f6a481ab82ea367b"
+  }
+}

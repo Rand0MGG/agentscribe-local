@@ -1,4 +1,5 @@
 """Real process handoff, cancellation and reused-session isolation without models."""
+import errno
 import io
 import json
 import os
@@ -17,6 +18,26 @@ import linguaflow.runtime_preparation as preparation
 import linguaflow.wlk_session as session_module
 from linguaflow.core import Settings
 from linguaflow.wlk_session import Session
+
+
+@pytest.mark.parametrize('platform,returncode,ignored', [('win32', 0, True), ('win32', None, False),
+                                                       ('darwin', 0, False)])
+def test_einval_flush_is_ignored_only_for_exited_windows_child(monkeypatch, platform, returncode, ignored):
+    import linguaflow.process_platform as module
+    error = OSError(errno.EINVAL, 'Invalid argument')
+    class Input(io.StringIO):
+        def close(self):
+            super().close()
+            raise error
+    process = SimpleNamespace(stdin=Input(), stdout=io.StringIO(), stderr=io.StringIO(), poll=lambda:returncode)
+    monkeypatch.setattr(module.sys, 'platform', platform)
+    if ignored:
+        module.close_process_pipes(process)
+    else:
+        with pytest.raises(OSError) as caught:
+            module.close_process_pipes(process)
+        assert caught.value is error
+    assert all(stream.closed for stream in (process.stdin, process.stdout, process.stderr))
 
 PROGRAM = '''
 import sys,json,base64
@@ -151,6 +172,21 @@ def test_exited_worker_closes_all_pipes_when_stdin_flush_fails(broken_pipe):
     assert joined == ['reader', 'diagnostics']
     assert all(pipe.closed for pipe in (stdin, worker.process.stdout, worker.process.stderr))
     worker.close()  # Cleanup is repeatable after an expected or unexpected pipe failure.
+
+
+def test_pipe_cleanup_preserves_output_error_and_closes_remaining_streams():
+    from linguaflow.process_platform import close_process_pipes
+    error = BrokenPipeError('unexpected output failure')
+    class Output(io.StringIO):
+        def close(self):
+            super().close()
+            raise error
+    process = SimpleNamespace(stdin=io.StringIO(), stdout=Output(), stderr=io.StringIO())
+    with pytest.raises(BrokenPipeError) as caught:
+        close_process_pipes(process)
+    assert caught.value is error
+    assert all(pipe.closed for pipe in (process.stdin, process.stdout, process.stderr))
+    close_process_pipes(process)
 
 
 def test_cancel_before_runtime_ready_never_captures_and_reaps_process(monkeypatch,tmp_path):

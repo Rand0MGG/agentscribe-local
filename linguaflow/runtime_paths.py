@@ -122,7 +122,7 @@ def compatible_environment(base, value):
             raise ValueError('invalid previous slot')
         record = base / previous / 'environment.json'
         value = json.loads(record.read_text(encoding='utf-8'))
-        if value.get('slot') != previous:
+        if not isinstance(value, dict) or value.get('slot') != previous:
             raise ValueError('mismatched environment record')
     raise RuntimeError('运行组件与当前软件版本或平台不匹配或已损坏，请重新安装 / 修复环境；旧文件保留。')
 
@@ -163,13 +163,40 @@ def installation_command(module, *args):
 DOCUMENT_RENDERER_VERSION = '0.1.3'
 
 
+def node_executable():
+    """Installed components and bundles own Node; only source mode uses PATH."""
+    suffix = 'node.exe' if sys.platform == 'win32' else 'bin/node'
+    for root in (runtime_root(), resource_root()):
+        node = root / 'node' / suffix
+        if node.is_file():
+            return node
+    node = shutil.which('node') if not packaged() else None
+    if not node:
+        raise RuntimeError('课件组件缺少 Node.js。请重新安装完整版本；源码版需要 Node.js 22.19 或更新版本。')
+    return Path(node)
+
+
+def npm_command(node):
+    """Invoke owned npm through owned Node, independent of shebangs and PATH."""
+    if packaged():
+        root = node.parent if sys.platform == 'win32' else node.parent.parent
+        relative = 'node_modules/npm/bin/npm-cli.js' if sys.platform == 'win32' else 'lib/node_modules/npm/bin/npm-cli.js'
+        script = root / relative
+        if not script.is_file():
+            raise RuntimeError('课件组件缺少 npm，请重新安装完整版本。')
+        return [str(node), str(script)]
+    npm = shutil.which('npm.cmd' if sys.platform == 'win32' else 'npm')
+    if not npm:
+        raise RuntimeError('请先安装 Node.js 22.19 或更新版本及 npm，然后重试。')
+    return [npm]
+
+
 def document_renderer():
     root = active_directory(runtime_root() / 'components' / 'document-renderer', runtime_root() / 'document-renderer')
-    owned_node = runtime_root() / 'node' / ('node.exe' if sys.platform == 'win32' else 'bin/node')
-    node = owned_node if owned_node.is_file() else shutil.which('node') if not packaged() else None
+    node = node_executable()
     entry = root / 'node_modules' / '@deepseek-ai' / 'libreoffice-kit' / 'lib' / 'index.js'
-    if node is None or not entry.is_file():
-        raise RuntimeError('课件渲染组件未准备完整。源码版请安装 Node.js 22.19 或更新版本，并运行 scripts/install_documents.py。')
+    if not entry.is_file():
+        raise RuntimeError('课件渲染组件未准备完整，请在设置中安装 / 修复课件组件。')
     return Path(node), entry
 
 

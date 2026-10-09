@@ -154,6 +154,19 @@ def test_scoped_resource_packing_rejects_missing_remote_and_parent_paths(tmp_pat
     assert css_dependencies("a{background:url('a b.png')} @import \"theme.css\";") == ['a b.png', 'theme.css']
 
 
+def test_denied_mac_window_session_fails_before_chromium_initialization(monkeypatch, tmp_path):
+    from linguaflow.knowledge import render_web
+    monkeypatch.setattr(render_web, 'window_session_available', lambda: False)
+    monkeypatch.setitem(sys.modules, 'PySide6.QtWebEngineCore', None)
+    source = tmp_path / 'course.html'
+    source.write_text('<h1>Preserved course</h1>', encoding='utf-8')
+    output = tmp_path / 'pages'
+    with pytest.raises(ValueError, match='macOS 图形会话'):
+        render_web.render_web(source, output, 1000)
+    assert not output.exists()
+    assert source.read_text(encoding='utf-8') == '<h1>Preserved course</h1>'
+
+
 def test_missing_optional_renderer_keeps_image_and_text_fixtures(monkeypatch, tmp_path_factory, tmp_path):
     import sys
     module = sys.modules[__name__]

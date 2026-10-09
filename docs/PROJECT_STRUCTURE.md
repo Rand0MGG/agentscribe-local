@@ -7,7 +7,7 @@ linguaflow/            桌面、业务规则与平台/模型适配
 linguaflow/knowledge/  按需启用的课程处理，不进入实时识别主链
 scripts/              生产准备入口、构建/探针与验证工具
 .github/workflows/    开发检查及后续发行自动化
-packaging/            平台构建锁、启动器与许可（Mac 分支待集成）
+packaging/            平台构建锁、启动器与许可（目前已有 Mac 构建）
 tests/                回归与小型许可夹具
 docs/                 当前使用、架构、发行和证据
 docs/testing/         仍使用的测试协议与回归说明

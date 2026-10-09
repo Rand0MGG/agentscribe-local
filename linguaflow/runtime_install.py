@@ -179,6 +179,9 @@ def install(kind):
             except (OSError, ValueError):
                 pass  # Damaged pointers can be repaired without deleting old slots.
         previous = (previous_metadata or {}).get('slot')
+        if (not isinstance(previous, str) or len(previous) != 32
+                or any(c not in '0123456789abcdef' for c in previous)):
+            previous = None
         base_python, base_slot = knowledge_python(), None
         if packaged():
             with preparation_lock(runtime_root() / 'base-python'):
