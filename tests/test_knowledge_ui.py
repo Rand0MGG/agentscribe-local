@@ -30,6 +30,7 @@ class FakeSession(QObject):
 module.Session=FakeSession
 app=QApplication([])
 w=module.Window(discover=False,prefs=QSettings(os.environ['AGENTSCRIBE_LIBRARY']+'/prefs.ini',QSettings.Format.IniFormat))
+w.beta_features.setChecked(True)
 w.device.addItem('fixture',('fixture',False));w.translate.setChecked(False)
 w.model_manager.backend.setCurrentIndex(0)
 assert w.new_recording(name='后台失败仍可录音')
@@ -80,6 +81,7 @@ from linguaflow.knowledge.files import read_json
 from linguaflow.knowledge.session import manifest_path
 app = QApplication([])
 w = Window(discover=False, prefs=QSettings(os.environ['AGENTSCRIBE_LIBRARY']+'/prefs.ini', QSettings.Format.IniFormat))
+w.beta_features.setChecked(True)
 assert w.new_recording(name='课程笔记')
 original = Caption(1,0,1,'Use gradient descent.','en')
 w.on_caption(original)
@@ -215,6 +217,7 @@ from linguaflow.app import Window
 app=QApplication([])
 w=Window(discover=False,prefs=QSettings(os.environ['AGENTSCRIBE_LIBRARY']+'/prefs.ini',QSettings.Format.IniFormat))
 assert w.new_recording(name='静态课件')
+w.beta_features.setChecked(True)
 w.open_knowledge();p=w.knowledge_panel
 def wait(predicate):
  deadline=time.monotonic()+20

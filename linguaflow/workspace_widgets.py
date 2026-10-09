@@ -298,6 +298,7 @@ class SettingsWorkspace(QWidget):
         card, rows = self.group()
         rows.addWidget(text_label('字幕停留在底部时自动跟随；向上翻阅会暂停。点击字幕区的向下箭头可回到最新位置。', 'infoBanner'))
         self.row(rows, '减少动态效果', '关闭平滑跟随、切页、弹窗和开关动画。', controls['reduce_motion'])
+        self.row(rows, '体验 Beta 功能', '开启后显示课件解析、识别提示整理和课堂笔记入口。关闭会停止相关任务，已有资料保留。', controls['beta_features'])
         body.addWidget(card)
         shortcuts = '    ·    '.join(
             QKeySequence(key).toString(QKeySequence.SequenceFormat.NativeText) + '  ' + title

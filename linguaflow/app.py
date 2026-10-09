@@ -729,8 +729,9 @@ class Window(QMainWindow):
         self.workspace_title = label("新录音")
         self.workspace_title.setStyleSheet("font-size: 14px; font-weight: 600;")
         toolbar.addWidget(self.workspace_title, 1)
-        self.knowledge_button = QPushButton("课程资料与笔记")
+        self.knowledge_button = QPushButton("课程资料与笔记 · Beta")
         self.knowledge_button.setObjectName("quiet")
+        self.knowledge_button.hide()
         self.knowledge_button.clicked.connect(self.open_knowledge)
         toolbar.addWidget(self.knowledge_button)
         overlay_button = QPushButton("悬浮字幕")
@@ -785,6 +786,7 @@ class Window(QMainWindow):
         self.reduce_motion = Switch('减少动态效果')
         self.reduce_motion.toggled.connect(lambda value: QApplication.instance().setProperty('reduceMotion', value))
         self.reduce_motion.toggled.connect(self.scroll.content_changed)
+        self.beta_features = Switch('体验 Beta 功能')
         menu.addSeparator()
         menu.addAction('移到最近删除…', self.delete_current)
         self.diagnostics = QPlainTextEdit()
@@ -902,7 +904,9 @@ class Window(QMainWindow):
         self.settings_workspace = SettingsWorkspace(WorkspaceFrame,
             storage_root=self.library.root, manager=self.model_manager,
             controls={key: getattr(self, key) for key in
-                      ('device', 'source', 'target', 'translate', 'reduce_motion')})
+                      ('device', 'source', 'target', 'translate', 'reduce_motion', 'beta_features')})
+        self.beta_features.toggled.connect(self.apply_beta_features)
+        self.apply_beta_features(self.beta_features.isChecked(), persist=False)
         self.settings_panel = self.settings_workspace.listening_page
         for signal, action in (
                 (self.settings_workspace.back_requested, self.leave_settings),
@@ -1152,6 +1156,8 @@ class Window(QMainWindow):
         self.prepare_playback()
 
     def open_knowledge(self):
+        if not self.beta_features.isChecked():
+            return
         if not self.current_item:
             QMessageBox.information(self, "选择录音", "请先新建或选择一段录音，再关联课程资料。")
             return
@@ -1164,7 +1170,7 @@ class Window(QMainWindow):
         self.attach_knowledge(force=True)
 
     def attach_knowledge(self, force=False):
-        if not self.current_item:
+        if not self.beta_features.isChecked() or not self.current_item:
             return
         try:
             if force or read_manifest(self.library, self.current_item['id'])['notes_cloud']:
@@ -1179,6 +1185,14 @@ class Window(QMainWindow):
         if self.knowledge_panel:
             self.knowledge_panel.hide()
             self.knowledge_panel.reset()
+
+    def apply_beta_features(self, enabled, *, persist=True):
+        """Gate all course-agent entry points and stop its owned process when opting out."""
+        self.knowledge_button.setVisible(enabled)
+        if not enabled:
+            self.close_knowledge()
+        if persist:
+            self.save()
 
     def cancel_knowledge(self):
         # API calls are cancellable in the worker; a blocked parser requires owned-process termination.
@@ -1503,7 +1517,7 @@ class Window(QMainWindow):
         self.on_status("正在启动本地推理环境…可点击停止取消加载。")
         self.empty.setText("正在准备模型和验证推理环境…\n准备好后自动开始录音，加载进度显示在下方。")
         settings = self.settings_binding.session_settings(self.device.currentData())
-        if settings.backend in ('qwen3-streaming', 'qwen3-mlx'):
+        if self.beta_features.isChecked() and settings.backend in ('qwen3-streaming', 'qwen3-mlx'):
             try:
                 context = session_context(self.library, self.current_item['id'])
                 settings = replace(settings, asr_context=context)

@@ -449,6 +449,9 @@ class KnowledgeWorker:
 
 
 async def serve():
+    # Both desktop pipes use UTF-8; Windows runner/desktop locales can default to cp1252.
+    sys.stdin.reconfigure(encoding='utf-8')
+    sys.stdout.reconfigure(encoding='utf-8')
     loop, queue = asyncio.get_running_loop(), asyncio.Queue()
     def read():
         for line in sys.stdin:

@@ -25,12 +25,19 @@ PREFERENCES = (
     Preference('update_seconds', 'float', 1.), Preference('endpoint_seconds', 'float', .5),
     Preference('draft_seconds', 'float', .5),
     Preference('reduce_motion', 'bool', False),
+    Preference('beta_features', 'bool', False),
 )
 
 
 def read_preferences(store):
     values = {}
     for pref in PREFERENCES:
+        if pref.key == 'beta_features':
+            # An opt-in must not become enabled by a corrupt/non-empty string.
+            value = store.value(pref.key, pref.default)
+            values[pref.key] = (value is True or type(value) is int and value == 1
+                               or isinstance(value, str) and value.strip().casefold() in ('true', '1'))
+            continue
         converter = {'bool': bool, 'float': float}.get(pref.kind)
         try:
             values[pref.key] = store.value(pref.key, pref.default, **({'type': converter} if converter else {}))

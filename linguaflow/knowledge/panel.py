@@ -57,7 +57,7 @@ class KnowledgePanel(QDialog):
         self.answer_sources = {}
         self.answer_version = None
         self.notes_fingerprint = ''
-        self.setWindowTitle('课程资料与笔记')
+        self.setWindowTitle('课程资料与笔记 · Beta')
         self.resize(860, 680)
         self.setMinimumSize(640, 540)
         self.setStyleSheet('QDialog { background: #202020; } QTableWidget, QListWidget, QTextBrowser '

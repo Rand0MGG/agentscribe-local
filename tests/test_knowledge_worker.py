@@ -80,7 +80,8 @@ def test_course_unavailable_keeps_notes_editable_and_can_reassociate(tmp_path):
     asyncio.run(scenario())
 
 
-def test_continuous_caption_messages_do_not_starve_automatic_notes(tmp_path):
+@pytest.mark.parametrize('pipe_encoding', ['utf-8', 'cp1252'])
+def test_continuous_caption_messages_do_not_starve_automatic_notes(tmp_path, pipe_encoding):
     import json
     import subprocess
     import sys
@@ -94,8 +95,11 @@ def test_continuous_caption_messages_do_not_starve_automatic_notes(tmp_path):
     library.save(item, [caption])
     code = '''
 import asyncio
+import sys
 from types import SimpleNamespace
 import linguaflow.knowledge.worker as worker
+sys.stdin.reconfigure(encoding=sys.argv[1])
+sys.stdout.reconfigure(encoding=sys.argv[1])
 class FakeService:
     def __init__(self,**kwargs):
         self.budget=SimpleNamespace(view=lambda:{'requests':1,'tokens_or_reserved':20,'uncertain':False})
@@ -106,19 +110,23 @@ class FakeService:
 worker.DeepSeekService=FakeService
 asyncio.run(worker.serve())
 '''
-    process = subprocess.Popen([sys.executable, '-u', '-c', code], stdin=subprocess.PIPE,
+    process = subprocess.Popen([sys.executable, '-u', '-c', code, pipe_encoding], stdin=subprocess.PIPE,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8')
     queue, stop = Queue(), Event()
     def read():
         for line in process.stdout:
             queue.put(json.loads(line))
     def write(value):
-        process.stdin.write(json.dumps(value) + '\n')
+        process.stdin.write(json.dumps(value, ensure_ascii=False) + '\n')
         process.stdin.flush()
     def feed():
         while not stop.is_set():
-            write({'operation': 'caption', 'caption': asdict(caption)})
-            write({'operation': 'saved', 'captions': [asdict(caption)]})
+            try:
+                write({'operation': 'caption', 'caption': asdict(caption)})
+                write({'operation': 'saved', 'captions': [asdict(caption)]})
+            except OSError:
+                queue.put({'worker_exited': True})
+                return
             stop.wait(.1)
     reader = Thread(target=read, daemon=True)
     feeder = Thread(target=feed, daemon=True)
@@ -134,7 +142,10 @@ asyncio.run(worker.serve())
                 event = queue.get(timeout=.2)
             except Empty:
                 continue
+            if event.get('worker_exited'):
+                break
             if event.get('notes'):
+                assert event['notes'][0]['text'] == '示例'
                 published = True
                 break
         assert published, 'Automatic notes did not run under continuous source events'
@@ -144,8 +155,13 @@ asyncio.run(worker.serve())
         process.terminate()
         process.wait(timeout=3)
         reader.join(timeout=2)
-        for stream in (process.stdin, process.stdout, process.stderr):
-            stream.close()
+        # A failed child leaves a pending stdin buffer; its flush must not mask the assertion.
+        try:
+            process.stdin.close()
+        except OSError:
+            pass
+        process.stdout.close()
+        process.stderr.close()
 
 
 def test_material_corruption_before_task_starts_prevents_any_model_request(monkeypatch, tmp_path):

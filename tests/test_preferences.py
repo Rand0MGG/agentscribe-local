@@ -38,6 +38,14 @@ def test_all_keys_roundtrip_and_missing_device_does_not_erase_selection():
         assert read_audio_device(Store(audio_device=invalid)) is None
 
 
+@pytest.mark.parametrize('stored, expected', [(False, False), (True, True), (0, False), (1, True),
+    ('false', False), ('true', True), ('1', True), ('0', False), ('invalid', False), (None, False),
+    (2, False), (1.0, False), ({}, False)])
+def test_beta_opt_in_defaults_off_and_rejects_corrupt_settings(stored, expected):
+    assert read_preferences(Store())['beta_features'] is False
+    assert read_preferences(Store(beta_features=stored))['beta_features'] is expected
+
+
 def test_retired_offline_preference_is_ignored():
     values = read_preferences(Store(offline=True, translate=False))
     assert 'offline' not in values

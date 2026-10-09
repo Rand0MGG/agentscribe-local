@@ -1,3 +1,15 @@
+## 2026-10-09 Beta 默认关闭与 Windows CI 编码修复
+
+环境：Windows 11 x64、Python 3.12.8，既有 `windows` / `00a17cf` 之上的未提交工作。新增体验开关默认关闭；本轮未新增依赖、读取密钥或访问音频设备，也未提交、推送、合并或发布。
+
+- Beta 隔离：独立 Qt 进程验证缺失设置默认关闭、开启/关闭后重开窗口仍保留选择；关闭时隐藏入口、拒绝课程打开与旧录音的自动笔记许可，不读取 Qwen 课程上下文。模拟开始/停止仍保存原文和译文。开启后使用实际课程子进程保存审核术语，再关闭开关，确认面板隐藏并清空视图、自有进程和读写线程退出、旧代次消息无效，课程与录音关联文件逐字节保留。13 组偏好值覆盖损坏/非法设置不能误开启；Beta 开关不授予课件或笔记上传许可。
+- 真实窗口：`.venv\Scripts\python.exe scripts/test_no_audio.py -q tests/test_beta_features.py --tb=short --basetemp=.work/cache/beta-ui-96a`，**2 passed，5.31 秒**。测试子进程使用 Windows Qt 平台、`QT_SCALE_FACTOR=1.25` 额外倍率；检查开启/关闭后的主窗口、1200×800 与 900×700 逻辑尺寸的常规设置，设置无横向滚动，截图文字/开关无遮挡。四张截图保留在 `.work/browser/beta-features-20261009/`；未枚举音频设备或启动真实推理。
+- CI 根因：用户报告的 [Code checks 37901440295](https://github.com/Rand0MGG/agentscribe-local/actions/runs/37901440295) 对应 `00a17cf`；失败的是 Windows 3.11/3.12/3.13 全库与 Windows 可选 SDK 四个任务，重复失败的是同三条课程 UI/worker 测试。课程后台原先没有固定标准输入/输出编码，西文 Windows 编码下中文协议消息导致错误或退出。使用 `PYTHONIOENCODING=cp1252` 复现同一 UI 失败；在修复前新增实际子进程编码回归为 **1 failed、1 passed**，西文分支稳定失败。`serve()` 现在在启动读线程前明确设置两端 UTF-8，不依赖控制台语言，也不修改全局环境。测试的失败子进程清理不再用管道关闭异常掩盖主要断言。
+- 修复后定向回归：在 `PYTHONIOENCODING=cp1252` 下运行 `test_beta_features.py`、`test_knowledge_ui.py`、`test_knowledge_worker.py`，`--basetemp=.work/cache/beta-ci-fixed-2e9`：**21 passed，18.43 秒**。覆盖本次 CI 的三条失败测试；连续字幕测试分别强制子进程初始 UTF-8 / cp1252，确认中文笔记完整返回。供应商使用替身，测试不发真实请求。历史 CI 日志保留在 `.work/cache/beta-ci-20261009/failed.log`。
+- 最终完整回归：在 `PYTHONIOENCODING=cp1252` 下运行 `.venv\Scripts\python.exe scripts/test_no_audio.py -q --tb=short --basetemp=.work/cache/beta-full-71d`，**607 passed、5 skipped，129.22 秒**，零原生音频导入尝试。`ruff check linguaflow scripts tests`、`git diff --check` 通过；跳过不视为通过。
+
+本轮验证只覆盖本地 Windows Python 3.12 和模拟录音/模型。未运行真实云端、音频采集/回听、GPU、macOS，未重新执行远程 CI；历史 macOS 检查通过不证明本轮新改动已经在 Mac 验收。已开始录音继续使用冻结的术语快照，开关关闭不改写该快照；核心录音/保存生命周期没有改动。
+
 ## 2026-10-09 审查五项修复与课程功能隔离
 
 环境：Windows 11 x64、Python 3.12.8、既有 `windows` / 本地 `a6fe5e6` 之上的未提交工作；保留上一轮多格式实现。未升级依赖、读取密钥或访问音频设备。本轮修复不表示提交、推送、合并或发布。
