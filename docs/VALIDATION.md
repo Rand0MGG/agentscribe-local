@@ -1,3 +1,15 @@
+## 2026-10-09 取消模型加载时的断管清理
+
+环境：Windows 11 x64、Python 3.12.8，既有 `windows` / `f8e830a` 之上的共享清理修复；没有新增依赖或修改模型、音频设备与录音格式。
+
+- 远端基线：[Code checks 37904804596](https://github.com/Rand0MGG/agentscribe-local/actions/runs/37904804596) 的 9 个任务有 8 个通过，Windows 四个任务全部通过；仅 macOS arm64 / Python 3.13.15 全库失败。失败项为 `test_stop_cancels_model_loading_without_waiting`，取消加载后误报 `会话模型释放失败：[Errno 32] Broken pipe`；该任务 **1 failed、585 passed、20 skipped，97.49 秒**。日志保留在 `.work/cache/mac313-ci-20261009/failed.log`，没有把此结果当作整组通过。
+- 根因与边界：`PreparedWorker.close()` 已终止并等待自有进程退出，关闭 stdin 时仍会冲刷缓冲中的会话设置；接收端已经退出，此时 BrokenPipeError 属于预期清理。旧代码让该异常越过关闭循环，误报释放失败并跳过 stdout/stderr 关闭。现在只在已退出进程的 stdin 关闭处处理 BrokenPipeError，其他异常继续传播，且输入管道出错仍关闭输出/诊断管道；重复调用可完成清理。共享实现供两端使用，没有新增 Mac 专属流程或放宽原测试断言。
+- 确定性回归：标准库真实 TextIOWrapper / BufferedWriter 包裹故障注入原始流，保留尚未冲刷的设置，再关闭已退出的进程。分别覆盖 BrokenPipeError 和非断管 EIO 错误；修复前 **2 failed**，修复后验证预期断管不报错、EIO 原异常继续传播、三条管道全部关闭、重复清理成功。此为故障注入，不冒充 macOS 实机重现。
+- 取消、停止、超时、进程复用与模拟 PCM 保存：`.venv\Scripts\python.exe scripts/test_no_audio.py -q tests/test_runtime_preparation.py tests/test_wlk_session.py --tb=short --basetemp=.work/cache/mac313-fixed-b49`，**36 passed、1 skipped，8.64 秒**；跳过的是 Mac MLX helper 检查。
+- 完整无音频回归：`.venv\Scripts\python.exe scripts/test_no_audio.py -q --tb=short --basetemp=.work/cache/mac313-full-c6a`，**609 passed、5 skipped，128.07 秒**，零原生音频导入尝试。Ruff 与 `git diff --check` 通过，跳过不视为通过。
+
+以上修复后的结果为本地 Windows Python 3.12 验证；macOS Python 3.13 必须由修复后的新提交 CI 复核。未在本机访问真实音频设备、加载 GPU/MLX 模型或调用云端；无音频检查不能替代真实录音、取消/停止、保存/回听与退出清理的设备验收。
+
 ## 2026-10-09 Beta 默认关闭与 Windows CI 编码修复
 
 环境：Windows 11 x64、Python 3.12.8，既有 `windows` / `00a17cf` 之上的未提交工作。新增体验开关默认关闭；本轮未新增依赖、读取密钥或访问音频设备，也未提交、推送、合并或发布。

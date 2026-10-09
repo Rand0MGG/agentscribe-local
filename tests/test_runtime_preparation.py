@@ -104,6 +104,37 @@ def test_second_lease_is_rejected_without_disrupting_first(monkeypatch,tmp_path)
         runtime.close()
 
 
+@pytest.mark.parametrize('broken_pipe', [True, False])
+def test_exited_worker_closes_all_pipes_when_stdin_flush_fails(broken_pipe):
+    import errno
+
+    error = BrokenPipeError(errno.EPIPE, 'Broken pipe') if broken_pipe else OSError(errno.EIO, 'I/O failure')
+    class ExitedChildPipe(io.RawIOBase):
+        def writable(self):
+            return True
+        def write(self, data):
+            raise error
+    stdin = io.TextIOWrapper(io.BufferedWriter(ExitedChildPipe()), encoding='utf-8')
+    stdin.write('{"source":"en"}\n')  # Pending settings encounter the exited child only on close/flush.
+    worker = object.__new__(preparation.PreparedWorker)
+    worker.lock, worker.close_lock = Lock(), Lock()
+    worker.closed, worker.ready = Event(), Event()
+    joined = []
+    worker.reader = SimpleNamespace(join=lambda timeout: joined.append('reader'))
+    worker.diagnostics = SimpleNamespace(join=lambda timeout: joined.append('diagnostics'))
+    worker.process = SimpleNamespace(stdin=stdin, stdout=io.StringIO(), stderr=io.StringIO(), poll=lambda:0)
+    if broken_pipe:
+        worker.close()
+    else:
+        with pytest.raises(OSError) as caught:
+            worker.close()
+        assert caught.value is error
+    assert worker.closed.is_set() and worker.ready.is_set()
+    assert joined == ['reader', 'diagnostics']
+    assert all(pipe.closed for pipe in (stdin, worker.process.stdout, worker.process.stderr))
+    worker.close()  # Cleanup is repeatable after an expected or unexpected pipe failure.
+
+
 def test_cancel_before_runtime_ready_never_captures_and_reaps_process(monkeypatch,tmp_path):
     runtime,_=pool(monkeypatch,tmp_path,'import time; time.sleep(30)')
     worker=runtime.worker

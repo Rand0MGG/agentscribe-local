@@ -133,9 +133,17 @@ class PreparedWorker:
             diagnostics = getattr(self, 'diagnostics', None)
             if diagnostics:
                 diagnostics.join(timeout=2)
-            for pipe in (process.stdin, process.stdout, process.stderr):
-                if not pipe.closed:
-                    pipe.close()
+            try:
+                if not process.stdin.closed:
+                    try:
+                        process.stdin.close()
+                    except BrokenPipeError:
+                        # The child is already reaped; cancelled settings may remain buffered.
+                        pass
+            finally:
+                for pipe in (process.stdout, process.stderr):
+                    if not pipe.closed:
+                        pipe.close()
 
 
 class RuntimePreparation:
