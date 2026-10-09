@@ -83,13 +83,13 @@ Mac 适配进展、已验证范围和待实机测试项目见 [macOS 适配记�
 
 允许课程云端处理后点击“完整阅读并提取术语”：全部页面图像逐页发送模型，包含无文字图形页和空白页；原生文字只作辅助。新增格式导入后即可在本地预览原页，无需密钥或上传。界面分别显示原页、模型视觉解读和已读页数，解读与原生文本分别保存和引用。已读完不表示模型理解无误；可手工录入和审核术语。
 
-可选云端功能需要在桌面环境安装额外依赖：Windows 运行 `.venv\Scripts\python.exe -m pip install -e ".[knowledge]"`；Mac 使用 `.venv/bin/python -m pip install -e '.[knowledge]'`。PDF/Office 页面渲染还需 Node.js 22.19 或更新版本，然后运行 `.venv\Scripts\python.exe scripts/install_documents.py`（Mac 使用 `.venv/bin/python`）。安装器在项目 `.runtime/components/document-renderer` 的独立目录准备 DSH LibreOffice Kit 0.1.3，验证成功后切换；兼容旧 `.runtime/document-renderer`。历史 Windows x64 安装约 197 MiB。网页、文本和图片复用既有 PySide6，不新增浏览器或 OCR 依赖；网页截图在自有子进程中使用 CPU。Mac 渲染尚待实机验证，安装不改变音频推理环境或识别设备。
+可选云端功能需要在桌面环境安装额外依赖：Windows 运行 `.venv\Scripts\python.exe -m pip install -e ".[knowledge]"`；Mac 使用 `.venv/bin/python -m pip install -e '.[knowledge]'`。PDF/Office 页面渲染还需 Node.js 22.19 或更新版本，然后运行 `.venv\Scripts\python.exe scripts/install_documents.py`（Mac 使用 `.venv/bin/python`）。安装器在项目 `.runtime/components/document-renderer` 的独立目录准备 DSH LibreOffice Kit 0.1.3，验证成功后切换；兼容旧 `.runtime/document-renderer`。历史 Windows x64 安装约 197 MiB。网页、文本和图片复用既有 PySide6，不新增浏览器或 OCR 依赖；网页截图在自有子进程中使用 CPU，并禁用真实音频输入/输出。macOS arm64 已通过生成夹具的本地格式导入回归；网页转换需要当前进程能访问 macOS 图形会话，受限环境会提示原因并保留原件。详见 [Mac 更新复核](docs/MACOS_SUPPORT.md#2026-10-09windows-更新的本机适配)。安装不改变识别设备。
 
 勾选术语并保存审核结果后，下一次 Qwen 录音会固定课程上下文；PyTorch 使用 `context`，MLX 使用 `system_prompt`。Whisper 保持原有行为。当前是参数接入与模拟验证，尚未证明术语改善识别质量，也没有完成本轮 Mac GPU 实测。
 
 “配置 DeepSeek 密钥”使用系统凭据存储，不将密钥写入课程文件。课件图像与文字按课程开启；旧的仅文字许可不会自动授权上传图片。笔记与问答按录音另行开启，导入课件时须先完成全部页读取。开启后，成功保存的定稿原文分批生成带引用笔记，课后可按章节整理或提问，并按需重读相关原页。字幕变化会使相关笔记待核对或失效；个人编辑不会被模型覆盖。引用可定位课件页或录音位置，点击引用不自动播放。详见 [工作区说明](docs/WORKSPACE.md#课程资料与笔记) 和 [设计与实施状态](docs/AgentScribe_软件开发设计文档.md#132-当前实施状态2026-10-09)。
 
-目前通过 Windows 本地与模拟服务回归；真实 DeepSeek、系统凭据写入、课件质量和两端模型实测仍待验收。云端默认关闭，失败、取消或预算耗尽保留已保存内容；实时识别继续运行。
+目前通过 Windows 与 macOS 本地格式、课程后台和模拟服务回归；真实 DeepSeek、系统凭据写入、用户课件质量及术语对两端实际识别质量的影响仍待验收。云端默认关闭，失败、取消或预算耗尽保留已保存内容；实时识别继续运行。
 
 ## 翻译引擎
 

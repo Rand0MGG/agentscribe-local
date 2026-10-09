@@ -153,6 +153,21 @@ def test_exited_worker_closes_all_pipes_when_stdin_flush_fails(broken_pipe):
     worker.close()  # Cleanup is repeatable after an expected or unexpected pipe failure.
 
 
+def test_pipe_cleanup_preserves_output_error_and_closes_remaining_streams():
+    from linguaflow.process_platform import close_process_pipes
+    error = BrokenPipeError('unexpected output failure')
+    class Output(io.StringIO):
+        def close(self):
+            super().close()
+            raise error
+    process = SimpleNamespace(stdin=io.StringIO(), stdout=Output(), stderr=io.StringIO())
+    with pytest.raises(BrokenPipeError) as caught:
+        close_process_pipes(process)
+    assert caught.value is error
+    assert all(pipe.closed for pipe in (process.stdin, process.stdout, process.stderr))
+    close_process_pipes(process)
+
+
 def test_cancel_before_runtime_ready_never_captures_and_reaps_process(monkeypatch,tmp_path):
     runtime,_=pool(monkeypatch,tmp_path,'import time; time.sleep(30)')
     worker=runtime.worker

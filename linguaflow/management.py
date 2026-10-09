@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .model_options import asr_backends, qwen_models, translation_devices
 from .process_platform import spawn_options, stop_tree
 from .qt_controls import text_label
 from .runtime_paths import installation_command, python_environment, resource_root
@@ -64,10 +65,11 @@ class ModelManager(QDialog):
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
         self.backend = QComboBox()
-        self.backend.addItem("WhisperLiveKit · Whisper / AlignAtt", "wlk-whisper")
-        self.backend.addItem("WhisperLiveKit · Qwen3-ASR 流式", "qwen3-streaming")
-        if sys.platform == 'darwin':
-            self.backend.addItem('Qwen3-ASR · MLX 4-bit（试验）', 'qwen3-mlx')
+        backend_labels = {'wlk-whisper': 'WhisperLiveKit · Whisper / AlignAtt',
+                          'qwen3-streaming': 'WhisperLiveKit · Qwen3-ASR 流式',
+                          'qwen3-mlx': 'Qwen3-ASR · MLX 4-bit（试验）'}
+        for backend in asr_backends():
+            self.backend.addItem(backend_labels[backend], backend)
         self.asr_page = QWidget()
         self.asr_form = QFormLayout(self.asr_page)
         self.asr_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
@@ -193,9 +195,7 @@ class ModelManager(QDialog):
         self.whisper_form.addRow(download)
         self.qwen_model = QComboBox()
         self.qwen_model.setEditable(True)
-        self.qwen_model.addItems(["Qwen/Qwen3-ASR-0.6B", "Qwen/Qwen3-ASR-1.7B"])
-        if sys.platform == 'darwin':
-            self.qwen_model.addItem('mlx-community/Qwen3-ASR-1.7B-4bit')
+        self.qwen_model.addItems(qwen_models())
         self.qwen_form.addRow("Qwen 识别模型", self.qwen_model)
         check = QPushButton("下载 / 检查 Qwen 模型")
         check.clicked.connect(lambda: self.prepare_qwen(self.qwen_model.currentText()))
@@ -260,13 +260,12 @@ class ModelManager(QDialog):
         self.translation_initial_before.setEnabled(enabled)
 
     def update_translation_engine(self):
-        from .llama_assets import devices
         llama = self.translation_engine.currentData() == 'llama'
         selected = self.translation_device.currentData()
         self.translation_device.clear()
         labels = {'cpu': 'CPU', 'cuda': 'NVIDIA GPU · CUDA',
                   'metal': 'Apple GPU · Metal', 'vulkan': 'GPU · Vulkan'}
-        available = devices() if llama else (('cpu',) if sys.platform == 'darwin' else ('cpu', 'cuda'))
+        available = translation_devices(self.translation_engine.currentData())
         for device in available:
             self.translation_device.addItem(labels[device], device)
         self.translation_device.setCurrentIndex(max(0, self.translation_device.findData(selected)))

@@ -1,5 +1,60 @@
 # macOS 适配记录
 
+## 2026-10-09：Windows 更新的本机适配
+
+既有 `mac` 分支从 `59bc32b` 快进至 Windows 提交 `2ed03c1`，本节对应该提交加课件渲染修复及后续共享规则、退出清理优化；改动归属 `mac` 分支，未合并至 `main` 或发布。环境为 Apple M2 / 8 GiB、macOS 26.6.2 / arm64、Python 3.12.14、PySide6 6.11.2。用户正在录音，所有验证使用模拟采集或现成文件，没有运行设备枚举、采集、回听或系统音频配置入口，也未停止或重启用户进程。
+
+### 课件转换崩溃与修复
+
+首轮受限环境完整回归为 **15 failed、625 passed、19 skipped，74.20 秒**。失败均来自网页、文本及 SVG 课件转换；用户同时收到 Python 意外退出弹窗，报告显示 `CrBrowserMain → QWebEngineProfile → AppKit / HIServices._RegisterApplication → SIGABRT`。Qt offscreen 仍不足以阻止 Chromium 初始化 macOS 窗口服务。本机受限进程的 `CGSessionCopyCurrentDictionary()` 返回空，具备窗口服务访问权限的进程返回有效会话。
+
+修复使用 `process_platform.window_session_available()` 在导入 WebEngine 前检测 Quartz 会话；不可访问时返回明确错误，保留原件，不再尝试会中止进程的初始化。检查不注册应用，也不访问音频设备；有效会话字典按 CoreGraphics 的所有权要求释放。位图路径继续可用。独立 helper 增加 Chromium 的虚拟输入与禁用音频输入/输出参数，已有页面权限拒绝、资源快照隔离和 CPU 渲染继续生效；参数来源见 [Chromium media switches](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/media/base/media_switches.cc)。没有关闭 Chromium 沙箱或改动系统设置。
+
+渲染入口与保护函数由两端共用；Quartz 检查只在 Mac 执行，Windows 直接返回可用，不加载 Mac 框架。禁用真实音频输入/输出的 Chromium 参数在两端均生效。该修复针对已复现的 WebEngine 初始化中止，不是对所有 Python 崩溃的通用恢复机制。
+
+- 受限环境确定性回归：图形会话不可用时，在 WebEngine 初始化之前失败；空会话/有效会话与释放责任均覆盖。相关 Mac 回归 **9 passed，1.98 秒**。另用实际受限 helper 生成明确错误，进程正常退出，未新增崩溃报告。
+- 桌面 `.venv` 安装项目已有的固定版本 `knowledge` 可选依赖：Deep Agents 0.7.23、langchain-deepseek 1.1.1、pypdf 6.19.0、keyring 25.7.0；`pip check` 通过。根版本固定不代表完整传递依赖锁定。未读取真实密钥或调用云端。
+- Node.js 22.22.1 / 原生 arm64 安装 LibreOffice Kit 0.1.3 及 darwin-arm64 组件，生产安装器验证能力后发布组件记录。首次下载遇到 TLS 连接中断，重试成功；没有改动 registry 或旧推理环境。组件目录约 **159.7 MiB**，不含下载缓存与进程内存。
+- 完整回归使用 `.venv/bin/python scripts/test_no_audio.py -q -x --tb=short --basetemp=.work/cache/mac-update-20261009-full`，在可访问窗口服务的环境运行，**668 passed，98.66 秒，零跳过**；没有原生音频导入尝试。覆盖真实生成夹具的全部课件格式、网页横纵溢出与固定栏、课程 SDK 模拟请求、后台关闭、Beta 默认关闭及模拟录音保存。Ruff、差异空白检查通过。修复后的完整回归与界面预览没有新增 Python 崩溃报告。
+- 界面以实际应用样式和独立偏好检查 900×700 设置、860×680 / 640×540 课程面板，未启动录音或枚举设备。正式预览在 `.work/browser/mac-update-20261009-styled/`；部分旧测试没有应用 `STYLE`，其原始截图不作为正式主题证据。
+
+Mac 的网页转换回归需要当前进程能访问窗口服务；offscreen 仅隐藏界面，不授予系统服务权限。受限环境下的明确失败不等于网页转换已经通过。用户课件、复杂字体/公式、真实 DeepSeek 与凭据写入、术语增强的识别质量仍待验收。
+
+### 共享规则与退出清理优化
+
+在自有、已退出的小型 Python 进程上复现：MLX 客户端关闭尚有缓冲数据的输入管道时触发 BrokenPipeError，导致输出管道未关闭；重复关闭因已标记关闭而不能补救。`process_platform.close_process_pipes()` 现在由 MLX 和两端运行库预热共用，在进程退出、读取线程收尾后关闭全部管道。只有输入缓冲冲刷的预期 BrokenPipeError 被忽略；输入的其他 I/O 错误、输出管道错误在完成其他管道清理后仍传播。关闭、超时、终止进程的顺序和范围保持原有责任边界。
+
+`model_options.py` 集中桌面与模型管理页的 ASR 后端、计算设备、Qwen 模型与翻译设备选项，复用现有 llama 设备定义；MLX 内置模型标识保留原有导入兼容。后端切换继续保留自定义模型路径和有效设备，安装与推理继续独立校验实际能力。模块没有 Qt、重型模型依赖或硬件探测，不增加设置、预热任务或平台业务副本；运行库预加载和 30 分钟课间保留不变。
+
+新增测试覆盖：缓冲输入关闭失败后仍关闭输出/诊断管道，其他错误不被吞掉，重复关闭安全；两端实际 Qt 控件的设备切换及偏好重开；真实 PyTorch / MLX 适配器接入受控模型端点，比较同一假设序列的原文纠正、初译、最终翻译和迟到结果拒绝；共享 worker 取消时释放所属资源并停止发布。Windows 跳过 Quartz 的路径单独验证，不调用 Mac 框架。
+
+优化后的完整验证：在可访问窗口服务的环境运行 `.venv/bin/python scripts/test_no_audio.py -q -x --tb=short --basetemp=.work/cache/shared-optimization-20261009-full`，**677 passed，104.46 秒，零跳过**，没有原生音频导入尝试；全仓 Ruff 与差异空白检查通过。日志位于 `.work/cache/shared-optimization-20261009-full.log`。两端分支模拟通过不能代替 Windows 实机验收；此优化不宣称降低模型内存或提高识别速度。
+
+优化后再次以 1× 速度回放同一 **101.176 秒**文件，实际 MLX / Apple GPU 识别与 HY / Metal 33 层翻译完成 **20 条原文、20 条最终译文**，零错误、错配或非空原文提前定稿，ASR 修订审计一致；本合成夹具 WER 为 0 / 256 词。文件库逐字段重读及双语 SRT 一致，音频访问尝试为零，无超时。ready 9.23 秒，输入后首原文 / 首译文 1.59 / 15.37 秒，收尾 9.98 秒，整轮 120.38 秒；MLX 分配峰值 **2.64 GiB**，最低系统空闲比例 9%，系统交换增长 3490.94 MiB。系统资源包含其他应用活动，本轮不是严格性能对照。新证据独立保存在 `.work/mac-file-tests/shared-optimization-20261009/`，没有覆盖下面的更新基线结果。
+
+使用生产 `STYLE`、独立偏好与文件库检查识别/翻译设置在 900×700 和窗口最小尺寸 900×650 的显示，未创建录音、预热或课程后台；截图位于 `.work/browser/shared-optimization-20261009-styled/`。真实音频设备、长课堂、Windows 硬件仍未验证。
+
+### 实际 Apple GPU 文件链路
+
+保留已有 `.venv-wlk` / `.venv-mlx`，生产 `runtime_check` 分别通过 PyTorch 2.11.0 的 MPS 和 MLX 0.32.2 的小型 GPU 运算；此处不是全新推理环境安装验收。未升级这两套推理环境或下载识别权重。
+
+完整回归之后，使用 `scripts/replay_streaming.py run` 和资源观察器，以 1× 速度输入已有 `continuous-en.wav` 的 **101.176 秒** PCM。Session / AudioJournal / 共享 worker / MLX / SaT / 翻译均使用生产实现，原生音频导入守卫由子进程继承；参考文本仅事后评分。Qwen3-ASR 1.7B 4-bit 确认 Apple GPU / Metal，HY-MT2 1.8B Q4_K_M 确认 llama.cpp / METAL 的 **33 层全部上 GPU**。
+
+| 指标 | 本轮结果 |
+| --- | --- |
+| 原文与最终译文 | 20 / 20 条，全部定稿，零错误与译文版本错配 |
+| ASR 完整修订与最终字幕审计 | match，零非空字幕提前定稿 |
+| 英文夹具 WER | 0 / 256 词；只证明该合成样本 |
+| 开始至 ready | 8.17 秒 |
+| 输入后首条原文 / 首条译文 | 1.43 / 12.60 秒 |
+| 输入结束后的收尾 / 整体会话 | 7.61 / 116.95 秒 |
+| 文件库保存与双语 SRT | 逐字段重读一致，保存的 SRT 与导出一致 |
+| MLX 分配峰值 | 2.64 GiB，不是整个进程或系统内存 |
+| 最低系统空闲比例 / 系统交换增长 | 9% / 3022.81 MiB |
+| 音频访问尝试 / 超时 | false / 无 |
+
+证据在 `.work/mac-file-tests/windows-2ed03c1-mac-20261009/`，包括输入及生产模块哈希、设置、事件、修订审计、资源观察、保存副本、SRT 和 `summary.json`。系统交换包含其他应用活动，不能据此认定更新引入回归或长期稳定；未作严格性能对照。未验证真实麦克风、系统声音、播放、长课堂、Windows 硬件，亦未验收全新 Mac 推理环境安装或安装包。
+
 ## 2026-10-06：初始化与分句缓存移入共享实现
 
 识别和 SaT 的并行加载、就绪条件及资源释放由 `inference_startup.py` 统一管理，PyTorch、MLX 与 Whisper 使用同一协调流程。删除 Mac 专用 `begin_mlx_loading`、后台加载线程 / 就绪等待及预加载客户端入口；`mlx_asr.py` 只保留独立解释器、MLX 协议、超时、GPU 确认与进程释放。所有模型加载结束后才创建音频处理 / VAD，避免 Transformers 的临时默认 dtype 影响语音检测。

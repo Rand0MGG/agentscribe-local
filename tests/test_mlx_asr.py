@@ -1,5 +1,6 @@
 """MLX contracts tested with generated PCM and fake model/process endpoints."""
 import base64
+import errno
 import io
 import json
 import os
@@ -24,6 +25,35 @@ def client_with_process(process):
     client.closed = False
     client.exchange = None
     return client
+
+
+@pytest.mark.parametrize('broken_pipe', [True, False])
+def test_exited_client_closes_every_pipe_even_when_stdin_flush_fails(broken_pipe):
+    error = BrokenPipeError(errno.EPIPE, 'Broken pipe') if broken_pipe else OSError(errno.EIO, 'I/O failure')
+    class ExitedChildPipe(io.RawIOBase):
+        def writable(self):
+            return True
+        def write(self, data):
+            raise error
+    stdin = io.TextIOWrapper(io.BufferedWriter(ExitedChildPipe()), encoding='utf-8')
+    stdin.write('{"model":"pending"}\n')
+    process = SimpleNamespace(stdin=stdin, stdout=io.StringIO(), stderr=io.StringIO(), poll=lambda: 0)
+    client = client_with_process(process)
+    try:
+        if broken_pipe:
+            client.close()
+        else:
+            with pytest.raises(OSError) as caught:
+                client.close()
+            assert caught.value is error
+        assert client.closed and all(pipe.closed for pipe in (stdin, process.stdout, process.stderr))
+        client.close()
+    finally:
+        for pipe in (stdin, process.stdout, process.stderr):
+            try:
+                pipe.close()
+            except OSError:
+                pass
 
 
 def test_bounded_windows_preserve_every_sample_and_flush_once():

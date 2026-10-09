@@ -37,7 +37,7 @@ def reachable(graph, module):
 
 def test_domain_and_storage_have_no_transitive_qt_or_model_dependency():
     graph, external = dependencies()
-    domain = ('core', 'preferences', 'recording_state', 'capture_control', 'recording_document', 'library', 'library_startup', 'runtime_paths', 'runtime_preparation', 'inference_startup',
+    domain = ('core', 'preferences', 'recording_state', 'capture_control', 'recording_document', 'library', 'library_startup', 'runtime_paths', 'runtime_preparation', 'inference_startup', 'model_options',
               'hardware', 'runtime_install', 'updates', 'llama_install', 'document_install',
               'wlk_captions', 'translation_queue', 'translation_service', 'translation_context', 'translation_config',
               'translation_models', 'llama_assets', 'llama_translation', 'process_platform', 'managed_process', 'qwen_revisions',

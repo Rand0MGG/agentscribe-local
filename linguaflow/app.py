@@ -49,6 +49,7 @@ from .library import Library
 from .library_access import acquire_recording_lock, check_library_access
 from .library_startup import LibrarySelectionCancelled, open_library
 from .management import ModelManager
+from .model_options import MLX_MODEL, asr_devices, normalize_asr_selection
 from .preferences import PREFERENCES, read_audio_device, read_preferences, write_preferences
 from .qt_controls import data_index
 from .qt_controls import text_label as label
@@ -677,11 +678,10 @@ class Window(QMainWindow):
         local_buttons.addStretch()
         models.addRow(Disclosure('使用已下载的本地权重', local_models))
         self.compute = QComboBox()
-        self.compute.addItem("CPU（通用）", "cpu")
-        if sys.platform == 'darwin':
-            self.compute.addItem('Apple GPU · Metal / MLX', 'mlx')
-        if sys.platform != "darwin":
-            self.compute.addItem("NVIDIA GPU · 半精度", "cuda")
+        device_labels = {'cpu': 'CPU（通用）', 'mlx': 'Apple GPU · Metal / MLX',
+                         'cuda': 'NVIDIA GPU · 半精度'}
+        for device in asr_devices():
+            self.compute.addItem(device_labels[device], device)
         self.model_manager.asr_form.insertRow(2, "识别计算设备", self.compute)
         models = self.model_manager.translation_form
         self.translation = QComboBox()
@@ -1393,14 +1393,10 @@ class Window(QMainWindow):
     def sync_asr_device(self):
         manager = self.model_manager
         mlx = manager.backend.currentData() == 'qwen3-mlx'
-        if mlx:
-            self.compute.setCurrentIndex(data_index(self.compute, 'mlx'))
-            if manager.qwen_model.currentText().startswith('Qwen/'):
-                manager.qwen_model.setCurrentText('mlx-community/Qwen3-ASR-1.7B-4bit')
-        elif self.compute.currentData() == 'mlx':
-            self.compute.setCurrentIndex(data_index(self.compute, 'cpu'))
-        if not mlx and manager.qwen_model.currentText() == 'mlx-community/Qwen3-ASR-1.7B-4bit':
-            manager.qwen_model.setCurrentText('Qwen/Qwen3-ASR-0.6B')
+        device, model = normalize_asr_selection(manager.backend.currentData(), self.compute.currentData(),
+                                               manager.qwen_model.currentText())
+        self.compute.setCurrentIndex(data_index(self.compute, device))
+        manager.qwen_model.setCurrentText(model)
         self.compute.setEnabled(not mlx)
 
     def select_asr_device(self):
@@ -1411,7 +1407,7 @@ class Window(QMainWindow):
     def use_mac_profile(self):
         manager = self.model_manager
         manager.backend.setCurrentIndex(data_index(manager.backend, 'qwen3-mlx'))
-        manager.qwen_model.setCurrentText('mlx-community/Qwen3-ASR-1.7B-4bit')
+        manager.qwen_model.setCurrentText(MLX_MODEL)
         self.sync_asr_device()
         manager.draft_seconds.setValue(1.)
         manager.endpoint_seconds.setValue(1.)

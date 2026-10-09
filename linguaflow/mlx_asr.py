@@ -9,10 +9,11 @@ from threading import Lock, Thread
 import numpy as np
 
 from .asr_stability import choose_cut
+from .model_options import MLX_MODEL as MLX_MODEL
+from .process_platform import close_process_pipes
 from .qwen_accurate import LANGUAGE_NAMES, QwenAccurateOnline
 from .runtime_paths import mlx_python, python_environment, resource_root
 
-MLX_MODEL = 'mlx-community/Qwen3-ASR-1.7B-4bit'
 MLX_REVISION = '78a389c776a5483b2d0d4ea5494e11012e0d6159'
 
 
@@ -117,8 +118,7 @@ class MLXClient:
                         self.process.wait(timeout=2)
             if self.exchange is not None:
                 self.exchange.join(timeout=2)
-            self.process.stdin.close()
-            self.process.stdout.close()
+            close_process_pipes(self.process)
 
 
 def build_mlx_online(model, language, update_seconds, report, window_seconds=30.,

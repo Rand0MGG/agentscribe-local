@@ -11,6 +11,41 @@ def spawn_options():
             else {'start_new_session': True})
 
 
+def close_process_pipes(process):
+    """Close reaped-child pipes after readers join; preserve unexpected IO failures."""
+    error = None
+    for name in ('stdin', 'stdout', 'stderr'):
+        pipe = getattr(process, name, None)
+        if pipe is None or pipe.closed:
+            continue
+        try:
+            pipe.close()
+        except Exception as exc:
+            # Closing stdin flushes settings buffered before a child exited.
+            # An expected broken pipe must not prevent closing output streams.
+            if name != 'stdin' or not isinstance(exc, BrokenPipeError):
+                error = error or exc
+    if error is not None:
+        raise error
+
+
+def window_session_available():
+    """Check Quartz availability without registering an app or opening devices."""
+    if sys.platform != 'darwin':
+        return True
+    import ctypes
+    graphics = ctypes.CDLL('/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics')
+    graphics.CGSessionCopyCurrentDictionary.restype = ctypes.c_void_p
+    session = graphics.CGSessionCopyCurrentDictionary()
+    if not session:
+        return False
+    foundation = ctypes.CDLL('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation')
+    foundation.CFRelease.argtypes = [ctypes.c_void_p]
+    foundation.CFRelease.restype = None
+    foundation.CFRelease(session)
+    return True
+
+
 def stop_tree(process, force=False):
     if sys.platform == 'win32':
         subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'],

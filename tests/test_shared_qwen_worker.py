@@ -139,6 +139,40 @@ def test_worker_uses_shared_startup_and_owns_backend_resource(monkeypatch, backe
     assert closed == ([True] if backend == 'qwen3-mlx' else [])
 
 
+@pytest.mark.parametrize('backend', ['qwen3-streaming', 'qwen3-mlx'])
+def test_cancelled_worker_releases_owned_backend_without_publishing_late_results(monkeypatch, backend):
+    import linguaflow.mlx_asr as mlx
+    _, online, _ = stub_worker(monkeypatch, 'darwin' if backend == 'qwen3-mlx' else 'win32')
+    closed = []
+    build = qwen_accurate.build_official_online
+    def create(*args, **kwargs):
+        kwargs['own'](SimpleNamespace(close=lambda: closed.append(True)))
+        model, language, interval = args[:3]
+        return build(model, 'mlx', language, interval, kwargs['window_seconds'])
+    monkeypatch.setattr(mlx, 'build_mlx_online', create)
+    async def exercise():
+        entered, events = asyncio.Event(), []
+        async def wait_for_cancel(*args):
+            entered.set()
+            await asyncio.Future()
+        monkeypatch.setattr(wlk_worker, '_run_session', wait_for_cancel)
+        settings = Settings('fixture', backend=backend,
+            asr_device='mlx' if backend == 'qwen3-mlx' else 'cpu', source='en', translate=False)
+        task = asyncio.create_task(wlk_worker.serve(asdict(settings), events.append, None))
+        try:
+            await asyncio.wait_for(entered.wait(), 3)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert len(online) == 1
+            assert not any(event['type'] in ('caption', 'done') for event in events)
+            assert closed == ([True] if backend == 'qwen3-mlx' else [])
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    asyncio.run(exercise())
+
+
 @pytest.mark.parametrize(('platform', 'device'), [('win32', 'cuda'), ('darwin', 'cpu')])
 def test_whisper_uses_shared_startup_and_preserves_device(monkeypatch, platform, device):
     stub_worker(monkeypatch, platform)
