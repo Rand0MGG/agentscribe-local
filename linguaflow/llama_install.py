@@ -9,6 +9,7 @@ import zipfile
 from pathlib import Path
 from uuid import uuid4
 
+from .download_progress import copy_download, hub_progress
 from .hardware import check_installation
 from .runtime_install import preparation_lock, publish
 from .runtime_paths import cache_root, runtime_root
@@ -28,7 +29,7 @@ def unpack(archive, destination):
     return entries[0] if len(entries) == 1 and entries[0].is_dir() else destination
 
 
-def main():
+def install(device, model):
     from linguaflow.llama_assets import (
         HY_GGUF,
         MODEL_FILE,
@@ -41,15 +42,11 @@ def main():
         validate_weights,
     )
 
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--device', default='metal' if sys.platform == 'darwin' else 'cpu')
-    parser.add_argument('--model', default=HY_GGUF, help='Built-in HY preset or an existing GGUF file')
-    args = parser.parse_args()
     target = check_installation()
-    archives = runtime_archives(args.device)
-    if args.model != HY_GGUF:
-        validate_weights(args.model)
-    name = 'llama-b11254-' + (target + '-' + args.device if target == 'windows-x64' else target)
+    archives = runtime_archives(device)
+    if model != HY_GGUF:
+        validate_weights(model)
+    name = 'llama-b11254-' + (target + '-' + device if target == 'windows-x64' else target)
     base = runtime_root() / 'components' / name
     with preparation_lock(base), tempfile.TemporaryDirectory(prefix='llama-install-', dir=base) as work:
         slot = uuid4().hex
@@ -61,7 +58,7 @@ def main():
                 archive = work/name
                 print('正在下载 llama.cpp 运行组件：'+name, flush=True)
                 with urllib.request.urlopen(RELEASE_URL+name, timeout=60) as response, archive.open('wb') as output:
-                    shutil.copyfileobj(response, output)
+                    copy_download(response, output, 'llama.cpp 运行组件')
             if digest(archive) != expected:
                 raise ValueError('运行组件校验失败：'+name)
             folder = unpack(archive, work/str(index))
@@ -76,15 +73,17 @@ def main():
         if not binary.is_file():
             raise ValueError('运行组件缺少 llama-server，请检查官方发行包。')
         publish(base / 'active.json', {'slot': slot})
-    if args.model == HY_GGUF:
+    if model == HY_GGUF:
         weights = model_path()
         if not weights.is_file() or digest(weights) != MODEL_SHA256:
             from huggingface_hub import hf_hub_download
             print('正在下载 HY-MT2 1.8B Q4_K_M 权重…', flush=True)
-            cached = Path(hf_hub_download(HY_GGUF, MODEL_FILE, revision=REVISION))
+            with hub_progress():
+                cached = Path(hf_hub_download(HY_GGUF, MODEL_FILE, revision=REVISION))
             if digest(cached) != MODEL_SHA256:
                 # Only confirmed corruption justifies replacing the cached file.
-                cached = Path(hf_hub_download(HY_GGUF, MODEL_FILE, revision=REVISION, force_download=True))
+                with hub_progress():
+                    cached = Path(hf_hub_download(HY_GGUF, MODEL_FILE, revision=REVISION, force_download=True))
             if digest(cached) != MODEL_SHA256:
                 raise ValueError('HY 权重校验失败，请重新准备。')
             weights.parent.mkdir(parents=True, exist_ok=True)
@@ -97,8 +96,17 @@ def main():
                 staged.replace(weights)
             finally:
                 staged.unlink(missing_ok=True)
-    validate_weights(args.model)
+    validate_weights(model)
     print('llama.cpp 文件已就绪；开始聆听时验证模型架构和所选设备。', flush=True)
+
+
+def main():
+    from .llama_assets import HY_GGUF
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--device', default='metal' if sys.platform == 'darwin' else 'cpu')
+    parser.add_argument('--model', default=HY_GGUF, help='Built-in HY preset or an existing GGUF file')
+    args = parser.parse_args()
+    install(args.device, args.model)
 
 
 if __name__ == '__main__':

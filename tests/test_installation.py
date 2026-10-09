@@ -223,7 +223,8 @@ print('fixture child ready', flush=True)
 time.sleep(30)
 '''
     logs, errors = [], []
-    worker = SimpleNamespace(cancelled=False, process=None, progress=SimpleNamespace(emit=logs.append))
+    worker = SimpleNamespace(cancelled=False, process=None, progress=SimpleNamespace(emit=logs.append),
+                             download=SimpleNamespace(emit=lambda event: None))
     manager = SimpleNamespace(worker=worker)
     def run():
         try:

@@ -9,6 +9,14 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QWidget
 import linguaflow.app as module
 calls=[]
+timers=[]
+single_shot=QTimer.singleShot
+def schedule(delay, callback):
+    timers.append((delay, callback.__name__))
+    if callback.__name__ == 'check_startup_updates':
+        assert calls == ['shown']
+    single_shot(delay, callback)
+module.QTimer.singleShot=schedule
 class Runtime:
     def prepare(self):
         assert calls==['shown']
@@ -24,11 +32,14 @@ class Window(QWidget):
     def show(self):
         super().show()
         calls.append('shown')
+    def check_startup_updates(self):
+        raise AssertionError('Update check must not delay showing or runtime preparation')
 module.RuntimePreparation=Runtime
 module.Window=Window
 try: module.main()
 except SystemExit as exc: assert exc.code==0
 assert calls==['shown','prepared','closed'],calls
+assert (1500, 'check_startup_updates') in timers
 """
     result=subprocess.run([sys.executable,'-c',code],capture_output=True,text=True,timeout=10,
                           env={**os.environ,'QT_QPA_PLATFORM':'offscreen'})
@@ -245,10 +256,10 @@ w.close()
 w = window()
 assert w.asr.currentText() == 'fixture-model'
 assert w.translation.currentText() == 'tencent/Hy-MT2-1.8B'
-assert w.model_manager.translation_before.currentData() == 2
-assert w.model_manager.translation_after.currentData() == 2
+assert w.model_manager.translation_before.currentData() == 5
+assert w.model_manager.translation_after.currentData() == 1
 settings = w.settings_binding.session_settings(('fixture', True))
-assert settings.translation_before == 2 and settings.translation_after == 2
+assert settings.translation_before == 5 and settings.translation_after == 1
 assert not hasattr(settings, 'offline')
 w.translation.setCurrentText('facebook/nllb-200-distilled-600M')
 assert not w.model_manager.translation_before.isEnabled()
@@ -478,13 +489,13 @@ assert w.settings_workspace.pages.isHidden()
 w.leave_settings()
 w.start()
 assert w.session is not None and w.current_item['id'] == identifier
-assert not w.settings_panel.isEnabled() and not w.model_manager.isEnabled()
+assert w.settings_panel.isEnabled() and w.model_manager.isEnabled()
 assert w.pause_button.isEnabled() and w.pause_button.text() == '暂停'
 w.pause_button.click()
 assert not w.pause_button.isEnabled() and w.stop_button.isEnabled()
 w.session.paused.emit(True)
 assert w.pause_button.text() == '继续录音' and w.pause_button.isEnabled()
-assert not w.new_button.isEnabled() and not w.settings_panel.isEnabled()
+assert not w.new_button.isEnabled() and w.settings_panel.isEnabled()
 w.on_ready()
 assert w.pause_button.text() == '继续录音'
 w.pause_button.click()
@@ -539,7 +550,7 @@ w.on_ready()
 w.session.paused.emit(True)
 w.update_activity()
 assert '正在停止' in w.status.text() and not w.stop_button.isEnabled()
-assert not w.start_button.isEnabled() and not w.model_manager.isEnabled()
+assert not w.start_button.isEnabled() and w.model_manager.isEnabled()
 w.on_finished()
 app.processEvents()
 # Closing a paused recording follows the same drain/save path as Stop.

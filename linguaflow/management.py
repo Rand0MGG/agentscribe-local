@@ -21,6 +21,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import __version__
+from .download_progress import PREFIX
+from .listening_profiles import PROFILES
 from .model_options import asr_backends, qwen_models, translation_devices
 from .process_platform import spawn_options, stop_tree
 from .qt_controls import text_label
@@ -32,6 +35,7 @@ from .ui_components import ChoiceBox as QComboBox
 class Preparation(QThread):
     result = Signal(str)
     progress = Signal(str)
+    download = Signal(dict)
 
     def __init__(self, action, parent, *, affects_runtime=True, beta_only=False):
         super().__init__(parent)
@@ -54,6 +58,9 @@ class Preparation(QThread):
 
 class ModelManager(QDialog):
     update_checked = Signal(dict)
+    preparation_changed = Signal(bool)
+    preparation_message = Signal(str)
+    download_changed = Signal(dict)
 
     def __init__(self, parent=None, *, compute_device=lambda: "cpu"):
         super().__init__(parent)
@@ -62,6 +69,8 @@ class ModelManager(QDialog):
         self.resize(660, 640)
         self.worker = None
         self.close_requested = False
+        self.session_active = False
+        self.preparation_buttons = []
         layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
@@ -91,7 +100,23 @@ class ModelManager(QDialog):
         self.add_page(self.translation_page, "翻译模型")
         advanced = QWidget()
         self.advanced_form = QFormLayout(advanced)
-        self.advanced_form.addRow(text_label('听写更新', 'settingsSection'))
+        self.profile = QComboBox()
+        for key, (name, *_rest) in PROFILES.items():
+            self.profile.addItem(name, key)
+        self.profile.addItem('自定义', 'custom')
+        self.profile.setCurrentIndex(1)
+        self.advanced_form.addRow('聆听预设', self.profile)
+        self.profile_hint = self.hint(self.advanced_form, PROFILES['balanced'][2])
+        self.advanced_toggle = QPushButton('显示高级参数')
+        self.advanced_toggle.setCheckable(True)
+        self.advanced_form.addRow(self.advanced_toggle)
+        self.advanced_parameters = QWidget()
+        parameter_form = QFormLayout(self.advanced_parameters)
+        self.advanced_parameters.hide()
+        self.advanced_form.addRow(self.advanced_parameters)
+        self.advanced_toggle.toggled.connect(self.advanced_parameters.setVisible)
+        self.advanced_toggle.toggled.connect(lambda enabled:
+            self.advanced_toggle.setText('收起高级参数' if enabled else '显示高级参数'))
         self.update_seconds = QDoubleSpinBox()
         self.update_seconds.setRange(0.5, 3)
         self.update_seconds.setSingleStep(0.5)
@@ -102,7 +127,7 @@ class ModelManager(QDialog):
         self.endpoint_seconds.setSingleStep(0.5)
         self.endpoint_seconds.setValue(0.5)
         self.endpoint_seconds.setSuffix(" 秒")
-        self.advanced_form.addRow("音频合并间隔", self.update_seconds)
+        parameter_form.addRow("音频合并间隔", self.update_seconds)
         self.update_seconds.setToolTip("请求识别前合并新音频的目标；当草稿刷新目标更短时优先采用草稿目标。不是上下文窗口长度，也不是承诺的字幕刷新频率。")
         self.draft_seconds = QDoubleSpinBox()
         self.draft_seconds.setRange(.25, 3.)
@@ -110,15 +135,15 @@ class ModelManager(QDialog):
         self.draft_seconds.setValue(.5)
         self.draft_seconds.setSuffix(" 秒")
         self.draft_seconds.setToolTip("更小值更早请求原文草稿，也会增加计算量。实际更新受模型速度限制，可能一次出现几个词；不使用假打字动画。草稿优先于较长的音频合并间隔。")
-        self.advanced_form.addRow("Qwen 原文草稿刷新目标", self.draft_seconds)
-        self.advanced_form.addRow("ASR 停顿检测（不直接定稿）", self.endpoint_seconds)
+        parameter_form.addRow("Qwen 原文草稿刷新目标", self.draft_seconds)
+        parameter_form.addRow("ASR 停顿检测（不直接定稿）", self.endpoint_seconds)
         self.endpoint_seconds.setToolTip("Qwen：连续静音达到该时间后才结束语音段，保留犹豫和短停顿的上下文。Whisper 保留原有检测节奏，此值仅辅助上游分段。两者都不直接决定字幕定稿。")
-        classroom = QPushButton("课堂逐词草稿 · 保留短停顿")
+        classroom = QPushButton("课堂草稿 · 保留短停顿")
         classroom.clicked.connect(self.classroom_drafts)
-        self.advanced_form.addRow(classroom)
+        parameter_form.addRow(classroom)
         self.behavior_hint = QLabel()
         self.behavior_hint.setWordWrap(True)
-        self.advanced_form.addRow(self.behavior_hint)
+        parameter_form.addRow(self.behavior_hint)
         self.add_page(advanced, "字幕与延迟")
         environment = QWidget()
         environment_form = QFormLayout(environment)
@@ -136,28 +161,34 @@ class ModelManager(QDialog):
         environment_form.addRow(self.runtime_status)
         install = QPushButton("安装 / 修复本地推理环境")
         install.clicked.connect(self.install_runtime)
+        self.preparation_buttons.append(install)
         environment_form.addRow(install)
         self.install_documents_button = QPushButton('安装 / 修复课件渲染组件')
         self.install_documents_button.hide()
         self.install_documents_button.clicked.connect(self.install_documents)
+        self.preparation_buttons.append(self.install_documents_button)
         environment_form.addRow(self.install_documents_button)
         if sys.platform == 'darwin':
             install_mlx = QPushButton('安装 / 修复 Apple GPU · MLX 识别环境')
             install_mlx.clicked.connect(lambda: self.prepare(lambda: self.run_preparation(
-                installation_command('linguaflow.runtime_install', 'mlx'))))
+                installation_command('linguaflow.runtime_install', 'mlx')), affects_runtime=True))
+            self.preparation_buttons.append(install_mlx)
             environment_form.addRow(install_mlx)
         self.hint(environment_form, "桌面界面与模型推理使用独立环境。无需手动启动服务。安装后请先到识别模型和翻译模型页下载所需权重，再开始聆听。")
         update = QPushButton('检查软件更新')
         update.clicked.connect(self.check_updates)
+        self.preparation_buttons.append(update)
         self.update_url = ''
         self.update_link = QPushButton('查看发行页')
         self.update_link.hide()
         self.update_link.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(self.update_url)))
         self.update_checked.connect(self.show_update)
-        environment_form.addRow(text_label('软件更新', 'settingsSection'))
+        environment_form.addRow(text_label('版本与更新', 'settingsSection'))
+        self.version_label = QLabel(f'当前版本：{__version__}')
+        environment_form.addRow(self.version_label)
         environment_form.addRow(update)
         environment_form.addRow(self.update_link)
-        self.hint(environment_form, '点击后才连接 GitHub 检查当前平台的发布版本。源码版查看源码更新；未发布的安装包不会显示为可安装更新。')
+        self.hint(environment_form, '启动后后台检查 GitHub 发布版本，也可在此手动检查。源码版查看源码更新；未发布的安装包不会显示为可安装更新。目前需从发行页下载安装。')
         self.add_page(environment, "运行环境")
         self.status = QLabel("下载只准备文件；开始聆听时才加载模型。")
         self.status.setObjectName('preparationStatus')
@@ -168,6 +199,10 @@ class ModelManager(QDialog):
         self.progress_bar.hide()
         layout.addWidget(self.progress_bar)
         layout.addWidget(self.status)
+        self.pending_settings = QLabel('当前聆听继续使用原设置；修改已保存，下次开始聆听生效。')
+        self.pending_settings.setWordWrap(True)
+        self.pending_settings.hide()
+        layout.addWidget(self.pending_settings)
         self.cancel_button = QPushButton("取消准备")
         self.cancel_button.setEnabled(False)
         self.cancel_button.clicked.connect(self.cancel_preparation)
@@ -175,6 +210,36 @@ class ModelManager(QDialog):
         self.done_button = QPushButton("完成")
         self.done_button.clicked.connect(self.accept)
         layout.addWidget(self.done_button)
+
+    def set_session_active(self, active):
+        self.session_active = active
+        self.pending_settings.setVisible(active)
+
+    def apply_profile(self):
+        key = self.profile.currentData()
+        if key not in PROFILES:
+            self.profile_hint.setText('使用你保存的高级参数。实际速度和效果取决于模型与设备。')
+            return
+        _name, interval, hint = PROFILES[key]
+        self._applying_profile = True
+        for control in (self.update_seconds, self.draft_seconds):
+            control.setValue(interval)
+        self.endpoint_seconds.setValue(1.5)
+        self._applying_profile = False
+        self.sync_profile()
+        self.profile_hint.setText(hint + ' 不改变字幕确认规则；下次开始聆听生效。')
+
+    def sync_profile(self):
+        if getattr(self, '_applying_profile', False):
+            return
+        key = next((key for key, (_name, interval, _hint) in PROFILES.items()
+                    if self.update_seconds.value() == self.draft_seconds.value() == interval
+                    and self.endpoint_seconds.value() == 1.5),
+                   'custom')
+        self.profile.blockSignals(True)
+        self.profile.setCurrentIndex(self.profile.findData(key))
+        self.profile.blockSignals(False)
+        self.profile_hint.setText(PROFILES[key][2] if key in PROFILES else '使用你保存的高级参数；可直接选择预设。')
 
     def add_page(self, widget, title):
         scroll = QScrollArea()
@@ -198,6 +263,7 @@ class ModelManager(QDialog):
         self.hint(self.whisper_form, "支持自动识别语言。小模型占用更少，大模型需要更多内存；本地导入请选择原始 Whisper .pt 权重或兼容目录。")
         download = QPushButton("下载 / 检查 Whisper 模型")
         download.clicked.connect(lambda: self.prepare_whisper(asr.currentText().strip()))
+        self.preparation_buttons.append(download)
         self.whisper_form.addRow(download)
         self.qwen_model = QComboBox()
         self.qwen_model.setEditable(True)
@@ -205,6 +271,7 @@ class ModelManager(QDialog):
         self.qwen_form.addRow("Qwen 识别模型", self.qwen_model)
         check = QPushButton("下载 / 检查 Qwen 模型")
         check.clicked.connect(lambda: self.prepare_qwen(self.qwen_model.currentText()))
+        self.preparation_buttons.append(check)
         self.qwen_form.addRow(check)
         self.qwen_hint = self.hint(self.qwen_form, '')
         self.translation_model = translation
@@ -234,15 +301,17 @@ class ModelManager(QDialog):
             for count in range(maximum + 1):
                 control.addItem(f'{count} 段' if count else '不参考', count)
             control.setCurrentIndex(default)
-        self.translation_form.addRow('初译参考前文', self.translation_initial_before)
-        self.translation_form.addRow('定稿参考前文', self.translation_before)
-        self.translation_form.addRow('定稿参考后文', self.translation_after)
+        # Keep legacy preference controls for decoding old settings, without exposing them.
+        for control in (self.translation_initial_before, self.translation_before, self.translation_after):
+            control.setParent(self.translation_page)
+            control.hide()
         self.translation_engine.currentIndexChanged.connect(self.update_translation_engine)
         translation.currentTextChanged.connect(self.update_translation_context)
-        self.hint(self.translation_form, '提交及提交后原文变化立即更新初译，使用少量已定稿前文；定稿使用更多上下文。相邻待处理段可共享上下文合并翻译，NLLB 逐段处理。')
+        self.hint(self.translation_form, '上下文已固定：初译前后各 1 段，定稿前 5 段、后 1 段。只参考已有的已定稿原文，没有后文立即翻译。')
         self.translation_hint = self.hint(self.translation_form, '')
         translation_download = QPushButton('下载 / 检查翻译模型')
         translation_download.clicked.connect(lambda: self.prepare_translation(translation.currentText().strip()))
+        self.preparation_buttons.append(translation_download)
         self.translation_form.addRow(translation_download)
         if sys.platform == 'darwin':
             self.hy_metal_button = QPushButton('使用 HY 1.8B · Apple GPU')
@@ -256,6 +325,11 @@ class ModelManager(QDialog):
         self.update_translation_engine()
         self.backend.currentIndexChanged.connect(self.update_backend)
         self.update_backend()
+        self.profile.currentIndexChanged.connect(self.apply_profile)
+        for control in (self.update_seconds, self.draft_seconds, self.endpoint_seconds):
+            control.valueChanged.connect(self.sync_profile)
+        for control in (self.translation_before, self.translation_after, self.translation_initial_before):
+            control.currentIndexChanged.connect(self.sync_profile)
 
     def update_translation_context(self):
         from .translation_models import is_hy_model
@@ -295,7 +369,7 @@ class ModelManager(QDialog):
         if mlx:
             self.behavior_hint.setText('Apple GPU / MLX 4-bit：短窗口识别，近期草稿可修订；停止时处理剩余音频。8GB Mac 可先关闭翻译；实际更新速度取决于音频与模型负载。')
         self.qwen_hint.setText(
-            'MLX 4-bit 使用 Apple GPU。当前为试验功能。请选择原文语言；8GB Mac 可用下方按钮关闭翻译。'
+            'MLX 4-bit 使用 Apple GPU。当前为试验功能。请选择原文语言；8GB Mac 同时识别与翻译的速度受可用内存影响。'
             if mlx else
             'Qwen 在本机识别，近期原文可随语音修订。请选择原文语言。0.6B 占用较少内存，1.7B 需要更多资源。')
         self.whisper_page.setVisible(not qwen)
@@ -305,21 +379,59 @@ class ModelManager(QDialog):
         for widget in [self.qwen_model]:
             widget.setEnabled(qwen)
 
-    def prepare(self, action, *, message='正在准备，请保留此窗口。下载进度见启动终端；已存在的权重会复用。',
-                affects_runtime=True, beta_only=False):
+    def prepare(self, action, *, message='正在准备，可返回录音或修改下次设置；已有文件会复用。',
+                affects_runtime=False, beta_only=False):
         if self.worker is not None:
+            self.preparation_status('已有准备任务正在运行，可查看进度或取消后再准备。')
             return
-        self.tabs.setEnabled(False)
-        self.done_button.setEnabled(False)
+        if affects_runtime and self.session_active:
+            self.preparation_status('运行环境修复请在本次录音结束后进行；设置仍可修改，下次生效。')
+            return
+        for button in self.preparation_buttons:
+            button.setEnabled(False)
         self.cancel_button.setEnabled(True)
         self.cancel_button.show()
         self.progress_bar.show()
+        self.progress_bar.setRange(0, 0)
+        self.progress_bar.setTextVisible(False)
         self.status.setText(message)
         self.worker = Preparation(action, self, affects_runtime=affects_runtime, beta_only=beta_only)
-        self.worker.result.connect(self.status.setText)
-        self.worker.progress.connect(self.status.setText)
+        self.worker.result.connect(self.preparation_status)
+        self.worker.progress.connect(self.preparation_status)
+        self.worker.download.connect(self.show_download)
         self.worker.finished.connect(self.prepared)
         self.worker.start()
+        self.preparation_changed.emit(True)
+        self.preparation_message.emit(message)
+
+    def preparation_status(self, text):
+        self.status.setText(text)
+        self.preparation_message.emit(text)
+
+    def show_download(self, event):
+        total, done = event.get('total'), event.get('completed', 0)
+        if total and total > 0:
+            self.progress_bar.setRange(0, 1000)
+            self.progress_bar.setValue(min(1000, int(1000 * done / total)))
+            self.progress_bar.setTextVisible(True)
+            self.progress_bar.setFormat('%p%')
+        else:
+            self.progress_bar.setRange(0, 0)
+            self.progress_bar.setTextVisible(False)
+        detail = event.get('label', '准备中')
+        if event.get('unit') == 'B':
+            detail += f' · {done / 1024**2:.1f} MB'
+            if total:
+                detail += f' / {total / 1024**2:.1f} MB'
+            rate = event.get('rate')
+            if rate and rate > 0:
+                detail += f' · {rate / 1024**2:.1f} MB/s'
+                if total and done < total:
+                    detail += f' · 约剩 {int((total - done) / rate)} 秒'
+        elif total:
+            detail += f' · {int(done)} / {int(total)} 个文件'
+        self.preparation_status(detail)
+        self.download_changed.emit(event)
 
     def set_beta_enabled(self, enabled):
         self.install_documents_button.setVisible(enabled)
@@ -336,11 +448,12 @@ class ModelManager(QDialog):
     def prepared(self):
         self.worker.deleteLater()
         self.worker = None
-        self.tabs.setEnabled(True)
-        self.done_button.setEnabled(True)
+        for button in self.preparation_buttons:
+            button.setEnabled(True)
         self.cancel_button.setEnabled(False)
         self.cancel_button.hide()
         self.progress_bar.hide()
+        self.preparation_changed.emit(False)
         from .runtime_paths import runtime_python
         try:
             python = runtime_python()
@@ -355,7 +468,7 @@ class ModelManager(QDialog):
     def cancel_preparation(self):
         if self.worker:
             self.worker.cancel()
-            self.status.setText("已请求取消；正在结束准备任务…")
+            self.preparation_status("已请求取消；正在结束准备任务…")
 
     def prepare_whisper(self, model):
         def action():
@@ -369,6 +482,8 @@ class ModelManager(QDialog):
         if self.worker.cancelled:
             raise RuntimeError('准备已取消。')
         tail = deque(maxlen=20)
+        if show_progress:
+            self.worker.download.emit(dict(label='准备组件', unit='stage'))
         # The supervisor owns descendants even when the desktop exits unexpectedly.
         command = installation_command('linguaflow.managed_process', *command)
         with subprocess.Popen(command, cwd=resource_root(), stdin=subprocess.PIPE,
@@ -392,6 +507,14 @@ class ModelManager(QDialog):
             try:
                 for line in process.stdout:
                     if line.strip():
+                        if line.startswith(PREFIX):
+                            try:
+                                event = json.loads(line[len(PREFIX):])
+                                if isinstance(event, dict):
+                                    self.worker.download.emit(event)
+                                    continue
+                            except ValueError:
+                                pass
                         tail.append(line.strip())
                         if show_progress:
                             self.worker.progress.emit(line.strip()[-350:])
@@ -408,7 +531,17 @@ class ModelManager(QDialog):
 
     def install_runtime(self):
         command = installation_command('linguaflow.runtime_install', 'wlk')
-        self.prepare(lambda: self.run_preparation(command))
+        self.prepare(lambda: self.run_preparation(command), affects_runtime=True)
+
+    def prepare_recommended(self):
+        from .runtime_paths import mlx_python, runtime_python
+        try:
+            changes_runtime = not (runtime_python().is_file() and mlx_python().is_file())
+        except RuntimeError:
+            changes_runtime = True
+        command = installation_command('linguaflow.recommended_prepare')
+        self.prepare(lambda: self.run_preparation(command), affects_runtime=changes_runtime,
+                     message='准备 Qwen3-ASR 1.7B 4-bit 和 HY 1.8B Q4_K_M；可离开此页，取消保留已下载缓存。')
 
     def check_updates(self):
         def action():
@@ -420,8 +553,8 @@ class ModelManager(QDialog):
         self.prepare(action, message='正在检查已发布的软件版本…', affects_runtime=False)
 
     @Slot(dict)
-    def show_update(self, result):
-        if self.worker is not None and self.worker.cancelled:
+    def show_update(self, result, *, respect_cancel=True):
+        if respect_cancel and self.worker is not None and self.worker.cancelled:
             return
         from .updates import trusted_release_url
         self.update_url = result.get('url', '')

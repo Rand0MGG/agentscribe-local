@@ -1,4 +1,4 @@
-"""Explicit update checks shared by platforms; never replace a running app/data."""
+"""Release checks for startup and explicit requests; never replace a running app/data."""
 import json
 import re
 import urllib.request

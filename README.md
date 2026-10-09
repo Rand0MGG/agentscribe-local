@@ -6,7 +6,7 @@
 
 **模型在你的电脑上运行，录音留在你手里。** 适合外语课程、线上讲座和需要回顾的讨论。
 
-**[下载 Mac 预览版](https://github.com/Rand0MGG/agentscribe-local/releases/tag/v0.6.0-beta.1)** · **[Windows 源码安装](docs/WORKSPACE.md#windows-源码安装)** · [使用指南](docs/WORKSPACE.md)
+**[下载 Mac 预览版](https://github.com/Rand0MGG/agentscribe-local/releases/tag/v0.6.0-beta.2)** · **[Windows 源码安装](docs/WORKSPACE.md#windows-源码安装)** · [使用指南](docs/WORKSPACE.md)
 
 Mac 下载提供 Apple Silicon DMG；Windows 目前需要按指南安装源码，尚无独立安装包。
 
@@ -72,7 +72,7 @@ Mac 下载提供 Apple Silicon DMG；Windows 目前需要按指南安装源码�
 
 | 平台 | 获取方式 | 使用前确认 |
 | --- | --- | --- |
-| Apple Silicon Mac | [下载 DMG 预览版](https://github.com/Rand0MGG/agentscribe-local/releases/tag/v0.6.0-beta.1) | macOS 15 或更新；不支持 Intel / Rosetta。当前预览版未公证，系统可能阻止打开，操作与实测范围见发行说明。 |
+| Apple Silicon Mac | [下载 DMG 预览版](https://github.com/Rand0MGG/agentscribe-local/releases/tag/v0.6.0-beta.2) | macOS 15 或更新；不支持 Intel / Rosetta。当前预览版未公证，系统可能阻止打开，操作与实测范围见发行说明。 |
 | Windows x64 | [源码安装指南](docs/WORKSPACE.md#windows-源码安装) | 需要兼容 NVIDIA 显卡与驱动；安装前会检查硬件。 |
 
 Mac 预览版的真实音频权限、采集和长会话仍待完整验收，建议先试用再用于重要录音。模型下载需要额外磁盘空间；具体准备方式见使用指南。

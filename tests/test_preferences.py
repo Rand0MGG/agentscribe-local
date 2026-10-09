@@ -68,14 +68,14 @@ def test_legacy_metal_migrates_to_llama_without_overriding_explicit_engine():
 
 
 def test_draft_final_context_defaults_preserve_saved_user_choices():
-    assert read_preferences(Store())['translation_before'] == 10
+    assert read_preferences(Store())['translation_before'] == 5
     assert read_preferences(Store())['translation_initial_before'] == 1
     for before in range(11):
         assert read_preferences(Store(translation_before=before))['translation_before'] == before
     assert read_preferences(Store(translation_before=3, translation_initial_before=0))['translation_before'] == 3
 
 
-@pytest.mark.parametrize('stored, expected', [('3', 3), (-4, 0), (500, 10), (None, 10),
-                                             ('bad', 10), (True, 10), (1.5, 10), (float('inf'), 10)])
+@pytest.mark.parametrize('stored, expected', [('3', 3), (-4, 0), (500, 10), (None, 5),
+                                             ('bad', 5), (True, 5), (1.5, 5), (float('inf'), 5)])
 def test_context_count_normalizes_old_or_corrupt_preferences(stored, expected):
     assert read_preferences(Store(translation_before=stored))['translation_before'] == expected

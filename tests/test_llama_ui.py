@@ -28,7 +28,7 @@ manager.translation_engine.setCurrentIndex(manager.translation_engine.findData('
 manager.llama_model.setCurrentText(str(folder/'new-model-f16.gguf'))
 assert manager.translation_before.isEnabled()
 assert manager.translation_initial_before.isEnabled()
-assert manager.translation_before.currentData() == 10
+assert manager.translation_before.currentData() == 5
 assert manager.translation_initial_before.currentData() == 1
 manager.translation_initial_before.setCurrentIndex(0)
 device = 'metal' if sys.platform == 'darwin' else 'cuda'
@@ -39,7 +39,7 @@ if sys.platform == 'win32':
 w.translate.setChecked(True)
 settings = w.settings_binding.session_settings(('fixture', False))
 assert settings.translation_engine == 'llama' and settings.translation_device == device
-assert settings.translation_initial_before == 0 and settings.translation_before == 10
+assert settings.translation_initial_before == 1 and settings.translation_before == 5
 assert settings.llama_model.endswith('new-model-f16.gguf')
 commands = []
 manager.prepare = lambda action: action()
@@ -50,7 +50,7 @@ w.close()
 w = window()
 manager = w.model_manager
 assert manager.translation_engine.currentData() == 'llama'
-assert manager.translation_initial_before.currentData() == 0
+assert manager.translation_initial_before.currentData() == 1
 assert manager.translation_device.currentData() == device
 assert manager.llama_model.currentText() == settings.llama_model
 manager.translation_engine.setCurrentIndex(manager.translation_engine.findData('pytorch'))

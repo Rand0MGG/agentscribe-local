@@ -2,6 +2,7 @@
 import argparse
 from pathlib import Path
 
+from .download_progress import hub_progress
 from .model_cache import resolve_qwen_cached, resolve_translation, validate_mlx_model
 from .runtime_paths import model_directory
 
@@ -18,8 +19,9 @@ def prepare(kind, model):
             if model == 'mlx-community/Qwen3-ASR-1.7B-4bit':
                 from .mlx_asr import MLX_REVISION
                 options = {'revision': MLX_REVISION, 'local_dir': str(model_directory('Qwen3-ASR-1.7B-4bit'))}
-            path = snapshot_download(model, allow_patterns=['*.json', '*.safetensors', '*.txt', '*.model', '*.jinja'],
-                                     max_workers=1, **options)
+            with hub_progress() as bar:
+                path = snapshot_download(model, allow_patterns=['*.json', '*.safetensors', '*.txt', '*.model', '*.jinja'],
+                                         max_workers=1, tqdm_class=bar, **options)
             path = resolve_qwen_cached(path)
         if model == 'mlx-community/Qwen3-ASR-1.7B-4bit':
             validate_mlx_model(path)

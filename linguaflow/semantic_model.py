@@ -1,6 +1,7 @@
 """Local SaT boundary predictions; returns original-text offsets, never rewritten text."""
 import re
 import unicodedata
+from contextlib import nullcontext
 from pathlib import Path
 
 MODEL = "segment-any-text/sat-3l-sm"
@@ -80,11 +81,16 @@ def _original_boundary(text, cleaned, owners, offset):
 
 def paths(prepare=False):
     from huggingface_hub import snapshot_download
-    model = snapshot_download(MODEL, allow_patterns=["config.json", "model_optimized.onnx"],
-                              local_files_only=not prepare, revision=MODEL_REVISION)
-    tokenizer = snapshot_download(TOKENIZER, allow_patterns=["config.json", "tokenizer.json",
-        "tokenizer_config.json", "special_tokens_map.json", "sentencepiece.bpe.model"],
-        local_files_only=not prepare, revision=TOKENIZER_REVISION)
+
+    from .download_progress import hub_progress
+    # Only owned preparation processes emit download events; local inference stays quiet.
+    with hub_progress() if prepare else nullcontext(None) as bar:
+        options = {'tqdm_class': bar} if bar else {}
+        model = snapshot_download(MODEL, allow_patterns=["config.json", "model_optimized.onnx"],
+                                  local_files_only=not prepare, revision=MODEL_REVISION, **options)
+        tokenizer = snapshot_download(TOKENIZER, allow_patterns=["config.json", "tokenizer.json",
+            "tokenizer_config.json", "special_tokens_map.json", "sentencepiece.bpe.model"],
+            local_files_only=not prepare, revision=TOKENIZER_REVISION, **options)
     if not (Path(model) / "model_optimized.onnx").is_file():
         raise ValueError("字幕分句文件不完整，请在‘识别模型’中下载 / 检查识别模型。")
     return model, tokenizer

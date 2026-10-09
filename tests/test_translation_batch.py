@@ -35,7 +35,7 @@ def test_small_initial_context_and_large_final_context_only_use_final_source():
     assert len(jobs) == 1 and jobs[0].source == revised.source
     assert planner.update([*history, pending, replace(revised, revision=3)]) == []
     planner.update([*history, pending, replace(revised, final=True, revision=4)])
-    assert planner.get(13).before == tuple(f'Context {i}.' for i in range(2, 12))
+    assert planner.get(13).before == tuple(f'Context {i}.' for i in range(7, 12))
     assert 'Unfinished neighbour.' not in planner.get(13).before
 
 
@@ -117,7 +117,7 @@ def test_adjacent_requests_share_one_context_without_losing_subtitle_alignment(f
                                planner.get, planner, batch)
         await asyncio.wait_for(queue.join(), 1)
         assert len(calls) == 1 and calls[0][0] == [10, 11, 12]
-        expected = tuple(c.source for c in history) if final else (history[-1].source,)
+        expected = tuple(c.source for c in history[-5:]) if final else (history[-1].source,)
         assert calls[0][1] == TranslationContext(expected)
         assert [c.id for c in output] == [10, 11, 12]
         assert all(c.translation == f'Translation {c.id}.' for c in output)

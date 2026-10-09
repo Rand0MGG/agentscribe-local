@@ -1,5 +1,6 @@
 import json
 import sys
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pytest
@@ -49,6 +50,7 @@ def test_model_manager_can_still_prepare_translation(tmp_path, monkeypatch):
 
 def test_download_selects_one_weight_format(monkeypatch, tmp_path):
     calls = []
+    monkeypatch.setattr('linguaflow.download_progress.hub_progress', lambda: nullcontext())
 
     def snapshot(repo, **kwargs):
         calls.append(kwargs)

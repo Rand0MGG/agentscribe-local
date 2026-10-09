@@ -31,7 +31,7 @@ PAGE_DESCRIPTIONS = {
     '聆听': '从哪里听、听什么语言，以及你想看到的译文。',
     '识别模型': '把声音变成原文。选择引擎和计算设备，再准备模型。',
     '翻译模型': '提交后先看初译，识别定稿后再结合上下文生成最终译文。',
-    '字幕与延迟': '让听写更连贯，让分句与定稿的节奏适合你。',
+    '字幕与延迟': '调整识别请求频率与计算量；实际草稿速度取决于模型，不直接控制字幕定稿。',
     '运行环境': '准备本地组件、修复运行环境和检查软件更新。',
     '使用指南': '从第一次聆听，到整理和分享你的录音。',
 }
@@ -246,6 +246,10 @@ class SettingsWorkspace(QWidget):
         self.categories = ["常规", "聆听", "识别模型", "翻译模型", "字幕与延迟", "运行环境", '使用指南']
         self.navigation.addItems(self.categories)
         nav.addWidget(self.navigation, 1)
+        self.advanced_navigation = QPushButton('显示更多设置')
+        self.advanced_navigation.setCheckable(True)
+        self.advanced_navigation.toggled.connect(self.show_advanced_settings)
+        nav.addWidget(self.advanced_navigation)
         nav.addWidget(text_label("更改将用于下一次录音", "timestamp"))
         layout.addWidget(sidebar)
         right = frame_factory()
@@ -335,7 +339,7 @@ class SettingsWorkspace(QWidget):
             self.row(rows, title, detail, button)
         body.addWidget(card)
         body.addWidget(text_label('聆听中的文字会发生什么？', 'settingsSection'))
-        body.addWidget(text_label('未提交  →  已提交，可修订  →  原文已定稿\n\n首次提交和已提交原文的变化立即排队初译，默认参考前 1 段已定稿原文。识别段结束后原文独立定稿，再参考前 10 段已定稿原文生成最终译文。相邻待译内容可以合并、共享背景；等待更新时保留已有译文并标注。翻译不阻挡原文更新，也不等待尚未出现的后文。暂停会停止收音并继续处理已有内容；点击“继续录音”可接着录，暂停时间不计入录音。停止聆听会处理剩余内容，请等待收尾完成。', 'infoBanner'))
+        body.addWidget(text_label('未提交  →  已提交，可修订  →  原文已定稿\n\n首次提交和已提交原文的变化立即排队初译，固定参考前后各 1 段已有的已定稿原文。识别段结束后原文独立定稿，再参考前 5 段、后 1 段已有的已定稿原文生成最终译文。相邻待译内容可以合并、共享背景；等待更新时保留已有译文并标注。翻译不阻挡原文更新，也不等待尚未出现的后文。暂停会停止收音并继续处理已有内容；点击“继续录音”可接着录，暂停时间不计入录音。停止聆听会处理剩余内容，请等待收尾完成。', 'infoBanner'))
         body.addWidget(text_label('录音结束以后', 'settingsSection'))
         body.addWidget(text_label('从侧栏打开录音，可回听音频或导出双语 SRT。使用「···」重命名、移动或打开保存位置；删除的录音先进入「最近删除」，可在那里恢复。', 'muted'))
         body.addStretch()
@@ -389,6 +393,11 @@ class SettingsWorkspace(QWidget):
         self.navigation.currentRowChanged.connect(self.select)
         self.search.textChanged.connect(self.filter)
         self.navigation.setCurrentRow(0)
+        self.filter('')
+
+    def show_advanced_settings(self, enabled):
+        self.advanced_navigation.setText('收起更多设置' if enabled else '显示更多设置')
+        self.filter(self.search.text())
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -470,6 +479,8 @@ class SettingsWorkspace(QWidget):
         for i, name in enumerate(self.categories):
             match = all(term in (name + ' ' + aliases[name] + ' ' + PAGE_DESCRIPTIONS[name]).casefold()
                         for term in query.split())
+            if not query and not self.advanced_navigation.isChecked():
+                match = match and name in ('常规', '聆听', '使用指南')
             self.navigation.item(i).setHidden(not match)
             if match:
                 visible.append(i)

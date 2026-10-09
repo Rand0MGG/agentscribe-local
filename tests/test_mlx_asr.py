@@ -239,7 +239,9 @@ w.use_mac_profile()
 settings = w.settings_binding.session_settings(('file', False))
 assert settings.backend == 'qwen3-mlx' and settings.asr_device == 'mlx'
 assert settings.qwen_model.endswith('1.7B-4bit')
-assert not hasattr(settings, 'semantic_device') and not settings.translate
+assert not hasattr(settings, 'semantic_device') and settings.translate
+assert settings.translation_engine == 'llama' and settings.translation_device == 'metal'
+assert settings.translation_before == 5 and settings.translation_after == 1
 w.save()
 w.model_manager.backend.setCurrentIndex(0)
 assert w.compute.currentData() == 'cpu' and w.compute.isEnabled()

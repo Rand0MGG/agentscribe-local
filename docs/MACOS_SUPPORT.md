@@ -1,5 +1,24 @@
 # macOS 适配记录
 
+## 2026-10-10：系统菜单与启动更新检查复核
+
+在下节本地改动上补充 Mac 原生应用菜单：“关于 AgentScribe”显示 `__version__`，“版本与更新…”进入包含当前版本的设置页，“检查更新…”复用已有手动检查。退出动作复用窗口的保存和清理流程。生产入口在窗口显示 1.5 秒后启动独立后台检查，有适用的已发布版本时显示可稍后处理的非模态提示；无更新或联网失败时安静返回，不占用模型准备任务、不自动下载安装或重启。
+
+- 完整无音频回归 **704 passed，107.39 秒**，Ruff 和差异格式检查通过。新增 Cocoa 原生菜单角色、版本可见性及菜单调用回归；模拟慢速更新查询确认 Qt 计时器继续工作、模型准备任务未占用、重复启动检查不重复请求、无更新不弹窗、新版提示非模态、退出后迟到结果被拒绝。首次完整检查为 703 通过、1 失败：原启动测试的模拟窗口缺少新增方法；补齐夹具并断言延迟检查在窗口显示后排期，未删除或放宽既有运行库就绪顺序断言。没有真实音频访问，未调用真实更新网络服务。
+- 含本次菜单与启动检查的包完成独立 Python / venv / pip、Node/npm、SDK、窗口、WebEngine 及更新选择探针，证据在 `.work/packaging/probes/package-u5g6pfxa/`。源码/构建文件与 DMG 摘要校验一致。
+- 本地 `guidance-20261010/dist/AgentScribe-0.6.0-beta.1-macos-arm64.dmg` 已替换为此轮测试产物：**314,951,962 字节**，SHA256 `3cb0c97ba01e3f3d8964565530366b6ec529f07352e337d66931f9241b851794`；下节哈希仅属于前一试包。日志为 `.work/cache/version-menu-final-full.log`、`version-menu-build.log`、`version-menu-package-probe.log`。保持未提交改动标记、ad-hoc 签名、未公证，不创建新版本或发布，不替换 GitHub Release；真实更新提示和 Windows 实机仍待验收。
+
+## 2026-10-10：模型引导与界面响应本地复核
+
+本轮为 `mac` 分支基于 `a79fe32` 的未提交改动；取消新增内存检测，保留现有 ASR 窗口、刷新、确认及定稿算法。固定推荐组合为 Qwen3-ASR 1.7B / MLX 4-bit 与 HY-MT2 1.8B / Q4_K_M / Metal，初译上下文前后各 1 段、定稿前 5 后 1 段；高级设置默认折叠。模型本地检查在后台执行；准备任务显示文件/字节进度，可取消，期间设置仍可操作；会话沿用开始时的快照，修改下次生效。课程后台的退出等待移到工作线程，保持 Qt 事件响应，并保护仍被后台占用的文件。
+
+- Apple M2 / arm64、macOS 26.6.2，桌面 Python 3.12.14。`.venv/bin/python scripts/test_no_audio.py -q`：**702 passed，114.78 秒**；Ruff 和差异格式检查通过，无原生音频导入尝试。覆盖旧偏好、固定上下文、下载已知/未知大小、离线检查、准备取消与界面响应；阻塞后台退出的模拟回归确认等待期间仍处理界面事件。
+- 使用生产构建脚本和已有校验下载缓存制作本地测试包，不修改版本、不发布。仅移除 Node 开发头文件和 man 手册，保留 Node/npm 与运行组件；未压缩目录减少约 62 MiB。DMG 从基线 325,805,827 字节降至 **314,839,856 字节**，减少约 11 MB（3.4%）；模型权重未包含。包内 97 个源码/构建文件摘要与本轮代码一致，清单明确 `source_modified=true`；ad-hoc 签名，未公证，不能作为同版本正式替换包。
+- 最终包的独立 Python / venv / pip、Node/npm、SDK 导入、窗口、WebEngine 和更新选择夹具通过，证据在 `.work/packaging/probes/package-6ev79e4y/`。同一瘦身方式的前一试包实际首次安装课件组件并完成 Office 渲染，证据在 `.work/packaging/probes/package-o9yj5khw/`；最终包不重复联网安装课件。所有探针隔离用户数据，阻止音频访问。
+- 产物在 `.work/packaging/candidates/guidance-20261010/dist/`，DMG SHA256 为 `d70412b12cd16446ab1b9112afbcb8e36ab71abacd83d10a0512cdea9ea26703`；回归、构建和最终包探针日志分别为 `.work/cache/guidance-final-full.log`、`guidance-build-current.log`、`guidance-package-final-probe.log`。
+
+本轮未实际重下载 Qwen/HY 权重、未重跑模型推理、真实录音或长课堂压力测试，也未在 Windows 实机验证共享改动。模拟下载进度与界面事件测试不证明所有操作都无阻塞；正式发行仍需集成审核、固定新版本来源及目标机器验收。
+
 ## 2026-10-09：独立 DMG 测试构建
 
 `0.6.0-beta.1` 新增完整便携 Python、Qt 和 Node 的 Apple Silicon 应用包；原生主程序保持应用身份，既有共享后台仍调用真正的 Python 解释器。课件安装器同时修正为使用包内 Node/npm。程序与用户录音/模型/运行环境分离，手动替换应用保留数据。包使用 ad-hoc 签名，未做 Apple 公证；发行状态以 GitHub Releases 为准。详细内容、构建步骤和验收边界见 [预览版说明](RELEASE_v0.6.0-beta.1.md)；以下旧记录中的“尚无安装包”只描述当时状态。真实录音仍不在本轮验证范围。

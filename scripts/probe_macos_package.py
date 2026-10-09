@@ -35,7 +35,7 @@ def probe(app_path, work, *, install_documents=False):
     from linguaflow.app import STYLE, Window
     from linguaflow.library import Library
     from linguaflow.process_platform import window_session_available
-    from linguaflow.updates import select_update
+    from linguaflow.updates import select_update, version_key
 
     resources = app_path / 'Contents/Resources'
     assert Path(linguaflow.__file__).resolve().is_relative_to(resources.resolve())
@@ -67,13 +67,18 @@ def probe(app_path, work, *, install_documents=False):
     installed = subprocess.check_output([str(python), '-m', 'pip', 'check'], text=True, timeout=30)
     assert 'No broken requirements' in installed
     version = linguaflow.__version__
-    fixture = dict(tag_name='v0.6.0-beta.2', prerelease=True,
-                   html_url='https://github.com/Rand0MGG/agentscribe-local/releases/tag/v0.6.0-beta.2',
-                   assets=[dict(name='AgentScribe-0.6.0-beta.2-macos-arm64.dmg', state='uploaded', size=100,
-                                digest='sha256:' + 'a' * 64, browser_download_url=
-                                'https://github.com/Rand0MGG/agentscribe-local/releases/download/v0.6.0-beta.2/'
-                                'AgentScribe-0.6.0-beta.2-macos-arm64.dmg')])
-    assert select_update([fixture], current=version)['version'] == '0.6.0-beta.2'
+    major, minor, patch, stable, beta = version_key(version)
+    next_version = (f'{major}.{minor}.{patch + 1}' if stable else
+                    f'{major}.{minor}.{patch}-beta.{beta + 1}')
+    page = 'https://github.com/Rand0MGG/agentscribe-local/releases'
+    filename = f'AgentScribe-{next_version}-macos-arm64.dmg'
+    fixture = dict(tag_name='v' + next_version, prerelease=not stable,
+                   html_url=page + '/tag/v' + next_version,
+                   assets=[dict(name=filename, state='uploaded', size=100,
+                                digest='sha256:' + 'a' * 64,
+                                browser_download_url=page + '/download/v' + next_version + '/' + filename)])
+    selected = select_update([fixture], current=version)
+    assert selected['version'] == next_version and selected['kind'] == 'package'
     if not window_session_available():
         raise RuntimeError('验证窗口需要 macOS 窗口服务。')
     application = QApplication([])

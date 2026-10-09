@@ -32,7 +32,7 @@ def test_reopened_historical_row_rejects_old_final_and_finalizes_with_current_ba
     submitted = replace(reopened, ready=True)
     initial = planner.update_changes([submitted])[0]
     assert initial.translation_phase == 'initial'
-    assert planner.get(3) == TranslationContext(('row 2',))
+    assert planner.get(3) == TranslationContext(('row 2',), ('row 4',))
     final = replace(submitted, final=True, revision=3)
     assert planner.update_changes([final])[0].translation_phase == 'final'
     assert not planner.accepts(initial)

@@ -10,6 +10,21 @@ from linguaflow.translation_queue import TranslationQueue
 from linguaflow.translation_service import publish_translation_result, run_translations
 
 
+def test_fixed_defaults_use_available_neighbours_in_both_phases_without_waiting():
+    planner = ContextPlanner()
+    rows = [Caption(i, i, i+1, f'source {i}', 'en') for i in range(8)]
+    rows[6] = replace(rows[6], final=False, ready=True)
+    planner.update(rows)
+    assert planner.get(6) == TranslationContext(('source 5',), ('source 7',))
+    assert planner.get(5) == TranslationContext(tuple(f'source {i}' for i in range(5)), ('source 7',))
+    rows[6] = replace(rows[6], final=True, revision=2)
+    assert [c.id for c in planner.update(rows)] == [6]
+    assert planner.get(6) == TranslationContext(tuple(f'source {i}' for i in range(1, 6)), ('source 7',))
+    tail = replace(rows[-1], source='revised tail', revision=2, final=False, ready=True)
+    assert [c.id for c in planner.update([*rows[:-1], tail])] == [7]
+    assert planner.get(7) == TranslationContext(('source 6',))
+
+
 def test_neighbours_do_not_retranslate_final_rows_and_corrections_do():
     planner = ContextPlanner(1, 1)
     rows = [Caption(i, i, i+1, f'source {i}', 'en') for i in range(4)]

@@ -3,6 +3,7 @@ import sys
 import time
 from dataclasses import asdict, replace
 from pathlib import Path
+from threading import Thread
 
 from PySide6.QtCore import (
     QEvent,
@@ -14,9 +15,20 @@ from PySide6.QtCore import (
     Qt,
     QTimer,
     QUrl,
+    Signal,
     Slot,
 )
-from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QShortcut
+from PySide6.QtGui import (
+    QAction,
+    QColor,
+    QIcon,
+    QKeySequence,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+    QShortcut,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -524,6 +536,9 @@ class CaptionCard(QFrame):
 
 
 class Window(QMainWindow):
+    model_assets_checked = Signal(int, list)
+    startup_update_checked = Signal(dict)
+
     def __init__(self, discover=True, library_root=None, prefs=None, library=None, runtime=None):
         super().__init__()
         self._backdrop_applied = False
@@ -543,6 +558,11 @@ class Window(QMainWindow):
         self.captions = {}
         self.cards = {}
         self.closing = False
+        self.asset_check = None
+        self.asset_check_generation = 0
+        self.asset_check_closed = False
+        self.startup_update_job = None
+        self.startup_update_checked.connect(self.on_startup_update_checked)
         self.overlay = Overlay()
         self.prefs = prefs if prefs is not None else QSettings("LinguaFlow", "LocalCaptions")
         self.library = library if library is not None else self.open_recording_library(library_root)
@@ -877,6 +897,30 @@ class Window(QMainWindow):
         self.quick_model.setToolTip('选择和准备本地识别模型')
         self.quick_model.clicked.connect(lambda: self.open_settings('识别模型'))
         quick.addWidget(self.quick_model)
+        if sys.platform == 'darwin':
+            self.quick_model.hide()
+            self.prepare_models = QPushButton('准备识别与翻译模型')
+            self.prepare_models.clicked.connect(self.prepare_recommended_models)
+            quick.addWidget(self.prepare_models)
+            self.cancel_model_preparation = QPushButton('取消准备')
+            self.cancel_model_preparation.clicked.connect(self.model_manager.cancel_preparation)
+            self.cancel_model_preparation.hide()
+            quick.addWidget(self.cancel_model_preparation)
+            self.preparation_summary = label('', 'muted')
+            self.preparation_summary.setWordWrap(True)
+            self.preparation_summary.hide()
+            content_layout.addWidget(self.preparation_summary)
+            self.model_guidance = label('检查本地模型文件…', 'muted')
+            self.model_guidance.setWordWrap(True)
+            content_layout.addWidget(self.model_guidance)
+            self.preparation_progress = QProgressBar()
+            self.preparation_progress.hide()
+            content_layout.addWidget(self.preparation_progress)
+            self.model_manager.preparation_message.connect(self.show_preparation_message)
+            self.model_manager.preparation_changed.connect(self.prepare_models.setDisabled)
+            self.model_manager.preparation_changed.connect(self.cancel_model_preparation.setVisible)
+            self.model_manager.preparation_changed.connect(self.preparation_progress.setVisible)
+            self.model_manager.download_changed.connect(self.show_download_progress)
         quick.addStretch()
         content_layout.addLayout(quick)
         content_layout.addWidget(footer)
@@ -898,7 +942,7 @@ class Window(QMainWindow):
         self.model_manager.backend.currentIndexChanged.connect(self.sync_asr_device)
         self.compute.currentIndexChanged.connect(self.select_asr_device)
         if sys.platform == 'darwin':
-            mac_profile = QPushButton('试用 Mac 4-bit 设置 · Apple GPU')
+            mac_profile = QPushButton('使用推荐模型组合 · Apple GPU')
             mac_profile.clicked.connect(self.use_mac_profile)
             self.model_manager.asr_form.addRow(mac_profile)
         self.update_model_summary()
@@ -917,6 +961,11 @@ class Window(QMainWindow):
                 (self.settings_workspace.refresh_devices_requested, self.refresh_devices)):
             signal.connect(action)
         self.pages.addWidget(self.settings_workspace)
+        for pref in PREFERENCES:
+            control = self.settings_binding.controls[pref.key]
+            signal = (control.toggled if pref.kind == 'bool' else
+                      control.valueChanged if pref.kind == 'float' else control.currentTextChanged)
+            signal.connect(self.save_next_settings)
         self.source.currentTextChanged.connect(self.update_quick_settings)
         self.target.currentTextChanged.connect(self.update_quick_settings)
         self.translate.toggled.connect(self.update_quick_settings)
@@ -930,12 +979,134 @@ class Window(QMainWindow):
         self.activity_timer = QTimer(self)
         self.activity_timer.timeout.connect(self.update_activity)
         self.activity_timer.start(1000)
+        self.knowledge_client.closing_changed.connect(self.on_knowledge_closing)
         if discover:
             QTimer.singleShot(0, self.refresh_devices)
+        if sys.platform == 'darwin':
+            self.model_assets_checked.connect(self.on_model_assets_checked)
+            self.model_manager.preparation_changed.connect(self.refresh_model_assets_after_preparation)
+            QTimer.singleShot(0, self.check_model_assets)
+            self.setup_application_menu()
+
+    def setup_application_menu(self):
+        """Expose version and update entry points in the native macOS app menu."""
+        self.menuBar().setNativeMenuBar(True)
+        menu = self.menuBar().addMenu('AgentScribe')
+        self.about_action = QAction('关于 AgentScribe', self)
+        self.about_action.setMenuRole(QAction.MenuRole.AboutRole)
+        self.about_action.triggered.connect(self.show_about)
+        menu.addAction(self.about_action)
+        self.version_action = QAction('版本与更新…', self)
+        self.version_action.setMenuRole(QAction.MenuRole.ApplicationSpecificRole)
+        self.version_action.triggered.connect(lambda: self.open_settings('运行环境'))
+        menu.addAction(self.version_action)
+        self.update_action = QAction('检查更新…', self)
+        self.update_action.setMenuRole(QAction.MenuRole.ApplicationSpecificRole)
+        self.update_action.triggered.connect(self.check_software_updates)
+        menu.addAction(self.update_action)
+        menu.addSeparator()
+        quit_action = QAction('退出 AgentScribe', self)
+        quit_action.setMenuRole(QAction.MenuRole.QuitRole)
+        quit_action.setShortcut(QKeySequence.StandardKey.Quit)
+        quit_action.triggered.connect(self.close)
+        menu.addAction(quit_action)
+
+    def show_about(self):
+        if not hasattr(self, 'about_dialog'):
+            self.about_dialog = QMessageBox(self)
+            self.about_dialog.setWindowTitle('关于 AgentScribe')
+            self.about_dialog.setText('AgentScribe · 本地同声字幕')
+            self.about_dialog.setInformativeText(f'版本 {__version__}\n本地语音识别、字幕与翻译。')
+            self.about_dialog.setStandardButtons(QMessageBox.StandardButton.Ok)
+        self.about_dialog.open()
+
+    def check_software_updates(self):
+        self.open_settings('运行环境')
+        self.model_manager.check_updates()
+
+    def check_startup_updates(self):
+        """Check in a separate bounded worker without occupying model preparation."""
+        if self.asset_check_closed or self.startup_update_job is not None:
+            return
+        def check():
+            from .updates import check_updates
+            try:
+                result = check_updates()
+            except Exception:
+                return  # Startup stays quiet offline; manual checks report errors.
+            try:
+                self.startup_update_checked.emit(result)
+            except RuntimeError:
+                pass
+        self.startup_update_job = Thread(target=check, daemon=True)
+        try:
+            self.startup_update_job.start()
+        except RuntimeError:
+            self.startup_update_job = None
+
+    def on_startup_update_checked(self, result):
+        if self.asset_check_closed or result.get('kind') not in ('package', 'source'):
+            return
+        from .updates import trusted_release_url
+        if not trusted_release_url(result.get('url')):
+            return
+        self.model_manager.show_update(result, respect_cancel=False)
+        self.model_manager.version_label.setText(f'当前版本：{__version__} · 可用新版：{result["version"]}')
+        self.update_dialog = QMessageBox(self)
+        self.update_dialog.setWindowTitle('AgentScribe 有新版本')
+        self.update_dialog.setText(f'发现新版 {result["version"]}，建议更新。')
+        self.update_dialog.setInformativeText(result['message'])
+        view = self.update_dialog.addButton('查看发行页', QMessageBox.ButtonRole.AcceptRole)
+        self.update_dialog.addButton('稍后', QMessageBox.ButtonRole.RejectRole)
+        self.update_dialog.buttonClicked.connect(
+            lambda button: self.model_manager.update_link.click() if button is view else None)
+        self.update_dialog.setWindowModality(Qt.WindowModality.NonModal)
+        self.update_dialog.show()
+
+    def refresh_model_assets_after_preparation(self, active):
+        self.asset_check_generation += 1
+        if not active:
+            self.check_model_assets()
+
+    def check_model_assets(self):
+        if self.asset_check_closed or self.model_manager.worker is not None:
+            return
+        if self.asset_check is not None and self.asset_check.is_alive():
+            QTimer.singleShot(200, self.check_model_assets)
+            return
+        self.asset_check_generation += 1
+        generation = self.asset_check_generation
+        def check():
+            try:
+                from .recommended_prepare import missing_assets
+                missing = missing_assets()
+            except Exception:
+                missing = ['本地模型检查失败，请点击准备按钮重新检查']
+            try:
+                self.model_assets_checked.emit(generation, missing)
+            except RuntimeError:
+                pass  # The window may have closed during a local cache read.
+        self.asset_check = Thread(target=check, daemon=True)
+        try:
+            self.asset_check.start()
+        except RuntimeError:
+            self.asset_check = None
+            self.on_model_assets_checked(generation, ['本地检查暂不可用，请点击准备按钮重试'])
+
+    def on_model_assets_checked(self, generation, missing):
+        if self.asset_check_closed or generation != self.asset_check_generation:
+            return
+        if missing:
+            self.model_guidance.setText('首次使用请准备本地模型：' + '、'.join(missing) +
+                '。点击“准备识别与翻译模型”；首次需要联网，准备时可以继续操作界面。')
+        else:
+            self.model_guidance.setText('推荐模型文件已就绪：Qwen3-ASR 1.7B · MLX 4-bit ＋ HY-MT2 1.8B · Q4_K_M。请选择声音与原文语言；启动时验证推理环境。')
 
     def open_settings(self, category="常规"):
         category = category if isinstance(category, str) else "常规"
         self.settings_workspace.search.clear()
+        if category in ('识别模型', '翻译模型', '字幕与延迟', '运行环境'):
+            self.settings_workspace.advanced_navigation.setChecked(True)
         self.settings_workspace.navigation.setCurrentRow(self.settings_workspace.categories.index(category))
         self.pages.setCurrentIndex(1)
 
@@ -1183,10 +1354,17 @@ class Window(QMainWindow):
             self.status.setText(f"课程资料未就绪：{exc}")
 
     def close_knowledge(self):
-        self.knowledge_client.close()
+        ready = self.knowledge_client.close()
         if self.knowledge_panel:
             self.knowledge_panel.hide()
             self.knowledge_panel.reset()
+        return ready
+
+    def on_knowledge_closing(self, closing):
+        for control in (self.library_tree, self.new_button, self.folder_button):
+            control.setEnabled(not closing and not self.recording_state.active)
+        if closing:
+            self.status.setText('课程后台正在释放文件，完成后继续当前操作。')
 
     def apply_beta_features(self, enabled, *, persist=True):
         """Gate all course-agent entry points and stop its owned process when opting out."""
@@ -1305,9 +1483,14 @@ class Window(QMainWindow):
         dialog.deleteLater()
 
     def can_edit_library(self, item=None):
+        if self.knowledge_client.closing:
+            self.status.setText('课程后台正在释放文件，请稍后操作；界面仍可使用。')
+            return False
         if self.session is not None or not self.persist_session():
             return False
-        self.close_knowledge()
+        if not self.close_knowledge():
+            self.status.setText(self.knowledge_client.close_error or '课程后台尚未退出，请稍后重试。')
+            return False
         return item is None or self.file_operation_ready(item)
 
     def file_operation_ready(self, item):
@@ -1411,10 +1594,31 @@ class Window(QMainWindow):
         manager.backend.setCurrentIndex(data_index(manager.backend, 'qwen3-mlx'))
         manager.qwen_model.setCurrentText(MLX_MODEL)
         self.sync_asr_device()
-        manager.draft_seconds.setValue(1.)
-        manager.endpoint_seconds.setValue(1.)
-        self.translate.setChecked(False)
-        manager.status.setText('已选择 Apple GPU、4-bit 识别，并关闭翻译。下载 / 检查识别模型后可开始；翻译可在设置中单独开启。')
+        from .llama_assets import HY_GGUF
+        manager.translation_engine.setCurrentIndex(data_index(manager.translation_engine, 'llama'))
+        manager.llama_model.setCurrentText(HY_GGUF)
+        manager.translation_device.setCurrentIndex(data_index(manager.translation_device, 'metal'))
+        self.translate.setChecked(True)
+        manager.status.setText('已选择 Qwen3-ASR 1.7B · MLX 4-bit 与 HY-MT2 1.8B · Q4_K_M。下次开始聆听生效。')
+
+    def prepare_recommended_models(self):
+        self.use_mac_profile()
+        self.model_manager.prepare_recommended()
+
+    def show_preparation_message(self, message):
+        self.preparation_summary.setText(message)
+        self.preparation_summary.show()
+
+    def show_download_progress(self, event):
+        total = event.get('total')
+        self.preparation_progress.setRange(0, 1000 if total else 0)
+        if total:
+            self.preparation_progress.setValue(min(1000, int(1000 * event.get('completed', 0) / total)))
+        self.preparation_progress.setFormat('%p%')
+
+    def save_next_settings(self):
+        if self.recording_state.active:
+            self.save()
 
     def manage_models(self):
         self.open_settings("识别模型")
@@ -1525,7 +1729,9 @@ class Window(QMainWindow):
                 self.on_failure(f"课程术语无效：{exc}")
                 return
         if self.knowledge_client.identifier == self.current_item['id']:
-            self.knowledge_client.close()
+            if not self.knowledge_client.close():
+                self.on_status('课程后台尚未退出，请稍后开始聆听。')
+                return
             self.attach_knowledge(force=True)
         else:
             self.attach_knowledge()
@@ -1560,8 +1766,8 @@ class Window(QMainWindow):
         self.recording_state = state
         if self.knowledge_panel:
             self.knowledge_panel.set_recording(state.active)
-        for control in (self.settings_panel, self.model_manager,
-                        self.library_tree, self.new_button, self.folder_button, self.quick_device, self.refresh_source):
+        self.model_manager.set_session_active(state.active)
+        for control in (self.library_tree, self.new_button, self.folder_button, self.device, self.quick_device, self.refresh_source):
             control.setEnabled(not state.active)
         self.start_button.setEnabled(not state.active)
         self.start_button.setText(state.value)
@@ -1611,7 +1817,7 @@ class Window(QMainWindow):
             return
         self.set_recording_state(RecordingState.LISTENING)
         self.on_stage("会话", "聆听中")
-        self.on_status("识别已就绪，正在聆听；翻译模型独立加载。" if self.translate.isChecked()
+        self.on_status("识别已就绪，正在聆听；翻译模型独立加载。" if self.caption_translation
                        else "识别已就绪，正在聆听。")
         self.empty.setText("正在聆听…")
 
@@ -1737,7 +1943,8 @@ class Window(QMainWindow):
             if self.current_item and not self.loading_saved:
                 self.autosave.start(800)
             if self.captions:
-                self.overlay.update_caption(self.captions[max(self.captions)], self.translate.isChecked())
+                self.overlay.update_caption(self.captions[max(self.captions)],
+                    self.caption_translation if self.recording_state.active else self.translate.isChecked())
             else:
                 self.overlay.source.setText("等待语音…")
                 self.overlay.target.setText("")
@@ -1852,13 +2059,17 @@ class Window(QMainWindow):
         if not self.persist_session():
             event.ignore()
             return
-        self.close_knowledge()
+        if not self.close_knowledge():
+            self.knowledge_client.closed.connect(self.close)
+            event.ignore()
+            return
         if self.player:
             self.player.stop()
         self.save()
         self.overlay.close()
         if self.runtime is not None:
             self.runtime.close(wait=False)
+        self.asset_check_closed = True
         event.accept()
 
 
@@ -1871,6 +2082,7 @@ def main():
     runtime = RuntimePreparation()
     window = Window(runtime=runtime)
     window.show()
+    QTimer.singleShot(1500, window.check_startup_updates)
     QTimer.singleShot(0, runtime.prepare)
     app.aboutToQuit.connect(lambda: runtime.close(wait=False))
     sys.exit(app.exec())

@@ -177,6 +177,7 @@ async def _run_session(settings, emit, read_message, config, engine, online, sem
     from .translation_config import (
         DEFAULT_CONTEXT_AFTER,
         DEFAULT_CONTEXT_BEFORE,
+        DEFAULT_INITIAL_CONTEXT_AFTER,
         DEFAULT_INITIAL_CONTEXT_BEFORE,
     )
     from .translation_context import ContextPlanner
@@ -184,9 +185,10 @@ async def _run_session(settings, emit, read_message, config, engine, online, sem
     contextual_translation = (translation_engine(SimpleNamespace(**settings)) == 'llama'
                              or is_hy_model(settings.get('translation_model', '')))
     context_planner = ContextPlanner(
-        settings.get('translation_before', DEFAULT_CONTEXT_BEFORE) if contextual_translation else 0,
-        settings.get('translation_after', DEFAULT_CONTEXT_AFTER) if contextual_translation else 0,
-        settings.get('translation_initial_before', DEFAULT_INITIAL_CONTEXT_BEFORE) if contextual_translation else 0)
+        DEFAULT_CONTEXT_BEFORE if contextual_translation else 0,
+        DEFAULT_CONTEXT_AFTER if contextual_translation else 0,
+        DEFAULT_INITIAL_CONTEXT_BEFORE if contextual_translation else 0,
+        initial_after=DEFAULT_INITIAL_CONTEXT_AFTER if contextual_translation else 0)
     caption_lock = asyncio.Lock()
     latest = {}
     closed_audio_time = -1.

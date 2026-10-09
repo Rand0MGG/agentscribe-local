@@ -1,4 +1,4 @@
-AgentScribe 0.6.0-beta.1 · Apple Silicon 测试安装包
+AgentScribe 0.6.0-beta.2 · Apple Silicon 测试安装包
 
 安装
 1. 将 AgentScribe.app 拖到右侧的 Applications（应用程序）。
@@ -11,9 +11,9 @@ AgentScribe 0.6.0-beta.1 · Apple Silicon 测试安装包
 
 首次使用
 软件包含桌面与课件功能的 Python 依赖、Qt（含回听与网页渲染）、Node.js/npm。
-语音识别、翻译的运行环境和模型权重需在设置中按需联网准备。
-Apple Silicon 识别可选“Qwen3-ASR · Apple GPU”，翻译可选“HY 1.8B · Apple GPU”。
-按页面提示先安装运行环境，再下载/检查模型。已有自定义模型路径保持不变。
+首次点击主界面的“准备识别与翻译模型”，会准备 Qwen3-ASR 1.7B MLX 4-bit
+和 HY-MT2 1.8B Q4_K_M / Metal 的运行环境、模型与字幕分句组件。
+准备过程显示进度，可取消；已有兼容文件复用，旧自定义路径继续保留。
 课件 Office/PDF 渲染组件也由设置中的安装/修复按钮准备。
 首次准备需要网络和足够磁盘空间，建议至少预留 20 GB；准备后识别和翻译可在本地运行。
 DeepSeek 课件理解/课堂笔记仍须你主动启用并配置密钥；安装应用不会自动启用。
@@ -30,6 +30,8 @@ Apple 说明：https://support.apple.com/102445
 默认录音、模型、运行组件保存在 ~/Library/Application Support/AgentScribe/。
 设置继续兼容旧版；你选择过的录音库路径仍保留，不自动搬迁源代码版的录音和模型。
 若旧配置使用开发目录中的模型/录音，请保留这些目录，或在设置中明确选择新位置。
+Mac 系统菜单栏的 AgentScribe 菜单提供关于、版本与更新、检查更新入口。
+启动后后台检查新版，有适用更新时建议更新，无更新或离线时不打扰。
 “检查更新”只接受对应 Apple Silicon 安装包的发行记录；测试版可接收后续 beta 和稳定版。
 当前更新方式是下载新 DMG，退出旧程序后替换 Applications 中的 AgentScribe.app。
 替换或删除应用不删除上述用户数据；应用不在录音时自动重启或安装更新。

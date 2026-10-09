@@ -6,6 +6,7 @@ from .core import source_is_final
 from .translation_config import (
     DEFAULT_CONTEXT_AFTER,
     DEFAULT_CONTEXT_BEFORE,
+    DEFAULT_INITIAL_CONTEXT_AFTER,
     DEFAULT_INITIAL_CONTEXT_BEFORE,
     MAX_CONTEXT_AFTER,
     MAX_CONTEXT_BEFORE,
@@ -45,10 +46,12 @@ class ContextPlanner:
     """Schedule submitted source changes; neighbours alone never cause retranslation."""
 
     def __init__(self, before=DEFAULT_CONTEXT_BEFORE, after=DEFAULT_CONTEXT_AFTER,
-                 initial_before=DEFAULT_INITIAL_CONTEXT_BEFORE):
+                 initial_before=DEFAULT_INITIAL_CONTEXT_BEFORE,
+                 initial_after=DEFAULT_INITIAL_CONTEXT_AFTER):
         self.before = context_count(before, DEFAULT_CONTEXT_BEFORE, MAX_CONTEXT_BEFORE)
         self.after = context_count(after, DEFAULT_CONTEXT_AFTER, MAX_CONTEXT_AFTER)
         self.initial_before = context_count(initial_before, DEFAULT_INITIAL_CONTEXT_BEFORE, MAX_INITIAL_CONTEXT_BEFORE)
+        self.initial_after = context_count(initial_after, DEFAULT_INITIAL_CONTEXT_AFTER, MAX_CONTEXT_AFTER)
         self.contexts = {}
         self.requests = {}
         self._rows = {}
@@ -115,7 +118,8 @@ class ContextPlanner:
             index = bisect_left(self._stable_keys, position)
             before = self._stable_keys[max(0, index - count):index]
             index = bisect_right(self._stable_keys, position)
-            after = self._stable_keys[index:index + self.after] if caption.final else ()
+            after_count = self.after if caption.final else self.initial_after
+            after = self._stable_keys[index:index + after_count]
             context = TranslationContext(
                 tuple(self._rows[cid].source[-MAX_CONTEXT_CHARACTERS:] for _start, cid in before),
                 tuple(self._rows[cid].source[:MAX_CONTEXT_CHARACTERS] for _start, cid in after))

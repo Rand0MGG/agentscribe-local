@@ -77,6 +77,18 @@ def native_files(root):
                     yield path
 
 
+def node_subset(node):
+    """Keep Node/npm runtime and licenses; omit headers and manual pages.
+
+    The application installs pinned prebuilt/pure-JS document components,
+    not native Node extensions compiled inside the read-only app bundle.
+    """
+    for relative in ('include', 'share/man'):
+        path = node / relative
+        if path.is_dir():
+            shutil.rmtree(path)
+
+
 def qt_subset(python):
     """Deploy used Qt modules plus their actual framework/plugin dependencies.
 
@@ -232,6 +244,7 @@ def build(downloads):
     (node_contents / 'MacOS').mkdir()
     node = node_contents / 'Resources/node'
     (stage / 'node-extract/node-v22.23.0-darwin-arm64').rename(node)
+    node_subset(node)
     (node / 'bin/node').rename(node_contents / 'MacOS/node')
     node.joinpath('bin/node').symlink_to('../../../MacOS/node')
     node_info = dict(CFBundleIdentifier='io.github.rand0mgg.agentscribe.node', CFBundleName='AgentScribe Node',

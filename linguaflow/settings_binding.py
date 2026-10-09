@@ -5,6 +5,7 @@ from .audio_processing.config import automatic_audio_config
 from .core import Settings
 from .preferences import PREFERENCES
 from .qt_controls import data_index
+from .translation_config import CONTEXT_COUNTS
 
 
 class SettingsBinding:
@@ -14,6 +15,8 @@ class SettingsBinding:
     def restore(self, values):
         for pref in PREFERENCES:
             control, value = self.controls[pref.key], values[pref.key]
+            if pref.key in CONTEXT_COUNTS:
+                value = CONTEXT_COUNTS[pref.key][0]
             if pref.kind == 'editable':
                 if value:
                     control.setCurrentText(str(value))
@@ -35,7 +38,9 @@ class SettingsBinding:
     def snapshot(self):
         getters = {'editable': 'currentText', 'text': 'currentText', 'data': 'currentData',
                    'bool': 'isChecked', 'float': 'value'}
-        return {p.key: getattr(self.controls[p.key], getters[p.kind])() for p in PREFERENCES}
+        values = {p.key: getattr(self.controls[p.key], getters[p.kind])() for p in PREFERENCES}
+        values.update({key: default for key, (default, _maximum) in CONTEXT_COUNTS.items()})
+        return values
 
     def session_settings(self, device):
         values = self.snapshot()

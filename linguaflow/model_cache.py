@@ -100,7 +100,9 @@ def resolve_translation(model, report, *, allow_download=False):
     safe = any(f.endswith(".safetensors") for f in files)
     patterns = ["*.json", "*.model", "*.txt", "*.jinja", "*.safetensors" if safe else "*.bin"]
     report("正在下载翻译模型（单份权重）；完成后开始聆听时才加载")
-    path = snapshot_download(model, allow_patterns=patterns, max_workers=1)
+    from .download_progress import hub_progress
+    with hub_progress() as bar:
+        path = snapshot_download(model, allow_patterns=patterns, max_workers=1, tqdm_class=bar)
     if not translation_complete(path, hy=is_hy_model(model)):
         raise ValueError('翻译模型下载不完整，请重新检查；已有文件保留供继续下载。')
     return path
