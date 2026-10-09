@@ -1,3 +1,75 @@
+## 2026-10-09 审查五项修复与课程功能隔离
+
+环境：Windows 11 x64、Python 3.12.8、既有 `windows` / 本地 `a6fe5e6` 之上的未提交工作；保留上一轮多格式实现。未升级依赖、读取密钥或访问音频设备。本轮修复不表示提交、推送、合并或发布。
+
+- 完整无音频回归：`.venv\Scripts\python.exe scripts/test_no_audio.py -q --tb=short --basetemp=.work/cache/full-fix-619`，**591 passed、5 skipped，122.13 秒**，零原生音频导入尝试；`ruff check linguaflow scripts tests` 和 `git diff --check` 通过。跳过不视为通过。
+- 录音收尾：模拟 worker 在 ready 后持续报告日志但不发送 done，覆盖用户重复停止和采集自然结束；测试缩短内部期限，确认失败通知、强制终止自有进程、完整保留已写 WAV 与字幕。生产期限 180 秒，未在慢设备或长课堂实测此阈值，也未访问真实音频后端。
+- 导入一致性：独立进程分别在复制新页面后、发布课程引用前、发布后直接 `os._exit(77)`。主 HTML 不变、CSS 改变；前两种仍读取旧版，发布后读取完整新版，旧图片保留，后续重导可修复未发布残缺目录。另覆盖发布异常、损坏缓存重导及无 snapshot 字段的旧材料目录。验证的是进程中断，不是断电持久性。
+- 网页布局：真实 Qt CPU 渲染 fixed / sticky 栏，横纵共六个分片；正文中间标记、右下角标记和栏内内容均保留，旧网页布局版本明确拒绝。HTML 会将固定栏放回静态排版，不保证原互动页面的全部状态或任意复杂网页。
+- 可选组件：独立测试进程将 PATH 限定为 Windows 系统目录，模拟没有 Node。`test_knowledge_formats.py -k real_offline_import --basetemp=.work/cache/no-node-c67`：**15 passed、8 skipped、10 deselected，12.06 秒**；图片、网页、文本继续运行，Office 渲染跳过。另有夹具回归模拟 `document_renderer()` 抛 RuntimeError。
+- 缓存资源：使用审查时相同的生成 TXT、10×10 PNG、已完成阅读的课件流程；模型为替身，重复读取不调用 API。8 页 PNG 读入 **416 → 16 次、41,184 → 1,584 字节**；16 页 **1600 → 32 次、158,400 → 3,168 字节**。修复后单次重复读取分别 0.3769 / 0.6816 秒，未测旧实现耗时或进程 RSS/显存，不据此承诺整体速度或内存收益。证据 `.work/cache/knowledge-fixes-20261009/cache-io.json` 和同目录生成探针；正式回归另断言缓存命中不重写来源数据库、不逐页发送完整视图，文件替换与新增阅读文件使缓存失效。
+- 解耦：静态导入约束覆盖录音、字幕、翻译、保存到知识模块的依赖，限定为纯术语数据规则；桌面不导入课程 SDK/worker/来源数据库，课程 worker 不反向依赖实时链路。独立 Qt 进程阻止云端 SDK 导入、放入损坏课程配置、模拟课程后台异常退出，Whisper 仍能开始/停止并保存原文和已有译文。Qwen 开录继续校验它使用的冻结术语；移动/删除文件前保留自有后台释放要求。该测试不运行 ASR/翻译真模型。
+
+课程相关定向回归另有 **97 passed，74.25 秒**。真实 DeepSeek、真实采集/回听、GPU、macOS、复杂用户课件和长会话资源仍待验收；本轮没有触发远程 CI。历史默认迁移失败见下节，本轮全库未复现，不认定其根因已修复。
+
+## 2026-10-09 多格式课件接入（工作区试验实现）
+
+环境：Windows 11 x64、Python 3.12.8、Node.js 24.13.0，既有 `windows` / 本地 `a6fe5e6` 之上的未提交工作。Office/PDF 复用已安装 LibreOffice Kit 0.1.3；网页/文本/图片使用已有 PySide6 的独立 Qt helper，网页 CPU 光栅化，不新增运行依赖、模型权重、浏览器下载或 DSH 插件框架。未读取密钥、请求真实供应商或运行采集、播放、音频设备及模型 GPU 测试。
+
+| 验证 | 结果 | 证据范围 |
+| --- | --- | --- |
+| 最终完整无音频回归 | **577 passed、5 skipped，99.44 秒** | `.venv\Scripts\python.exe scripts/test_no_audio.py -q --tb=short --basetemp .work/cache/final-728af2`；无原生音频导入尝试，跳过项不视为通过 |
+| 前一轮完整回归 | **576 passed、5 skipped，114.49 秒** | `.work/cache/full-a92351`，尚未加入最终原页预览 UI 回归；与最终结果分别保留 |
+| 格式/原生窗口/worker 组合 | **44 passed，52.69 秒** | `test_knowledge_formats.py`、`test_knowledge_ui.py`、`test_knowledge_worker.py`；真实 Windows 窗口，`QT_SCALE_FACTOR=1.25` 为额外 Qt 倍率，860×680 和 640×540 逻辑尺寸；截图 `.work/browser/course-formats-20261009/`，无横向滚动 |
+| 新增格式真实本地导入 | 23 种新增后缀通过 | DOC/DOCX/ODT、XLS/XLSX/ODS、PPT/ODP；HTML/HTM、MD/Markdown、TXT、CSV/TSV；PNG/JPG/JPEG/WebP/GIF/BMP/ICO/SVG。DOC/XLS/PPT 使用固定来源的 Apache POI 小型公开样本；其他夹具自行生成。原有 PDF/PPTX 的真实 Kit 回归继续通过 |
+| 网页完整静态画面 | 通过 | 本地 CSS 图片、JS Canvas、屏幕样式和横纵溢出；实测四个分片包含页面右下角彩色标记，打印样式隐藏的内容仍可见，滚动条不造成接缝漏像素。位图/网页 PNG 目视检查；不证明真实视觉模型理解 |
+| Excel 来源位置 | 通过 | 两个可见工作表，故意限制打印区域为 A1，仍渲染至 B3；保留工作表/A1/矩形/分片信息。没有新增公式重算、编辑、批注或隐藏状态读取功能 |
+| 来源、取消及失败恢复 | 通过 | 有界目录资源、原件快照、图片/资源校验；主文件相同而图片变化时版本改变，旧缓存损坏可重导修复。模拟课程描述写入失败后恢复原页面、原资源和原文本缓存；取消未发布部分课件 |
+| 新格式到全页模型请求的闭环 | 模拟服务通过 | 新 HTML 导入后离线预览不发请求；允许上传后，实际生成的四张 PNG 按顺序进入替身服务，全部来源校验通过后覆盖才显示完成。真实 SDK 图片传输仍由既有内存 HTTP 回归覆盖 |
+| Ruff、Node 语法与差异空白 | 通过 | `ruff check linguaflow scripts tests`、`node --check linguaflow/knowledge/render_document.mjs`、`git diff --check` |
+
+旧迁移 `WinError 5` 在上述两轮默认顺序全库回归中均未复现；本轮没有修改 `library.py` 或其迁移测试，仍不能认定已经定位或修复原根因。历史失败记录和夹具保留在下节。可选 CI 主机缺少 Kit 时明确跳过真实 Office 渲染，不把底层格式清单当应用验证；尚未推送运行两平台 CI。
+
+许可与来源见 [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES.md)，包括 DSH MIT 适配规则、独立 Kit MPL-2.0、既有 Qt/Chromium 和公开旧格式样本。使用与容量见 [WORKSPACE](WORKSPACE.md#课程资料与笔记)。真实 DeepSeek、用户课件、复杂字体/公式、动态网页交互、峰值内存、Mac 渲染和识别质量仍待验收；已生成所有静态页面不等于模型正确读懂全部内容。本轮未提交、推送、合并或发布。
+
+## 2026-10-08 完整课件视觉读取（工作区试验实现）
+
+环境：Windows 11 x64、Python 3.12.8、Node.js 24.13.0；既有 `windows` 分支、本地 `a6fe5e6` 之上的未提交改动，包含前一轮五项修复。安装独立 `@deepseek-ai/libreoffice-kit@0.1.3`；PDF 使用 native PDFium，PPTX 使用 native LibreOffice。组件及依赖本轮约 197 MiB，不含下载缓存；这是磁盘大小，未测整个渲染进程峰值内存。未读取真实密钥、调用供应商、上传用户材料、访问音频设备或运行模型 GPU。
+
+| 验证 | 结果 | 证据范围 |
+| --- | --- | --- |
+| 无音频课程回归：`test_knowledge_visual.py`、`test_knowledge.py`、`test_knowledge_api.py`、`test_knowledge_worker.py` | **60 passed，18.49 秒** | 全页覆盖、空文字/空白页、逐页缓存与取消续读、许可撤回、原件变化、损坏图片、长解读摘录与完整来源保留、后续引用修订 |
+| 实际 Kit 渲染 | PDF / PPTX 各三页通过，包含无文字图形页、空白页，渲染缓存复用 | 自编有效夹具；实际页面图像目视检查；PPTX 文字和简单公式清晰、PDF 三角形可见。未验证用户课程字体、复杂公式或视觉模型理解 |
+| 实际 ChatDeepSeek / Deep Agents SDK | 模拟 HTTP 请求通过 | PNG 的实际字节进入 user `image_url`，超过 12 页可按页数处理；图片单独计费预算、8,192 页面输出上限、多轮原页重读、图片许可撤回及 SDK 截断异常拒绝。没有请求真实 DeepSeek |
+| Node 子进程取消 | 通过 | 生成的替身 converter 启动自己的子进程；取消后 dispose 等待其退出、清理临时渲染目录。实际 Kit 正常完成路径已验证；未强杀用户进程 |
+| 真实 Windows Qt 窗口 | **2 passed，3.56 秒** | 125% 缩放、860×680 / 640×540；原页、页数状态、来源标注与无横向滚动。截图 `.work/browser/course-visual-20261008/`；模型解读为测试生成数据 |
+| 课程与录音库组合回归 | **82 passed，23.30 秒** | 上述课程核心/API/worker 测试及 `test_knowledge_ui.py`、`test_library.py` 同进程顺序运行，包含 SDK/Qt/实际渲染；无原生音频导入尝试 |
+| 默认顺序完整无音频回归 | **1 failed、548 passed、5 skipped，70.20 秒** | 旧 `test_legacy_migration_is_repeatable_and_keeps_originals` 在目录 rename 时出现 `WinError 5`。前一次亦为同一项失败；跳过不视为通过，不能标记全库检查通过 |
+| 排除视觉与窗口测试的对照 | **532 passed、5 skipped，59.15 秒** | `--ignore=tests/test_knowledge_visual.py --ignore=tests/test_knowledge_ui.py`；同一无音频入口和新短路径临时目录。该对照不包含新视觉测试，不当完整通过证据 |
+| Ruff、Node 语法、差异空白 | 通过 | `ruff check linguaflow scripts tests`、`node --check linguaflow/knowledge/render_document.mjs`、`git diff --check` |
+
+测试均使用 `.venv\Scripts\python.exe scripts/test_no_audio.py -q`，临时目录通过 `--basetemp` 指向项目 `.work/cache/` 下新建的短目录，避免本机沙箱临时目录和 Windows 路径问题。真实窗口测试另设置 `AGENTSCRIBE_UI_PLATFORM=windows`、`QT_SCALE_FACTOR=1.25` 与截图输出目录。默认顺序失败夹具保留在 `.work/cache/vfull-afe282/`、`.work/cache/vfinal-12e1cc/`；其他工作产物均不提交。
+
+完整回归遗留问题：`library.py` / `test_library.py` 没有改动；录音库单独 **20 passed**，课程与录音库组合 **82 passed**，但默认全库顺序两次触发上述访问错误。尚未定位持有句柄的主体或执行顺序原因，不断言是外部扫描器，也不据此盲目重试或改写迁移规则。需要后续单独排查；没有使用忽略测试的结果替代完整回归结果。
+
+实际云端图表/公式理解、密集页内容完整性、真实费用、系统凭据写入、Mac 渲染及两端 ASR 质量仍待验收。“已读 N/N 页”只表示逐页请求和结构化结果校验全部完成。使用、容量和许可边界见 [工作区说明](WORKSPACE.md#课程资料与笔记)，组件许可见 [第三方说明](../THIRD_PARTY_NOTICES.md)。
+
+## 2026-10-08 五项复审修复
+
+环境：Windows 11 x64，Python 3.12.8，桌面 `.venv`；分支 `windows`，修复基线为本地提交 `a6fe5e6`，本轮修复尚未提交。未读取真实密钥、调用真实云 API、访问原生音频或运行 GPU 推理。
+
+| 验证 | 结果 | 范围 |
+| --- | --- | --- |
+| `.venv\Scripts\python.exe scripts/test_no_audio.py -q --tb=short` | **533 passed、5 skipped，62.40 秒**；无原生音频导入尝试 | 完整无音频回归，新增 17 项正式回归；跳过项不视为通过 |
+| `.venv\Scripts\python.exe -m ruff check linguaflow scripts tests` / `git diff --check` | 通过 | 静态与差异检查 |
+| 上传许可 | 排队后撤回许可阻止服务创建；真实框架第二轮被拦截；第一批保存后撤回许可保留该批并阻止后续调用 | 模拟模型、生成资料；未请求供应商 |
+| 删除范围 | 本批未提供的有效旧笔记不能被删除，整个非法补丁回滚 | 仍保留用户编辑和章节范围保护 |
+| 原件恢复 | 缺失/损坏原件均可重新导入修复，有效文本缓存不重新解析 | 测试生成的 PPTX，未操作用户课件 |
+| 长笔记分批 | 六条约千字笔记分批更新，后续批次仍读取已在首批处理的新讲述；真实框架三批整理共用同一请求预算 | 检查输入与进度完整性，模拟输出不证明摘要质量或真实费用 |
+| 术语快照 | 草稿读取当前关联课程的审核词表；移动草稿保留原课程归属；recording/complete/incomplete 状态保留已存快照 | 数据层和既有 Qt 闭环，不替代 Qwen GPU 参数/效果实测 |
+
+实现与使用边界见 [设计文档 v1.4](AgentScribe_软件开发设计文档.md#132-当前实施状态2026-10-09) 和 [工作区说明](WORKSPACE.md#课程资料与笔记)。未新增依赖、设置或推理后端；真实供应商、Mac Apple GPU、Windows 实际识别与课程质量仍待验收。
+
 ## 2026-10-08 课程资料、静态上下文与来源笔记（工作区试验实现）
 
 环境：Windows 11 x64，Python 3.12.8；分支 `windows`，基础提交 `6a41ed08db2fc8a1d11732e0a52fb736994b8d1b`，本轮修改尚未提交。未访问、枚举或播放音频设备，未下载新模型、调用真实云 API 或运行 GPU 推理。
@@ -16,7 +88,7 @@
 
 依赖安装限定桌面 `.venv`，根版本为 Deep Agents 0.7.23、langchain-deepseek 1.1.1、pypdf 6.19.0、keyring 25.7.0；未更改 WLK/MLX 环境和应用版本。许可证/Python 范围核对来自已安装分发元数据，根版本固定不等于完整传递依赖锁定。原 CI 之外新增两平台 Python 3.12 的可选 SDK 模拟检查，尚未推送运行。
 
-M1 的 6,000 次差分与存储/耗时测量仍仅对应合成 CaptionMapper，详见 [实施状态](AgentScribe_软件开发设计文档.md#132-当前实施状态2026-10-08)。剩余验收为真实供应商/凭据、授权课程质量、Mac Apple GPU 与 Windows 设备分别实测，以及长会话总资源/预算表现。历史 GPU 数字不作为本轮新功能已通过的证据。
+M1 的 6,000 次差分与存储/耗时测量仍仅对应合成 CaptionMapper，详见 [实施状态](AgentScribe_软件开发设计文档.md#132-当前实施状态2026-10-09)。剩余验收为真实供应商/凭据、授权课程质量、Mac Apple GPU 与 Windows 设备分别实测，以及长会话总资源/预算表现。历史 GPU 数字不作为本轮新功能已通过的证据。
 
 # 0.3 集成验证记录（2026-09-07）
 

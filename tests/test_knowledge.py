@@ -178,6 +178,26 @@ def test_import_order_cache_tampering_and_course_move(recording, tmp_path):
         read_blocks(library, path2, course2)
 
 
+def test_legacy_material_layout_remains_readable_and_can_be_reimported(recording, tmp_path):
+    import shutil
+
+    from linguaflow.knowledge.files import material_cache
+    library, item, _ = recording
+    source = tmp_path / 'legacy.pptx'
+    pptx(source)
+    document = import_material(library, item['folder'], source)
+    path, course = course_for_folder(library, item['folder'])
+    expected = read_blocks(library, path, course)
+    base = path.parent / 'materials' / document['id']
+    shutil.copyfile(material_cache(library, path, document) / 'blocks.json', base / 'blocks.json')
+    course['documents'][0].pop('snapshot')
+    write_json(library.root, path, course)
+    assert read_blocks(library, path, course) == expected
+    assert import_material(library, item['folder'], source)['snapshot']
+    _, course = course_for_folder(library, item['folder'])
+    assert read_blocks(library, path, course) == expected
+
+
 def test_course_purge_blocks_external_references(recording, tmp_path):
     library, item, _ = recording
     original_folder = next(row for row in library.index['folders'] if row['id'] == item['folder'])
@@ -279,3 +299,116 @@ def test_external_saved_mismatch_and_time_change_do_not_reuse_eligibility(record
     store.saved([replace(first, end=2)])
     with pytest.raises(ValueError, match='来源已变化'):
         store.publish(job, patch())
+
+
+def retained_patch(job):
+    return {'upserts': [{**{key: row[key] for key in ('id', 'section', 'text', 'origin')},
+                        'refs': [{'id': ref['id'], 'quote': ref['quote']} for ref in row['refs']]}
+                        for row in job.notes], 'delete_note_ids': []}
+
+
+def long_notes(store):
+    caption = seed(store, 'gradient descent')
+    notes = [{'id': f'long-{index}', 'section': '课堂讲述', 'text': 'gradient descent ' + '课程' * 480,
+              'origin': 'lecture', 'refs': [{'id': 'caption:1', 'quote': caption.source}]} for index in range(6)]
+    store.publish(store.make_job(), {'upserts': notes, 'delete_note_ids': []})
+    return caption
+
+
+def test_delete_cannot_remove_valid_note_not_supplied_to_this_batch(recording):
+    _, _, store = recording
+    captions = [Caption(index, index, index+1, word, 'en')
+                for index, word in enumerate(('apple', 'banana', 'cherry', 'date'), 1)]
+    for caption in captions:
+        store.observe(caption)
+    store.saved(captions)
+    store.publish(store.make_job(), {'upserts': [{**patch(caption.source, f'caption:{caption.id}')['upserts'][0],
+                                                'id': f'n{caption.id}'} for caption in captions], 'delete_note_ids': []})
+    new = Caption(5, 5, 6, 'elephant', 'en')
+    store.observe(new)
+    store.saved([*captions, new])
+    job = store.make_job()
+    assert 'n1' not in {row['id'] for row in job.notes}
+    before = store.view()
+    assert next(row for row in before['notes'] if row['id'] == 'n1')['status'] == 'valid'
+    invalid = retained_patch(job)
+    invalid['delete_note_ids'] = ['n1']
+    with pytest.raises(ValueError, match='不能删除未提供'):
+        store.publish(job, invalid)
+    assert store.view() == before
+
+
+def test_incremental_batches_keep_new_evidence_for_all_deferred_notes(recording):
+    from linguaflow.knowledge.schemas import MAX_NOTE_PAYLOAD_BYTES, job_payload_bytes
+    _, _, store = recording
+    first = long_notes(store)
+    new = Caption(2, 2, 3, 'gradient descent was corrected', 'en')
+    store.observe(new)
+    store.saved([first, new])
+    updated = set()
+    for _ in range(6):
+        job = store.make_job()
+        if job is None:
+            break
+        assert 0 < len(job.notes) <= 2
+        assert job_payload_bytes(job) <= MAX_NOTE_PAYLOAD_BYTES
+        assert job.sources['caption:2']['text'] == new.source
+        assert not updated & {row['id'] for row in job.notes}
+        updated.update(row['id'] for row in job.notes)
+        store.publish(job, retained_patch(job))
+    assert updated == {f'long-{index}' for index in range(6)}
+    assert store.make_job() is None
+    assert all(row['status'] == 'valid' and not row['pending_sources'] for row in store.view()['notes'])
+
+
+@pytest.mark.parametrize('damage', ['corrupt', 'missing'])
+def test_reimport_repairs_original_without_reparsing_valid_cache(recording, tmp_path, monkeypatch, damage):
+    import linguaflow.knowledge.materials as module
+    library, item, _ = recording
+    source = tmp_path / 'intact.pptx'
+    pptx(source)
+    document = import_material(library, item['folder'], source)
+    path, course = course_for_folder(library, item['folder'])
+    original = path.parent / 'materials' / document['id'] / 'original.pptx'
+    if damage == 'corrupt':
+        original.write_bytes(b'corruption')
+    else:
+        original.unlink()
+    monkeypatch.setattr(module, 'extract_material', lambda *args: pytest.fail('A valid text cache should be reused'))
+    restored = import_material(library, item['folder'], source)
+    path, course = course_for_folder(library, item['folder'])
+    assert original.read_bytes() == source.read_bytes()
+    assert restored['version'] == document['version']
+    assert [row.text for row in read_blocks(library, path, course)] == ['梯度下降', 'gradient descent']
+
+
+@pytest.mark.parametrize('state', ['draft', 'recording', 'complete', 'incomplete'])
+def test_draft_refreshes_shared_glossary_but_started_recording_keeps_snapshot(recording, state):
+    library, item, _ = recording
+    path, course = course_for_folder(library, item['folder'], create=True)
+    course['terms'] = [{'canonical': 'old-term', 'approved': True}]
+    write_json(library.root, path, course)
+    previous = session_context(library, item['id'])
+    library.save(item, [], state)
+    course['terms'] = [{'canonical': 'new-term', 'approved': True}]
+    write_json(library.root, path, course)
+    current = session_context(library, item['id'])
+    assert list(current['terms']) == (['new-term'] if state == 'draft' else ['old-term'])
+    if state != 'draft':
+        assert current == read_manifest(library, item['id'])['asr_context'] == json.loads(json.dumps(previous))
+
+
+def test_moved_draft_refreshes_its_bound_course_not_destination_glossary(recording):
+    library, item, _ = recording
+    path, course = course_for_folder(library, item['folder'], create=True)
+    course['terms'] = [{'canonical': 'old-term', 'approved': True}]
+    write_json(library.root, path, course)
+    session_context(library, item['id'])
+    destination = library.folder('other course')
+    other_path, other = course_for_folder(library, destination['id'], create=True)
+    other['terms'] = [{'canonical': 'wrong-course', 'approved': True}]
+    write_json(library.root, other_path, other)
+    library.move(item, destination['id'])
+    course['terms'] = [{'canonical': 'new-term', 'approved': True}]
+    write_json(library.root, path, course)
+    assert session_context(library, item['id'])['terms'] == ('new-term',)

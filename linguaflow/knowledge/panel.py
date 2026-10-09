@@ -2,7 +2,7 @@
 import html
 from urllib.parse import quote, unquote
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .rendering import IMPORT_SUFFIXES
 from .schemas import fingerprint
 
 
@@ -33,6 +34,10 @@ def refs_html(refs, sources):
         source = sources.get(ref['id'], {})
         label = (f"录音约 {source.get('start', 0):.1f} 秒" if source.get('kind') == 'caption'
                  else f"课件第 {source.get('page', '?')} 页")
+        if source.get('kind') != 'caption' and source.get('title', '').startswith(('工作表 ', '网页分片 ')):
+            label += ' · ' + source['title']
+        if source.get('evidence_type') == 'visual':
+            label += ' · 模型视觉解读'
         rows.append(f'<p><a href="source:{quote(ref["id"], safe="")}">{html.escape(label)}</a>：'
                     f'{html.escape(ref["quote"])}</p>')
     return ''.join(rows)
@@ -83,7 +88,7 @@ class KnowledgePanel(QDialog):
         self.associate_button = self.button('使用此课程', self.associate, association)
         material_layout.addLayout(association)
         row = QHBoxLayout()
-        self.import_button = self.button('导入 PDF / PPTX', self.import_material, row)
+        self.import_button = self.button('导入课件', self.import_material, row)
         self.pages = QComboBox()
         self.pages.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.pages.setMinimumContentsLength(12)
@@ -92,11 +97,14 @@ class KnowledgePanel(QDialog):
         material_layout.addLayout(row)
         self.material_text = QTextBrowser()
         material_layout.addWidget(self.material_text, 1)
-        self.material_cloud = QCheckBox('允许将本课程的课件文本发送给 DeepSeek 提取术语')
+        self.material_cloud = QCheckBox('允许将本课程的页面图像和文字发送给 DeepSeek，完整阅读课件')
         self.material_cloud.toggled.connect(self.permissions)
         material_layout.addWidget(self.material_cloud)
+        self.extract_button = QPushButton('完整阅读并提取术语')
+        self.extract_button.clicked.connect(lambda: self.command('extract'))
+        material_layout.addWidget(self.extract_button)
         term_layout = QVBoxLayout(terms)
-        help_text = QLabel('候选术语需勾选并保存后才用于 Qwen。先核对课件中的图片、公式和空白页；当前版本提取原生文本。')
+        help_text = QLabel('完整阅读会逐页查看课件，包括图表、公式和无文字页。模型解读仍需核对；候选术语勾选并保存后才用于 Qwen。')
         help_text.setWordWrap(True)
         term_layout.addWidget(help_text)
         self.terms = QTableWidget(0, 3)
@@ -107,7 +115,6 @@ class KnowledgePanel(QDialog):
         self.terms.cellChanged.connect(self.term_changed)
         term_layout.addWidget(self.terms, 1)
         row = QHBoxLayout()
-        self.extract_button = self.button('提取候选术语', lambda: self.command('extract'), row)
         self.add_button = self.button('添加术语', self.add_term, row)
         self.remove_button = self.button('移除选中', self.remove_term, row)
         self.save_terms_button = self.button('保存审核结果', self.save_terms, row)
@@ -119,7 +126,7 @@ class KnowledgePanel(QDialog):
         self.notes_cloud = QCheckBox('允许 DeepSeek 处理本段录音的文字，生成笔记与回答')
         self.notes_cloud.toggled.connect(self.permissions)
         note_layout.addWidget(self.notes_cloud)
-        cloud_scope = QLabel('将发送已保存定稿、相关课件与已有笔记文字，不上传录音。关闭后停止后续请求；已发送内容无法撤回。')
+        cloud_scope = QLabel('发送已保存定稿、相关课件和笔记文字；允许课件页面上传时，可重新查看相关页图像。不上传录音。关闭许可后停止后续请求；已发送内容无法撤回。')
         cloud_scope.setWordWrap(True)
         note_layout.addWidget(cloud_scope)
         scope_row = QHBoxLayout()
@@ -222,20 +229,27 @@ class KnowledgePanel(QDialog):
                 index = self.courses.findData(selected_course or value.get('course_folder_id'))
                 if index >= 0:
                     self.courses.setCurrentIndex(index)
-            self.material_cloud.setChecked(bool(course.get('material_cloud')))
+            self.material_cloud.setChecked(bool(course.get('material_images_cloud')))
             self.notes_cloud.setChecked(bool(value['manifest']['notes_cloud']))
             names = {doc['id']: doc['name'] for doc in course.get('documents', [])}
             if update_materials:
                 page_id = self.pages.currentData()
                 self.pages.clear()
                 for block in value.get('blocks', []):
+                    if block.get('evidence_type') == 'visual':
+                        continue
                     label = names.get(block['document_id'], '课件') + f" · 第 {block['page']} 页"
-                    if block['needs_review']:
+                    if block['title'].startswith('工作表 '):
+                        label = names.get(block['document_id'], '课件') + ' · ' + block['title']
+                    visual = next((row for row in value.get('blocks', []) if row['id'] == block['id'] + ':visual'), None)
+                    label += (' · 已视觉读取' if visual else ' · 尚未视觉读取')
+                    if visual and visual['needs_review']:
                         label += ' · 待核对'
                     self.pages.addItem(label, block['id'])
                 index = self.pages.findData(page_id)
                 if index >= 0:
                     self.pages.setCurrentIndex(index)
+                self.show_page()
             digest = fingerprint(course.get('terms', []))
             if digest != self.terms_fingerprint and not self.terms_dirty:
                 self.terms.setRowCount(0)
@@ -282,8 +296,10 @@ class KnowledgePanel(QDialog):
                 self.note_text.setPlainText('回答所依据的原文或笔记已更新，请重新提问。')
             elif not self.note_list.count() and not self.answer_active:
                 self.note_text.setPlainText('暂无笔记。允许云端处理后，已保存的定稿原文会分批生成带引用笔记。')
-            self.status.setText(f"本机已保存 {len(names)} 份课件 · {len(value.get('pending', []))} 条原文待处理"
-                                + (' · 正在处理文字…' if value.get('busy') else ''))
+            coverage = value.get('reading_coverage', {})
+            total, read = sum(row['total'] for row in coverage.values()), sum(row['read'] for row in coverage.values())
+            self.status.setText(f"本机已保存 {len(names)} 份课件 · 视觉读取 {read}/{total} 页 · {len(value.get('pending', []))} 条原文待处理"
+                                + (' · 正在处理…' if value.get('busy') else ''))
             if value.get('material_error'):
                 self.status.setText('关联课程资料不可用，云端任务已暂停。请恢复原件或重新关联课程。')
             elif value.get('automatic_paused'):
@@ -329,8 +345,28 @@ class KnowledgePanel(QDialog):
 
     def show_page(self, *_):
         block = next((row for row in self.view.get('blocks', []) if row['id'] == self.pages.currentData()), None)
-        self.material_text.setPlainText((('本页图片、公式或提取不全，请对照原件核对。\n\n' if block['needs_review'] else '')
-                                        + (block['text'] or '未提取到原生文本。')) if block else '先导入本课程课件。')
+        if not block:
+            self.material_text.setPlainText('先导入本课程课件。')
+            return
+        visual = next((row for row in self.view.get('blocks', []) if row['id'] == block['id'] + ':visual'), None)
+        reading = '<p>本页尚未完成视觉读取，以下仅为原生文字。</p>'
+        if block.get('preview_image_path'):
+            uri = html.escape(QUrl.fromLocalFile(block['preview_image_path']).toString(), quote=True)
+            width = min(680, max(240, self.material_text.viewport().width() - 24))
+            reading = f'<p><img src="{uri}" width="{width}"></p><p>本地原页，尚未由模型阅读。</p>'
+        if visual:
+            uri = html.escape(QUrl.fromLocalFile(visual['image_path']).toString(), quote=True)
+            width = min(680, max(240, self.material_text.viewport().width() - 24))
+            preview = ' · 文字预览，完整解读用于检索和笔记' if visual.get('preview_truncated') else ''
+            reading = (f'<p><img src="{uri}" width="{width}"></p><p><b>页面视觉解读（模型生成，需核对）</b></p>'
+                       f'<p>{html.escape(visual["text"]).replace(chr(10), "<br>")}{preview}</p>')
+        self.material_text.setHtml(reading + '<p><b>原生文字</b></p><p>'
+            + html.escape(block['text'] or '未提取到原生文字；视觉读取仍会查看整页。').replace('\n', '<br>') + '</p>')
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'material_text'):
+            self.show_page()
 
     def show_note(self, current, previous=None):
         if current is None:
@@ -353,7 +389,7 @@ class KnowledgePanel(QDialog):
             self.seekRequested.emit(float(source['start']))
             self.status.setText(f"已定位到录音约 {source['start']:.1f} 秒；播放由你控制。")
         else:
-            self.pages.setCurrentIndex(self.pages.findData(identifier.removeprefix('block:')))
+            self.pages.setCurrentIndex(self.pages.findData(identifier.removeprefix('block:').removesuffix(':visual')))
             self.tabs.setCurrentIndex(0)
 
     def permissions(self, *_):
@@ -361,7 +397,8 @@ class KnowledgePanel(QDialog):
             self.client.send('permission', materials=self.material_cloud.isChecked(), notes=self.notes_cloud.isChecked())
 
     def import_material(self):
-        path, _ = QFileDialog.getOpenFileName(self, '选择本课程课件', '', '课件 (*.pdf *.pptx)')
+        formats = ' '.join('*' + suffix for suffix in IMPORT_SUFFIXES)
+        path, _ = QFileDialog.getOpenFileName(self, '选择本课程课件', '', f'课件 ({formats})')
         if path:
             self.command('import', path=path)
 
@@ -409,7 +446,7 @@ class KnowledgePanel(QDialog):
                        self.terms, self.associate_button, self.courses):
             widget.setEnabled(ready and not self.active and not self.busy)
         self.extract_button.setEnabled(ready and not self.active and not self.busy and self.material_cloud.isChecked()
-                                       and any(row.get('text') for row in self.view.get('blocks', [])))
+                                       and bool(self.view.get('blocks', [])))
         for widget in (self.update_button, self.export_button, self.edit_button, self.credential_button):
             widget.setEnabled(ready and not self.busy)
         for widget in (self.organize_button, self.ask_button):
@@ -420,4 +457,4 @@ class KnowledgePanel(QDialog):
         self.material_cloud.setEnabled(ready and bool(self.view.get('course')))
         self.notes_cloud.setEnabled(ready)
         self.cancel_button.setEnabled(self.busy)
-        self.import_button.setToolTip('录音结束后可更新课件；本次识别术语已固定。' if self.active else '在本机提取带页码文本')
+        self.import_button.setToolTip('录音结束后可更新课件；本次识别术语已固定。' if self.active else '保存完整原件并提取带页码文字；完整阅读会另行查看页面图像')

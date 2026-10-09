@@ -1503,13 +1503,13 @@ class Window(QMainWindow):
         self.on_status("正在启动本地推理环境…可点击停止取消加载。")
         self.empty.setText("正在准备模型和验证推理环境…\n准备好后自动开始录音，加载进度显示在下方。")
         settings = self.settings_binding.session_settings(self.device.currentData())
-        try:
-            context = session_context(self.library, self.current_item['id'])
-            if settings.backend in ('qwen3-streaming', 'qwen3-mlx'):
+        if settings.backend in ('qwen3-streaming', 'qwen3-mlx'):
+            try:
+                context = session_context(self.library, self.current_item['id'])
                 settings = replace(settings, asr_context=context)
-        except (OSError, ValueError) as exc:
-            self.on_failure(f"课程术语无效：{exc}")
-            return
+            except (OSError, ValueError) as exc:
+                self.on_failure(f"课程术语无效：{exc}")
+                return
         if self.knowledge_client.identifier == self.current_item['id']:
             self.knowledge_client.close()
             self.attach_knowledge(force=True)

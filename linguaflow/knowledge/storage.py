@@ -2,12 +2,12 @@
 import json
 import sqlite3
 from contextlib import closing, contextmanager
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from uuid import uuid4
 
 from ..core import source_is_final
 from .files import checked_path
-from .schemas import NoteJob, fingerprint
+from .schemas import MAX_NOTE_PAYLOAD_BYTES, MAX_NOTES_PER_BATCH, NoteJob, fingerprint, job_payload_bytes
 
 
 class KnowledgeStore:
@@ -54,6 +54,8 @@ class KnowledgeStore:
         old = db.execute('SELECT * FROM sources WHERE id=?', (identifier,)).fetchone()
         content = {key: data.get(key) for key in ('text', 'language', 'segmentation_revision', 'final', 'deleted',
                    'version', 'start', 'end', 'title', 'page', 'document_id', 'persisted_mismatch')}
+        if data.get('evidence_type') == 'visual':
+            content.update(evidence_type='visual', image_hash=data.get('image_hash'))
         digest = fingerprint(content)
         changed = old is None or old['fingerprint'] != digest
         version = (old['version'] + int(changed)) if old else 1
@@ -85,6 +87,9 @@ class KnowledgeStore:
                 note['status'] = 'pending'
             else:
                 continue
+            if not note.get('user_locked'):
+                version = db.execute('SELECT version FROM sources WHERE id=?', (identifier,)).fetchone()[0]
+                note.setdefault('pending_sources', {})[identifier] = version
             db.execute('UPDATE notes SET data=? WHERE id=?', (json.dumps(note, ensure_ascii=False), key))
 
     @staticmethod
@@ -154,6 +159,7 @@ class KnowledgeStore:
     def materials(self, blocks):
         rows = {f'block:{block.id}': {'text': block.text, 'title': block.title, 'page': block.page,
                 'version': block.version, 'document_id': block.document_id, 'kind': 'block',
+                'evidence_type': block.evidence_type, 'image_path': block.image_path, 'image_hash': block.image_hash,
                 'section': block.title, 'final': bool(block.text), 'deleted': False} for block in blocks}
         with self.connection() as db:
             for identifier, data in rows.items():
@@ -176,12 +182,20 @@ class KnowledgeStore:
                     'notes_version': int(self._meta(db, 'notes_version')),
                     'event_seq': int(self._meta(db, 'event_seq'))}
 
-    def make_job(self, course_version='', question='', mode='notes', section=''):
+    def make_job(self, course_version='', question='', mode='notes', section='', note_ids=None):
         view, selected, used = self.view(), {}, 0
         pending = []
+        identifier = uuid4().hex
+        def build(sources, notes=(), remaining=()):
+            sections = (section,) if section else tuple(dict.fromkeys([
+                '课堂讲述', *(row['section'] for row in sources.values() if mode == 'notes'),
+                *(note['section'] for note in notes)]))
+            return NoteJob(identifier, self.epoch, view['notes_version'], sources, sections, tuple(notes),
+                course_version, event_seq=view['event_seq'], question=question, mode=mode,
+                pending=tuple(pending), remaining_note_ids=tuple(remaining))
         # Process oldest eligible speech first; unsaved/unselected entries stay pending.
-        for identifier in view['pending']:
-            source = view['sources'][identifier]
+        for key in view['pending']:
+            source = view['sources'][key]
             if not source['saved']:
                 continue
             cost = len(source['text'].encode('utf-8'))
@@ -189,8 +203,11 @@ class KnowledgeStore:
                 if not selected and mode == 'notes':
                     raise ValueError('单条定稿原文超出增量处理预算；可先针对具体知识点提问，已保存原文保留。')
                 break
-            selected[identifier] = source
-            pending.append((identifier, source['source_version']))
+            proposal = {**selected, key: source}
+            if mode == 'notes' and job_payload_bytes(build(proposal)) > MAX_NOTE_PAYLOAD_BYTES:
+                break
+            selected[key] = source
+            pending.append((key, source['source_version']))
             used += cost
         if mode != 'notes':
             selected = {key: row for key, row in view['sources'].items() if row['kind'] == 'caption'
@@ -199,41 +216,60 @@ class KnowledgeStore:
         if not selected and not question and not dirty:
             return None
         # A bounded lexical retrieval supplies original material, never previous summaries alone.
-        from .retrieval import rank_sources
+        from .retrieval import rank_sources, visual_excerpt
         query = question or ' '.join(row['text'] for row in selected.values())
         material = {key: row for key, row in view['sources'].items() if row['kind'] == 'block'
                     and not row['deleted'] and row['final']}
         for key in rank_sources(query, material)[:5]:
-            if mode == 'notes' and used + len(material[key]['text'].encode('utf-8')) > 5000:
+            source = visual_excerpt(material[key], query) if mode == 'notes' else material[key]
+            if mode == 'notes' and used + len(source['text'].encode('utf-8')) > 5000:
                 continue
-            selected[key] = material[key]
-            used += len(material[key]['text'].encode('utf-8'))
+            if mode == 'notes' and job_payload_bytes(build({**selected, key: source})) > MAX_NOTE_PAYLOAD_BYTES:
+                continue
+            selected[key] = source
+            used += len(source['text'].encode('utf-8'))
         if mode != 'notes':
             selected.update(material)  # Scoped tools can retrieve any frozen original, without uploading it all.
-        sections = tuple(dict.fromkeys(['课堂讲述', *(row['section'] for row in selected.values()),
-                                       *(note['section'] for note in dirty)]))
         if section:
+            sections = {'课堂讲述', *(row['section'] for row in selected.values()),
+                        *(note['section'] for note in view['notes'])}
             if section not in sections:
                 raise ValueError('所选章节已不存在，请刷新。')
-            sections = (section,)
-        notes = tuple(note for note in view['notes'] if note['section'] in sections and (
-            mode != 'notes' or (not note.get('user_locked') and note['status'] != 'valid')))
+        notes = [note for note in view['notes'] if (not section or note['section'] == section)
+                 and (note_ids is None or note['id'] in note_ids)
+                 and (mode == 'question' or not note.get('user_locked'))
+                 and (mode != 'notes' or note['status'] != 'valid')]
         if mode == 'question':
             ranked = rank_sources(question, {note['id']: {'text': note['text'], 'title': note['section']} for note in notes})[:6]
-            notes = tuple(note for note in notes if note['id'] in ranked)
-            sections = tuple(dict.fromkeys(['课堂讲述', *(note['section'] for note in notes)]))
+            notes = [note for note in notes if note['id'] in ranked]
         # Re-check an old conclusion using its original current evidence as well as new speech.
+        chosen, remaining, oversized = [], [], []
         for note in notes:
-            for ref in note.get('refs', []):
-                row = view['sources'].get(ref['id'])
+            proposal, blocked = dict(selected), False
+            dependencies = {ref['id'] for ref in note.get('refs', [])} | set(note.get('pending_sources', {}))
+            for key in dependencies:
+                row = view['sources'].get(key)
                 if row and row['saved'] and row['final'] and not row['deleted']:
-                    selected[ref['id']] = row
-                elif row and not row['saved']:
-                    return None  # Do not withdraw an old claim until the changed source is saved.
-        job = NoteJob(uuid4().hex, self.epoch, view['notes_version'], selected, sections, notes,
-                      course_version, question=question, mode=mode, pending=tuple(pending))
+                    proposal[key] = visual_excerpt(row, query, [ref['quote'] for ref in note.get('refs', [])
+                        if ref['id'] == key]) if mode == 'notes' else row
+                elif row and (not row['saved'] or not row['final'] and not row['deleted']):
+                    blocked = True
+            candidate = build(proposal, [*chosen, note])
+            if blocked or len(chosen) >= MAX_NOTES_PER_BATCH or job_payload_bytes(candidate) > MAX_NOTE_PAYLOAD_BYTES:
+                remaining.append(note['id'])
+                if not blocked and not chosen:
+                    oversized.append(note['id'])
+                continue
+            selected, chosen = proposal, [*chosen, note]
+        if mode == 'notes' and not selected and not chosen:
+            if oversized:
+                raise ValueError('单条笔记及其证据超出处理预算，请缩短该条个人编辑或针对具体知识点提问；原内容保留。')
+            return None
+        if mode == 'organize' and remaining and not chosen:
+            raise ValueError('当前笔记或证据无法纳入单批预算，请先核对未保存原文或缩短过长笔记；原内容保留。')
+        job = build(selected, chosen, remaining if mode != 'question' else ())
         with self.connection() as db:
-            job = NoteJob(**{**asdict(job), 'event_seq': int(self._meta(db, 'event_seq'))})
+            job = replace(job, event_seq=int(self._meta(db, 'event_seq')))
             metadata = {**asdict(job), 'sources': {key: source['source_version'] for key, source in job.sources.items()}, 'notes': []}
             db.execute('INSERT INTO jobs VALUES (?, ?, NULL)', (job.id, json.dumps(metadata, ensure_ascii=False)))
             db.execute('DELETE FROM jobs WHERE rowid NOT IN (SELECT rowid FROM jobs ORDER BY rowid DESC LIMIT 20)')
@@ -267,6 +303,7 @@ class KnowledgeStore:
             notes = {row['id']: json.loads(row['data']) for row in db.execute('SELECT * FROM notes')}
             upserts, deletes = patch.get('upserts', []), patch.get('delete_note_ids', [])
             ids = set()
+            supplied = {note['id'] for note in job.notes}
             for note in upserts:
                 identifier = note['id']
                 if not identifier or identifier in ids or note['section'] not in job.sections:
@@ -275,7 +312,7 @@ class KnowledgeStore:
                 old = notes.get(identifier)
                 if old and (old.get('user_locked') or old['section'] not in job.sections):
                     raise ValueError('模型不能覆盖用户内容或其他章节。')
-                if old and identifier not in {note['id'] for note in job.notes}:
+                if old and identifier not in supplied:
                     raise ValueError('模型不能修改未提供的旧笔记。')
                 if not note['text'].strip() or len(note['text']) > 1600 or not note.get('refs'):
                     raise ValueError('笔记缺少内容或证据。')
@@ -295,12 +332,15 @@ class KnowledgeStore:
                     raise ValueError('删除补丁不能修改用户内容或未知条目。')
                 if notes[identifier]['section'] not in job.sections:
                     raise ValueError('删除补丁超出本批范围。')
+                if identifier not in supplied:
+                    raise ValueError('模型不能删除未提供的旧笔记。')
             required = {note['id'] for note in job.notes if not note.get('user_locked')}
             if not required <= ids | set(deletes):
                 raise ValueError('旧笔记尚未逐条核对，未发布不完整补丁。')
             for note in upserts:
                 note = dict(note)
-                note.update(user_locked=False, status='valid', revision=notes.get(note['id'], {}).get('revision', 0)+1)
+                note.update(user_locked=False, status='valid', pending_sources={},
+                            revision=notes.get(note['id'], {}).get('revision', 0)+1)
                 note['refs'] = [{**ref, 'version': job.sources[ref['id']]['source_version']} for ref in note['refs']]
                 db.execute('INSERT OR REPLACE INTO notes VALUES (?, ?, ?)',
                            (note['id'], note['section'], json.dumps(note, ensure_ascii=False)))
@@ -308,10 +348,17 @@ class KnowledgeStore:
                 db.execute('DELETE FROM notes WHERE id=?', (identifier,))
             for identifier, version in job.pending:
                 db.execute('UPDATE sources SET processed=? WHERE id=? AND version=?', (version, identifier, version))
+            # Also retain evidence for dirty notes created before pending_sources existed.
+            for identifier, note in notes.items():
+                if identifier not in supplied and not note.get('user_locked') and note['status'] != 'valid':
+                    note.setdefault('pending_sources', {}).update(dict(job.pending))
+                    db.execute('UPDATE notes SET data=? WHERE id=?', (json.dumps(note, ensure_ascii=False), identifier))
             for row in db.execute("SELECT * FROM sources WHERE id LIKE 'caption:%'").fetchall():
                 data = json.loads(row['data'])
                 if row['version'] != row['processed'] and data.get('final') and not data.get('deleted'):
-                    self._mark_affected(db, row['id'], data)
+                    supplied_source = job.sources.get(row['id'])
+                    if not supplied_source or supplied_source['source_version'] != row['version']:
+                        self._mark_affected(db, row['id'], data)
             db.execute('UPDATE meta SET value=? WHERE key=?', (str(job.notes_version+1), 'notes_version'))
             db.execute('UPDATE jobs SET result=? WHERE id=?', (json.dumps(patch, ensure_ascii=False), job.id))
             return True

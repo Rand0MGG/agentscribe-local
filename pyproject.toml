@@ -23,6 +23,9 @@ linguaflow = "linguaflow.app:main"
 [tool.setuptools.packages.find]
 include = ["linguaflow*"]
 
+[tool.setuptools.package-data]
+"linguaflow.knowledge" = ["*.mjs"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 cache_dir = ".work/cache/pytest"

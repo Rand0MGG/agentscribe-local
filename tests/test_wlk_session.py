@@ -4,6 +4,7 @@ import sys
 import time
 
 import numpy as np
+import pytest
 from PySide6.QtCore import QCoreApplication
 
 from linguaflow.core import Settings
@@ -118,6 +119,48 @@ def test_stop_cancels_model_loading_without_waiting(monkeypatch, tmp_path):
                           "import sys,time; sys.stdin.readline(); time.sleep(30)",
                           lambda *args: opened.append(True), cancel_loading=True)
     assert not opened and not failures
+
+
+@pytest.mark.parametrize('user_stop', [False, True])
+def test_stalled_stop_has_total_deadline_preserves_recording_and_caption(monkeypatch, tmp_path, user_stop):
+    import wave
+
+    import linguaflow.wlk_session as module
+    monkeypatch.setattr(Session, 'stop_timeout', .3)
+    opened, forced = [], []
+    stop_tree = module.stop_tree
+    def terminate(process, force=False):
+        forced.append(force)
+        stop_tree(process, force=force)
+    monkeypatch.setattr(module, 'stop_tree', terminate)
+    def capture(settings, stop, block):
+        block(np.ones(1600, dtype=np.float32) * .01)
+        opened.append(True)
+        if user_stop:
+            stop.wait()
+    # The child continues reporting progress but never completes the stop.
+    program = '''
+import sys,json,time
+sys.stdin.readline()
+print(json.dumps({'type':'ready'}),flush=True)
+print(json.dumps({'type':'caption','data':{'id':1,'start':0,'end':.1,'source':'retained','language':'en','final':True}}),flush=True)
+for line in sys.stdin:
+    if json.loads(line)['type']=='stop':
+        while True:
+            print(json.dumps({'type':'status','text':'still working'}),flush=True)
+            time.sleep(.04)
+'''
+    def tick(session):
+        if user_stop and opened:
+            session.stop()  # Repeated requests must not extend the deadline.
+    started = time.monotonic()
+    captions, failures = execute(monkeypatch, tmp_path, program, capture, tick=tick)
+    assert time.monotonic() - started < 6
+    assert any('收尾超时' in error for error in failures)
+    assert forced and all(forced)
+    assert captions[0].source == 'retained'
+    with wave.open(str(tmp_path / 'recording.wav')) as recording:
+        assert recording.getnframes() == 1600
 
 
 def test_cancelled_worker_does_not_leave_mlx_helper_pipes_open(monkeypatch, tmp_path):

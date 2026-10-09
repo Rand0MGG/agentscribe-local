@@ -18,6 +18,19 @@ def rank_sources(query, sources):
     return sorted((identifier for identifier in sources if score(identifier)), key=score, reverse=True)
 
 
+def visual_excerpt(source, query='', quotes=()):
+    """Bound generated reading excerpts, retaining the full page image and original source ID."""
+    text = source['text']
+    if source.get('evidence_type') != 'visual' or len(text.encode('utf-8')) <= 2000:
+        return source
+    anchors = [text.find(quote) for quote in quotes if quote and quote in text]
+    if not anchors:
+        anchors = [text.casefold().find(word) for word in tokens(query) if word in text.casefold()]
+    start = max(0, min(anchors, default=0) - 80)
+    excerpt = text[start:].encode('utf-8')[:2000].decode('utf-8', errors='ignore')
+    return {**source, 'text': excerpt, 'text_excerpt': True, 'text_offset': start, 'total_chars': len(text)}
+
+
 def markdown(view):
     rows = ['# 课堂笔记', '']
     for note in view['notes']:
@@ -32,7 +45,8 @@ def markdown(view):
             if source.get('kind') == 'caption':
                 rows.append(f"- 录音约 {source.get('start', 0):.1f}–{source.get('end', 0):.1f} 秒：{ref['quote']}")
             else:
-                rows.append(f"- 课件第 {source.get('page', '?')} 页：{ref['quote']}")
+                reading = ' · 模型视觉解读' if source.get('evidence_type') == 'visual' else ''
+                rows.append(f"- 课件第 {source.get('page', '?')} 页{reading}：{ref['quote']}")
         rows.append('')
     if len(rows) == 2:
         rows.append('暂无已核对的有效笔记。待处理或失效的 AI 内容未导出。')

@@ -21,6 +21,7 @@ from .runtime_preparation import RuntimePreparation
 
 class Session(QThread):
     startup_idle_timeout = 300
+    stop_timeout = 180.
     status = Signal(str)
     caption = Signal(object)
     model_result = Signal(object)
@@ -42,6 +43,7 @@ class Session(QThread):
         self.process = None
         self.process_owned = Event()
         self.model_ready = Event()
+        self.stop_started = None
         self.last_error = ""
         self.recording_path = recording_path
         self.capture_control = CaptureControl()
@@ -57,6 +59,8 @@ class Session(QThread):
         return self.capture_control.resume()
 
     def stop(self, discard=False):
+        if self.stop_started is None:
+            self.stop_started = time.monotonic()
         self.stop_capture.set()
         self.capture_control.stop()
         if discard or ((self.process is not None or self.runtime is not None) and not self.model_ready.is_set()):
@@ -64,7 +68,7 @@ class Session(QThread):
             if self.process and self.process_owned.is_set() and self.process.poll() is None:
                 self.process_owned.clear()  # Repeated cancellation must not spawn more cleanup tasks.
                 # Cancel the owned launcher and Python child off the UI thread.
-                Thread(target=stop_tree, args=(self.process,)).start()
+                Thread(target=stop_tree, args=(self.process,), kwargs={'force': True}).start()
 
     def fail(self, text):
         self.last_error = text
@@ -105,16 +109,22 @@ class Session(QThread):
                         recent_errors.append(text)
                         self.status.emit(text)
 
-            def watch_startup():
-                while not self.abort.wait(1):
-                    if self.model_ready.is_set() or self.process.poll() is not None:
+            def watch_progress():
+                while not self.abort.wait(.1):
+                    if self.process.poll() is not None:
                         return
-                    if time.monotonic() - last_progress[0] > self.startup_idle_timeout:
+                    now = time.monotonic()
+                    if self.model_ready.is_set():
+                        # Keep a total deadline even if a stalled worker keeps printing logs.
+                        if self.stop_started is not None and now - self.stop_started > self.stop_timeout:
+                            self.fail('录音收尾超时，已结束自有推理进程；已有录音和字幕保留，本次录音将标记为未完整结束。')
+                            return
+                    elif now - last_progress[0] > self.startup_idle_timeout:
                         self.fail("模型启动长时间没有进展，已结束推理进程。请在模型管理中检查模型文件和运行环境。\n"
                                   + "\n".join(recent_errors)[-1200:])
                         return
 
-            watchdog = Thread(target=watch_startup)
+            watchdog = Thread(target=watch_progress)
             watchdog.start()
             workers.append(watchdog)
 
@@ -179,6 +189,8 @@ class Session(QThread):
                         except OSError as exc:
                             self.fail(f"录音保存失败：{exc}")
                     self.capture_done.set()
+                    if self.stop_started is None:
+                        self.stop_started = time.monotonic()
                     self.stage.emit("音频", "已停止")
 
             def feed():

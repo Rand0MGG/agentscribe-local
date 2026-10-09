@@ -58,3 +58,22 @@ def test_runtime_does_not_depend_on_desktop_and_package_has_no_import_cycles():
     for module, imports in graph.items():
         for dependency in imports:
             assert module not in reachable(graph, dependency), f'Import cycle: {module} -> {dependency}'
+
+
+def test_knowledge_sdk_and_worker_cannot_enter_realtime_or_desktop_transport():
+    graph, external = dependencies()
+    cloud = {'linguaflow.knowledge.' + name for name in ('api', 'harness', 'worker', 'storage')}
+    sdk = {'deepagents', 'langchain', 'langchain_core', 'langchain_deepseek', 'langgraph', 'openai', 'httpx', 'keyring'}
+    for module in ('app', 'knowledge.client', 'knowledge.panel', 'knowledge.session'):
+        dependencies_ = reachable(graph, 'linguaflow.' + module)
+        assert not dependencies_ & cloud, (module, dependencies_ & cloud)
+        assert not set().union(*(external[row] for row in dependencies_)) & sdk
+    for module in ('wlk_worker', 'wlk_session', 'backends', 'wlk_captions', 'translation_service',
+                   'recording_save', 'library', 'audio_processing.pipeline'):
+        knowledge = {row for row in reachable(graph, 'linguaflow.' + module) if row.startswith('linguaflow.knowledge.')}
+        assert knowledge <= {'linguaflow.knowledge.schemas', 'linguaflow.knowledge.glossary'}, (module, knowledge)
+    for module in ('knowledge.worker', 'knowledge.api', 'knowledge.harness', 'knowledge.storage'):
+        dependencies_ = reachable(graph, 'linguaflow.' + module)
+        forbidden = {'linguaflow.' + name for name in ('app', 'wlk_worker', 'wlk_session', 'backends',
+                     'audio_processing.pipeline', 'recording_save')}
+        assert not dependencies_ & forbidden, (module, dependencies_ & forbidden)

@@ -150,15 +150,22 @@ asyncio.run(worker.serve())
 
 def test_material_corruption_before_task_starts_prevents_any_model_request(monkeypatch, tmp_path):
     from test_knowledge import pptx
+    from test_knowledge_visual import fake_pages, reading
 
     import linguaflow.knowledge.worker as module
-    from linguaflow.knowledge.materials import import_material
+    from linguaflow.knowledge.materials import course_for_folder, import_material, read_blocks
+    from linguaflow.knowledge.readings import save_reading
     library = Library(tmp_path / 'library')
     item = library.create(library.index['folders'][0]['id'], {}, '录音')
     library.save(item, [Caption(1, 0, 1, 'gradient descent', 'en')])
     path = tmp_path / 'slides.pptx'
     pptx(path)
     document = import_material(library, item['folder'], path)
+    course_path, course = course_for_folder(library, item['folder'])
+    native = read_blocks(library, course_path, course)
+    images = fake_pages(library, course_path, document, len(native))['images']
+    for block, image in zip(native, images):
+        save_reading(library, course_path, block, image['sha256'], reading(block))
     calls = []
     monkeypatch.setattr(module, 'DeepSeekService', lambda **kwargs: calls.append('dispatch'))
     async def scenario():
@@ -171,4 +178,82 @@ def test_material_corruption_before_task_starts_prevents_any_model_request(monke
         original.write_bytes(b'changed before request')
         await worker.task
         assert not calls and worker.material_error and worker.last_error
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('operation', ['notes', 'organize', 'question', 'extract'])
+def test_permission_revoked_before_dispatch_prevents_service_creation(monkeypatch, tmp_path, operation):
+    import linguaflow.knowledge.worker as module
+    from linguaflow.knowledge.files import write_json
+    library = Library(tmp_path / 'library')
+    item = library.create(library.index['folders'][0]['id'], {}, '录音')
+    library.save(item, [Caption(1, 0, 1, 'private lecture', 'en')])
+    calls = []
+    monkeypatch.setattr(module, 'DeepSeekService', lambda **kwargs: calls.append('dispatch'))
+    async def scenario():
+        worker = KnowledgeWorker(lambda value: None)
+        await worker.command({'operation': 'open', 'root': str(library.root), 'identifier': item['id'],
+                              'folder_id': item['folder'], 'epoch': 'test'})
+        await worker.command({'operation': 'permission', 'materials': True, 'notes': True})
+        worker.start_task(operation, 'What was said?' if operation == 'question' else '')
+        path = worker.course_path if operation == 'extract' else manifest_path(library, item['id'])
+        value = read_json(path)
+        value['material_cloud' if operation == 'extract' else 'notes_cloud'] = False
+        write_json(library.root, path, value)
+        await worker.task
+        assert not calls and worker.last_error
+        assert not worker.store.view()['notes']
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('revoke', [False, True])
+def test_post_class_organize_batches_all_long_notes_with_one_shared_budget(monkeypatch, tmp_path, revoke):
+    pytest.importorskip('deepagents')
+    from langchain_core.messages import AIMessage
+    from test_knowledge import long_notes
+    from test_knowledge_api import ScriptedModel
+
+    import linguaflow.knowledge.worker as module
+    from linguaflow.knowledge.api import DeepSeekService
+    from linguaflow.knowledge.storage import KnowledgeStore
+    library = Library(tmp_path / 'library')
+    item = library.create(library.index['folders'][0]['id'], {}, '录音')
+    store = KnowledgeStore(library.root, library.directory(item['id']), item['id'])
+    first = long_notes(store)
+    new = Caption(2, 2, 3, 'gradient descent was corrected', 'en')
+    library.save(item, [first, new])
+    model = ScriptedModel(responses=[AIMessage(content='', tool_calls=[{'name': 'NotePatch', 'id': f'batch-{batch}',
+        'args': {'upserts': [{'id': f'long-{index}', 'section': '课堂讲述', 'text': f'已核对 {index}', 'origin': 'lecture',
+                             'refs': [{'id': 'caption:2', 'quote': new.source}]} for index in range(batch*2, batch*2+2)],
+                 'delete_note_ids': []}}]) for batch in range(3)])
+    services, events = [], []
+    def notify(value):
+        events.append(value)
+        if revoke and value.get('type') == 'view' and any(row['text'].startswith('已核对') for row in value['notes']):
+            from linguaflow.knowledge.files import write_json
+            path = manifest_path(library, item['id'])
+            manifest = read_json(path)
+            manifest['notes_cloud'] = False
+            write_json(library.root, path, manifest)
+    def service(**kwargs):
+        result = DeepSeekService(model=model, **kwargs)
+        services.append(result)
+        return result
+    monkeypatch.setattr(module, 'DeepSeekService', service)
+    async def scenario():
+        worker = KnowledgeWorker(notify)
+        await worker.command({'operation': 'open', 'root': str(library.root), 'identifier': item['id'],
+                              'folder_id': item['folder'], 'epoch': 'test'})
+        await worker.command({'operation': 'permission', 'materials': False, 'notes': True})
+        worker.start_task('organize', section='课堂讲述')
+        await worker.task
+        assert worker.last_error is revoke, events
+        assert len(services) == 1 and services[0].budget.calls == (1 if revoke else 3)
+        notes = worker.store.view()['notes']
+        updated = {row['text'] for row in notes if row['text'].startswith('已核对')}
+        assert updated == {f'已核对 {index}' for index in range(2 if revoke else 6)}
+        if revoke:
+            assert all(row['pending_sources'].get('caption:2') for row in notes if row['status'] != 'valid')
+        else:
+            assert all(row['status'] == 'valid' for row in notes)
     asyncio.run(scenario())

@@ -34,17 +34,22 @@ def write_manifest(library, value):
 
 
 def session_context(library, identifier):
-    """Return a validated small snapshot; no parsing, model or database on the ASR path."""
+    """Compile current reviewed terms for a draft; keep historical recording snapshots."""
     value = read_manifest(library, identifier)
-    if not value['course_id']:
+    item = next(row for row in library.index['sessions'] if row['id'] == identifier)
+    if item['state'] == 'draft':
         from .glossary import compile_context
-        from .materials import course_for_folder
+        from .materials import course_for_folder, locate_course
         from .schemas import Term
-        item = next(row for row in library.index['sessions'] if row['id'] == identifier)
-        _, course = course_for_folder(library, item['folder'])
+        if value['course_id']:
+            _, course = locate_course(library, value['course_id'])
+        else:
+            _, course = course_for_folder(library, item['folder'])
         if course:
+            previous = dict(value)
             value['course_id'] = course['id']
             value['asr_context'] = compile_context((Term(**row) for row in course['terms']),
                 ((row['id'], row['version']) for row in course['documents'])).to_dict()
-            write_manifest(library, value)
+            if value != previous:
+                write_manifest(library, value)
     return value['asr_context']

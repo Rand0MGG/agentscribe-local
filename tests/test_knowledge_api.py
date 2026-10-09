@@ -123,3 +123,47 @@ def test_actual_deepseek_sdk_payload_usage_and_client_cleanup(monkeypatch):
     assert captured[0]['model'] == 'deepseek-flash'
     assert captured[0]['thinking']['type'] == 'disabled'
     assert captured[0]['response_format'] == {'type': 'json_object'}
+
+
+def test_harness_rechecks_consent_before_each_model_turn():
+    import asyncio
+    model = ScriptedModel(responses=[
+        AIMessage(content='', tool_calls=[{'name': 'read_transcript_spans', 'args': {'ids': ['caption:1']}, 'id': 'read'}]),
+        AIMessage(content='', tool_calls=[{'name': 'CourseAnswer', 'args': {
+            'answer': 'should not dispatch', 'refs': []}, 'id': 'answer'}])])
+    checks = []
+    def consent():
+        checks.append(True)
+        if len(checks) == 2:
+            raise ValueError('笔记上传许可已关闭，未发起模型请求。')
+    service = DeepSeekService(model=model, before_request=consent)
+    job = NoteJob('job', 'epoch', 0, {'caption:1': {'text': 'private lecture', 'kind': 'caption',
+                  'source_version': 1}}, ('课堂讲述',), question='What was said?')
+    with pytest.raises(ValueError, match='上传许可已关闭'):
+        asyncio.run(run_agent(service, job, answer=True))
+    assert len(checks) == 2 and service.budget.calls == 1
+    assert len(model.responses) == 1
+
+
+def test_incremental_long_note_batch_fits_actual_model_input_budget(tmp_path):
+    import asyncio
+
+    from test_knowledge import long_notes, retained_patch
+
+    from linguaflow.core import Caption
+    from linguaflow.knowledge.storage import KnowledgeStore
+    from linguaflow.library import Library
+    library = Library(tmp_path / 'library')
+    item = library.create(library.index['folders'][0]['id'], {}, '录音')
+    store = KnowledgeStore(library.root, library.directory(item['id']), item['id'])
+    first = long_notes(store)
+    new = Caption(2, 2, 3, 'gradient descent was corrected', 'en')
+    store.observe(new)
+    store.saved([first, new])
+    job = store.make_job()
+    model = ScriptedModel(responses=[AIMessage(content=json.dumps(retained_patch(job)))])
+    service = DeepSeekService(model=model)
+    result = asyncio.run(service.update_notes(job))
+    assert service.budget.calls == 1
+    assert store.publish(job, result)
+    assert job.remaining_note_ids and len(job.notes) == 2

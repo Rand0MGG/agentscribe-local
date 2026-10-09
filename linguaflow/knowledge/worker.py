@@ -3,16 +3,18 @@ import asyncio
 import json
 import os
 import sys
-from dataclasses import asdict, replace
+from dataclasses import asdict
 from threading import Thread
 
 from ..core import Caption
 from ..library import Library
 from .api import DeepSeekService, save_credential
-from .files import checked_path, read_json, write_json, write_text
+from .files import FileChecks, checked_path, material_cache, read_json, write_json, write_text
 from .glossary import compile_context, term_text
 from .harness import run_agent
-from .materials import course_for_folder, import_material, locate_course, read_blocks
+from .materials import RENDERED_PARSER, course_for_folder, import_document, locate_course, read_blocks
+from .readings import load_readings, save_reading, validate_reading, visual_blocks
+from .rendering import image_bytes, render_material
 from .retrieval import markdown
 from .schemas import Term, fingerprint
 from .session import read_manifest, write_manifest
@@ -30,6 +32,7 @@ class KnowledgeWorker:
         self.library = self.item = self.store = None
         self.course_path = self.course = None
         self.blocks = []
+        self.coverage = {}
         self.task = None
         self.automatic = False
         self.last_started = 0.
@@ -37,6 +40,8 @@ class KnowledgeWorker:
         self.last_error = False
         self.material_error = ''
         self.last_view_course = None
+        self.checked_materials = None
+        self.synced_store = None
 
     def identity(self):
         """Re-resolve and verify identity before every write/publication, including external moves."""
@@ -56,13 +61,23 @@ class KnowledgeWorker:
                 self.course_path = self.course = None
                 self.material_error = str(exc)
 
-    def sync_materials(self):
+    def sync_materials(self, checks=None):
+        identity = (self.course_path, fingerprint((self.course or {}).get('documents', [])))
+        if checks and self.checked_materials == (checks, identity) and checks.unchanged():
+            return
+        previous = self.blocks
         try:
-            self.blocks = read_blocks(self.library, self.course_path, self.course) if self.course else []
+            self.blocks = read_blocks(self.library, self.course_path, self.course, checks) if self.course else []
+            visual, self.coverage = visual_blocks(self.library, self.course_path, self.blocks, self.course['documents'], checks) if self.course else ([], {})
+            self.blocks += visual
         except (OSError, ValueError, KeyError, TypeError) as exc:
             self.blocks = []
+            self.coverage = {}
             self.material_error = str(exc)
-        self.store.materials(self.blocks)
+        if self.blocks != previous or self.synced_store is not self.store:
+            self.store.materials(self.blocks)
+            self.synced_store = self.store
+        self.checked_materials = (checks, identity) if checks and not self.material_error else None
 
     def view(self):
         view = self.store.view()
@@ -72,23 +87,45 @@ class KnowledgeWorker:
             refs.add(max(captions, key=lambda key: captions[key]['event_seq']))
         view['sources'] = {key: row for key, row in view['sources'].items() if key in refs}
         value = {'type': 'view', 'manifest': self.manifest, **view, 'material_error': self.material_error,
+                     'reading_coverage': self.coverage,
                      'automatic_paused': bool(self.manifest['notes_cloud']) and (not self.automatic or self.last_error),
                      'course_options': [{'id': row['id'], 'name': self.library.folder_label(row['id'])}
                                         for row in self.library.index['folders']],
                      'course_folder_id': next((row['id'] for row in self.library.index['folders'] if self.course_path
                         and self.library.directory(row['id']) == self.course_path.parent.parent), ''),
                      'busy': self.task is not None and not self.task.done()}
-        digest = fingerprint([self.course, self.material_error])
+        digest = fingerprint([self.course, self.material_error, [(row.id, row.version) for row in self.blocks]])
         if digest != self.last_view_course:
-            value.update(course=self.course, blocks=[asdict(block) for block in self.blocks])
+            rendered = {row['id']: row for row in (self.course or {}).get('documents', []) if row['parser'] == RENDERED_PARSER}
+            display = [{**asdict(block),
+                'text': block.text[:1600] if block.evidence_type == 'visual' else block.text,
+                'preview_truncated': block.evidence_type == 'visual' and len(block.text) > 1600} for block in self.blocks]
+            for block in display:
+                if block['document_id'] in rendered and block['evidence_type'] == 'native':
+                    block['preview_image_path'] = str(checked_path(self.library.root,
+                        material_cache(self.library, self.course_path, rendered[block['document_id']]) /
+                        'pages' / f'page-{block["page"]:04d}.png'))
+            value.update(course=self.course, blocks=display)
             self.last_view_course = digest
         self.notify(value)
 
     def course_version(self):
-        return fingerprint(self.course or {})
+        return fingerprint([self.course or {}, [(row.id, row.version) for row in self.blocks]])
+
+    def authorize(self, operation, course_id=None):
+        """Read the current consent before dispatch, including every harness model turn."""
+        self.identity()
+        if course_id is not None and self.manifest['course_id'] != course_id:
+            raise ValueError('课程关联已变化，未发起后续模型请求。')
+        if operation == 'extract':
+            if (not self.course or not self.course.get('material_cloud', False)
+                    or not self.course.get('material_images_cloud', False)):
+                raise ValueError('课件上传许可已关闭，未发起模型请求。')
+        elif not self.manifest['notes_cloud']:
+            raise ValueError('笔记上传许可已关闭，未发起模型请求。')
 
     def cancel(self):
-        if self.task is not None and not self.task.done():
+        if self.task is not None and not self.task.done() and not self.task.cancelling():
             self.task.cancel()
         self.automatic = False
 
@@ -140,10 +177,7 @@ class KnowledgeWorker:
             folder = next(row for row in self.library.index['folders']
                           if self.library.directory(row['id']) == self.course_path.parent.parent)
             self.notify({'type': 'status', 'message': '正在本地读取课件，可取消。', 'busy': True})
-            import_material(self.library, folder['id'], value['path'])
-            self.course = read_json(self.course_path)
-            self.sync_materials()
-            self.view()
+            self.task = asyncio.create_task(self.import_task(folder['id'], value['path']))
         elif operation == 'terms':
             terms = [Term(term_text(row['canonical']), tuple(term_text(alias) for alias in row.get('aliases', [])),
                           tuple(row.get('evidence_ids', [])), bool(row['approved']), row.get('origin', 'manual'))
@@ -160,6 +194,7 @@ class KnowledgeWorker:
             self.cancel()
             if self.course:
                 self.course['material_cloud'] = bool(value['materials'])
+                self.course['material_images_cloud'] = bool(value['materials'])
                 write_json(self.library.root, self.course_path, self.course)
             elif value['materials']:
                 raise ValueError('课程资料不可用，请恢复或重新关联后再允许课件上传。')
@@ -204,24 +239,42 @@ class KnowledgeWorker:
     def start_task(self, operation, question='', section=''):
         if self.task is not None and not self.task.done():
             raise ValueError('已有课程任务正在处理，请等待或取消。')
-        if operation == 'extract' and not self.course['material_cloud']:
-            raise ValueError('请先允许将本课程课件文本发送给 DeepSeek。')
+        if operation == 'extract' and not self.course.get('material_images_cloud', False):
+            raise ValueError('请先允许将本课程的课件页面图像和文字发送给 DeepSeek。')
         if operation != 'extract' and not self.manifest['notes_cloud']:
             raise ValueError('请先允许将本段录音的已保存定稿文字和相关课件发送给 DeepSeek。')
         self.sync_materials()
         if self.material_error:
             raise ValueError('课程资料不可用或校验失败，请恢复原件或重新关联课程；原笔记保留。')
+        if operation != 'extract' and any(not row['complete'] for row in self.coverage.values()):
+            raise ValueError('课件尚未完成全页视觉读取，请先点击“完整阅读并提取术语”；原笔记保留。')
         self.last_started = asyncio.get_running_loop().time()
         self.last_error = False
         if operation == 'notes':
             self.automatic = True
         self.task = asyncio.create_task(self.cloud_task(operation, question, section))
-        self.notify({'type': 'status', 'message': '正在处理课程文字，可取消。', 'busy': True})
+        self.notify({'type': 'status', 'message': '正在处理课程资料，可取消。', 'busy': True})
+
+    async def import_task(self, folder_id, path):
+        try:
+            await import_document(self.library, folder_id, path)
+            self.identity()
+            self.sync_materials()
+            self.view()
+            total = sum(row['total'] for row in self.coverage.values())
+            read = sum(row['read'] for row in self.coverage.values())
+            self.notify({'type': 'status', 'message': f'课件已在本地导入 · 视觉读取 {read}/{total} 页；允许上传后可完整阅读并提取术语。', 'busy': False})
+        except asyncio.CancelledError:
+            self.notify({'type': 'status', 'message': '课件导入已取消，已有材料和笔记保留。', 'busy': False})
+        except Exception as exc:
+            self.error(exc)
+        finally:
+            self.notify({'type': 'idle', 'busy': False})
 
     async def cloud_task(self, operation, question, section=''):
         service = None
         try:
-            self.identity()
+            self.authorize(operation)
             self.sync_materials()
             if self.material_error:
                 raise ValueError('课程资料不可用或校验失败，请恢复后重试；没有发起模型请求。')
@@ -234,38 +287,47 @@ class KnowledgeWorker:
                 if job is None:
                     self.notify({'type': 'status', 'message': '暂无可更新内容；需要已保存的定稿原文。', 'busy': False})
                     return
-            service = DeepSeekService(notify=lambda usage: self.notify({'type': 'usage', **usage}))
+            course_id = self.manifest['course_id']
+            service = DeepSeekService(notify=lambda usage: self.notify({'type': 'usage', **usage}),
+                before_request=lambda: self.authorize(operation, course_id),
+                before_image_request=lambda: self.authorize('extract', course_id),
+                page_count=sum(row.evidence_type == 'native' for row in self.blocks) if operation == 'extract' else 0,
+                images_enabled=bool(self.course and self.course.get('material_images_cloud', False)))
             if operation == 'extract':
                 await self.extract_batches(service, course_version)
                 self.view()
                 return
-            elif operation == 'notes':
-                result = await service.update_notes(job)
-            else:
-                result = await run_agent(service, job, answer=operation == 'question')
-            # Yield once so already queued source updates are applied before validating late results.
-            await asyncio.sleep(0)
-            self.identity()
-            self.sync_materials()
-            if self.material_error:
-                raise ValueError('课件原件或缓存已变化，请恢复后重试；旧结果未发布。')
-            _, saved = self.library.load(self.item)
-            self.store.verify_saved(saved)
-            if self.course_version() != course_version:
-                raise ValueError('课程材料或术语已变化，旧结果已拒绝。')
-            if not self.manifest['notes_cloud']:
-                raise ValueError('笔记上传许可已关闭，结果未发布。')
-            elif operation == 'question':
-                # Validate answer against the same source/version transaction as a note patch.
-                self.store.validate_job(job, require_latest=True)
-                self.notify({'type': 'answer', **result, 'event_seq': job.event_seq,
-                    'notes_version': job.notes_version, 'sources': {ref['id']: {
-                        key: job.sources[ref['id']].get(key) for key in ('kind', 'start', 'end', 'page', 'source_version')}
-                        for ref in result['refs']}})
-            else:
-                self.store.publish(job, result)
-                write_text(self.library.root, self.library.directory(self.item['id']) / '课堂笔记.md', markdown(self.store.view()))
-            self.view()
+            batches = 0
+            while job is not None:
+                result = (await service.update_notes(job) if operation == 'notes' else
+                          await run_agent(service, job, answer=operation == 'question'))
+                # Let queued changes invalidate a late result before publication.
+                await asyncio.sleep(0)
+                self.authorize(operation, course_id)
+                self.sync_materials()
+                if self.material_error:
+                    raise ValueError('课件原件或缓存已变化，请恢复后重试；旧结果未发布。')
+                _, saved = self.library.load(self.item)
+                self.store.verify_saved(saved)
+                if self.course_version() != course_version:
+                    raise ValueError('课程材料或术语已变化，旧结果已拒绝。')
+                if operation == 'question':
+                    self.store.validate_job(job, require_latest=True)
+                    self.notify({'type': 'answer', **result, 'event_seq': job.event_seq,
+                        'notes_version': job.notes_version, 'sources': {ref['id']: {
+                            key: job.sources[ref['id']].get(key) for key in (
+                                'kind', 'start', 'end', 'page', 'title', 'source_version', 'evidence_type')}
+                            for ref in result['refs']}})
+                else:
+                    self.store.publish(job, result)
+                    write_text(self.library.root, self.library.directory(self.item['id']) / '课堂笔记.md', markdown(self.store.view()))
+                self.view()
+                batches += 1
+                if operation != 'organize' or not job.remaining_note_ids:
+                    break
+                self.notify({'type': 'status', 'message': f'课后整理已保存 {batches} 批，继续处理剩余笔记，可取消。', 'busy': True})
+                job = self.store.make_job(course_version, mode='organize', section=section,
+                    note_ids=job.remaining_note_ids)
         except asyncio.CancelledError:
             self.notify({'type': 'status', 'message': '任务已取消，已保存内容保留。', 'busy': False})
         except Exception as exc:
@@ -287,60 +349,82 @@ class KnowledgeWorker:
             self.notify({'type': 'idle', 'busy': False})
 
     async def extract_batches(self, service, version):
-        """Bound each upload, cache validated candidates and retain completed batches on cancellation."""
-        chunks, chunk, used = [], [], 0
-        for block in self.blocks:
-            if not block.text:
-                continue
-            # Long pages remain cited by the original page ID; split without altering text.
-            pieces = [block] if len(block.text.encode('utf-8')) <= 6000 else [
-                replace(block, text=block.text[index:index+1800]) for index in range(0, len(block.text), 1800)]
-            for piece in pieces:
-                cost = len(piece.text.encode('utf-8'))
-                if chunk and (used + cost > 6000 or any(row.id == piece.id for row in chunk)):
-                    chunks.append(chunk)
-                    chunk, used = [], 0
-                chunk.append(piece)
-                used += cost
-        if chunk:
-            chunks.append(chunk)
-        cache_path = checked_path(self.library.root, self.course_path.parent / 'terms-cache.json')
-        cache = read_json(cache_path) if cache_path.exists() else {}
-        for index, batch in enumerate(chunks, 1):
-            key = fingerprint(['terms-v1-deepseek-flash', [asdict(row) for row in batch]])
-            if key in cache:
-                # Cache candidates are data, and retain the same explicit user approval step.
-                result = cache[key]
-            else:
-                result = await service.extract_terms(batch)
-            await asyncio.sleep(0)
-            self.identity()
-            self.sync_materials()
-            if self.material_error:
-                raise ValueError('课件原件或缓存已变化，请恢复后重试；旧术语结果未发布。')
-            if self.course_version() != version or not self.course['material_cloud']:
-                raise ValueError('课程或上传许可已变化，旧术语结果未发布。')
-            original = {row.id: row for row in batch}
-            for term in result:
-                if (not any(term['canonical'].casefold() in ref['quote'].casefold() for ref in term['refs'])
-                        or any(ref['id'] not in original or not ref['quote'] or ref['quote'] not in original[ref['id']].text
-                               for ref in term['refs'])):
-                    raise ValueError('缓存术语引用校验失败，请重新导入材料。')
-            old = {row['canonical'].casefold() for row in self.course['terms']}
-            for row in result:
-                if row['canonical'].casefold() not in old:
-                    if len(self.course['terms']) >= 200:
-                        raise ValueError('候选术语已达 200 条上限，请审核删减后继续；之前保存的候选保留。')
-                    aliases = tuple(term_text(alias) for alias in row['aliases'])
-                    self.course['terms'].append(asdict(Term(term_text(row['canonical']), aliases,
-                        tuple(ref['id'] for ref in row['refs']), False)))
-                    old.add(row['canonical'].casefold())
-            write_json(self.library.root, self.course_path, self.course)
-            cache[key] = result
-            cache = dict(list(cache.items())[-100:])
-            write_json(self.library.root, cache_path, cache)
+        """Every native page gets an image request; blank pages count, validated readings resume."""
+        checks = FileChecks(self.library.root)
+        try:
+            self.sync_materials(checks)
+            await self._extract_pages(service, version, checks)
+        finally:
+            self.checked_materials = None  # No validation memo survives the owned task.
+
+    async def _extract_pages(self, service, version, checks):
+        native = [row for row in self.blocks if row.evidence_type == 'native']
+        if not native:
+            raise ValueError('请先导入课件。')
+        completed, omitted = 0, 0
+        course_id = self.manifest['course_id']
+        descriptors = list(self.course['documents'])
+        for descriptor in descriptors:
+            pages = [row for row in native if row.document_id == descriptor['id']]
+            expected_course = fingerprint(self.course)
+            self.notify({'type': 'status', 'message': f'正在本机渲染 {descriptor["name"]} 的全部页面，可取消。', 'busy': True})
+            manifest = await render_material(self.library, self.course_path, descriptor, len(pages))
+            self.authorize('extract', course_id)
+            self.sync_materials(checks)
+            if (self.material_error or fingerprint(self.course) != expected_course
+                    or [row for row in self.blocks if row.evidence_type == 'native'] != native):
+                raise ValueError('渲染期间课程资料已变化，没有发送旧页面。')
             version = self.course_version()
-            self.notify({'type': 'status', 'message': f'术语已完成 {index}/{len(chunks)} 批，候选已保存，可取消。', 'busy': True})
+            try:
+                cache = load_readings(self.library, self.course_path, descriptor['id'], checks)
+            except (ValueError, TypeError):
+                cache = {}
+            for block, image in zip(pages, manifest['images']):
+                self.authorize('extract', course_id)
+                self.sync_materials(checks)
+                if self.material_error or self.course_version() != version:
+                    raise ValueError('课程资料已变化，旧页面未上传；请重新阅读。')
+                location = checked_path(self.library.root,
+                    material_cache(self.library, self.course_path, descriptor) / 'pages' / image['path'])
+                reused = True
+                try:
+                    result = validate_reading(block, cache[block.id], image['sha256'])
+                except (ValueError, KeyError, TypeError):
+                    reused = False
+                    result = await service.read_page(block, {'image_path': str(location), 'image_hash': image['sha256']})
+                await asyncio.sleep(0)
+                self.authorize('extract', course_id)
+                self.sync_materials(checks)
+                if self.material_error or self.course_version() != version:
+                    raise ValueError('课程资料已变化，旧阅读结果未保存。')
+                checks.get(location, image['sha256'], lambda entry: len(image_bytes(entry, image['sha256'])))
+                if not reused:
+                    save_reading(self.library, self.course_path, block, image['sha256'], result)
+                old = {row['canonical'].casefold() for row in self.course['terms']}
+                changed_terms = False
+                for term in result['terms']:
+                    if term['canonical'].casefold() in old:
+                        continue
+                    if len(self.course['terms']) >= 200:
+                        omitted += 1  # Candidate limits must not skip the rest of the courseware.
+                        continue
+                    self.course['terms'].append(asdict(Term(term_text(term['canonical']),
+                        tuple(term_text(alias) for alias in term['aliases']), tuple(ref['id'] for ref in term['refs']), False)))
+                    old.add(term['canonical'].casefold())
+                    changed_terms = True
+                if changed_terms:
+                    write_json(self.library.root, self.course_path, self.course)
+                self.sync_materials(checks)
+                version = self.course_version()
+                completed += 1
+                if not reused:
+                    self.view()
+                self.notify({'type': 'status', 'message': f'课件已读取 {completed}/{len(native)} 页，结果已保存，可取消。', 'busy': True})
+        uncertain = sum(row['uncertain'] for row in self.coverage.values())
+        if not all(row['complete'] for row in self.coverage.values()):
+            raise ValueError('仍有页面未通过阅读校验，没有标记整份课件完成；请继续阅读。')
+        self.notify({'type': 'status', 'message': f'全部 {completed} 页已完成视觉读取，{uncertain} 页有待核对内容。'
+            + (f'术语候选已达上限，另有 {omitted} 条未加入；页面阅读保留。' if omitted else ''), 'busy': False})
 
     def error(self, exc):
         # Provider/schema errors can contain user text; do not echo them through UI or logs.
