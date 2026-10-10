@@ -12,6 +12,10 @@ Mac [诊断运行](https://github.com/Rand0MGG/agentscribe-local/actions/runs/38
 
 本机模拟平台不能代替 macOS 运行器和 Cocoa 原生窗口验收；GitHub 当前提交的检查结果以对应 Actions 运行记录为准。真实音频、GPU 推理、系统分屏与安装包仍不在这轮测试范围内。
 
+`9386c24` 的 [GitHub 回归](https://github.com/Rand0MGG/agentscribe-local/actions/runs/38064421135) 九项检查全部通过：Windows / macOS 的 Python 3.11、3.12、3.13 无音频全量测试，两端可选课程 SDK，以及静态检查。
+
+诊断运行还暴露取消模型加载时偶发的 Mac 进程组 `EPERM`。取消线程与释放线程可能连续终止同一子进程；[Apple 内核的进程组信号实现](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_sig.c) 会过滤僵尸进程，在找不到可发送信号的成员时返回 `EPERM`。平台适配仅在 Darwin 且 `poll()` 确认自有子进程已退出时接受这个结束状态；仍先发送进程组信号以处理存活后代，其他平台及存活进程的权限错误继续抛出。新增模拟回归覆盖这些边界，并增加 Mac 自有子进程退出未回收的实机回归（仅运行短 Python 子进程，不访问音频）。本机受保护的进程平台、会话、准备及安装回归 **88 passed、3 skipped，13.63 秒**，其中两项跳过为上述 Mac 专属回归；Ruff 与差异检查通过。后续提交的 CI 结果另见相应 Actions 记录。
+
 ## 2026-10-10 beta.3 共享界面与音频来源切换
 
 范围：Windows 分支上的共享界面、字幕展示、音频来源切换、模型下载目录和平台窗口边界；源码版本 `0.6.0-beta.3`。Windows 11 / AMD64、Python 3.12.8。界面对照与 18 张示例图见 [UI_DESIGN](UI_DESIGN.md)。示例窗口只使用模拟字幕、音量、回放和下载进度，没有访问声卡或下载模型。

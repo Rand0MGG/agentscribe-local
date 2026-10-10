@@ -1,5 +1,7 @@
 import ctypes
 import os
+import select
+import signal
 import subprocess
 import sys
 import zipfile
@@ -61,6 +63,51 @@ def test_windows_spawn_and_cleanup_target_only_owned_tree(monkeypatch):
     process_platform.stop_tree(SimpleNamespace(pid=12345), force=True)
     assert seen[0][0] == ['taskkill', '/PID', '12345', '/T', '/F']
     assert seen[0][1]['timeout'] == 5
+
+
+@pytest.mark.parametrize('force', [False, True])
+@pytest.mark.parametrize('system,exited', [('darwin', True), ('darwin', False), ('linux', True)])
+def test_group_cleanup_permission_error_requires_reaped_mac_child(monkeypatch, force, system, exited):
+    monkeypatch.setattr(sys, 'platform', system)
+    monkeypatch.setattr(signal, 'SIGKILL', 9, raising=False)
+    seen = []
+    def kill_group(pid, signum):
+        seen.append((pid, signum))
+        raise PermissionError(1, 'Operation not permitted')
+    monkeypatch.setattr(os, 'killpg', kill_group, raising=False)
+    process = SimpleNamespace(pid=12345, poll=lambda: 0 if exited else None)
+    if system == 'darwin' and exited:
+        process_platform.stop_tree(process, force=force)
+    else:
+        with pytest.raises(PermissionError):
+            process_platform.stop_tree(process, force=force)
+    assert seen == [(process.pid, signal.SIGKILL if force else signal.SIGTERM)]
+
+
+def test_group_cleanup_signals_descendants_even_when_parent_exited(monkeypatch):
+    monkeypatch.setattr(sys, 'platform', 'darwin')
+    seen = []
+    monkeypatch.setattr(os, 'killpg', lambda *args: seen.append(args), raising=False)
+    process_platform.stop_tree(SimpleNamespace(pid=12345, poll=lambda: 0))
+    assert seen == [(12345, signal.SIGTERM)]
+
+
+@pytest.mark.skipif(sys.platform != 'darwin', reason='Darwin zombie process-group regression')
+@pytest.mark.parametrize('exit_code', [0, 7])
+def test_mac_cleanup_reaps_exited_process_group(exit_code):
+    process = subprocess.Popen([sys.executable, '-c', f'raise SystemExit({exit_code})'],
+                               stdout=subprocess.PIPE, **process_platform.spawn_options())
+    try:
+        # EOF means the child exited, without poll/wait reaping its zombie.
+        assert select.select([process.stdout], [], [], 5)[0]
+        assert process.stdout.read() == b''
+        process_platform.stop_tree(process)
+        assert process.wait(timeout=5) == exit_code
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        process.stdout.close()
 
 
 @pytest.mark.parametrize('state,expected', [('connected',False), ('broken',True), ('data',False)])
