@@ -52,7 +52,7 @@ def install(device, model):
 
     target = check_installation()
     archives = runtime_archives(device)
-    if model is not None and model != HY_GGUF:
+    if model is not None and model != HY_GGUF and not model.startswith('hf://'):
         validate_weights(model)
     name = 'llama-b11254-' + (target + '-' + device if target == 'windows-x64' else target)
     base = runtime_root() / 'components' / name
@@ -94,8 +94,10 @@ def prepare_weights(model):
         MODEL_SHA256,
         REVISION,
         digest,
+        hub_gguf,
         model_path,
         validate_weights,
+        weights_path,
     )
     if model == HY_GGUF:
         weights = model_path()
@@ -114,6 +116,33 @@ def prepare_weights(model):
             for name in ('LICENSE.txt', 'README.md'):
                 document = hf_hub_download(HY_GGUF, name, revision=REVISION)
                 shutil.copy2(document, weights.parent / name)
+            staged = weights.with_name(weights.name + '.' + uuid4().hex + '.tmp')
+            try:
+                shutil.copy2(cached, staged)
+                staged.replace(weights)
+            finally:
+                staged.unlink(missing_ok=True)
+    elif model.startswith('hf://'):
+        repo, filename = hub_gguf(model)
+        weights = weights_path(model)
+        try:
+            validate_weights(model)
+            ready = True
+        except (ValueError, OSError):
+            ready = False
+        if not ready:
+            from huggingface_hub import hf_hub_download
+            print('正在下载 GGUF 权重：' + filename, flush=True)
+            with hub_progress():
+                cached = Path(hf_hub_download(repo, filename))
+            try:
+                validate_weights(str(cached))
+            except ValueError:
+                # A confirmed invalid cached header can be replaced once, without unbounded retries.
+                with hub_progress():
+                    cached = Path(hf_hub_download(repo, filename, force_download=True))
+                validate_weights(str(cached))
+            weights.parent.mkdir(parents=True, exist_ok=True)
             staged = weights.with_name(weights.name + '.' + uuid4().hex + '.tmp')
             try:
                 shutil.copy2(cached, staged)

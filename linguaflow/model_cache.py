@@ -78,11 +78,11 @@ def validate_mlx_model(path):
     try:
         config = json.loads((Path(path) / 'config.json').read_text(encoding='utf-8'))
         quant = config.get('quantization', config.get('quantization_config', {}))
-        valid = config.get('model_type') == 'qwen3_asr' and quant.get('bits') == 4
+        valid = config.get('model_type') == 'qwen3_asr' and quant.get('bits') in (4, 8)
     except (OSError, ValueError, AttributeError):
         valid = False
     if not valid:
-        raise ValueError('Apple GPU 识别需要 Qwen3-ASR 的 MLX 4-bit 权重；请选择对应模型。')
+        raise ValueError('Apple GPU 识别需要 Qwen3-ASR 的 MLX 4-bit 或 8-bit 权重；请选择对应模型。')
 
 
 def resolve_translation(model, report, *, allow_download=False):

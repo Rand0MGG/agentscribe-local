@@ -1,8 +1,10 @@
 """Pinned llama.cpp assets and platform choices; no model or Qt imports."""
 import hashlib
 import platform
+import re
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from urllib.parse import urlsplit
 
 from .runtime_paths import llama_server, model_directory
 from .translation_models import HY_MODEL
@@ -47,8 +49,36 @@ def selected_model(settings):
     raise ValueError('请选择 llama.cpp 的 GGUF 模型。')
 
 
+def normalize_model_reference(model):
+    """Validate Hub references without converting them into local filesystem paths."""
+    model = model.strip()
+    if model.startswith('hf://'):
+        hub_gguf(model)
+        return model
+    return model if model == HY_GGUF else str(Path(model).expanduser().resolve())
+
+
 def weights_path(model):
+    if model.startswith('hf://'):
+        repo, filename = hub_gguf(model)
+        return model_directory('gguf-downloads').joinpath(*repo.split('/'), filename)
     return model_path() if model == HY_GGUF else Path(model).expanduser()
+
+
+def hub_gguf(model):
+    """Explicit Hub repository/file reference; never interpreted as a local path."""
+    url = urlsplit(model)
+    parts = url.path.strip('/').split('/')
+    if (url.scheme != 'hf' or url.query or url.fragment or len(parts) < 2
+            or not re.fullmatch(r'[A-Za-z0-9_.-]+', url.netloc)
+            or not re.fullmatch(r'[A-Za-z0-9_.-]+', parts[0])
+            or url.netloc in ('.', '..') or parts[0] in ('.', '..')):
+        raise ValueError('GGUF 下载地址格式：hf://作者/仓库/文件.gguf')
+    filename = '/'.join(parts[1:])
+    if (any(part in ('', '.', '..') for part in parts[1:]) or '\\' in filename
+            or not filename.lower().endswith('.gguf') or ':' in filename):
+        raise ValueError('GGUF 文件必须是仓库内的相对路径，且以 .gguf 结尾。')
+    return url.netloc + '/' + parts[0], str(PurePosixPath(filename))
 
 
 def validate_weights(model):

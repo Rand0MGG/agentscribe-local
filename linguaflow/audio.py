@@ -20,7 +20,7 @@ def list_devices() -> list[Device]:
     result = []
     for mic in sc.all_microphones(include_loopback=sys.platform == "win32"):
         loopback = bool(mic.isloopback)
-        prefix = "系统声音" if loopback else "输入"
+        prefix = "系统音频" if loopback else "外部输入"
         result.append(Device(str(mic.id), f"{prefix} · {mic.name}", loopback))
     return result
 
@@ -39,7 +39,7 @@ def capture(settings, stop, on_block):
         None,
     )
     if mic is None:
-        raise RuntimeError("录音设备已断开，请停止后刷新设备列表。")
+        raise RuntimeError("录音设备已断开，请刷新列表并重新选择。")
     # Record all native channels. WASAPI mono-channel recording has a known
     # SoundCard issue; downmix here rather than requesting a single channel.
     # WASAPI uses a one-second buffer. CoreAudio constrains hardware buffer

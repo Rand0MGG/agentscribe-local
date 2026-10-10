@@ -9,6 +9,7 @@ HY_MODEL = 'tencent/Hy-MT2-1.8B'
 
 HY_GENERATION = dict(max_new_tokens=1024, temperature=.7, top_p=.6, top_k=20,
                      repetition_penalty=1.05, do_sample=True)
+NLLB_GENERATION = dict(max_new_tokens=256, num_beams=1)
 
 
 def translation_engine(settings):

@@ -5,6 +5,21 @@ import sys
 
 import pytest
 
+from linguaflow.model_options import download_catalog, model_catalog, recommended_selection
+
+
+@pytest.mark.parametrize('system', ['darwin', 'win32'])
+def test_download_catalog_and_recommendation_share_identifiers(system):
+    selection = recommended_selection(system)
+    entries = download_catalog(system)
+    assert ('asr', selection['backend'], selection['asr_model']) in [row[2:] for row in entries]
+    assert ('translation', selection['translation_engine'], selection['translation_model']) in [row[2:] for row in entries]
+    for _title, _description, _kind, engine, model in entries:
+        assert model in dict(model_catalog(engine)).values()
+    assert selection['translation_engine'] == 'llama'
+    if system == 'win32':
+        assert all(row[3] != 'qwen3-mlx' for row in entries)
+
 
 @pytest.mark.parametrize('system', ['darwin', 'win32'])
 def test_desktop_backend_device_and_model_choices_roundtrip(tmp_path, system):

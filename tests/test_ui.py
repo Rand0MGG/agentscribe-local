@@ -314,27 +314,27 @@ QMessageBox.warning = lambda parent, title, text: messages.append(title)
 QMessageBox.information = QMessageBox.warning
 def unexpected(*args, **kwargs): raise AssertionError('session must not launch')
 module.Session = unexpected
-w.start()
+w.start(models_checked=True)
 assert messages.pop() == '没有音频来源'
 w.device.addItem('fixture', ('fixture', True))
 w.model_manager.backend.setCurrentIndex(0)
 w.asr.setCurrentText('')
-w.start()
+w.start(models_checked=True)
 assert messages.pop() == '模型为空'
 w.asr.setCurrentText('small')
 from linguaflow.management import Preparation
 w.model_manager.worker = Preparation(lambda: 'ready', w.model_manager)
-w.start()
+w.start(models_checked=True)
 assert messages.pop() == '模型准备中'
 w.model_manager.worker = None
 w.model_manager.backend.setCurrentIndex(w.model_manager.backend.findData('qwen3-streaming'))
 w.source.setCurrentIndex(0)
-w.start()
+w.start(models_checked=True)
 assert messages.pop() == '请选择原文语言'
 w.model_manager.backend.setCurrentIndex(0)
 from linguaflow.workspace_widgets import RecordingDialog
 RecordingDialog.exec = lambda self: 0
-w.start()
+w.start(models_checked=True)
 assert w.current_item is None and not w.library.index['sessions']
 assert w.session is None and w.start_button.isEnabled()
 w.close()
@@ -360,7 +360,7 @@ w.on_caption(Caption(1, 0, 1, '错字', 'zh', final=False))
 w.on_caption(Caption(1, 0, 2, '正确原文', 'zh', final=False, revision=2))
 assert w.cards[1].source.text() == '正确原文'
 assert not hasattr(w.cards[1], 'change')
-assert '识别中' in w.cards[1].meta.text()
+assert '优化中' in w.cards[1].meta.text()
 w.on_caption(Caption(1, 0, 1, '过期结果', 'zh', final=False))
 assert w.cards[1].source.text() == '正确原文'
 w.on_caption(Caption(1, 0, 2, '', 'zh', final=True, revision=3))
@@ -452,6 +452,7 @@ class FakeSession(QObject):
     paused = Signal(bool)
     caption = Signal(object)
     level = Signal(float)
+    source_changed = Signal(int)
     failure = Signal(str)
     finished = Signal()
     def __init__(self, settings, parent, recording_path, runtime=None):
@@ -486,7 +487,7 @@ w.open_settings('聆听')
 w.settings_workspace.search.setText('xxx-unmatched')
 assert w.settings_workspace.pages.isHidden()
 w.leave_settings()
-w.start()
+w.start(models_checked=True)
 assert w.session is not None and w.current_item['id'] == identifier
 assert w.settings_panel.isEnabled() and w.model_manager.isEnabled()
 assert w.pause_button.isEnabled() and w.pause_button.text() == '暂停'
@@ -513,7 +514,7 @@ assert w.session is None and w.settings_panel.isEnabled() and w.model_manager.is
 assert w.library.load(w.current_item)[1][0].source == 'saved'
 assert not (w.library.directory(identifier) / '.recording.lock').exists()
 assert w.new_recording(name='取消的录音')
-w.start()
+w.start(models_checked=True)
 w.stop()
 app.processEvents()
 assert w.current_item['state'] == 'draft'
@@ -522,7 +523,7 @@ assert w.new_recording(name='另一个课堂')
 original = w.library.begin
 def failed(*args): raise OSError('fixture disk failure')
 w.library.begin = failed
-w.start()
+w.start(models_checked=True)
 assert w.session is None and w.settings_panel.isEnabled() and w.model_manager.isEnabled()
 w.library.begin = original
 # Deletion is reversible and clears the active view without recreating the item.
@@ -541,7 +542,7 @@ deleted.close()
 assert item['id'] in w.library.paths
 # Late status/ready events cannot turn a stopping session back into listening.
 assert w.new_recording(name='收尾状态')
-w.start()
+w.start(models_checked=True)
 w.session.stop = lambda: None
 w.stop()
 w.on_status('late model progress')
@@ -554,7 +555,7 @@ w.on_finished()
 app.processEvents()
 # Closing a paused recording follows the same drain/save path as Stop.
 assert w.new_recording(name='暂停后关闭')
-w.start()
+w.start(models_checked=True)
 w.toggle_pause()
 w.session.paused.emit(True)
 from PySide6.QtGui import QCloseEvent
@@ -568,7 +569,7 @@ w.closing = False
 assert w.new_recording(name='启动失败')
 def failed_constructor(*args, **kwargs): raise RuntimeError('cannot construct session')
 module.Session = failed_constructor
-w.start()
+w.start(models_checked=True)
 assert w.session is None and w.recording_lock is None
 assert w.start_button.isEnabled() and w.library_tree.isEnabled()
 assert 'cannot construct session' in w.status.text()

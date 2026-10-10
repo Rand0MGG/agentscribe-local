@@ -76,7 +76,7 @@ def test_maintenance_reuses_healthy_and_repairs_failed(monkeypatch, tmp_path, ta
     monkeypatch.setattr(runtime, 'clean_environments', lambda kind: cleanups.append(kind) or 0)
     runtime.maintain()
     assert checks == kinds and installs == [kinds[-1]] and cleanups == kinds
-    assert translation_checks == (['metal'] if target == 'macos-arm64' else [])
+    assert translation_checks == (['metal'] if target == 'macos-arm64' else ['cuda'])
 
 
 def test_failed_repair_never_cleans_previous_environment(monkeypatch, tmp_path):

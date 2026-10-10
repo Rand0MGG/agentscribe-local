@@ -29,7 +29,7 @@ def model_kind(path, name):
     if 'whisper' in hint:
         return 'asr', 'wlk-whisper'
     if any(word in hint for word in ('qwen3-asr', 'qwen3_asr', 'whisper')):
-        return 'asr', 'qwen3-mlx' if quant.get('bits') == 4 else 'qwen3-streaming'
+        return 'asr', 'qwen3-mlx' if quant.get('bits') in (4, 8) else 'qwen3-streaming'
     if any(word in hint for word in ('hy-mt', 'nllb', 'm2m_100')) or path.suffix.casefold() == '.gguf':
         return 'translation', 'llama' if path.suffix.casefold() == '.gguf' else 'pytorch'
     return None, None
@@ -44,7 +44,7 @@ def file_size(path):
 
 def inventory(selected=()):
     entries, seen = [], set()
-    def add(path, owned, name=None, delete_path=None, kind=None, engine=None):
+    def add(path, owned, name=None, delete_path=None, kind=None, engine=None, selection=None):
         if not path.exists() or str(path.resolve()) in seen:
             return
         name = name or path.name
@@ -61,25 +61,31 @@ def inventory(selected=()):
             return
         target = delete_path or path
         seen.add(str(path.resolve()))
-        entries.append(dict(id=str(target), path=str(path), name=name, kind=kind, engine=engine,
+        entries.append(dict(id=str(target), path=str(path), name=name, kind=kind, engine=engine, selection=selection,
                             size=file_size(target), deletable=owned and not target.is_symlink()
                             and not any(parent.is_symlink() for parent in target.parents)))
     for name in ('Qwen3-ASR-1.7B-4bit', 'Hy-MT2-1.8B', 'Hy-MT2-1.8B-GGUF'):
         root = model_directory(name)
         if root.name.endswith('GGUF'):
+            from .llama_assets import HY_GGUF, MODEL_FILE
             for file in root.glob('*.gguf'):
-                add(file, True)
+                add(file, True, selection=HY_GGUF if file.name == MODEL_FILE else None)
         else:
-            add(root, True)
+            from .model_options import MLX_MODEL
+            from .translation_models import HY_MODEL
+            add(root, True, selection=MLX_MODEL if name.startswith('Qwen') else HY_MODEL)
     for repo in hub_root().glob('models--*'):
         name = repo.name.removeprefix('models--').replace('--', '/')
         snapshots = sorted((repo / 'snapshots').glob('*'), key=lambda p: p.stat().st_mtime, reverse=True)
         for snapshot in snapshots:
             if has_weights(snapshot):
-                add(snapshot, True, name, repo)
+                add(snapshot, True, name, repo, selection=name)
                 break
+    for file in model_directory('gguf-downloads').rglob('*.gguf'):
+        relative = file.relative_to(model_directory('gguf-downloads'))
+        add(file, True, selection='hf://' + relative.as_posix())
     for file in whisper_cache_root().glob('*.pt'):
-        add(file, True, 'Whisper · ' + file.stem, kind='asr', engine='wlk-whisper')
+        add(file, True, 'Whisper · ' + file.stem, kind='asr', engine='wlk-whisper', selection=file.stem)
     for value in selected:
         if not isinstance(value, dict):
             continue

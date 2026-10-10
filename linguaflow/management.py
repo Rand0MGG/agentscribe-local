@@ -6,25 +6,28 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QDialog,
-    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
+    QHBoxLayout,
     QLabel,
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from . import __version__
-from .model_options import asr_backends, qwen_models, translation_devices
+from .model_options import asr_backends, asr_devices, qwen_models, translation_devices
 from .preparation_task import Preparation
 from .qt_controls import text_label
 from .runtime_paths import installation_command
 from .translation_config import CONTEXT_COUNTS
 from .ui_components import ChoiceBox as QComboBox
+from .ui_components import DoubleSpinBox as QDoubleSpinBox
 from .ui_components import set_download_progress
 
 
@@ -34,10 +37,11 @@ class ModelManager(QDialog):
     session_changed = Signal(bool)
     update_checked = Signal(dict)
     preparation_changed = Signal(bool)
+    inventory_changed = Signal(bool)
     preparation_message = Signal(str)
     download_changed = Signal(dict)
 
-    def __init__(self, parent=None, *, compute_device=lambda: "cpu"):
+    def __init__(self, parent=None, *, compute_device=lambda: "cpu", start_check=None):
         super().__init__(parent)
         self.compute_device = compute_device
         self.setWindowTitle("模型管理 · 准备一次，随后直接聆听")
@@ -46,8 +50,7 @@ class ModelManager(QDialog):
         self.close_requested = False
         self.session_active = False
         self.inventory_busy = False
-        self.consolidated = False
-        self.start_check = None
+        self.start_check = start_check
         self.update_busy = False
         self.preparation_buttons = []
         layout = QVBoxLayout(self)
@@ -56,7 +59,7 @@ class ModelManager(QDialog):
         self.backend = QComboBox()
         backend_labels = {'wlk-whisper': 'WhisperLiveKit · Whisper / AlignAtt',
                           'qwen3-streaming': 'WhisperLiveKit · Qwen3-ASR 流式',
-                          'qwen3-mlx': 'Qwen3-ASR · MLX 4-bit（试验）'}
+                          'qwen3-mlx': 'Qwen3-ASR · MLX（试验）'}
         for backend in asr_backends():
             self.backend.addItem(backend_labels[backend], backend)
         self.asr_page = QWidget()
@@ -107,7 +110,7 @@ class ModelManager(QDialog):
         self.draft_seconds.setSingleStep(.25)
         self.draft_seconds.setValue(.5)
         self.draft_seconds.setSuffix(" 秒")
-        self.draft_seconds.setToolTip("更小值更早请求原文草稿，也会增加计算量。实际更新受模型速度限制，可能一次出现几个词；不使用假打字动画。草稿优先于较长的音频合并间隔。")
+        self.draft_seconds.setToolTip("更小值更早请求原文草稿，也会增加计算量。实际更新受模型速度限制；逐字显示只影响呈现，不改变识别、翻译和保存时机。草稿优先于较长的音频合并间隔。")
         parameter_form.addRow("Qwen 原文草稿刷新目标", self.draft_seconds)
         parameter_form.addRow("ASR 停顿检测（不直接定稿）", self.endpoint_seconds)
         self.endpoint_seconds.setToolTip("Qwen：连续静音达到该时间后才结束语音段，保留犹豫和短停顿的上下文。Whisper 保留原有检测节奏，此值仅辅助上游分段。两者都不直接决定字幕定稿。")
@@ -149,26 +152,49 @@ class ModelManager(QDialog):
         environment_form.addRow(self.update_status)
         self.hint(environment_form, '启动后后台检查 GitHub 发布版本，也可在此手动检查。源码版查看源码更新；未发布的安装包不会显示为可安装更新。目前需从发行页下载安装。')
         self.add_page(environment, "运行环境")
+        self.download_card = QFrame()
+        self.download_card.setObjectName('downloadCard')
+        card = QVBoxLayout(self.download_card)
+        card.setContentsMargins(20, 16, 20, 16)
+        card.setSpacing(10)
+        heading = QHBoxLayout()
+        self.download_title = text_label('准备本地模型', 'settingsSection')
+        heading.addWidget(self.download_title, 1)
+        self.cancel_button = QPushButton('取消')
+        self.cancel_button.setObjectName('quiet')
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(self.cancel_preparation)
+        heading.addWidget(self.cancel_button)
+        card.addLayout(heading)
         self.status = QLabel("下载只准备文件；开始聆听时才加载模型。")
         self.status.setObjectName('preparationStatus')
         self.status.setWordWrap(True)
-        self.status.setFixedHeight(64)
+        self.status.setMaximumHeight(44)
+        card.addWidget(self.status)
+        details = QHBoxLayout()
+        self.download_file = text_label('', 'muted')
+        self.download_file.setMinimumWidth(0)
+        self.download_file.setWordWrap(False)
+        self.download_file.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.download_stats = text_label('', 'timestamp')
+        self.download_stats.setWordWrap(False)
+        details.addWidget(self.download_file, 1)
+        details.addWidget(self.download_stats)
+        card.addLayout(details)
         self.progress_bar = QProgressBar()
-        self.progress_bar.setFixedHeight(24)
+        self.progress_bar.setFixedHeight(6)
+        self.progress_bar.setObjectName('downloadProgress')
         self.progress_bar.setToolTip("当前下载文件的进度；总大小未知时显示滑动条。")
         self.progress_bar.setRange(0, 0)
         self.progress_bar.setTextVisible(False)
         self.progress_bar.hide()
-        layout.addWidget(self.progress_bar)
-        layout.addWidget(self.status)
+        card.addWidget(self.progress_bar)
+        self.download_card.hide()
+        layout.addWidget(self.download_card)
         self.pending_settings = QLabel('当前聆听继续使用原设置；修改已保存，下次开始聆听生效。')
         self.pending_settings.setWordWrap(True)
         self.pending_settings.hide()
         layout.addWidget(self.pending_settings)
-        self.cancel_button = QPushButton("取消准备")
-        self.cancel_button.setEnabled(False)
-        self.cancel_button.clicked.connect(self.cancel_preparation)
-        layout.addWidget(self.cancel_button)
         self.done_button = QPushButton("完成")
         self.done_button.clicked.connect(self.accept)
         layout.addWidget(self.done_button)
@@ -190,7 +216,30 @@ class ModelManager(QDialog):
         form.addRow(widget)
         return widget
 
-    def finish_setup(self, *, asr, translation):
+    def finish_setup(self, *, asr, translation, compute=None, choose_asr=None,
+                     choose_checkpoint=None, choose_translation=None):
+        """Attach explicit preference controls; this component owns their form layout."""
+        self.compute_control = compute
+        self.whisper_form.addRow('识别模型 · Whisper', asr)
+        if compute is not None:
+            self.asr_form.insertRow(2, '识别计算设备', compute)
+        if choose_asr is not None:
+            from .ui_components import Disclosure
+            local = QWidget()
+            buttons = QHBoxLayout(local)
+            buttons.setContentsMargins(0, 0, 0, 0)
+            for title, callback in [('选择模型目录…', choose_asr), ('选择 .pt 文件…', choose_checkpoint)]:
+                button = QPushButton(title)
+                button.clicked.connect(callback)
+                buttons.addWidget(button)
+            buttons.addStretch()
+            self.whisper_form.addRow(Disclosure('使用已下载的本地权重', local))
+        self.translation_form.addRow('翻译模型', translation)
+        if not hasattr(self, 'choose_translation'):
+            self.choose_translation = QPushButton('选择翻译模型目录…')
+            if choose_translation is not None:
+                self.choose_translation.clicked.connect(choose_translation)
+            self.translation_form.addRow(self.choose_translation)
         self.whisper_widgets = [asr]
         self.hint(self.whisper_form, "支持自动识别语言。小模型占用更少，大模型需要更多内存；本地导入请选择原始 Whisper .pt 权重或兼容目录。")
         download = QPushButton("下载 / 检查 Whisper 模型")
@@ -273,6 +322,43 @@ class ModelManager(QDialog):
                    if kind == 'asr' else (self.llama_model if engine == 'llama' else self.translation_model))
         control.setCurrentText(entry['path'])
 
+    def model_settings_snapshot(self):
+        """Plain draft data for dialogs; no widget or manager reference escapes."""
+        return dict(selection=self.preparation_selection(), asr_device=self.compute_device(),
+                    parameters={name: dict(value=control.value(), minimum=control.minimum(),
+                                           maximum=control.maximum(), step=control.singleStep(),
+                                           tooltip=control.toolTip())
+                                for name in ('draft_seconds', 'update_seconds', 'endpoint_seconds')
+                                for control in (getattr(self, name),)},
+                    preparing=self.preparing, inventory_busy=self.inventory_busy)
+
+    def apply_model_settings(self, values):
+        """Apply an explicit editor draft to next-session preferences only."""
+        selection, kind = values['selection'], values['kind']
+        device = values['device']
+        control = self.compute_control if kind == 'asr' else self.translation_device
+        # Validate before touching preferences; an unavailable device must never
+        # silently become the first item (usually CPU).
+        available = (('mlx',) if selection['backend'] == 'qwen3-mlx' else asr_devices()) if kind == 'asr' else translation_devices(selection['translation_engine'])
+        if device not in available:
+            raise ValueError('当前平台不能使用这个计算设备。')
+        self.assign_model(dict(kind=kind, engine=selection['backend' if kind == 'asr' else 'translation_engine'],
+                               path=selection['asr_model' if kind == 'asr' else 'translation_model']))
+        if control is not None:
+            control.setCurrentIndex(control.findData(device))
+        if kind == 'asr':
+            for name in ('draft_seconds', 'update_seconds', 'endpoint_seconds'):
+                getattr(self, name).setValue(values['parameters'][name])
+
+    def apply_selection(self, selection):
+        """Apply an explicitly chosen bundle, preserving its translation device."""
+        if selection['translation_device'] not in translation_devices(selection['translation_engine']):
+            raise ValueError('当前平台不能使用这个翻译计算设备。')
+        self.assign_model(dict(kind='asr', engine=selection['backend'], path=selection['asr_model']))
+        self.assign_model(dict(kind='translation', engine=selection['translation_engine'],
+                               path=selection['translation_model']))
+        self.translation_device.setCurrentIndex(self.translation_device.findData(selection['translation_device']))
+
     @property
     def preparing(self):
         return self.worker is not None
@@ -293,6 +379,7 @@ class ModelManager(QDialog):
 
     def set_inventory_busy(self, busy):
         self.inventory_busy = busy
+        self.inventory_changed.emit(busy)
 
     def embed_model_settings(self, back_button):
         """Own internal form visibility when embedded beneath the inventory page."""
@@ -301,6 +388,8 @@ class ModelManager(QDialog):
         self.done_button.hide()
         self.cancel_button.setVisible(self.worker is not None)
         self.setObjectName("embeddedModels")
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
+        self.tabs.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
         self.setStyleSheet("QDialog#embeddedModels { background: transparent; } QTabWidget::pane { border: none; }")
         self.layout().setContentsMargins(0, 0, 0, 0)
         self.layout().setSpacing(14)
@@ -323,6 +412,7 @@ class ModelManager(QDialog):
                 button.parentWidget().layout().setAlignment(button, Qt.AlignmentFlag.AlignLeft)
         for tab in range(self.tabs.count()):
             scroll = self.tabs.widget(tab)
+            scroll.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
             page = scroll.takeWidget()
             page.setObjectName("modelSettingsGroup")
             page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
@@ -334,6 +424,8 @@ class ModelManager(QDialog):
             scroll.setWidget(wrapper)
             scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         for hint in self.findChildren(QLabel):
+            if self.download_card.isAncestorOf(hint):
+                continue
             hint.setWordWrap(True)
             if hint.objectName() not in ('settingsSection', 'preparationStatus'):
                 hint.setObjectName('settingsHint')
@@ -341,11 +433,6 @@ class ModelManager(QDialog):
             subsection.setObjectName('modelSubsection')
             subsection.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
         self.layout().insertWidget(0, back_button)
-        self.consolidated = True
-        for form, control in ((self.asr_form, self.backend), (self.qwen_form, self.qwen_model),
-                              (self.whisper_form, self.whisper_widgets[0]),
-                              (self.translation_form, self.translation_engine)):
-            form.setRowVisible(control, False)
         self.update_translation_engine()
 
     def update_translation_context(self):
@@ -366,11 +453,10 @@ class ModelManager(QDialog):
         for device in available:
             self.translation_device.addItem(labels[device], device)
         self.translation_device.setCurrentIndex(max(0, self.translation_device.findData(selected)))
-        consolidated = self.consolidated
-        self.translation_form.setRowVisible(self.translation_model, not llama and not consolidated)
-        self.translation_form.setRowVisible(self.choose_translation, not llama and not consolidated)
-        self.translation_form.setRowVisible(self.llama_model, llama and not consolidated)
-        self.translation_form.setRowVisible(self.choose_gguf, llama and not consolidated)
+        self.translation_form.setRowVisible(self.translation_model, not llama)
+        self.translation_form.setRowVisible(self.choose_translation, not llama)
+        self.translation_form.setRowVisible(self.llama_model, llama)
+        self.translation_form.setRowVisible(self.choose_gguf, llama)
         self.translation_hint.setText(
             '内置 HY 1.8B 为 Q4_K_M。也可选择受当前 llama.cpp 支持、带聊天模板的本地 GGUF 指令模型；精度由权重文件决定。新模型的翻译质量需验证。'
             if llama else '支持 HY-MT2、NLLB 及兼容模型目录。模型与 GGUF 分别保存，切换引擎不会覆盖选择。')
@@ -385,9 +471,9 @@ class ModelManager(QDialog):
             if qwen else
             "Whisper：AlignAtt 根据注意力决定继续输出还是等待新音频。连续说话也能确认原文，不需要等整段停顿；调小合并间隔会增加计算频率。")
         if mlx:
-            self.behavior_hint.setText('Apple GPU / MLX 4-bit：短窗口识别，近期草稿可修订；停止时处理剩余音频。8GB Mac 可先关闭翻译；实际更新速度取决于音频与模型负载。')
+            self.behavior_hint.setText('Apple GPU / MLX：短窗口识别，近期草稿可修订；停止时处理剩余音频。8GB Mac 可先关闭翻译；实际更新速度取决于音频与模型负载。')
         self.qwen_hint.setText(
-            'MLX 4-bit 使用 Apple GPU。当前为试验功能。请选择原文语言；8GB Mac 同时识别与翻译的速度受可用内存影响。'
+            'MLX 4-bit / 8-bit 使用 Apple GPU。当前为试验功能，8-bit 尚待实机验收。请选择原文语言；8GB Mac 同时识别与翻译的速度受可用内存影响。'
             if mlx else
             'Qwen 在本机识别，近期原文可随语音修订。请选择原文语言。0.6B 占用较少内存，1.7B 需要更多资源。')
         self.whisper_page.setVisible(not qwen)
@@ -415,7 +501,11 @@ class ModelManager(QDialog):
         self.progress_bar.show()
         self.progress_bar.setRange(0, 0)
         self.progress_bar.setTextVisible(False)
-        self.status.hide()
+        self.download_card.show()
+        self.download_title.setText('正在准备本地模型' if affects_runtime else '正在准备本地组件')
+        self.download_file.clear()
+        self.download_stats.setText('正在检查…')
+        self.status.show()
         self.status.setText(message)
         self.worker = Preparation(action, self, affects_runtime=affects_runtime, beta_only=beta_only)
         self.worker.result.connect(self.preparation_status)
@@ -432,10 +522,32 @@ class ModelManager(QDialog):
             text = "准备未完成，请稍后重试；详细原因可在诊断记录中查看。"
         self.status.setText(text)
         self.status.setToolTip(text)
+        self.download_card.show()
         self.preparation_message.emit(text)
 
     def show_download(self, event):
         set_download_progress(self.progress_bar, event)
+        self.progress_bar.setTextVisible(False)
+        name = str(event.get('label') or '下载文件').replace('\\', '/').rsplit('/', 1)[-1]
+        self.download_file.setText(self.download_file.fontMetrics().elidedText(
+            name, Qt.TextElideMode.ElideMiddle, max(80, self.download_file.width())))
+        self.download_file.setToolTip(str(event.get('label') or '下载文件'))
+        done, total, rate = event.get('completed', 0), event.get('total'), event.get('rate')
+        def amount(value):
+            if event.get('unit') != 'B':
+                return f'{value:g}'
+            for unit in ('B', 'KB', 'MB', 'GB', 'TB'):
+                if value < 1024 or unit == 'TB':
+                    return f'{value:.1f} {unit}'
+                value /= 1024
+        known = isinstance(total, (int, float)) and total > 0
+        detail = f'{min(100, max(0, done/total*100)):.0f}% · {amount(done)} / {amount(total)}' if known else f'{amount(done)} · 总大小未知'
+        if isinstance(rate, (int, float)) and rate > 0:
+            detail += f' · {amount(rate)}/s'
+        self.download_stats.setText(detail)
+        if event.get('unit') == 'stage':
+            self.download_stats.setText('正在准备…')
+        self.download_title.setText('正在下载模型文件' if event.get('unit') == 'B' else '正在准备本地组件')
         self.download_changed.emit(event)
 
     def set_beta_enabled(self, enabled):
@@ -458,6 +570,9 @@ class ModelManager(QDialog):
         self.cancel_button.setEnabled(False)
         self.cancel_button.hide()
         self.progress_bar.hide()
+        self.download_title.setText('准备结果')
+        self.download_file.clear()
+        self.download_stats.clear()
         self.status.setVisible(bool(self.status.text()))
         self.preparation_changed.emit(False)
         from .runtime_paths import runtime_python

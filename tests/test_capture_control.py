@@ -3,6 +3,21 @@ from threading import Event, Thread
 from linguaflow.capture_control import CaptureControl
 
 
+def test_source_restart_rejects_old_blocks_without_pausing_or_reopening_after_stop():
+    control = CaptureControl()
+    old = control.next_segment(lambda: None, lambda: None)
+    assert control.restart() and old.is_set()
+    assert not control.paused
+    assert not control.accept(lambda: None, old)
+    new = control.next_segment(lambda: None, lambda: None)
+    assert control.accept(lambda: None, new)
+    assert not control.accept(lambda: None, old)
+    control.stop()
+    assert not control.restart()
+    assert not control.accept(lambda: None, new)
+    assert control.next_segment(lambda: None, lambda: None) is None
+
+
 def test_pause_excludes_late_blocks_and_waits_for_device_release_before_resume():
     control = CaptureControl()
     paused, resumed = Event(), []

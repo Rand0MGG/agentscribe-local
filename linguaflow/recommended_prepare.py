@@ -8,7 +8,7 @@ from .model_options import recommended_selection, required_runtimes
 from .runtime_paths import environment_python, llama_server, runtime_environment, runtime_python
 
 
-def missing_assets(selection=None):
+def missing_assets(selection=None, *, only=None):
     """Inspect local files only, never install or load model libraries."""
     selection = recommended_selection() if selection is None else selection
     missing = []
@@ -22,16 +22,17 @@ def missing_assets(selection=None):
         resolve_asr(selection)
     except (ValueError, OSError):
         missing.append('识别模型：' + selection['asr_model'])
-    try:
-        if selection['translation_engine'] == 'llama':
-            from .llama_assets import validate_weights
-            if not llama_server(selection['translation_device']).is_file():
-                missing.append('翻译运行组件')
-            validate_weights(selection['translation_model'])
-        else:
-            resolve_translation(selection['translation_model'], lambda _: None)
-    except (ValueError, OSError, RuntimeError):
-        missing.append('翻译模型：' + selection['translation_model'])
+    if only != 'asr':
+        try:
+            if selection['translation_engine'] == 'llama':
+                from .llama_assets import validate_weights
+                if not llama_server(selection['translation_device']).is_file():
+                    missing.append('翻译运行组件')
+                validate_weights(selection['translation_model'])
+            else:
+                resolve_translation(selection['translation_model'], lambda _: None)
+        except (ValueError, OSError, RuntimeError):
+            missing.append('翻译模型：' + selection['translation_model'])
     try:
         from .semantic_model import paths
         paths(prepare=False)
@@ -86,6 +87,6 @@ if __name__ == '__main__':
     parser.add_argument('--only', choices=('asr', 'translation'))
     args = parser.parse_args()
     if args.check:
-        print(json.dumps(missing_assets(args.selection), ensure_ascii=False), flush=True)
+        print(json.dumps(missing_assets(args.selection, only=args.only), ensure_ascii=False), flush=True)
     else:
         main(args.selection, only=args.only)

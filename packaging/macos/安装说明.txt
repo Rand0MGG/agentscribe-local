@@ -1,4 +1,4 @@
-AgentScribe 0.6.0-beta.2 · Apple Silicon 测试安装包
+AgentScribe 0.6.0-beta.3 · Apple Silicon 测试安装包
 
 安装
 1. 将 AgentScribe.app 拖到右侧的 Applications（应用程序）。

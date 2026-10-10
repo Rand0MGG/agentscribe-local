@@ -3,6 +3,7 @@
 from .core import WHISPER_TO_NLLB, Settings
 from .translation_models import (
     HY_GENERATION,
+    NLLB_GENERATION,
     fit_translation_prompt,
     is_hy_model,
     translation_engine,
@@ -146,7 +147,6 @@ class NllbTranslator:
             output = self.model.generate(
                 **inputs,
                 forced_bos_token_id=self.tokenizer.convert_tokens_to_ids(self.target),
-                max_new_tokens=256,
-                num_beams=1,
+                **NLLB_GENERATION,
             )
         return self.tokenizer.batch_decode(output, skip_special_tokens=True)[0].strip()

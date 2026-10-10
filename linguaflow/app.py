@@ -10,6 +10,7 @@ from PySide6.QtCore import (
     QPoint,
     QRect,
     QSettings,
+    QSignalBlocker,
     QSize,
     QStandardPaths,
     Qt,
@@ -21,12 +22,10 @@ from PySide6.QtGui import (
     QAction,
     QColor,
     QIcon,
-    QKeySequence,
     QPainter,
     QPainterPath,
     QPen,
     QPixmap,
-    QShortcut,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -34,11 +33,11 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
-    QProgressBar,
     QPushButton,
     QSizePolicy,
     QSlider,
@@ -51,8 +50,8 @@ from PySide6.QtWidgets import (
 
 from . import __version__
 from .audio import list_devices
-from .caption_view import CaptionScrollArea
-from .core import LANGUAGES, translation_status
+from .caption_view import CaptionScrollArea, CaptionText
+from .core import LANGUAGES
 from .deleted_dialog import DeletedDialog
 from .knowledge.client import KnowledgeClient
 from .knowledge.panel import KnowledgePanel
@@ -69,182 +68,20 @@ from .recording_save import RecordingSaver
 from .recording_state import RecordingState
 from .runtime_preparation import RuntimePreparation
 from .settings_binding import SettingsBinding
-from .ui_components import ActionMenu, Disclosure, NameDialog, set_download_progress
+from .subtitles_overlay import Overlay
+from .ui_backdrop import desktop_wallpaper_path, frosted_wallpaper
+from .ui_components import (
+    ActionMenu,
+    AudioLevelMeter,
+    FloatingIsland,
+    NameDialog,
+    SurfaceDialog,
+)
 from .ui_components import ChoiceBox as QComboBox
-from .ui_theme import PLATFORM_STYLE, SURFACE_STYLE, appearance_style
+from .ui_theme import STYLE, WORKSPACE_RADIUS, appearance_style, theme_colors
+from .window_platform import enable_native_resize, enable_system_backdrop, start_edge_resize
 from .wlk_session import Session
-from .workspace_widgets import LibraryTree, RecordingDialog, SettingsWorkspace, Switch
-
-STYLE = """
-QWidget { background: transparent; color: #f1f1f1; font-family: 'Microsoft YaHei UI', 'PingFang SC', sans-serif; font-size: 13px; }
-QMainWindow, QWidget#appRoot { background: transparent; }
-QLabel { background: transparent; }
-QLabel#title { font-size: 23px; font-weight: 700; letter-spacing: 0.3px; }
-QLabel#brand { font-size: 19px; font-weight: 700; letter-spacing: -0.2px; }
-QLabel#muted { color: #a8a8a8; }
-QLabel#section { color: #a6a6a6; font-size: 11px; font-weight: 700; letter-spacing: 1.1px; }
-QLabel#eyebrow { color: #b8b8b8; font-size: 11px; font-weight: 700; letter-spacing: 0.6px; }
-QLabel#pill { color: #d8d8d8; background: rgba(74, 74, 74, 120); border: 1px solid rgba(145, 145, 145, 90); border-radius: 9px; padding: 5px 9px; font-size: 11px; font-weight: 700; }
-QFrame#glassTopBar, QFrame#sidebar { background: rgba(28, 28, 28, 195); border: none; }
-QFrame#sidebar { border-right: 1px solid rgba(125, 125, 125, 80); }
-QFrame#workspace { background: transparent; border: none; }
-QFrame#workspaceHeader { background: #171717; border: none; border-bottom: 1px solid #343434; border-top-left-radius: 13px; }
-QWidget#workspaceContent { background: #171717; }
-QFrame#footer { background: #252525; border: 1px solid #454545; border-radius: 12px; }
-QWidget#settingsPanel { background: transparent; }
-QWidget#feed { background: transparent; }
-QWidget#overlay { background: rgba(20, 20, 20, 235); }
-QFrame#panel { background: #292929; border: 1px solid #454545; border-radius: 10px; }
-QFrame#panel:hover { background: #2d2d2d; border-color: #565656; }
-QComboBox, QSpinBox, QDoubleSpinBox { background: #2d2d2d; border: 1px solid #4d4d4d;
-    padding: 8px 10px; border-radius: 7px; min-height: 18px; selection-background-color: #494949; }
-QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover { background: #323232; border-color: #626262; }
-QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus { border-color: #888888; }
-QComboBox::drop-down { border: none; width: 24px; }
-QComboBox QAbstractItemView { background: #292929; color: #f1f1f1; border: 1px solid #515151; outline: none; selection-background-color: #454545; }
-QPushButton { background: #2d2d2d; border: 1px solid #484848; border-radius: 7px; padding: 8px 13px; color: #ededed; }
-QPushButton:hover { background: #383838; border-color: #626262; }
-QPushButton:focus { border-color: #787878; }
-QPushButton:pressed { background: #242424; border-color: #505050; }
-QPushButton:checked { background: #404040; border-color: #6a6a6a; color: #ffffff; }
-QPushButton:checked:hover { background: #464646; }
-QPushButton#primary { background: #eeeeee; color: #171717; font-weight: 700; border: 1px solid #ffffff; padding: 10px 22px; }
-QPushButton#primary:hover { background: #ffffff; border-color: #ffffff; }
-QPushButton#primary:pressed { background: #d2d2d2; border-color: #d2d2d2; }
-QPushButton#secondary { background: #323232; color: #f0f0f0; border-color: #535353; }
-QPushButton#secondary:hover { background: #3d3d3d; border-color: #696969; }
-QPushButton:disabled { color: #707070; background: #232323; border-color: #333333; }
-QPushButton#windowControl { background: transparent; border: none; border-radius: 0; padding: 0; min-width: 46px; min-height: 44px; font-size: 16px; }
-QPushButton#windowControl:hover { background: rgba(255, 255, 255, 24); }
-QPushButton#windowControl:pressed { background: rgba(255, 255, 255, 14); }
-QPushButton#windowClose { background: transparent; border: none; border-radius: 0; padding: 0; min-width: 48px; min-height: 44px; font-size: 18px; }
-QPushButton#windowClose:hover { background: #c42b1c; color: #ffffff; }
-QPushButton#windowClose:pressed { background: #a52117; }
-QProgressBar { background: #2d2d2d; border: none; border-radius: 3px; max-height: 5px; }
-QProgressBar::chunk { background: #d8d8d8; border-radius: 3px; }
-QScrollArea { border: none; background: transparent; }
-QScrollBar:vertical { background: transparent; width: 8px; margin: 3px; }
-QScrollBar::handle:vertical { background: #454545; min-height: 30px; border-radius: 4px; }
-QScrollBar::handle:vertical:hover { background: #626262; }
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
-QSplitter::handle { background: rgba(110, 110, 110, 55); width: 1px; }
-QSplitter::handle:hover { background: rgba(160, 160, 160, 100); }
-QCheckBox { spacing: 8px; padding: 4px 0; }
-QCheckBox:hover { color: #ffffff; }
-QCheckBox::indicator { width: 15px; height: 15px; border: 1px solid #626262; border-radius: 4px; background: #292929; }
-QCheckBox::indicator:hover { border-color: #8a8a8a; background: #333333; }
-QCheckBox::indicator:checked { background: #e3e3e3; border-color: #f2f2f2; }
-QPlainTextEdit { background: #1c1c1c; border: 1px solid #404040; border-radius: 7px; padding: 8px; selection-background-color: #4a4a4a; }
-QTabWidget::pane { border: 1px solid #404040; border-radius: 8px; top: -1px; }
-QTabBar::tab { background: #252525; color: #aaaaaa; border: 1px solid transparent; border-bottom: none; border-radius: 7px 7px 0 0; padding: 9px 12px; margin-right: 3px; }
-QTabBar::tab:selected { background: #393939; color: #f2f2f2; border-color: #555555; }
-QTabBar::tab:hover:!selected { background: #303030; color: #e4e4e4; }
-QDialog { background: #1d1d1d; }
-QDialog QWidget { background-color: transparent; }
-QDialog QComboBox, QDialog QSpinBox, QDialog QDoubleSpinBox { background: #2d2d2d; }
-QDialog QPushButton { background: #2d2d2d; }
-QDialog QPushButton:hover { background: #383838; }
-QDialog QPlainTextEdit { background: #1c1c1c; }
-QToolTip { background: #303030; color: #f5f5f5; border: 1px solid #707070; padding: 5px; }
-"""
-
-
-STYLE += """
-QWidget { font-family: 'Segoe UI', 'Microsoft YaHei UI', 'PingFang SC'; font-size: 13px; color: #e4e4e7; }
-QLabel#brand { font-size: 19px; font-weight: 600; }
-QLabel#title { font-size: 21px; font-weight: 600; }
-QLabel#section { color: #838389; font-size: 12px; font-weight: 500; letter-spacing: 0; }
-QLabel#timestamp { color: #77777e; font-size: 11px; }
-QFrame#glassTopBar, QFrame#sidebar { background: rgba(25, 25, 27, 105); border: none; }
-QFrame#workspaceHeader { background: transparent; border: none; border-bottom: 1px solid #303032; }
-QSplitter::handle { background: transparent; }
-QTreeWidget::branch:selected { background: transparent; }
-QWidget#workspaceContent { background: #191919; }
-QFrame#captionRow { background: transparent; border: none; }
-QFrame#footer { background: #242425; border: 1px solid #353537; border-radius: 18px; }
-QPushButton { background: #2a2a2c; border: 1px solid #3b3b3e; border-radius: 8px; padding: 8px 12px; }
-QPushButton#quiet, QPushButton#navigation { background: transparent; border: 1px solid transparent; font-weight: 400; }
-QPushButton#navigation { text-align: left; padding: 10px 8px; }
-QPushButton#quiet:hover, QPushButton#navigation:hover { background: rgba(255,255,255,14); }
-QPushButton#quiet { padding: 6px; }
-QPushButton#quiet::menu-indicator { image: none; width: 0; }
-QPushButton#primary { background: #e9e9eb; color: #1c1c1e; border: none; border-radius: 12px; font-weight: 600; padding: 10px 18px; }
-QTreeWidget { background: transparent; border: none; outline: none; color: #c8c8cd; }
-QTreeWidget::item { height: 36px; padding: 0 5px; border: none; border-radius: 7px; }
-QTreeWidget::item:selected { background: rgba(255,255,255,22); color: #f4f4f5; }
-QTreeWidget::item:hover:!selected { background: rgba(255,255,255,10); }
-QTreeWidget::branch { background: transparent; }
-QMenu { background: #262628; border: 1px solid #404044; border-radius: 10px; padding: 6px; }
-QMenu::item { padding: 9px 24px; border-radius: 5px; }
-QMenu::item:selected { background: #3a3a3d; }
-QLineEdit { background: #29292c; border: 1px solid #444448; border-radius: 6px; padding: 9px; }
-QFrame#overlayShell { background: rgba(25,25,28,242); border: 1px solid rgba(180,180,190,40); border-radius: 18px; }
-QSlider::groove:horizontal { background: #38383c; height: 3px; border-radius: 1px; }
-QSlider::sub-page:horizontal { background: #a9a9af; }
-QSlider::handle:horizontal { background: #e1e1e4; width: 10px; margin: -4px 0; border-radius: 5px; }
-QProgressBar { background: transparent; }
-QProgressBar::chunk { background: #74777b; }
-QLabel#settingsTitle { font-size: 27px; font-weight: 600; color: #e8e8eb; }
-QLabel#settingsSection { font-size: 15px; font-weight: 600; color: #d5d5d9; }
-QLabel#settingsLabel { font-size: 14px; font-weight: 600; }
-QFrame#settingsGroup { background: #242425; border: 1px solid #333335; border-radius: 15px; }
-QWidget#modelSettingsGroup { background: #242425; border: 1px solid #333335; border-radius: 15px; }
-QFrame#settingsRow { border: none; border-bottom: 1px solid #343436; }
-QListWidget#settingsNavigation { background: transparent; border: none; outline: none; }
-QListWidget#settingsNavigation::item { padding: 12px 14px; border-radius: 8px; margin-bottom: 3px; }
-QListWidget#settingsNavigation::item:selected { background: #353033; color: #f3f3f5; }
-QListWidget#settingsNavigation::item:hover:!selected { background: rgba(255,255,255,10); }
-"""
-STYLE += SURFACE_STYLE + PLATFORM_STYLE
-
-
-def enable_system_backdrop(window):
-    """Enable wallpaper-only Mica behind the connected top and sidebar glass."""
-    if sys.platform != "win32" or os.environ.get("QT_QPA_PLATFORM") == "offscreen":
-        return False
-    try:
-        import ctypes
-        from ctypes import wintypes
-
-        class Margins(ctypes.Structure):
-            _fields_ = [("left", ctypes.c_int), ("right", ctypes.c_int),
-                        ("top", ctypes.c_int), ("bottom", ctypes.c_int)]
-
-        hwnd = wintypes.HWND(int(window.winId()))
-        dwmapi = ctypes.windll.dwmapi
-        enabled = ctypes.c_int(1)
-        rounded = ctypes.c_int(2)
-        backdrop = ctypes.c_int(2)  # DWMSBT_MAINWINDOW / Mica samples the wallpaper only.
-        dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(enabled), ctypes.sizeof(enabled))
-        dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(rounded), ctypes.sizeof(rounded))
-        modern_result = dwmapi.DwmSetWindowAttribute(
-            hwnd, 38, ctypes.byref(backdrop), ctypes.sizeof(backdrop)
-        )
-        # Windows 11 21H2 exposed Mica through this earlier attribute before
-        # DWMWA_SYSTEMBACKDROP_TYPE became available.
-        legacy_result = dwmapi.DwmSetWindowAttribute(
-            hwnd, 1029, ctypes.byref(enabled), ctypes.sizeof(enabled)
-        )
-        margins = Margins(-1, -1, -1, -1)
-        dwmapi.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(margins))
-        return modern_result == 0 or legacy_result == 0
-    except (AttributeError, OSError, TypeError, ValueError, ctypes.ArgumentError):
-        return False
-
-
-def desktop_wallpaper_path():
-    if sys.platform != "win32":
-        return ""
-    try:
-        import ctypes
-
-        path = ctypes.create_unicode_buffer(32768)
-        if ctypes.windll.user32.SystemParametersInfoW(0x0073, len(path), path, 0):
-            return path.value
-    except (AttributeError, OSError, ValueError):
-        pass
-    return ""
+from .workspace_widgets import LanguagePopup, LibraryTree, RecordingDialog, SettingsWorkspace, Switch
 
 
 class WallpaperBackdrop(QWidget):
@@ -259,6 +96,7 @@ class WallpaperBackdrop(QWidget):
         self._source = QPixmap()
         self._blurred = QPixmap()
         self._blurred_size = None
+        self._blurred_appearance = None
         self.refresh_wallpaper()
         self.wallpaper_timer = QTimer(self)
         self.wallpaper_timer.timeout.connect(self.refresh_wallpaper)
@@ -273,8 +111,6 @@ class WallpaperBackdrop(QWidget):
         if path == self._wallpaper_path and stamp == self._wallpaper_stamp:
             return
         wallpaper = QPixmap(path) if path else QPixmap()
-        if wallpaper.isNull():
-            return
         self._wallpaper_path = path
         self._wallpaper_stamp = stamp
         self._source = wallpaper
@@ -283,37 +119,20 @@ class WallpaperBackdrop(QWidget):
         self.update()
 
     def _build_blurred_wallpaper(self, size):
-        if self._source.isNull() or size.isEmpty():
+        if size.isEmpty():
             return
-        scaled = self._source.scaled(
-            size,
-            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        left = max(0, (scaled.width() - size.width()) // 2)
-        top = max(0, (scaled.height() - size.height()) // 2)
-        cropped = scaled.copy(left, top, size.width(), size.height())
-        small = cropped.scaled(
-            max(1, size.width() // 64),
-            max(1, size.height() // 64),
-            Qt.AspectRatioMode.IgnoreAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        self._blurred = small.scaled(
-            size,
-            Qt.AspectRatioMode.IgnoreAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
+        self._blurred_appearance = QApplication.instance().property('appearance') or 'light'
+        self._blurred = frosted_wallpaper(self._source, size, self._blurred_appearance)
         self._blurred_size = size
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        light = QApplication.instance().property("appearance") != "dark"
-        painter.fillRect(self.rect(), QColor(246, 246, 249, 180) if light else QColor(30, 30, 30, 180))
+        appearance = QApplication.instance().property('appearance') or 'light'
+        painter.fillRect(self.rect(), QColor(theme_colors(appearance)['glass']))
         screen = self.window().screen() or QApplication.primaryScreen()
         if screen is not None:
             geometry = screen.geometry()
-            if self._blurred_size != geometry.size():
+            if self._blurred_size != geometry.size() or self._blurred_appearance != appearance:
                 self._build_blurred_wallpaper(geometry.size())
             if not self._blurred.isNull():
                 origin = self.mapToGlobal(QPoint(0, 0))
@@ -323,10 +142,7 @@ class WallpaperBackdrop(QWidget):
                     self.width(),
                     self.height(),
                 )
-                painter.setOpacity(0.30)
                 painter.drawPixmap(self.rect(), self._blurred, source)
-                painter.setOpacity(1.0)
-        painter.fillRect(self.rect(), QColor(248, 248, 250, 25) if light else QColor(25, 25, 27, 25))
         painter.end()
 
 
@@ -342,6 +158,33 @@ def panel(title, subtitle=None):
     return frame, layout
 
 
+class WindowButton(QPushButton):
+    """Draw window controls without depending on symbol-font fallback."""
+    def __init__(self, host, kind):
+        super().__init__('')
+        self.host, self.kind = host, kind
+        self.setObjectName('windowClose' if kind == 'close' else 'windowControl')
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        c = theme_colors(QApplication.instance().property('appearance'))
+        p.setPen(QPen(QColor('#ffffff' if self.kind == 'close' and self.underMouse() else c['text']), 1.2))
+        x, y = self.width() // 2, self.height() // 2
+        if self.kind == 'close':
+            p.drawLine(x-4, y-4, x+4, y+4)
+            p.drawLine(x-4, y+4, x+4, y-4)
+        elif self.kind == 'minimize':
+            p.drawLine(x-5, y, x+5, y)
+        elif self.host.isMaximized():
+            p.drawRect(x-3, y-5, 8, 8)
+            p.fillRect(x-5, y-3, 8, 8, QColor(c['glass']))
+            p.drawRect(x-5, y-3, 8, 8)
+        else:
+            p.drawRect(x-4, y-4, 8, 8)
+
+
 class GlassTitleBar(QFrame):
     def __init__(self, window):
         super().__init__(window)
@@ -351,22 +194,21 @@ class GlassTitleBar(QFrame):
         bar = QHBoxLayout(self)
         bar.setContentsMargins(13, 0, 0, 0)
         bar.setSpacing(8)
-        bar.addWidget(label("▣", "muted"))
         title = label("AgentScribe · 本地同声字幕")
         title.setWordWrap(False)
         bar.addWidget(title)
         bar.addStretch()
-        minimize = QPushButton("—")
-        minimize.setObjectName("windowControl")
+        minimize = WindowButton(window, 'minimize')
         minimize.setToolTip("最小化")
+        minimize.setAccessibleName('最小化')
         minimize.clicked.connect(window.showMinimized)
-        self.maximize = QPushButton("□")
-        self.maximize.setObjectName("windowControl")
+        self.maximize = WindowButton(window, 'maximize')
         self.maximize.setToolTip("最大化")
+        self.maximize.setAccessibleName('最大化或还原')
         self.maximize.clicked.connect(self.toggle_maximized)
-        close = QPushButton("×")
-        close.setObjectName("windowClose")
+        close = WindowButton(window, 'close')
         close.setToolTip("关闭")
+        close.setAccessibleName('关闭')
         close.clicked.connect(window.close)
         bar.addWidget(minimize)
         bar.addWidget(self.maximize)
@@ -375,12 +217,11 @@ class GlassTitleBar(QFrame):
     def toggle_maximized(self):
         if self.host.isMaximized():
             self.host.showNormal()
-            self.maximize.setText("□")
             self.maximize.setToolTip("最大化")
         else:
             self.host.showMaximized()
-            self.maximize.setText("❐")
             self.maximize.setToolTip("还原")
+        self.maximize.update()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self.host.windowHandle():
@@ -403,22 +244,24 @@ class WorkspaceFrame(QFrame):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        radius = 18.0
+        radius = float(WORKSPACE_RADIUS)
         path = QPainterPath()
-        path.moveTo(self.width(), 0.5)
+        path.moveTo(self.width() - .5, radius)
+        path.quadTo(self.width() - .5, .5, self.width() - radius, .5)
         path.lineTo(radius, 0.5)
         path.quadTo(0.5, 0.5, 0.5, radius)
         path.lineTo(0.5, self.height())
         path.lineTo(self.width(), self.height())
         path.closeSubpath()
-        light = QApplication.instance().property("appearance") != "dark"
-        painter.fillPath(path, QColor("#ffffff" if light else "#191919"))
+        colors = theme_colors(QApplication.instance().property('appearance'))
+        painter.fillPath(path, QColor(colors['surface']))
         edge = QPainterPath()
-        edge.moveTo(self.width(), 0.5)
+        edge.moveTo(self.width() - .5, radius)
+        edge.quadTo(self.width() - .5, .5, self.width() - radius, .5)
         edge.lineTo(radius, 0.5)
         edge.quadTo(0.5, 0.5, 0.5, radius)
         edge.lineTo(0.5, self.height())
-        painter.setPen(QPen(QColor("#e5e5e8" if light else "#343436"), 1))
+        painter.setPen(QPen(QColor(colors['border']), 1))
         painter.drawPath(edge)
 
 
@@ -447,8 +290,46 @@ def line_icon(kind, color="#bdbdbf"):
     elif kind == "settings":
         for y, x in [(5, 7), (10, 13), (15, 8)]:
             painter.drawLine(3, y, 17, y)
-            painter.setBrush(QColor("#252527"))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawEllipse(QPoint(x, y), 2, 2)
+    elif kind == 'chevron':
+        painter.drawLine(6, 8, 10, 12)
+        painter.drawLine(10, 12, 14, 8)
+    elif kind == 'refresh':
+        painter.drawArc(4, 4, 12, 12, 40*16, 280*16)
+        painter.drawLine(15, 3, 15, 7)
+        painter.drawLine(11, 7, 15, 7)
+    elif kind == 'check':
+        painter.drawLine(4, 10, 8, 14)
+        painter.drawLine(8, 14, 16, 6)
+    elif kind == 'system':
+        painter.drawRoundedRect(3, 3, 14, 10, 2, 2)
+        painter.drawLine(10, 13, 10, 17)
+        painter.drawLine(6, 17, 14, 17)
+    elif kind == 'input':
+        painter.drawRoundedRect(7, 2, 6, 10, 3, 3)
+        painter.drawArc(4, 5, 12, 10, 180*16, 180*16)
+        painter.drawLine(10, 15, 10, 18)
+        painter.drawLine(7, 18, 13, 18)
+    elif kind == 'trash':
+        painter.drawLine(3, 5, 17, 5)
+        painter.drawLine(7, 3, 13, 3)
+        painter.drawLine(5, 7, 6, 17)
+        painter.drawLine(6, 17, 14, 17)
+        painter.drawLine(14, 17, 15, 7)
+        painter.drawLine(8, 8, 8, 14)
+        painter.drawLine(12, 8, 12, 14)
+    elif kind == 'play':
+        path = QPainterPath()
+        path.moveTo(7, 4)
+        path.lineTo(16, 10)
+        path.lineTo(7, 16)
+        path.closeSubpath()
+        painter.setBrush(QColor(color))
+        painter.drawPath(path)
+    elif kind == 'pause':
+        painter.drawLine(7, 4, 7, 16)
+        painter.drawLine(13, 4, 13, 16)
     else:
         painter.drawRoundedRect(5, 3, 10, 14, 2, 2)
         painter.drawLine(8, 7, 12, 7)
@@ -457,84 +338,51 @@ def line_icon(kind, color="#bdbdbf"):
     return QIcon(pixmap)
 
 
-class Overlay(QWidget):
-    def __init__(self):
-        super().__init__(None, Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint |
-                         Qt.WindowType.WindowStaysOnTopHint)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setWindowTitle("AgentScribe · 悬浮字幕")
-        self.resize(780, 180)
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(8, 8, 8, 8)
-        shell = QFrame()
-        shell.setObjectName("overlayShell")
-        outer.addWidget(shell)
-        layout = QVBoxLayout(shell)
-        layout.setContentsMargins(28, 12, 24, 24)
-        top = QHBoxLayout()
-        top.addWidget(label("实时字幕", "eyebrow"))
-        top.addStretch()
-        close = QPushButton("×")
-        close.setObjectName("quiet")
-        close.setFixedSize(28, 26)
-        close.clicked.connect(self.hide)
-        top.addWidget(close)
-        layout.addLayout(top)
-        self.source = label("等待语音…")
-        self.source.setStyleSheet("font-size: 19px; color: #e5e5e7;")
-        self.target = label("")
-        self.target.setStyleSheet("font-size: 23px; color: #fafafa; font-weight: 500;")
-        layout.addWidget(self.source)
-        layout.addWidget(self.target)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and self.windowHandle():
-            self.windowHandle().startSystemMove()
-
-    def update_caption(self, caption, translating=True):
-        self.source.setText(caption.source)
-        self.source.setStyleSheet("font-size: 19px; color: " +
-                                 ("#e5e5e7;" if caption.final else "#a8a8ae;"))
-        prefix = '初译 · ' if caption.translation_phase == 'initial' else ''
-        self.target.setText(prefix + caption.translation if translating and caption.translation else "")
-        self.target.setVisible(bool(self.target.text()))
-        self.adjustSize()
-
-
 class CaptionCard(QFrame):
-    def __init__(self, caption, translating):
+    def __init__(self, caption, translating, *, animate=False):
         super().__init__()
         self.setObjectName("captionRow")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 14, 4, 18)
         layout.setSpacing(9)
         self.meta = label("", "timestamp")
-        self.source = label("")
-        self.target = label("")
+        self.source = CaptionText()
+        self.target = CaptionText()
         self.source.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.target.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.target.setObjectName("captionTranslation")
+        self.pending = label('', 'translationPending')
         layout.addWidget(self.meta)
         layout.addWidget(self.source)
         layout.addWidget(self.target)
+        layout.addWidget(self.pending)
         self.translating = translating
-        self.update_caption(caption)
+        self.update_caption(caption, animate=animate)
 
-    def update_caption(self, caption):
-        if self.source.text() != caption.source:
-            self.source.setText(caption.source)
+    def update_caption(self, caption, *, animate=True):
+        self.source.set_caption_text(caption.source, animate=animate)
         source_style = "font-size: 16px;"
-        self.source.setObjectName("captionFinal" if caption.final else "captionDraft")
+        name = "captionFinal" if caption.final else "captionDraft"
+        if self.source.objectName() != name:
+            self.source.setObjectName(name)
+            self.source.style().unpolish(self.source)
+            self.source.style().polish(self.source)
         if self.source.styleSheet() != source_style:
             self.source.setStyleSheet(source_style)
         self.meta.setText(f"{int(caption.start) // 60:02}:{int(caption.start) % 60:02}" +
-                          (' · 原文已定稿' if caption.final else (' · 已提交，可修订' if caption.ready else ' · 识别中')) +
-                          (' · ' + translation_status(caption) if self.translating else ''))
-        self.meta.setToolTip(translation_status(caption) if self.translating else '识别独立决定提交与定稿')
-        self.target.setText(caption.translation or ("翻译暂不可用" if caption.error else ""))
+                          (' · 已定稿' if caption.final else ' · 优化中'))
+        self.meta.setToolTip('原文已定稿' if caption.final else '原文正在优化，内容可能继续修订')
+        self.target.set_caption_text(caption.translation or ("翻译暂不可用" if caption.error else ""),
+                                     animate=animate)
         self.target.setToolTip(caption.error or ('初译依据：' + caption.translation_source
                                if caption.translation_phase == 'initial' else ''))
         self.target.setVisible(bool(self.target.text()))
+        stale = bool(caption.translation and caption.translation_source
+                     and caption.translation_source != caption.source)
+        self.pending.setText(('译文更新失败，请查看错误详情' if caption.error else '原文已更新，正在更新译文…')
+                             if stale else '')
+        self.pending.setToolTip(caption.error)
+        self.pending.setVisible(self.translating and stale)
 
 
 class Window(QMainWindow):
@@ -545,22 +393,27 @@ class Window(QMainWindow):
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self._backdrop_applied = False
         self._backdrop_attempted = False
+        self._native_resize_applied = False
         if sys.platform == "win32" and os.environ.get("QT_QPA_PLATFORM") != "offscreen":
             self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
         self.setWindowTitle("AgentScribe · 本地同声字幕")
         self.resize(1280, 840)
-        self.setMinimumSize(900, 650)
+        self.setMinimumSize(640, 480)
         self.session = None
         self.runtime = runtime
         self.recording_lock = None
         self.last_error = ""
         self.recording_state = RecordingState.IDLE
+        self.save_error = ''
         self.phase_started = time.monotonic()
         self.pipeline_state = {"音频": "未开始", "识别": "未加载", "翻译": "未加载"}
         self.captions = {}
         self.cards = {}
         self.closing = False
         self.asset_check = None
+        self.missing_model_assets = None
+        self.model_action = None
+        self.model_prompt = None
         self.asset_check_timer = QTimer(self)
         self.asset_check_timer.setSingleShot(True)
         self.asset_check_timer.timeout.connect(self.check_model_assets)
@@ -568,8 +421,8 @@ class Window(QMainWindow):
         self.asset_check_closed = False
         self.startup_update_job = None
         self.background_checks = set()
-        self.overlay = Overlay()
         self.prefs = prefs if prefs is not None else QSettings("LinguaFlow", "LocalCaptions")
+        self.overlay = Overlay(self.prefs)
         self.library = library if library is not None else self.open_recording_library(library_root)
         self.knowledge_client = KnowledgeClient(self)
         self.knowledge_panel = None
@@ -602,8 +455,9 @@ class Window(QMainWindow):
         self.pages.addWidget(split)
         layout.addWidget(self.pages, 1)
         sidebar = QFrame()
+        self.recording_sidebar = sidebar
         sidebar.setObjectName("sidebar")
-        sidebar.setMinimumWidth(220)
+        sidebar.setMinimumWidth(180)
         sidebar.setMaximumWidth(420)
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setContentsMargins(14, 20, 14, 14)
@@ -642,24 +496,21 @@ class Window(QMainWindow):
         self.library_tree.newRequested.connect(lambda folder: self.new_recording(folder_id=folder))
         self.library_tree.menuRequested.connect(self.show_library_menu)
         sidebar_layout.addWidget(self.library_tree, 1)
-        settings_button = QPushButton("  设置")
+        settings_button = self.settings_button = QPushButton("  设置")
         settings_button.setObjectName("navigation")
         settings_button.setIcon(line_icon("settings"))
         settings_button.clicked.connect(self.open_settings)
-        deleted_button = QPushButton("最近删除")
+        deleted_button = self.deleted_button = QPushButton("  最近删除")
         deleted_button.setObjectName("navigation")
+        deleted_button.setIcon(line_icon('trash'))
         deleted_button.clicked.connect(self.show_deleted)
         sidebar_layout.addWidget(deleted_button)
-        guide_button = QPushButton('使用指南')
-        guide_button.setObjectName('navigation')
-        guide_button.clicked.connect(lambda: self.open_settings('使用指南'))
-        sidebar_layout.addWidget(guide_button)
         self.ui_update_button = QPushButton("↓  检查更新")
         self.ui_update_button.setObjectName("navigation")
         self.ui_update_button.clicked.connect(self.check_software_updates)
         sidebar_layout.addWidget(self.ui_update_button)
+        self.ui_update_button.hide()
         sidebar_layout.addWidget(settings_button)
-        sidebar_layout.addWidget(label("  本地工作空间", "timestamp"))
         self.settings_panel = QWidget()
         self.settings_panel.setObjectName("settingsPanel")
         form_outer = QVBoxLayout(self.settings_panel)
@@ -676,7 +527,7 @@ class Window(QMainWindow):
         refresh = QPushButton("刷新设备")
         refresh.clicked.connect(self.refresh_devices)
         form.addRow(refresh)
-        hint = "Windows：选择“系统声音”录制电脑播放内容。"
+        hint = "Windows：选择“系统音频”录制电脑播放内容。"
         if sys.platform == "darwin":
             hint = "Mac：系统声音请选择 BlackHole 输入，并在音频 MIDI 设置中配置多输出设备。"
         form.addRow(label(hint, "muted"))
@@ -689,53 +540,31 @@ class Window(QMainWindow):
         form.addRow("原文语言", self.source)
         form.addRow("翻译为", self.target)
         form_outer.addLayout(form)
-        self.model_manager = ModelManager(self, compute_device=lambda: self.compute.currentData())
-        models = self.model_manager.whisper_form
+        self.model_manager = ModelManager(self, compute_device=lambda: self.compute.currentData(),
+                                         start_check=self.start_background_check)
         self.asr = QComboBox()
         self.asr.setEditable(True)
         self.asr.setMinimumContentsLength(18)
         self.asr.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.asr.addItems(["tiny", "base", "small", "medium", "large-v3", "turbo"])
         self.asr.setCurrentText("small")
-        models.addRow("识别模型 · Whisper", self.asr)
-        choose_asr = QPushButton("选择模型目录…")
-        choose_asr.clicked.connect(lambda: self.choose_model(self.asr))
-        choose_checkpoint = QPushButton("选择 .pt 文件…")
-        choose_checkpoint.clicked.connect(self.choose_checkpoint)
-        local_models = QWidget()
-        local_buttons = QHBoxLayout(local_models)
-        local_buttons.setContentsMargins(0, 0, 0, 0)
-        local_buttons.addWidget(choose_asr)
-        local_buttons.addWidget(choose_checkpoint)
-        local_buttons.addStretch()
-        models.addRow(Disclosure('使用已下载的本地权重', local_models))
         self.compute = QComboBox()
         device_labels = {'cpu': 'CPU（通用）', 'mlx': 'Apple GPU · Metal / MLX',
                          'cuda': 'NVIDIA GPU · 半精度'}
         for device in asr_devices():
             self.compute.addItem(device_labels[device], device)
-        self.model_manager.asr_form.insertRow(2, "识别计算设备", self.compute)
-        models = self.model_manager.translation_form
         self.translation = QComboBox()
         self.translation.setEditable(True)
         self.translation.setMinimumContentsLength(18)
         self.translation.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.translation.addItems(["facebook/nllb-200-distilled-600M", "tencent/Hy-MT2-1.8B", "facebook/nllb-200-distilled-1.3B"])
-        models.addRow("翻译模型", self.translation)
-        choose_translation = QPushButton("选择翻译模型目录…")
-        choose_translation.clicked.connect(lambda: self.choose_model(self.translation))
-        models.addRow(choose_translation)
-        self.model_manager.choose_translation = choose_translation
-        self.translate = Switch("同时显示翻译")
+        self.translate = Switch("启用翻译")
         self.translate.setChecked(True)
         form_outer.addWidget(self.translate)
-        models.addRow(
-            label(
-                "建议先在这里下载模型；已下载模型可在断网时使用。音频和字幕只在本机处理。",
-                "muted",
-            )
-        )
-        self.model_manager.finish_setup(asr=self.asr, translation=self.translation)
+        self.model_manager.finish_setup(asr=self.asr, translation=self.translation, compute=self.compute,
+                                        choose_asr=lambda: self.choose_model(self.asr),
+                                        choose_checkpoint=self.choose_checkpoint,
+                                        choose_translation=lambda: self.choose_model(self.translation))
         self.model_manager.diagnostic.connect(self.diagnostics_append)
         form_outer.addWidget(label("当前引擎", "section"))
         self.model_summary = label("", "muted")
@@ -758,9 +587,12 @@ class Window(QMainWindow):
         workspace_header = QFrame()
         workspace_header.setObjectName("workspaceHeader")
         toolbar = QHBoxLayout(workspace_header)
-        toolbar.setContentsMargins(20, 13, 18, 13)
+        toolbar.setContentsMargins(20, 5, 18, 5)
         self.workspace_title = label("新录音")
         self.workspace_title.setStyleSheet("font-size: 14px; font-weight: 600;")
+        self.workspace_title.setMinimumWidth(0)
+        self.workspace_title.setWordWrap(False)
+        self.workspace_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(self.workspace_title, 1)
         self.knowledge_button = QPushButton("课程资料与笔记 · Beta")
         self.knowledge_button.setObjectName("quiet")
@@ -797,20 +629,21 @@ class Window(QMainWindow):
         self.workspace_content = content
         self.workspace_content_layout = content_layout
         content.installEventFilter(self)
-        content_layout.setContentsMargins(32, 12, 32, 24)
+        content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(10)
         self.scroll = CaptionScrollArea()
+        self.scroll.viewport().installEventFilter(self)
         self.feed = QWidget()
         self.feed.setObjectName("feed")
         self.feed_layout = QVBoxLayout(self.feed)
         self.feed_layout.setContentsMargins(12, 24, 12, 16)
         self.feed_layout.setSpacing(4)
         self.empty = label(
-            "让每一次聆听，都有所留存。\n\n开始录音，原文与译文将在这里自然呈现。",
+            "点击「新录音」开始。",
             "muted",
         )
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty.setMinimumHeight(300)
+        self.empty.setMinimumHeight(160)
         self.empty.setStyleSheet("font-size: 16px; color: #89898f;")
         self.feed_layout.addWidget(self.empty)
         self.feed_layout.addStretch()
@@ -829,25 +662,25 @@ class Window(QMainWindow):
         self.diagnostics.hide()
         diagnostics_button.toggled.connect(self.diagnostics.setVisible)
         content_layout.addWidget(self.diagnostics)
-        self.meter = QProgressBar()
+        self.meter = AudioLevelMeter()
         self.pipeline = label("音频：未开始   /   识别：未加载   /   翻译：未加载", "muted")
         self.pipeline.hide()
-        diagnostics_button.toggled.connect(self.pipeline.setVisible)
         self.meter.setRange(0, 100)
         self.meter.setValue(0)
         self.meter.setTextVisible(False)
-        self.meter.setFixedHeight(2)
-        content_layout.addWidget(self.meter)
-        footer = QFrame()
-        footer.setObjectName("footer")
+        self.meter.setToolTip('输入音量；暂停收音时归零')
+        self.volume_caption = label('音频音量\n开始后显示', 'muted')
+        self.volume_caption.setWordWrap(False)
+        self.volume_caption.setStyleSheet('font-size: 11px;')
+        self.pending_source_revision = None
+        footer = self.control_island = FloatingIsland(self.scroll.viewport())
         footer_layout = QVBoxLayout(footer)
-        footer_layout.setContentsMargins(13, 12, 12, 10)
-        footer_layout.setSpacing(12)
-        input_row = QHBoxLayout()
-        input_row.addWidget(label('音频来源', 'muted'))
+        footer_layout.setContentsMargins(14, 12, 14, 12)
+        footer_layout.setSpacing(8)
+        input_row = self.input_row = QGridLayout()
         self.quick_device = QComboBox()
         self.quick_device.setAccessibleName('音频来源')
-        self.quick_device.setPlaceholderText('选择麦克风或系统声音')
+        self.quick_device.setPlaceholderText('选择系统音频或外部输入')
         self.quick_device.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.quick_device.setMinimumContentsLength(12)
         self.quick_device.setMinimumWidth(0)
@@ -857,22 +690,48 @@ class Window(QMainWindow):
         self.quick_device.currentIndexChanged.connect(self.device.setCurrentIndex)
         self.device.currentIndexChanged.connect(self.quick_device.setCurrentIndex)
         self.quick_device.currentTextChanged.connect(self.quick_device.setToolTip)
-        input_row.addWidget(self.quick_device, 1)
-        self.refresh_source = QPushButton('刷新')
+        input_row.addWidget(self.quick_device, 0, 0)
+        input_row.setColumnStretch(0, 1)
+        self.refresh_source = QPushButton()
+        self.refresh_source.setIcon(line_icon('refresh'))
+        self.refresh_source.setFixedSize(30, 30)
+        self.refresh_source.setAccessibleName('刷新音频来源')
         self.refresh_source.setObjectName('quiet')
         self.refresh_source.setToolTip('刷新音频设备列表')
         self.refresh_source.clicked.connect(self.refresh_devices)
-        input_row.addWidget(self.refresh_source)
+        self.refresh_feedback = QTimer(self)
+        self.refresh_feedback.setSingleShot(True)
+        self.refresh_feedback.setInterval(1500)
+        self.refresh_feedback.timeout.connect(self.reset_refresh_feedback)
+        input_row.addWidget(self.refresh_source, 0, 2)
         footer_layout.addLayout(input_row)
         bottom = QHBoxLayout()
         footer_layout.addLayout(bottom)
         self.status = label("准备开始", "muted")
-        bottom.addWidget(self.status, 1)
+        self.status.setObjectName('status')
+        self.status.setStyleSheet('font-size: 11px;')
+        self.status.setMaximumHeight(36)
+        self.status.hide()
+        content_layout.insertWidget(0, self.status)
+        transport_column = QVBoxLayout()
+        transport_column.setSpacing(2)
+        self.transport = QStackedWidget()
+        self.transport.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.live_transport = QWidget()
+        live_row = QHBoxLayout(self.live_transport)
+        live_row.setContentsMargins(0, 0, 0, 0)
+        live_row.addWidget(self.volume_caption)
+        live_row.addWidget(self.meter, 1)
+        live_row.addStretch()
+        self.transport.addWidget(self.live_transport)
+        transport_column.addWidget(self.transport)
+        bottom.addLayout(transport_column, 1)
         self.start_button = QPushButton("开始聆听")
-        self.start_button.setFixedWidth(122)
+        self.start_button.setFixedWidth(98)
         self.start_button.setObjectName("primary")
         self.start_button.clicked.connect(self.start)
-        self.stop_button = QPushButton("停止")
+        self.stop_button = QPushButton("结束")
+        self.stop_button.setToolTip('结束聆听并保存录音与字幕')
         self.stop_button.setEnabled(False)
         self.stop_button.hide()
         self.stop_button.clicked.connect(self.stop)
@@ -886,54 +745,44 @@ class Window(QMainWindow):
         bottom.addWidget(self.stop_button)
         self.playback = QFrame()
         playback_layout = QHBoxLayout(self.playback)
-        playback_layout.setContentsMargins(8, 4, 8, 4)
-        self.play_button = QPushButton("播放录音")
+        playback_layout.setContentsMargins(0, 0, 0, 0)
+        self.play_button = QPushButton()
+        self.play_button.setIcon(line_icon('play'))
+        self.play_button.setFixedSize(32, 32)
+        self.play_button.setAccessibleName('播放录音')
+        self.play_button.setToolTip('播放录音')
         self.play_button.setObjectName("quiet")
         self.play_button.clicked.connect(self.toggle_playback)
         playback_layout.addWidget(self.play_button)
         self.seek = QSlider(Qt.Orientation.Horizontal)
+        self.seek.setAccessibleName('录音播放进度')
+        self.seek.setMinimumWidth(70)
         playback_layout.addWidget(self.seek, 1)
-        self.play_time = label("00:00", "timestamp")
+        self.play_time = label("00:00 / 00:00", "timestamp")
+        self.play_time.setWordWrap(False)
+        self.playback_duration_ms = 0
         playback_layout.addWidget(self.play_time)
         self.playback.hide()
+        self.playback.setProperty('available', False)
         self.player = None
-        content_layout.addWidget(self.playback)
-        quick = QHBoxLayout()
+        self.transport.addWidget(self.playback)
         self.quick_language = QPushButton('输入与语言')
         self.quick_language.setObjectName('quiet')
         self.quick_language.setToolTip('更改原文和目标语言')
-        self.quick_language.clicked.connect(lambda: self.open_settings('聆听'))
-        quick.addWidget(self.quick_language)
-        self.prepare_models = QPushButton('准备识别与翻译模型')
-        self.prepare_models.clicked.connect(self.prepare_recommended_models)
-        quick.addWidget(self.prepare_models)
-        self.cancel_model_preparation = QPushButton('取消准备')
-        self.cancel_model_preparation.clicked.connect(self.model_manager.cancel_preparation)
-        self.cancel_model_preparation.hide()
-        quick.addWidget(self.cancel_model_preparation)
-        self.preparation_summary = label('', 'muted')
-        self.preparation_summary.setWordWrap(True)
-        self.preparation_summary.hide()
-        content_layout.addWidget(self.preparation_summary)
-        self.model_guidance = label('检查本地模型文件…', 'muted')
-        self.model_guidance.setWordWrap(True)
-        content_layout.addWidget(self.model_guidance)
-        self.preparation_progress = QProgressBar()
-        self.preparation_progress.setFixedHeight(24)
-        self.preparation_progress.setToolTip("当前下载文件的进度；总大小未知时显示滑动条。")
-        self.preparation_progress.hide()
-        content_layout.addWidget(self.preparation_progress)
-        self.model_manager.preparation_message.connect(self.show_preparation_message)
-        self.model_manager.preparation_changed.connect(self.prepare_models.setDisabled)
-        self.model_manager.preparation_changed.connect(lambda active: self.model_guidance.setVisible(not active))
-        self.model_manager.preparation_changed.connect(lambda active:
-            self.show_preparation_message(self.model_manager.status.text()) if not active else None)
-        self.model_manager.preparation_changed.connect(self.cancel_model_preparation.setVisible)
-        self.model_manager.preparation_changed.connect(self.preparation_progress.setVisible)
-        self.model_manager.download_changed.connect(self.show_download_progress)
-        quick.addStretch()
-        content_layout.addLayout(quick)
-        content_layout.addWidget(footer)
+        self.language_popup = LanguagePopup(self.source, self.target, self.translate, self)
+        self.language_popup.finished.connect(self.save)
+        self.quick_language.clicked.connect(lambda: self.language_popup.show_at(
+            self.quick_language, next_session=self.recording_state.active))
+        self.quick_language.setMinimumWidth(0)
+        self.quick_language.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        input_row.addWidget(self.quick_language, 0, 1)
+        self.control_island.compactChanged.connect(self.arrange_input_controls)
+        footer_layout.addWidget(self.pipeline)
+        self.pipeline.setStyleSheet('font-size: 11px;')
+        self.control_island.heightChanged.connect(self.update_caption_insets)
+        self.control_island.heightChanged.connect(self.scroll.set_overlay_height)
+        self.control_island.placement.start(0)
+        self.update_transport()
         right_layout.addWidget(content, 1)
         split.addWidget(right)
         split.setSizes([250, 1030])
@@ -961,10 +810,13 @@ class Window(QMainWindow):
         self.settings_workspace = SettingsWorkspace(WorkspaceFrame,
             storage_root=self.library.root, manager=self.model_manager,
             controls={key: getattr(self, key) for key in
-                      ('device', 'source', 'target', 'translate', 'reduce_motion', 'beta_features', 'appearance')})
+                      ('device', 'source', 'target', 'translate', 'reduce_motion', 'beta_features', 'appearance', 'compute')})
         self.beta_features.toggled.connect(self.apply_beta_features)
         self.apply_beta_features(self.beta_features.isChecked(), persist=False)
         self.settings_panel = self.settings_workspace.listening_page
+        self.settings_workspace.model_settings_changed.connect(self.save)
+        self.device.currentIndexChanged.connect(self.save)
+        self.device.currentIndexChanged.connect(self.change_audio_source)
         for signal, action in (
                 (self.settings_workspace.back_requested, self.leave_settings),
                 (self.settings_workspace.open_storage_requested, self.reveal_library),
@@ -973,7 +825,6 @@ class Window(QMainWindow):
                 (self.settings_workspace.refresh_devices_requested, self.refresh_devices)):
             signal.connect(action)
         self.settings_workspace.prepare_models_requested.connect(self.prepare_recommended_models)
-        self.model_manager.start_check = self.start_background_check
         self.settings_workspace.model_browser.start_check = self.start_background_check
         self.settings_workspace.model_browser.changed.connect(self.check_model_assets)
         self.model_manager.selection_changed.connect(lambda *_: self.asset_check_timer.start(100))
@@ -988,10 +839,6 @@ class Window(QMainWindow):
         self.translate.toggled.connect(self.update_quick_settings)
         self.model_manager.backend.currentIndexChanged.connect(self.update_quick_settings)
         self.update_quick_settings()
-        for sequence, action in [('Ctrl+,', self.open_settings), ('Ctrl+N', self.new_recording),
-                                 ('Escape', self.return_to_recording), ('Ctrl+F', self.focus_settings_search)]:
-            shortcut = QShortcut(QKeySequence(sequence), self)
-            shortcut.activated.connect(action)
         self.translate.setText("")
         self.activity_timer = QTimer(self)
         self.activity_timer.timeout.connect(self.update_activity)
@@ -1023,7 +870,6 @@ class Window(QMainWindow):
         menu.addSeparator()
         quit_action = QAction('退出 AgentScribe', self)
         quit_action.setMenuRole(QAction.MenuRole.QuitRole)
-        quit_action.setShortcut(QKeySequence.StandardKey.Quit)
         quit_action.triggered.connect(self.close)
         menu.addAction(quit_action)
 
@@ -1050,7 +896,19 @@ class Window(QMainWindow):
             palette.setColor(role, QColor(color))
         app.setPalette(palette)
         app.setStyleSheet(appearance_style(STYLE, mode))
+        for button, kind in ((self.new_button, 'new'), (self.settings_button, 'settings'),
+                             (self.deleted_button, 'trash'),
+                             (self.quick_language, 'chevron'),
+                             (self.refresh_source, 'check' if self.refresh_feedback.isActive() else 'refresh')):
+            button.setIcon(line_icon(kind, theme_colors(mode)['muted']))
+        for index in range(self.device.count()):
+            data = self.device.itemData(index)
+            if data:
+                self.device.setItemIcon(index, line_icon('system' if data[1] else 'input', colors[1]))
+        for widget in self.findChildren(QWidget):
+            widget.update()
         self.prefs.setValue('appearance', mode)
+        self.update_playback_button()
         self.centralWidget().update()
         for frame in self.findChildren(WorkspaceFrame):
             frame.update()
@@ -1090,6 +948,7 @@ class Window(QMainWindow):
         self.model_manager.version_label.setText(f'当前版本：{__version__} · 可用新版：{result["version"]}')
         self.update_dialog = QMessageBox(self)
         self.ui_update_button.setText('↓  有新版本')
+        self.ui_update_button.show()
         self.update_dialog.setWindowTitle('AgentScribe 有新版本')
         self.update_dialog.setText(f'发现新版 {result["version"]}，建议更新。')
         self.update_dialog.setInformativeText(result['message'])
@@ -1101,6 +960,8 @@ class Window(QMainWindow):
         self.update_dialog.show()
 
     def refresh_model_assets_after_preparation(self, active):
+        if active:
+            self.model_action = None
         self.asset_check_generation += 1
         if not active:
             self.check_model_assets()
@@ -1114,31 +975,76 @@ class Window(QMainWindow):
         self.asset_check_generation += 1
         generation = self.asset_check_generation
         selection = self.preparation_selection()
+        translating = self.translate.isChecked()
         def checked(value):
-            if selection != self.preparation_selection():
+            if selection != self.preparation_selection() or translating != self.translate.isChecked():
                 self.check_model_assets()
                 return
-            missing = value if isinstance(value, list) else ['本地模型检查失败，请点击准备按钮重试']
+            missing = value if isinstance(value, list) else ['本地模型检查未完成，可在模型管理中重新检查']
             self.on_model_assets_checked(generation, missing)
-        self.asset_check = self.start_background_check('linguaflow.recommended_prepare', checked, '--check',
-            '--selection', json.dumps(selection, ensure_ascii=False))
+        arguments = ['--check', '--selection', json.dumps(selection, ensure_ascii=False)]
+        if not translating:
+            arguments += ['--only', 'asr']
+        self.asset_check = self.start_background_check('linguaflow.recommended_prepare', checked, *arguments)
 
     def on_model_assets_checked(self, generation, missing):
         if self.asset_check_closed or generation != self.asset_check_generation:
             return
-        if missing:
-            self.model_guidance.setText('首次使用请准备本地模型：' + '、'.join(missing) +
-                '。点击“准备识别与翻译模型”；首次需要联网，准备时可以继续操作界面。')
-        else:
-            self.model_guidance.setText('所选模型文件已就绪。请选择声音与原文语言；启动时验证推理环境。')
+        self.missing_model_assets = tuple(missing)
+        action, self.model_action = self.model_action, None
+        if not missing:
+            if self.model_prompt is not None:
+                self.model_prompt.close()
+            if action == 'start':
+                self.start(models_checked=True)
+            elif action and not self.save_error:
+                self.status.setText('模型已就绪 · 可以开始聆听')
+        elif action:
+            if not self.save_error:
+                self.status.setText('需要准备所选模型')
+            self.prompt_missing_models()
+
+    def check_models_for_action(self, action):
+        """Only explicit recording actions request a prompt; checks never download."""
+        if self.model_manager.preparing:
+            return
+        self.model_action = action
+        if not self.save_error:
+            self.status.setText('正在检查所选模型…')
+        self.check_model_assets()
+
+    def prompt_missing_models(self):
+        if (self.asset_check_closed or not self.missing_model_assets or not self.isVisible()
+                or self.recording_state.active or self.model_manager.preparing):
+            return
+        if QApplication.activeModalWidget() or QApplication.activePopupWidget():
+            QTimer.singleShot(300, self.prompt_missing_models)
+            return
+        if self.model_prompt is not None:
+            self.model_prompt.close()
+        dialog = self.model_prompt = SurfaceDialog('本地模型需要准备',
+            '缺少所选模型文件：' + '、'.join(self.missing_model_assets), self)
+        dialog.body.addWidget(label('前往“设置 → 模型管理”下载或导入模型。关闭提示后仍可在那里操作；已有录音可以继续查看和回听。', 'muted'))
+        later = QPushButton('稍后')
+        later.clicked.connect(dialog.close)
+        manage = QPushButton('前往模型管理')
+        manage.clicked.connect(lambda: (dialog.close(), self.open_settings('模型管理')))
+        download = QPushButton('下载所选模型')
+        download.setObjectName('primary')
+        download.clicked.connect(lambda: (dialog.close(), self.open_settings('模型管理'),
+                                          self.prepare_recommended_models(only=None if self.translate.isChecked() else 'asr')))
+        dialog.actions.addStretch()
+        dialog.actions.addWidget(later)
+        dialog.actions.addWidget(manage)
+        dialog.actions.addWidget(download)
+        dialog.setWindowModality(Qt.WindowModality.NonModal)
+        dialog.show()
 
     def open_settings(self, category="常规"):
         category = category if isinstance(category, str) else "常规"
         if category in ('识别模型', '翻译模型'):
             category = '模型管理'
         self.settings_workspace.search.clear()
-        if category in ('识别模型', '翻译模型', '字幕与延迟', '运行环境'):
-            self.settings_workspace.advanced_navigation.setChecked(True)
         index = self.settings_workspace.categories.index(category)
         self.settings_workspace.navigation.setCurrentRow(index)
         self.settings_workspace.select(index)
@@ -1153,15 +1059,10 @@ class Window(QMainWindow):
         if self.pages.currentIndex() == 1 and QApplication.activeModalWidget() is None:
             self.leave_settings()
 
-    def focus_settings_search(self):
-        if self.pages.currentIndex() == 1:
-            self.settings_workspace.search.setFocus()
-            self.settings_workspace.search.selectAll()
-
     def update_quick_settings(self):
         language = self.source.currentText()
         self.quick_language.setText(language + (' → ' + self.target.currentText()
-                                    if self.translate.isChecked() else ' · 仅原文') + '  ⌄')
+                                    if self.translate.isChecked() else ' · 仅原文'))
 
     def open_recording_library(self, explicit_root):
         def choose_directory(root, error):
@@ -1253,14 +1154,19 @@ class Window(QMainWindow):
             return
         if error:
             self.session_dirty = True
-            self.status.setText("自动保存失败，请导出字幕备份")
-            self.status.setToolTip(error)
+            self.save_error = error
+            self.update_activity()
             return
         self.current_item['state'] = state
         if self.knowledge_client.identifier == self.current_item['id']:
             self.knowledge_client.saved(snapshot.captions, final=state in ('complete', 'incomplete'))
         if snapshot.revision == self.caption_version:
             self.session_dirty = False
+            self.save_error = ''
+            self.status.setToolTip('')
+            if not self.recording_state.active and not self.last_error:
+                self.status.setText('已保存')
+            self.update_activity()
 
     def persist_session(self, state=None):
         self.autosave.stop()
@@ -1282,34 +1188,41 @@ class Window(QMainWindow):
         if self.player:
             self.player.stop()
             self.player.setSource(QUrl())
-        self.playback.hide()
+        self.playback.setProperty('available', False)
+        self.playback_duration_ms = 0
+        self.seek.setRange(0, 0)
+        self.playback_position(0)
+        self.update_transport()
 
     def reset_recording_view(self):
+        self.model_action = None
         self.close_knowledge()
         self.release_playback()
         self.autosave.stop()
         self.current_item = None
         self.session_dirty = False
+        self.save_error = ''
+        self.status.setToolTip('')
+        self.update_activity()
         self.clear_captions()
         self.workspace_title.setText("新录音")
-        self.empty.setText("选择文件夹，创建你的第一段录音。\n\n点击文件夹旁的 ＋，为这次聆听起个名字。")
+        self.empty.setText("点击「新录音」开始。")
         self.export_button.setEnabled(False)
 
-    def new_recording(self, checked=False, *, folder_id=None, name=None):
+    def new_recording(self, checked=False, *, folder_id=None, name=None, check_models=True):
         if not self.can_edit_library():
             return False
         self.library.refresh()
-        if not self.library.index["folders"]:
-            self.create_folder()
-            if not self.library.index["folders"]:
-                return False
-        folder_id = folder_id or self.folder_id or self.library.index["folders"][0]["id"]
+        folders = self.library.index['folders']
+        folder_id = folder_id or self.folder_id or (folders[0]['id'] if folders else None)
         if name is None:
             dialog = RecordingDialog(self.library, folder_id, self)
             if not dialog.exec():
                 return False
             name, folder_id = dialog.name.text(), dialog.folder.currentData()
         try:
+            if not self.library.index['folders']:
+                folder_id = self.library.folder('我的录音')['id']
             item = self.library.create(folder_id, {}, name=name)
         except (OSError, ValueError) as exc:
             QMessageBox.warning(self, "无法创建录音", str(exc))
@@ -1321,11 +1234,14 @@ class Window(QMainWindow):
         self.status.setText("待开始 · " + self.library.folder_label(folder_id))
         self.refresh_library()
         self.pages.setCurrentIndex(0)
+        if check_models:
+            self.check_models_for_action('new')
         return True
 
     def open_library_item(self, row, column):
         if not self.can_edit_library():
             return
+        self.model_action = None
         kind, identifier = row.data(0, Qt.ItemDataRole.UserRole)
         if kind == "folder":
             self.reset_recording_view()
@@ -1572,26 +1488,99 @@ class Window(QMainWindow):
         if self.player:
             self.player.stop()
         path = self.library.directory(self.current_item["id"]) / "录音.wav" if self.current_item else None
-        self.playback.setVisible(bool(path and path.exists() and path.stat().st_size > 44))
-        if not self.playback.isHidden():
+        available = bool(path and path.exists() and path.stat().st_size > 44)
+        self.playback.setProperty('available', available)
+        self.update_transport()
+        if available:
             from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
             if self.player is None:
                 self.player = QMediaPlayer(self)
                 self.audio_output = QAudioOutput(self)
                 self.player.setAudioOutput(self.audio_output)
-                self.player.durationChanged.connect(lambda n: self.seek.setRange(0, n))
+                self.player.durationChanged.connect(self.playback_duration)
                 self.player.positionChanged.connect(self.playback_position)
                 self.seek.sliderMoved.connect(self.player.setPosition)
-                self.player.playbackStateChanged.connect(lambda state: self.play_button.setText(
-                    "暂停" if state == QMediaPlayer.PlaybackState.PlayingState else "播放录音"))
-                self.player.errorOccurred.connect(lambda *_: self.status.setText("录音无法播放：" + self.player.errorString()))
+                self.player.playbackStateChanged.connect(lambda *_: self.update_playback_button())
+                self.player.errorOccurred.connect(lambda *_: QMessageBox.warning(
+                    self, '录音无法播放', self.player.errorString()))
             self.player.setSource(QUrl.fromLocalFile(str(path)))
+
+    def update_transport(self):
+        active = self.recording_state.active
+        replay = not active and bool(self.playback.property('available'))
+        self.transport.setCurrentWidget(self.playback if replay else self.live_transport)
+        self.meter.setVisible(not replay)
+        self.transport.setVisible(True)
+        self.start_button.setVisible(not active and not replay)
+        self.quick_device.setVisible(not replay)
+        self.quick_language.setVisible(not replay)
+        self.refresh_source.setVisible(not replay)
+        self.update_volume_caption()
+
+    def update_volume_caption(self):
+        source = self.quick_device.currentData()
+        category = ('系统音频' if source[1] else '外部输入') if source else '音频音量'
+        state = self.recording_state
+        detail = ('收尾中' if state is RecordingState.STOPPING else
+                  '继续后切换' if self.pending_source_revision is not None and state is RecordingState.PAUSED else
+                  '正在切换…' if self.pending_source_revision is not None else
+                  '已暂停' if state is RecordingState.PAUSED else
+                  '实时音量' if state is RecordingState.LISTENING else
+                  '准备收音' if state.active else '开始后显示')
+        self.volume_caption.setText(f'{category}\n{detail}')
+
+    def change_audio_source(self):
+        source = self.device.currentData()
+        if self.session is not None and self.recording_state.active and source:
+            self.pending_source_revision = self.session.switch_source(*source)
+            self.meter.setValue(0)
+        self.update_volume_caption()
+
+    def on_source_changed(self, revision):
+        if self.sender() is not None and self.sender() is not self.session:
+            return
+        if revision == self.pending_source_revision:
+            self.pending_source_revision = None
+            self.update_volume_caption()
+
+    def on_level(self, value):
+        if self.sender() is not None and self.sender() is not self.session:
+            return
+        # Queued levels from the previous source must not light up its replacement.
+        if self.recording_state is RecordingState.LISTENING and self.pending_source_revision is None:
+            self.meter.set_rms(value)
+        else:
+            self.meter.setValue(0)
+
+    def arrange_input_controls(self, compact):
+        self.input_row.addWidget(self.quick_device, 0, 0, 1, 3 if compact else 1)
+        self.input_row.addWidget(self.quick_language, 1 if compact else 0, 0 if compact else 1,
+                                 1, 2 if compact else 1)
+        self.input_row.addWidget(self.refresh_source, 1 if compact else 0, 2)
+
+    @staticmethod
+    def playback_clock(milliseconds):
+        seconds = max(0, milliseconds // 1000)
+        return (f'{seconds//3600}:{seconds//60%60:02}:{seconds%60:02}' if seconds >= 3600 else
+                f'{seconds//60:02}:{seconds%60:02}')
+
+    def playback_duration(self, milliseconds):
+        self.playback_duration_ms = max(0, milliseconds)
+        self.seek.setRange(0, self.playback_duration_ms)
+        self.playback_position(self.seek.value())
+
+    def update_playback_button(self):
+        playing = self.player is not None and self.player.playbackState().name == 'PlayingState'
+        title = '暂停播放' if playing else '播放录音'
+        self.play_button.setIcon(line_icon('pause' if playing else 'play',
+                                         theme_colors(QApplication.instance().property('appearance'))['text']))
+        self.play_button.setAccessibleName(title)
+        self.play_button.setToolTip(title)
 
     def playback_position(self, position):
         if not self.seek.isSliderDown():
             self.seek.setValue(position)
-        seconds = position // 1000
-        self.play_time.setText(f"{seconds // 60:02}:{seconds % 60:02}")
+        self.play_time.setText(self.playback_clock(position) + ' / ' + self.playback_clock(self.playback_duration_ms))
 
     def toggle_playback(self):
         if self.player:
@@ -1623,14 +1612,8 @@ class Window(QMainWindow):
     def use_recommended_profile(self):
         selection = recommended_selection()
         manager = self.model_manager
-        manager.backend.setCurrentIndex(data_index(manager.backend, selection['backend']))
-        control = self.asr if selection['backend'] == 'wlk-whisper' else manager.qwen_model
-        control.setCurrentText(selection['asr_model'])
+        manager.apply_selection(selection)
         self.sync_asr_device()
-        manager.translation_engine.setCurrentIndex(data_index(manager.translation_engine, selection['translation_engine']))
-        control = manager.llama_model if selection['translation_engine'] == 'llama' else self.translation
-        control.setCurrentText(selection['translation_model'])
-        manager.translation_device.setCurrentIndex(data_index(manager.translation_device, selection['translation_device']))
         self.translate.setChecked(True)
         manager.status.setText('已选择推荐模型；下一次开始聆听时生效。')
 
@@ -1647,23 +1630,19 @@ class Window(QMainWindow):
             return defaults
         return selection
 
-    def prepare_recommended_models(self):
+    def prepare_recommended_models(self, *, only=None):
         if self.preparation_selection() != self.model_manager.preparation_selection():
             self.use_recommended_profile()
-        self.model_manager.prepare_recommended()
+        self.model_manager.prepare_selected(self.model_manager.preparation_selection(), only=only)
 
     def diagnostics_append(self, message):
         self.diagnostics.appendPlainText(message)
 
-    def show_preparation_message(self, message):
-        if not message:
-            self.preparation_summary.hide()
-            return
-        self.preparation_summary.setText(message)
-        self.preparation_summary.setVisible(self.model_manager.worker is None)
-
-    def show_download_progress(self, event):
-        set_download_progress(self.preparation_progress, event)
+    def update_pipeline_visibility(self):
+        active = self.recording_state.active
+        attention = any(any(word in value for word in ('加载中', '准备中', '失败'))
+                        for value in self.pipeline_state.values())
+        self.pipeline.setVisible(active and attention)
 
     def save_next_settings(self):
         if self.recording_state.active:
@@ -1703,37 +1682,61 @@ class Window(QMainWindow):
             previous = read_audio_device(self.prefs)
         try:
             devices = list_devices()
-            self.device.clear()
-            for device in devices:
-                self.device.addItem(device.name, (device.id, device.loopback))
-            if previous:
-                index = data_index(self.device, previous)
-                if index >= 0:
-                    self.device.setCurrentIndex(index)
-                else:
-                    self.device.setCurrentIndex(-1)
-                    self.status.setText("上次的音频设备不可用，请在设置中重新选择来源。")
-                    return
-            self.status.setText("就绪" if devices else "未发现录音设备，请连接设备并检查麦克风权限。")
+            # The two views share a model. Block both during its reset so a
+            # transient first row cannot overwrite the selected microphone/prefs.
+            with QSignalBlocker(self.device), QSignalBlocker(self.quick_device):
+                self.device.clear()
+                for device in devices:
+                    category = '系统音频' if device.loopback else '外部输入'
+                    # Keep category visible even when a long device name is elided.
+                    name = device.name.split(' · ', 1)[-1]
+                    color = theme_colors(QApplication.instance().property('appearance'))['text']
+                    self.device.addItem(line_icon('system' if device.loopback else 'input', color),
+                                        f'{category} · {name}', (device.id, device.loopback))
+                self.device.setCurrentIndex(data_index(self.device, previous) if previous else (0 if devices else -1))
+                self.quick_device.setCurrentIndex(self.device.currentIndex())
+            self.save()
+            self.update_volume_caption()
+            self.quick_device.setToolTip(self.device.currentText() or '音频来源不可用，请连接设备后刷新。')
+            if previous and self.device.currentIndex() < 0:
+                QMessageBox.warning(self, '音频来源不可用', '上次的音频设备不可用，请重新选择系统音频或外部输入。')
+                return
+            if not devices:
+                QMessageBox.warning(self, '没有音频来源', '未发现录音设备，请连接设备并检查麦克风权限。')
+                return
+            self.refresh_source.setIcon(line_icon('check', theme_colors(QApplication.instance().property('appearance'))['text']))
+            self.refresh_source.setToolTip(f'已刷新 · 找到 {len(devices)} 个音频来源')
+            self.refresh_feedback.start()
         except Exception as exc:
             self.status.setText(f"无法读取音频设备：{exc}")
+            QMessageBox.warning(self, '无法读取音频设备', str(exc))
 
-    def start(self):
+    def reset_refresh_feedback(self):
+        self.refresh_source.setIcon(line_icon('refresh', theme_colors(QApplication.instance().property('appearance'))['muted']))
+        self.refresh_source.setToolTip('刷新音频设备列表')
+
+    def start(self, *, models_checked=False):
         if self.session is not None:
             return
         if reason := self.model_manager.start_block_reason():
             QMessageBox.information(self, *reason)
             return
-        if self.device.currentData() is None:
+        if not models_checked:
+            self.check_models_for_action('start')
+            return
+        device = self.quick_device.currentData()
+        if device is None:
             QMessageBox.warning(self, "没有音频来源", "请连接录音设备并刷新列表。")
             return
         from .inference_startup import start_problem
-        settings = self.settings_binding.session_settings(self.device.currentData())
+        # The start action belongs to the recording page: freeze exactly the
+        # source visible beside it, rather than reading a hidden settings view.
+        settings = self.settings_binding.session_settings(device)
         if reason := start_problem(settings):
             QMessageBox.warning(self, *reason)
             return
         if not self.current_item or self.current_item["state"] != "draft":
-            if not self.new_recording():
+            if not self.new_recording(check_models=False):
                 return
         self.clear_captions()
         self.last_error = ""
@@ -1745,7 +1748,7 @@ class Window(QMainWindow):
         self.on_stage("会话", "启动中")
         self.diagnostics.clear()
         self.on_status("正在启动本地推理环境…可点击停止取消加载。")
-        self.empty.setText("正在准备模型和验证推理环境…\n准备好后自动开始录音，加载进度显示在下方。")
+        self.empty.setText("正在准备模型…\n准备好后自动开始录音。")
         if self.beta_features.isChecked() and settings.backend in ('qwen3-streaming', 'qwen3-mlx'):
             try:
                 context = session_context(self.library, self.current_item['id'])
@@ -1792,8 +1795,13 @@ class Window(QMainWindow):
         if self.knowledge_panel:
             self.knowledge_panel.set_recording(state.active)
         self.model_manager.set_session_active(state.active)
-        for control in (self.library_tree, self.new_button, self.folder_button, self.device, self.quick_device, self.refresh_source):
+        for control in (self.library_tree, self.new_button, self.folder_button):
             control.setEnabled(not state.active)
+        source_enabled = state in (RecordingState.IDLE, RecordingState.LISTENING, RecordingState.PAUSED)
+        for control in (self.device, self.quick_device, self.refresh_source):
+            control.setEnabled(source_enabled)
+        if state is RecordingState.IDLE:
+            self.pending_source_revision = None
         self.start_button.setEnabled(not state.active)
         self.start_button.setText(state.value)
         self.stop_button.setEnabled(state.can_stop)
@@ -1801,7 +1809,16 @@ class Window(QMainWindow):
         self.pause_button.setVisible(state.active)
         self.pause_button.setEnabled(state.can_pause and not self.last_error)
         self.pause_button.setText("继续录音" if state is RecordingState.PAUSED else "暂停")
+        self.start_button.setVisible(not state.active)
+        self.update_transport()
         self.export_button.setEnabled(not state.active and any(c.final and c.source for c in self.captions.values()))
+        self.update_pipeline_visibility()
+        reason = '正在聆听，请先停止录音再切换或整理文件。' if state.active else ''
+        for control in (self.library_tree, self.new_button, self.folder_button):
+            control.setToolTip(reason)
+        if not state.active:
+            self.folder_button.setToolTip('新建文件夹')
+        self.quick_device.setToolTip(self.device.currentText() + '\n系统音频：电脑播放的声音；外部输入：麦克风或虚拟输入。\n录音时可切换，暂停时切换将在继续后生效。')
 
     def launch_session(self, settings):
         self.session = Session(settings, self, recording_path=
@@ -1811,7 +1828,8 @@ class Window(QMainWindow):
         self.session.ready.connect(self.on_ready)
         self.session.paused.connect(self.on_paused)
         self.session.caption.connect(self.on_caption)
-        self.session.level.connect(lambda value: self.meter.setValue(min(100, int(value * 500))))
+        self.session.level.connect(self.on_level)
+        self.session.source_changed.connect(self.on_source_changed)
         self.session.failure.connect(self.on_failure)
         self.session.finished.connect(self.on_finished)
         self.session.start()
@@ -1821,6 +1839,12 @@ class Window(QMainWindow):
         self.pipeline.setText(
             "   /   ".join(f"{name}：{value}" for name, value in self.pipeline_state.items())
         )
+        self.update_pipeline_visibility()
+        if name == '音频' and self.recording_state is RecordingState.LISTENING and not self.captions:
+            if state.startswith('输入持续为零'):
+                self.empty.setText('没有收到声音。\n请检查所选音频来源、静音和麦克风权限。')
+            elif state.startswith('已收到声音'):
+                self.empty.setText('正在聆听…')
 
     def on_status(self, message):
         self.diagnostics.appendPlainText(time.strftime("%H:%M:%S") + "  " + message)
@@ -1831,11 +1855,20 @@ class Window(QMainWindow):
                 and self.session.settings.backend.startswith('qwen3-')):
             return
         self.phase_started = time.monotonic()
-        self.status.setToolTip(message)
+        if not self.save_error:
+            self.status.setToolTip(message)
         self.update_activity()
 
     def update_activity(self):
-        if self.recording_state.active and not self.last_error:
+        self.status.setVisible(bool(self.save_error or self.last_error))
+        if self.status.property('saveError') != bool(self.save_error):
+            self.status.setProperty('saveError', bool(self.save_error))
+            self.status.style().unpolish(self.status)
+            self.status.style().polish(self.status)
+        if self.save_error:
+            self.status.setText('自动保存失败 · 字幕仍保留，请检查保存位置')
+            self.status.setToolTip(self.save_error)
+        elif self.recording_state.active and not self.last_error:
             elapsed = int(time.monotonic() - self.phase_started)
             self.status.setText(self.recording_state.status(elapsed))
 
@@ -1900,6 +1933,7 @@ class Window(QMainWindow):
         self.last_error = message
         self.pause_button.setEnabled(False)
         self.status.setText(message)
+        self.update_activity()
         self.diagnostics.appendPlainText(time.strftime("%H:%M:%S") + "  " + message)
         self.diagnostics.show()
         if not self.captions:
@@ -1987,9 +2021,9 @@ class Window(QMainWindow):
                               translation_phase=previous.translation_phase)
         self.captions[caption.id] = caption
         if caption.id in self.cards:
-            self.cards[caption.id].update_caption(caption)
+            self.cards[caption.id].update_caption(caption, animate=not self.loading_saved)
         elif caption.id >= max(self.captions) - 199:
-            card = CaptionCard(caption, self.caption_translation)
+            card = CaptionCard(caption, self.caption_translation, animate=not self.loading_saved)
             self.cards[caption.id] = card
             self.feed_layout.insertWidget(self.feed_layout.count() - 1, card)
             # Bound Qt widget count while retaining the complete export in memory.
@@ -1999,7 +2033,7 @@ class Window(QMainWindow):
                 self.feed_layout.removeWidget(old)
                 old.deleteLater()
         if caption.id == max(self.captions):
-            self.overlay.update_caption(caption, self.caption_translation)
+            self.overlay.update_caption(caption, self.caption_translation, animate=not self.loading_saved)
         self.export_button.setEnabled(any(c.final and c.source for c in self.captions.values()))
         if self.current_item and not self.loading_saved and not self.autosave.isActive():
             self.autosave.start(1500)
@@ -2042,38 +2076,31 @@ class Window(QMainWindow):
         else:
             self.status.setText(f"已导出录音定稿：{snapshot.item['path']}")
 
+    def update_caption_insets(self, *_):
+        width = self.scroll.viewport().width()
+        margin = max(20, (width-900)//2) + 12
+        self.feed_layout.setContentsMargins(margin, 24, margin, self.control_island.height()+46)
+
     def eventFilter(self, watched, event):
         if (event.type() == QEvent.Type.Resize and hasattr(self, "workspace_content")
                 and watched is self.workspace_content):
-            margin = max(20, (event.size().width() - 900) // 2)
-            self.workspace_content_layout.setContentsMargins(margin, 12, margin, 20)
-        if (sys.platform == "win32"
-                and os.environ.get("QT_QPA_PLATFORM") != "offscreen"
-                and event.type() == QEvent.Type.MouseButtonPress
+            self.update_caption_insets()
+        if (event.type() == QEvent.Type.Resize and hasattr(self, 'control_island')
+                and watched is self.scroll.viewport()):
+            self.update_caption_insets()
+        if (event.type() == QEvent.Type.MouseButtonPress
                 and event.button() == Qt.MouseButton.LeftButton
                 and watched.window() is self
-                and not self.isMaximized()):
-            point = self.mapFromGlobal(event.globalPosition().toPoint())
-            margin = 7
-            edges = Qt.Edge(0)
-            if point.x() <= margin:
-                edges |= Qt.Edge.LeftEdge
-            elif point.x() >= self.width() - margin:
-                edges |= Qt.Edge.RightEdge
-            if point.y() <= margin:
-                edges |= Qt.Edge.TopEdge
-            elif point.y() >= self.height() - margin:
-                edges |= Qt.Edge.BottomEdge
-            if edges and self.windowHandle():
-                self.windowHandle().startSystemResize(edges)
-                return True
+                and start_edge_resize(self.windowHandle(), self.mapFromGlobal(event.globalPosition().toPoint()),
+                                      self.size(), maximized=self.isMaximized())):
+            return True
         return super().eventFilter(watched, event)
 
     def changeEvent(self, event):
         super().changeEvent(event)
         if event.type() == QEvent.Type.WindowStateChange and hasattr(self, "title_bar"):
             maximized = self.isMaximized()
-            self.title_bar.maximize.setText("❐" if maximized else "□")
+            self.title_bar.maximize.update()
             self.title_bar.maximize.setToolTip("还原" if maximized else "最大化")
 
     def moveEvent(self, event):
@@ -2087,7 +2114,8 @@ class Window(QMainWindow):
                 and sys.platform == "win32"
                 and os.environ.get("QT_QPA_PLATFORM") != "offscreen"):
             self._backdrop_attempted = True
-            self._backdrop_applied = enable_system_backdrop(self)
+            self._native_resize_applied = enable_native_resize(int(self.winId()))
+            self._backdrop_applied = enable_system_backdrop(int(self.winId()))
 
     def closeEvent(self, event):
         if self.model_manager.worker is not None:
@@ -2118,7 +2146,11 @@ class Window(QMainWindow):
         if self.runtime is not None:
             self.runtime.close(wait=False)
         self.asset_check_closed = True
+        self.model_action = None
         self.asset_check_timer.stop()
+        self.language_popup.close()
+        if self.model_prompt is not None:
+            self.model_prompt.close()
         if self.background_checks:
             for check in tuple(self.background_checks):
                 check.kill()

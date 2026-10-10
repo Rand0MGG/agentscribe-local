@@ -4,7 +4,7 @@ import json
 import time
 import wave
 from collections import deque
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from threading import Event, Thread
 
 import numpy as np
@@ -26,6 +26,7 @@ class Session(QThread):
     caption = Signal(object)
     model_result = Signal(object)
     level = Signal(float)
+    source_changed = Signal(int)
     failure = Signal(str)
     ready = Signal()
     paused = Signal(bool)
@@ -47,6 +48,8 @@ class Session(QThread):
         self.last_error = ""
         self.recording_path = recording_path
         self.capture_control = CaptureControl()
+        self.capture_settings = settings
+        self.source_revision = 0
         self.owns_runtime = runtime is None
         self.runtime = runtime if runtime is not None else RuntimePreparation()
 
@@ -57,6 +60,19 @@ class Session(QThread):
 
     def resume(self):
         return self.capture_control.resume()
+
+    def switch_source(self, device_id, loopback):
+        """Queue a capture-only change; return its revision or None after stop.
+
+        The capture thread releases the old device first. The model configuration,
+        recording file and caption clock remain those of the current session.
+        """
+        with self.capture_control.condition:
+            if self.stop_capture.is_set() or not self.capture_control.restart():
+                return None
+            self.capture_settings = replace(self.settings, device_id=device_id, loopback=loopback)
+            self.source_revision += 1
+            return self.source_revision
 
     def stop(self, discard=False):
         if self.stop_started is None:
@@ -151,13 +167,10 @@ class Session(QThread):
                     if silent_samples >= self.settings.input_sample_rate * 3 and not warned:
                         warned = True
                         self.stage.emit("音频", "输入持续为零，请检查来源 / 静音")
-                        self.status.emit("连续 3 秒未采集到有效声音。请检查所选设备；系统声音来源需要正在播放音频。")
+                        self.status.emit("连续 3 秒未采集到有效声音。请检查所选设备；系统音频来源需要正在播放音频。")
                     elif warned and silent_samples == 0:
                         warned = False
                         self.stage.emit("音频", "已收到声音 · 连续采集")
-
-                def block(samples):
-                    return self.capture_control.accept(lambda: write_block(samples))
 
                 def paused():
                     nonlocal silent_samples, warned
@@ -176,8 +189,29 @@ class Session(QThread):
                         recording.setnchannels(1)
                         recording.setsampwidth(2)
                         recording.setframerate(self.settings.input_sample_rate)
+                    previous_revision = 0
                     while (segment := self.capture_control.next_segment(paused, resumed)) is not None:
-                        self.capture_fn(self.settings, segment, block)
+                        with self.capture_control.condition:
+                            if segment.is_set():
+                                continue
+                            source_settings = self.capture_settings
+                            revision = self.source_revision
+                        if revision != previous_revision:
+                            journal.mark_pause()  # Flush old-source speech before new PCM.
+                            silent_samples, warned = 0, False
+                            self.level.emit(0.)
+                        previous_revision = revision
+                        acknowledged = [False]
+
+                        def block(samples, segment=segment, revision=revision, acknowledged=acknowledged):
+                            def write():
+                                write_block(samples)
+                                if not acknowledged[0]:
+                                    acknowledged[0] = True
+                                    self.source_changed.emit(revision)
+                            return self.capture_control.accept(write, segment)
+
+                        self.capture_fn(source_settings, segment, block)
                         if not segment.is_set():
                             break
                 except Exception as exc:

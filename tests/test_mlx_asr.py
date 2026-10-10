@@ -214,16 +214,12 @@ def test_worker_pcm_contract_and_quantization_validation(monkeypatch, tmp_path, 
     inputs = iter([{'model': str(tmp_path), 'language': 'English'},
                    {'pcm': base64.b64encode(pcm.tobytes()).decode()}, {'type': 'stop'}])
     events = []
-    if bits != 4:
-        with pytest.raises(ValueError, match='4-bit'):
-            serve(lambda: next(inputs), events.append)
-        assert not state['calls']
-    else:
-        serve(lambda: next(inputs), events.append)
-        assert [e['type'] for e in events] == ['ready', 'result']
-        assert events[-1]['text'] == 'hello' and events[-1]['device'] == 'gpu'
-        np.testing.assert_array_equal(state['calls'][0][0], pcm)
-        assert state['calls'][0][1]['language'] == 'English'
+    serve(lambda: next(inputs), events.append)
+    assert [e['type'] for e in events] == ['ready', 'result']
+    assert events[0]['bits'] == bits
+    assert events[-1]['text'] == 'hello' and events[-1]['device'] == 'gpu'
+    np.testing.assert_array_equal(state['calls'][0][0], pcm)
+    assert state['calls'][0][1]['language'] == 'English'
 
 
 def test_mac_profile_roundtrip_and_backend_switch_do_not_open_audio(tmp_path):

@@ -6,6 +6,54 @@ from linguaflow.core import Caption, Settings
 from linguaflow.library import Library
 
 
+def test_visible_trash_and_legacy_entries_coexist_without_migration(tmp_path):
+    library = Library(tmp_path)
+    old = library.create('inbox', {}, name='旧录音')
+    library.save(old, [Caption(1, 0, 1, 'keep', 'en')])
+    old_token = library.trash(old)
+    (tmp_path / '垃圾桶').rename(tmp_path / '.最近删除')
+    library = Library(tmp_path)
+    new = library.create('inbox', {}, name='新录音')
+    new_token = library.trash(new)
+    assert {item['token'] for item in library.deleted()} == {old_token, new_token}
+    assert all(item['name'] != '垃圾桶' for item in library.index['folders'])
+    assert (tmp_path / '.最近删除' / old_token / '旧录音').is_dir()
+    assert (tmp_path / '垃圾桶' / new_token / '新录音').is_dir()
+    library.restore_deleted(old_token)
+    assert library.load(old)[1][0].source == 'keep'
+    library.purge_deleted(new_token)
+    assert not library.deleted()
+
+
+def test_trash_reserves_name_and_protects_existing_foreign_directory(tmp_path):
+    library = Library(tmp_path)
+    with pytest.raises(ValueError, match='垃圾桶'):
+        library.folder('垃圾桶')
+    foreign = tmp_path / '垃圾桶'
+    foreign.mkdir()
+    (foreign / 'user.txt').write_text('keep')
+    item = library.create('inbox', {})
+    with pytest.raises(ValueError, match='不会覆盖'):
+        library.trash(item)
+    assert library.directory(item['id']).exists()
+    assert (foreign / 'user.txt').read_text() == 'keep'
+    library.refresh()
+    assert any(item['name'] == '垃圾桶' for item in library.index['folders'])
+
+
+def test_duplicate_trash_token_never_restores_or_purges_wrong_entry(tmp_path):
+    import shutil
+    library = Library(tmp_path)
+    item = library.create('inbox', {})
+    token = library.trash(item)
+    duplicate = tmp_path / '.最近删除' / token
+    shutil.copytree(tmp_path / '垃圾桶' / token, duplicate)
+    for action in (library.restore_deleted, library.purge_deleted):
+        with pytest.raises(ValueError, match='重复'):
+            action(token)
+    assert duplicate.exists() and (tmp_path / '垃圾桶' / token).exists()
+
+
 def test_reopen_keeps_revisions_and_exports_only_final(tmp_path):
     library = Library(tmp_path)
     folder = library.folder("课程")

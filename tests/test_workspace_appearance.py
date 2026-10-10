@@ -27,11 +27,13 @@ def read_inventory(module, callback, *args):
     callback({'models':[]})
 browser.start_check=read_inventory
 w.open_settings('模型管理')
-workspace.advanced_navigation.setChecked(True)
-workspace.advanced_navigation.setChecked(False)
+assert not hasattr(workspace, 'advanced_navigation')
+assert all(not workspace.navigation.item(i).isHidden() for i in range(len(workspace.categories)))
 assert len(reads)==1
 # Fake only the filesystem result, preserving widget and navigation behavior.
-browser.receive({'models':[dict(id='/fixture',path='/fixture/Qwen',name='Qwen 4-bit',kind='asr',engine='qwen3-mlx',size=100,deletable=True)]})
+from linguaflow.model_options import asr_backends
+engine = next(backend for backend in asr_backends() if backend.startswith('qwen3'))
+browser.receive({'models':[dict(id='/fixture',path='/fixture/Qwen',name='Qwen 4-bit',kind='asr',engine=engine,size=100,deletable=True)]})
 choice = browser.role_choices['asr']
 choice.activated.emit(1)
 assert manager.qwen_model.currentText() == '/fixture/Qwen'
@@ -42,10 +44,15 @@ w.set_recording_state(RecordingState.LISTENING)
 assert not browser.delete_button.isEnabled()
 w.set_recording_state(RecordingState.IDLE)
 browser.open_selected()
+dialog = QApplication.activeModalWidget()
+assert dialog is not None and dialog.windowTitle() == 'Qwen 4-bit'
+assert manager.qwen_model.currentText() == '/fixture/Qwen'
+dialog.accept()
+dialog = workspace.open_model_settings('asr')
 assert workspace.navigation.currentItem().text() == '模型管理'
 assert '识别模型' not in workspace.categories and '翻译模型' not in workspace.categories
-assert workspace.pages.currentIndex() == workspace.manager_page
-workspace.model_back.click()
+assert dialog.isVisible() and dialog.engine.currentData() == engine
+dialog.reject()
 assert workspace.pages.currentIndex() == workspace.mapping['模型管理']
 assert manager.qwen_model.currentText() == '/fixture/Qwen'
 w.open_settings('使用指南')
@@ -55,7 +62,7 @@ def action():
     assert release.wait(3)
     return '完成'
 manager.prepare(action)
-assert manager.status.isHidden()
+assert manager.status.isVisible() and manager.download_card.isVisible()
 ticks=[]
 def advance():
     ticks.append(1)
@@ -67,16 +74,19 @@ deadline=time.monotonic()+2
 while len(ticks)<3 and time.monotonic()<deadline:
     app.processEvents()
     time.sleep(.005)
-browser.open_selected()
+dialog = workspace.open_model_settings('asr')
+assert not dialog.download.isEnabled()
+dialog.reject()
 app.processEvents()
-assert manager.progress_bar.value()>=300 and manager.status.isHidden()
+assert manager.progress_bar.value()>=300 and manager.status.isVisible()
 width,height=manager.progress_bar.size().toTuple()
 while len(ticks)<6 and time.monotonic()<deadline:
     app.processEvents()
     time.sleep(.005)
 assert manager.progress_bar.value()>=600
 assert manager.progress_bar.size().toTuple()==(width,height)
-assert not w.preparation_summary.isVisible()
+assert not hasattr(w, 'preparation_summary')
+assert manager.download_card.parentWidget() is workspace.right
 release.set()
 while manager.worker is not None and time.monotonic()<deadline:
     app.processEvents()

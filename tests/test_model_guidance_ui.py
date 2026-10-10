@@ -91,7 +91,7 @@ assert not w.update_dialog.isVisible()
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_hidden_settings_fixed_context_and_responsive_preparation(tmp_path):
+def test_direct_settings_fixed_context_and_responsive_preparation(tmp_path):
     code = '''
 import os, time
 from threading import Event
@@ -112,7 +112,7 @@ def check(module, callback, *arguments):
 w.start_background_check = check
 visible = [workspace.categories[i] for i in range(workspace.navigation.count())
            if not workspace.navigation.item(i).isHidden()]
-assert visible == ['常规', '聆听', '模型管理', '使用指南']
+assert visible == ['常规', '聆听', '模型管理', '字幕与延迟', '运行环境', '使用指南']
 assert manager.translation_before.isHidden() and manager.translation_after.isHidden()
 settings = w.settings_binding.session_settings(('file', False))
 assert (settings.translation_before, settings.translation_after, settings.translation_initial_before) == (5, 1, 1)
@@ -144,13 +144,12 @@ while manager.worker is not None and time.monotonic() < deadline:
     app.processEvents()
     time.sleep(.005)
 assert manager.worker is None
-if hasattr(w, 'model_guidance'):
-    w.check_model_assets()
-    deadline = time.monotonic()+2
-    while '首次使用' not in w.model_guidance.text() and time.monotonic() < deadline:
-        app.processEvents()
-        time.sleep(.005)
-    assert '首次使用' in w.model_guidance.text() and 'Qwen3-ASR' in w.model_guidance.text()
+w.check_model_assets()
+deadline = time.monotonic()+2
+while w.missing_model_assets is None and time.monotonic() < deadline:
+    app.processEvents()
+    time.sleep(.005)
+assert w.missing_model_assets and w.model_prompt is None
 w.set_recording_state(RecordingState.IDLE)
 w.close()
 '''

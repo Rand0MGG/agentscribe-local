@@ -44,7 +44,8 @@ class MLXClient:
                                   **({'context': context} if context else {})}, self.startup_timeout)
             if ready.get('type') != 'ready' or 'gpu' not in ready.get('device', ''):
                 raise RuntimeError('MLX 未确认 Apple GPU 已加载。')
-            self.report(f"Qwen 4-bit · Apple GPU / Metal · 加载 {ready['load_seconds']:.1f}s")
+            precision = f" {ready['bits']}-bit" if ready.get('bits') in (4, 8) else ''
+            self.report(f"Qwen{precision} · Apple GPU / Metal · 加载 {ready['load_seconds']:.1f}s")
         except BaseException:
             self.close()
             raise

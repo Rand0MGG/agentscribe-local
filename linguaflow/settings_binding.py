@@ -1,6 +1,4 @@
 """Adapt explicitly supplied controls to preferences and an immutable session snapshot."""
-from pathlib import Path
-
 from .audio_processing.config import automatic_audio_config
 from .core import Settings
 from .preferences import PREFERENCES
@@ -45,9 +43,8 @@ class SettingsBinding:
     def session_settings(self, device):
         values = self.snapshot()
         if values['translation_engine'] == 'llama':
-            from .llama_assets import HY_GGUF
-            if values['llama_model'] != HY_GGUF:
-                values['llama_model'] = str(Path(values['llama_model'].strip()).expanduser().resolve())
+            from .llama_assets import normalize_model_reference
+            values['llama_model'] = normalize_model_reference(values['llama_model'])
         source, source_nllb = self.controls['source'].currentData()
         return Settings(
             device_id=device[0], loopback=device[1], asr_model=values['asr'].strip(),

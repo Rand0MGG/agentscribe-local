@@ -44,6 +44,7 @@ requirements-*.txt    推理环境约束；桌面依赖见 pyproject.toml
 | 安装、首次使用、录音与课程助手 | [WORKSPACE](WORKSPACE.md) |
 | 开发约束与授权边界 | [AGENTS](../AGENTS.md) |
 | 模块归属、状态与资源规则 | [ARCHITECTURE](ARCHITECTURE.md) |
+| 桌面视觉、参考图与 Mac 界面对照 | [UI_DESIGN](UI_DESIGN.md) |
 | 两端集成、打包、发布、自动升级 | [RELEASING](RELEASING.md) |
 | 当前平台的实测与限制 | [Windows 记录](VALIDATION.md)、[Mac 记录](MACOS_SUPPORT.md)及其专题链接 |
 | 识别分段、翻译模型和后台音频规则 | [语义分段](SEMANTIC_SEGMENTATION.md)、[上下文翻译](CONTEXT_TRANSLATION.md)、[llama.cpp](LLAMA_CPP.md)、[音频处理](AUDIO_PROCESSING.md) |

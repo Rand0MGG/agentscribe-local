@@ -81,3 +81,4 @@ def test_device_discovery_uses_platform_loopback_policy(monkeypatch, platform, l
     monkeypatch.setitem(sys.modules, 'soundcard', SimpleNamespace(all_microphones=devices))
     device, = list_devices()
     assert device.loopback is loopback and device.id == 'device'
+    assert device.name == ('系统音频 · fixture' if loopback else '外部输入 · fixture')

@@ -138,13 +138,17 @@ assert w.quick_device.currentData() == ('coreaudio:blackhole', False)
 for state in (RecordingState.STARTING, RecordingState.LISTENING, RecordingState.PAUSING,
               RecordingState.PAUSED, RecordingState.RESUMING, RecordingState.STOPPING):
     w.set_recording_state(state)
-    assert not w.quick_device.isEnabled() and not w.device.isEnabled()
-    assert not w.refresh_source.isEnabled()
+    enabled = state in (RecordingState.LISTENING, RecordingState.PAUSED)
+    assert w.quick_device.isEnabled() == w.device.isEnabled() == enabled
+    assert w.refresh_source.isEnabled() == enabled
 w.set_recording_state(RecordingState.IDLE)
 devices.pop(0)
+warnings = []
+desktop.QMessageBox.warning = lambda *args: warnings.append(args[1:])
 w.refresh_devices()
 assert w.device.currentIndex() == w.quick_device.currentIndex() == -1
 assert w.quick_device.currentData() is None
+assert warnings and warnings[-1][0] == '音频来源不可用'
 assert 'soundcard' not in sys.modules and 'PySide6.QtMultimedia' not in sys.modules
 w.close()
 '''

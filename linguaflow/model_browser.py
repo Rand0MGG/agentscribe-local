@@ -30,6 +30,7 @@ class ModelBrowser(QWidget):
         self.selected_models = selected_models
         self.start_check = None
         self.entries = []
+        self.inventory_loaded = False
         self.busy = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -48,6 +49,7 @@ class ModelBrowser(QWidget):
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         self.list = QListWidget()
+        self.list.setMouseTracking(True)
         self.list.setObjectName('modelInventory')
         self.list.setWordWrap(True)
         self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -57,13 +59,10 @@ class ModelBrowser(QWidget):
         row = QHBoxLayout()
         self.refresh_button = QPushButton('刷新')
         self.refresh_button.clicked.connect(self.refresh)
-        self.open_button = QPushButton('参数设置 →')
-        self.open_button.setObjectName('accentAction')
-        self.open_button.clicked.connect(self.open_selected)
         self.delete_button = QPushButton('删除模型')
         self.delete_button.setObjectName('danger')
         self.delete_button.clicked.connect(self.delete_selected)
-        for button in (self.refresh_button, self.open_button, self.delete_button):
+        for button in (self.refresh_button, self.delete_button):
             row.addWidget(button)
         row.addStretch()
         layout.addLayout(row)
@@ -89,12 +88,13 @@ class ModelBrowser(QWidget):
             choice.blockSignals(True)
             choice.clear()
             engine, path = selected[kind]
-            choice.addItem(path.rsplit('/', 1)[-1] + ' · 当前', None)
+            suffix = ' · 已选择，未在本地找到' if self.inventory_loaded else ' · 当前选择'
+            choice.addItem(path.replace('\\', '/').rsplit('/', 1)[-1] + suffix, None)
             choice.setToolTip(path + '\n修改用于下一次聆听。')
             for entry in self.entries:
                 if entry['kind'] != kind or (kind == 'asr' and entry['engine'] not in self.supported_backends):
                     continue
-                if entry['path'] == path and entry['engine'] == engine:
+                if path in (entry['path'], entry.get('selection')) and entry['engine'] == engine:
                     choice.setItemText(0, entry['name'])
                 else:
                     choice.addItem(entry['name'], entry)
@@ -114,7 +114,6 @@ class ModelBrowser(QWidget):
     def update_actions(self):
         entry = self.current()
         self.refresh_button.setEnabled(not self.busy)
-        self.open_button.setEnabled(bool(entry and entry['kind'] != 'alignment') and not self.busy)
         locked = self.busy or self.preparing or self.session_active
         self.delete_button.setEnabled(bool(entry and entry['deletable']) and not locked)
         self.delete_button.setToolTip('录音或下载期间不能删除模型。' if locked else
@@ -142,16 +141,19 @@ class ModelBrowser(QWidget):
             self.status.setText(result.get('error', '读取模型未完成，请刷新重试。') if isinstance(result, dict)
                                 else '读取模型未完成，请刷新重试。')
         else:
+            self.inventory_loaded = True
             self.entries = result.get('models', [])
             self.list.clear()
             for entry in self.entries:
                 kind = {'asr': '识别', 'translation': '翻译', 'alignment': '时间对齐 · 当前流程未使用'}.get(entry['kind'], '模型')
-                item = QListWidgetItem(f"{kind}  ·  {entry['name']}\n{entry['size'] / 1024**3:.2f} GB")
+                from .model_dialog import ENGINE_LABELS
+                engine = ENGINE_LABELS.get(entry['engine'], '独立组件')
+                item = QListWidgetItem(f"{kind}  ·  {entry['name']}\n{engine} · {entry['size'] / 1024**3:.2f} GB")
                 item.setToolTip(entry['path'])
                 item.setData(Qt.ItemDataRole.UserRole, entry)
                 self.list.addItem(item)
-            self.status.setText('选择模型查看参数；双击也可打开。' if self.entries else
-                                '还没有下载模型。请先准备识别与翻译模型。')
+            self.status.setText('双击模型可查看引擎与参数；使用模型需在窗口中确认。' if self.entries else
+                                '还没有下载模型。点击“下载模型”选择一个模型，或直接下载推荐组合。')
             if self.entries:
                 self.list.setCurrentRow(0)
             self.sync_roles()

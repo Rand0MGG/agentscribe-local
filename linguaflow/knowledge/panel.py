@@ -5,7 +5,6 @@ from urllib.parse import quote, unquote
 from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QDialog,
     QFileDialog,
     QHBoxLayout,
@@ -24,6 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..ui_components import ChoiceBox as QComboBox
 from .rendering import IMPORT_SUFFIXES
 from .schemas import fingerprint
 

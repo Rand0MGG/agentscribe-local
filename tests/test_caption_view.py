@@ -116,8 +116,9 @@ assert w.quick_device.currentData() == ('mic', False)
 for state in (RecordingState.STARTING, RecordingState.LISTENING, RecordingState.PAUSING,
               RecordingState.PAUSED, RecordingState.RESUMING, RecordingState.STOPPING):
     w.set_recording_state(state)
-    assert not w.quick_device.isEnabled() and not w.device.isEnabled()
-    assert not w.refresh_source.isEnabled()
+    enabled = state in (RecordingState.LISTENING, RecordingState.PAUSED)
+    assert w.quick_device.isEnabled() == w.device.isEnabled() == enabled
+    assert w.refresh_source.isEnabled() == enabled
 w.set_recording_state(RecordingState.IDLE)
 assert w.quick_device.isEnabled() and w.device.isEnabled() and w.refresh_source.isEnabled()
 w.reduce_motion.setChecked(True)

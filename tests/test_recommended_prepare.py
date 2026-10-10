@@ -2,6 +2,7 @@
 import pytest
 
 from linguaflow import recommended_prepare as worker
+from linguaflow import runtime_install  # Import OS libraries before platform simulation.
 from linguaflow.model_options import recommended_selection
 
 
@@ -14,7 +15,7 @@ def test_preparation_reuses_models_and_keeps_segmentation(monkeypatch, tmp_path,
     selection.update(backend='qwen3-mlx' if system == 'darwin' else 'qwen3-streaming',
                      asr_model='fixture', translation_engine='llama', translation_model='fixture.gguf')
     calls = []
-    monkeypatch.setattr('linguaflow.runtime_install.maintain', lambda value: calls.append(('runtime', value.copy())))
+    monkeypatch.setattr(runtime_install, 'maintain', lambda value: calls.append(('runtime', value.copy())))
     monkeypatch.setattr(worker, 'runtime_python', lambda: tmp_path/'python')
     def resolve(_):
         if not cached and not any(c[0] == 'qwen' for c in calls):
@@ -34,6 +35,8 @@ def test_preparation_reuses_models_and_keeps_segmentation(monkeypatch, tmp_path,
 def test_windows_whisper_and_pytorch_use_shared_preparation(monkeypatch, tmp_path):
     monkeypatch.setattr('sys.platform', 'win32')
     selection = recommended_selection()
+    selection.update(backend='wlk-whisper', asr_model='tiny', translation_engine='pytorch',
+                     translation_model='tencent/Hy-MT2-1.8B')
     monkeypatch.setattr('linguaflow.runtime_install.maintain', lambda _: None)
     monkeypatch.setattr(worker, 'runtime_python', lambda: tmp_path/'python')
     calls = []
@@ -76,3 +79,22 @@ def test_single_role_preparation_propagates_scope_and_skips_other_weights(monkey
     worker.main(dict(backend='qwen3-streaming', asr_model='fixture',
                      translation_engine='llama', translation_model='fixture.gguf'), only=only)
     assert calls == [('maintain', {'only': only}), (only, {})]
+
+
+def test_asr_only_asset_check_does_not_require_translation(monkeypatch, tmp_path):
+    python = tmp_path / 'python'
+    python.touch()
+    monkeypatch.setattr(worker, 'environment_python', lambda _: python)
+    monkeypatch.setattr(worker, 'resolve_asr', lambda _: tmp_path)
+    monkeypatch.setattr('linguaflow.semantic_model.paths', lambda **kwargs: (tmp_path, tmp_path))
+    calls = []
+    def translation(*args):
+        calls.append('translation')
+        raise ValueError('missing translation')
+    monkeypatch.setattr(worker, 'resolve_translation', translation)
+    selection = dict(backend='qwen3-streaming', asr_model='fixture',
+                     translation_engine='pytorch', translation_model='missing')
+    assert worker.missing_assets(selection, only='asr') == []
+    assert calls == []
+    assert worker.missing_assets(selection) == ['翻译模型：missing']
+    assert calls == ['translation']

@@ -20,7 +20,7 @@ from linguaflow.core import Caption
 from linguaflow.knowledge.session import manifest_path
 class FakeSession(QObject):
     status=Signal(str);stage=Signal(str,str);ready=Signal();paused=Signal(bool)
-    caption=Signal(object);level=Signal(float);failure=Signal(str);finished=Signal()
+    caption=Signal(object);level=Signal(float);source_changed=Signal(int);failure=Signal(str);finished=Signal()
     def __init__(self, settings, parent, recording_path, runtime=None):
         super().__init__(parent)
         self.settings=settings;self.model_ready=Event()
@@ -38,7 +38,7 @@ path=manifest_path(w.library,w.current_item['id'])
 path.parent.mkdir(parents=True,exist_ok=True);path.write_text('broken JSON',encoding='utf-8')
 def forbidden_context(*args): raise AssertionError('Whisper must not compile Qwen context')
 module.session_context=forbidden_context
-w.start()
+w.start(models_checked=True)
 assert w.session is not None and w.recording_state.active
 real_spawn=subprocess.Popen
 def crashing_worker(command,**kwargs):
@@ -130,7 +130,7 @@ w.device.addItem('模拟设备',('test',False))
 w.translate.setChecked(False)
 captured=[]
 w.launch_session=lambda settings: captured.append(settings)
-w.start()
+w.start(models_checked=True)
 assert captured and list(captured[0].asr_context['terms'])==['gradient descent']
 assert not p.save_terms_button.isEnabled()
 assert 'soundcard' not in sys.modules and 'PySide6.QtMultimedia' not in sys.modules

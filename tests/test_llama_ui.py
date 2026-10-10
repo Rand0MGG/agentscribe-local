@@ -71,13 +71,19 @@ assert manager.llama_model.currentText() == settings.llama_model
 assert manager.translation_before.isEnabled()
 manager.llama_model.setCurrentText('models/custom-f16.gguf')
 assert Path(w.settings_binding.session_settings(('fixture', False)).llama_model).is_absolute()
+reference = 'hf://tencent/Hy-MT2-1.8B-GGUF/Hy-MT2-1.8B-Q8_0.gguf'
+import linguaflow.llama_assets as assets
+manager.llama_model.setCurrentText(reference)
+settings = w.settings_binding.session_settings(('fixture', False))
+assert settings.llama_model == reference
+assert assets.weights_path(settings.llama_model).name == 'Hy-MT2-1.8B-Q8_0.gguf'
 w.device.addItem('fixture', ('fixture', False))
 import linguaflow.llama_assets as assets
 def missing(settings): raise ValueError('fixture missing assets')
 assets.resolve_assets = missing
 warnings = []
 QMessageBox.warning = lambda *args: warnings.append(args[-1])
-w.start()
+w.start(models_checked=True)
 assert w.session is None and 'fixture missing' in warnings[0]
 if sys.platform == 'darwin':
     w.use_mac_profile()
@@ -117,22 +123,25 @@ checks, warnings, next_steps = [], [], []
 assets.resolve_assets = lambda settings: checks.append(settings.translation_engine)
 QMessageBox.warning = lambda *args: warnings.append(args[-1])
 # Stop after preflight, before a recording or inference process is created.
-w.new_recording = lambda: next_steps.append('new recording') or False
-w.start()
+def new_recording(**kwargs):
+    assert kwargs == {'check_models': False}  # The preflight has already checked files.
+    return next_steps.append('new recording') or False
+w.new_recording = new_recording
+w.start(models_checked=True)
 assert checks == ['llama'] and not warnings and len(next_steps) == 1
 manager.translation_engine.setCurrentIndex(manager.translation_engine.findData('pytorch'))
-w.start()
+w.start(models_checked=True)
 assert len(warnings) == 1 and len(next_steps) == 1
 # Disabling translation permits an empty translation model on either engine.
 for engine in ('pytorch', 'llama'):
     manager.translation_engine.setCurrentIndex(manager.translation_engine.findData(engine))
     w.translate.setChecked(False)
-    w.start()
+    w.start(models_checked=True)
 assert len(warnings) == 1 and len(next_steps) == 3 and checks == ['llama']
 # ASR validation still applies with llama.cpp translation selected.
 w.translate.setChecked(True)
 w.asr.setCurrentText('')
-w.start()
+w.start(models_checked=True)
 assert len(warnings) == 2 and len(next_steps) == 3
 w.close()
 """

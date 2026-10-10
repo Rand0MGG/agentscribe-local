@@ -1,3 +1,13 @@
+## 2026-10-10 beta.3 共享界面与音频来源切换
+
+范围：Windows 分支上的共享界面、字幕展示、音频来源切换、模型下载目录和平台窗口边界；源码版本 `0.6.0-beta.3`。Windows 11 / AMD64、Python 3.12.8。界面对照与 18 张示例图见 [UI_DESIGN](UI_DESIGN.md)。示例窗口只使用模拟字幕、音量、回放和下载进度，没有访问声卡或下载模型。
+
+- 完整无音频回归：`.venv\Scripts\python.exe scripts/test_no_audio.py -q --basetemp=.work/cache/aff10`，**794 passed、6 skipped、2 failed，212.06 秒**；日志 `.work/cache/shared-ui-20261010/full-final.log`。两项失败均为 Windows 缺少创建符号链接权限的 `WinError 1314`：`test_delete_rejects_custom_paths_unknown_ids_and_links`、`test_cleanup_keeps_active_rollback_live_custom_and_symlink`。没有删掉测试或放宽断言。
+- 共享模型路径、目录默认值、配置快照和窗口适配的回归通过；模拟覆盖 Windows / Mac 分支。原生 Windows 预览检查浅色/深色、640×480、900×650、窄竖窗以及模型弹窗；未出现 `Painter not active` 或重复 painter 警告。日志留在 `.work/cache/shared-ui-20261010/`。
+- 版本更新后补查更新排序、安装/模型引导、共享模型配置、窗口平台边界并重新生成参考图：**35 passed、1 skipped，25.93 秒**；日志 `.work/cache/shared-ui-20261010/beta3-final.log`。跳过项为只适用于 Mac 的原生菜单；预览仍启用音频导入保护。
+- `.venv\Scripts\python.exe -m ruff check linguaflow scripts tests` 与差异空白检查通过。无音频回归报告 `No native audio import attempts detected`；没有枚举音频设备、播放文件或停止用户录音。
+- 音频切换通过模拟确认旧来源释放、迟到 PCM 拒收、字幕时间连续和暂停状态处理。真实 Windows 设备切换、保存与回听仍待授权实测；Mac Cocoa 原生界面、分屏、权限、音频切换与 MLX 8-bit 推理尚未由本轮验收。模拟分支和 Windows 图片不能替代这些检查。
+
 ## 2026-10-10 共享准备流程与平台边界修复
 
 范围：本地 `mac` 分支候选，保留此前未提交工作；未合并、推送、构建或发布。macOS 26.6.2 / arm64，Python 3.12.14。修复 Windows 空模型列表的准备入口、自定义 Qwen 被当前 Whisper 后端误分类、环境维护遗漏 llama.cpp。两端共用模型准备、分句依赖准备、文件引导、取消和进度渲染；环境健康检查按所选后端执行，公共进程/锁/发布工具放在 `installation.py`，没有新增平台业务副本。

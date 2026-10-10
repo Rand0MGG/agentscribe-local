@@ -69,13 +69,13 @@ w.source.setCurrentIndex(next(i for i in range(w.source.count()) if w.source.ite
 w.device.addItem('fixture',('fixture',False));w.translate.setChecked(False)
 class FakeSession(QObject):
     status=Signal(str);stage=Signal(str,str);ready=Signal();paused=Signal(bool)
-    caption=Signal(object);level=Signal(float);failure=Signal(str);finished=Signal()
+    caption=Signal(object);level=Signal(float);source_changed=Signal(int);failure=Signal(str);finished=Signal()
     def __init__(self,settings,parent,recording_path,runtime=None):
         super().__init__(parent);self.settings=settings;self.model_ready=Event()
     def start(self): self.model_ready.set();self.ready.emit()
     def stop(self): self.finished.emit()
 module.Session=FakeSession
-w.start()
+w.start(models_checked=True)
 assert w.session is not None and w.session.settings.asr_context=={}
 w.session.caption.emit(Caption(1,0,1,'Local caption','en','本地译文'))
 w.stop();wait(lambda:w.session is None)

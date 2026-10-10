@@ -35,7 +35,9 @@ def serve(read, emit):
     validate_mlx_model(path)
     started = time.perf_counter()
     model = load_model(str(path))
-    emit({'type': 'ready', 'device': str(mx.default_device()),
+    config = json.loads((path / 'config.json').read_text(encoding='utf-8'))
+    quant = config.get('quantization', config.get('quantization_config', {}))
+    emit({'type': 'ready', 'device': str(mx.default_device()), 'bits': quant['bits'],
           'load_seconds': time.perf_counter() - started,
           'active_bytes': mx.get_active_memory()})
     while (message := read()) is not None and message.get('type') != 'stop':

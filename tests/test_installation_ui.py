@@ -7,7 +7,7 @@ import pytest
 
 
 @pytest.mark.parametrize('width,height', [(1280, 900), (900, 650)])
-def test_update_settings_and_legacy_storage_warning(tmp_path, width, height):
+def test_update_settings_and_inline_storage_path(tmp_path, width, height):
     code = '''
 import os
 from pathlib import Path
@@ -43,7 +43,9 @@ w.settings_workspace.search.clear()
 w.open_settings('常规')
 from linguaflow.runtime_paths import resource_root
 w.settings_workspace.set_storage_root(resource_root()/'录音')
-assert not w.settings_workspace.storage_warning.isHidden()
+assert w.settings_workspace.storage_path.text() == str(resource_root()/'录音')
+assert w.settings_workspace.storage_path.parentWidget().objectName() == 'settingsRow'
+assert not hasattr(w.settings_workspace, 'storage_warning')
 app.processEvents()
 w.grab().save(str(folder/'storage.png'))
 assert w.session is None
@@ -86,14 +88,14 @@ def unexpected(*args): raise AssertionError('Update checks must not prevent reco
 QMessageBox.information=unexpected
 class FakeSession(QObject):
     status=Signal(str);stage=Signal(str,str);ready=Signal();paused=Signal(bool)
-    caption=Signal(object);level=Signal(float);failure=Signal(str);finished=Signal()
+    caption=Signal(object);level=Signal(float);source_changed=Signal(int);failure=Signal(str);finished=Signal()
     def __init__(self,settings,parent,recording_path,runtime=None):
         super().__init__(parent);self.model_ready=Event()
     def start(self): self.model_ready.set();self.ready.emit()
     def stop(self): self.finished.emit()
 module.Session=FakeSession
 try:
-    w.start();assert w.session is not None
+    w.start(models_checked=True);assert w.session is not None
     w.session.caption.emit(Caption(1,0,1,'Saved during update','en'))
     w.stop();wait(lambda:w.session is None)
     assert w.library.load(w.current_item)[1][0].source=='Saved during update'

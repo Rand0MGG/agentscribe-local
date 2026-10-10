@@ -1,10 +1,12 @@
 """Quiet navigation, explicit recording creation and the full-page settings view."""
 
-from PySide6.QtCore import QEasingCurve, QRectF, QSize, Qt, QVariantAnimation, Signal
-from PySide6.QtGui import QColor, QKeySequence, QLinearGradient, QPainter, QPixmap
+from PySide6.QtCore import QEasingCurve, QPoint, QPointF, QRectF, QSize, Qt, QVariantAnimation, Signal
+from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QDialog,
+    QFormLayout,
     QFrame,
     QHBoxLayout,
     QLineEdit,
@@ -23,6 +25,7 @@ from .library import default_recording_name
 from .qt_controls import text_label
 from .ui_components import ChoiceBox as QComboBox
 from .ui_components import PageTransition, SurfaceDialog, motion_enabled
+from .ui_theme import theme_colors
 
 PAGE_DESCRIPTIONS = {
     '模型管理': '查看、设置或删除已下载的识别与翻译模型。',
@@ -70,14 +73,57 @@ class Switch(QCheckBox):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setOpacity(1 if self.isEnabled() else .4)
-        painter.setBrush(QColor("#4277c8" if self.isChecked() else "#4b4b50"))
+        c = theme_colors(QApplication.instance().property('appearance'))
+        painter.setBrush(QColor(c['primary'] if self.isChecked() else c['disabled']))
         painter.drawRoundedRect(QRectF(1, 3, 36, 20), 10, 10)
-        painter.setBrush(QColor("#f7f7f9"))
+        painter.setBrush(QColor(c['primary_text'] if self.isChecked() else c['surface']))
         painter.drawEllipse(QRectF(3 + 16 * self.position, 5, 16, 16))
         if self.hasFocus():
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.setPen(QColor('#c5d2ed'))
+            painter.setPen(QColor(c['focus']))
             painter.drawRoundedRect(QRectF(.5, .5, 37, 23), 11, 11)
+
+
+class LanguagePopup(QDialog):
+    """Three views of the existing language controls, with no independent settings."""
+    def __init__(self, source, target, translate, parent):
+        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setFixedWidth(320)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(8, 8, 8, 8)
+        surface = QFrame()
+        surface.setObjectName('dialogSurface')
+        outer.addWidget(surface)
+        form = QFormLayout(surface)
+        form.setContentsMargins(18, 14, 18, 14)
+        form.setSpacing(10)
+        self.source_choice, self.target_choice = QComboBox(), QComboBox()
+        for view, control in ((self.source_choice, source), (self.target_choice, target)):
+            view.setModel(control.model())
+            view.setCurrentIndex(control.currentIndex())
+            view.currentIndexChanged.connect(control.setCurrentIndex)
+            control.currentIndexChanged.connect(view.setCurrentIndex)
+        form.addRow('原文', self.source_choice)
+        form.addRow('译文', self.target_choice)
+        self.translation_switch = Switch('启用翻译')
+        self.translation_switch.setChecked(translate.isChecked())
+        self.translation_switch.toggled.connect(translate.setChecked)
+        translate.toggled.connect(self.translation_switch.setChecked)
+        form.addRow('启用翻译', self.translation_switch)
+        self.hint = text_label('修改用于下一次聆听。', 'muted')
+        form.addRow(self.hint)
+
+    def show_at(self, anchor, *, next_session=False):
+        self.hint.setVisible(next_session)
+        self.adjustSize()
+        point = anchor.mapToGlobal(QPoint(0, 0))
+        bounds = anchor.screen().availableGeometry()
+        x = max(bounds.left()+8, min(point.x(), bounds.right()-self.width()-8))
+        y = max(bounds.top()+8, point.y()-self.height()-6)
+        self.move(x, y)
+        self.show()
+        self.source_choice.setFocus()
 
 
 class LibraryDelegate(QStyledItemDelegate):
@@ -92,19 +138,35 @@ class LibraryDelegate(QStyledItemDelegate):
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
         hover = bool(option.state & QStyle.StateFlag.State_MouseOver)
         if selected or hover:
-            painter.setBrush(QColor(20, 20, 25, 14 if selected else 7) if light else QColor(255, 255, 255, 22 if selected else 10))
+            colors = theme_colors(QApplication.instance().property('appearance'))
+            painter.setBrush(QColor(colors['selected' if selected else 'hover']))
             painter.drawRoundedRect(QRectF(option.rect).adjusted(2, 2, -2, -2), 8, 8)
         depth, parent = 0, index.parent()
         while parent.isValid():
             depth += 1
             parent = parent.parent()
         x = option.rect.x() + 12 + depth * 14
-        # All levels use the same neutral, narrow rounded marker.
-        painter.setBrush(QColor("#d1d1d6" if selected else "#68686f"))
-        painter.drawRoundedRect(QRectF(x, option.rect.center().y() - 7, 3, 14), 1.5, 1.5)
+        kind, _ = index.data(Qt.ItemDataRole.UserRole)
+        y = option.rect.center().y()
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QColor('#666670' if light else '#aaaab2'))
+        if kind == 'folder':
+            expanded = bool(option.state & QStyle.StateFlag.State_Open)
+            points = [(x + 2, y - 2), (x + 5, y + 1), (x + 8, y - 2)] if expanded else [
+                (x + 3, y - 4), (x + 6, y - 1), (x + 3, y + 2)]
+            painter.drawLine(QPointF(*points[0]), QPointF(*points[1]))
+            painter.drawLine(QPointF(*points[1]), QPointF(*points[2]))
+            painter.drawRoundedRect(QRectF(x + 15, y - 5, 15, 11), 2, 2)
+            painter.drawLine(QPointF(x + 16, y - 7), QPointF(x + 22, y - 7))
+            text_x = x + 37
+        else:
+            painter.drawRoundedRect(QRectF(x + 10, y - 7, 11, 14), 2, 2)
+            painter.drawLine(QPointF(x + 13, y - 2), QPointF(x + 18, y - 2))
+            painter.drawLine(QPointF(x + 13, y + 2), QPointF(x + 18, y + 2))
+            text_x = x + 30
         painter.setFont(option.font)
         painter.setPen(QColor(("#303034" if selected else "#60606a") if light else ("#eeeeef" if selected else "#bdbdc3")))
-        rect = option.rect.adjusted(x - option.rect.x() + 13, 0, -53, 0)
+        rect = option.rect.adjusted(text_x - option.rect.x(), 0, -53, 0)
         title = str(index.data())
         if option.fontMetrics.horizontalAdvance(title) <= rect.width():
             painter.drawText(rect, Qt.AlignmentFlag.AlignVCenter, title)
@@ -125,7 +187,6 @@ class LibraryDelegate(QStyledItemDelegate):
             ink.fillRect(bounds, fade)
             ink.end()
             painter.drawPixmap(rect.topLeft(), layer)
-        kind, _ = index.data(Qt.ItemDataRole.UserRole)
         if kind == "folder":
             painter.setPen(QColor("#9999a1"))
             painter.drawText(option.rect.adjusted(option.rect.width() - 50, 0, -26, 0), Qt.AlignmentFlag.AlignCenter, "+")
@@ -151,6 +212,15 @@ class LibraryTree(QTreeWidget):
         if row and event.button() == Qt.MouseButton.LeftButton:
             rect = self.visualItemRect(row)
             kind, identifier = row.data(0, Qt.ItemDataRole.UserRole)
+            depth, parent = 0, row.parent()
+            while parent is not None:
+                depth += 1
+                parent = parent.parent()
+            arrow_x = rect.x() + 12 + depth * 14
+            if kind == 'folder' and arrow_x - 4 <= event.position().x() <= arrow_x + 12:
+                row.setExpanded(not row.isExpanded())
+                event.accept()
+                return
             offset = rect.right() - event.position().x()
             if offset < 27:
                 self.menuRequested.emit(row, self.viewport().mapToGlobal(event.position().toPoint()))
@@ -177,6 +247,8 @@ class RecordingDialog(SurfaceDialog):
         self.folder = QComboBox()
         for item in library.index["folders"]:
             self.folder.addItem(library.folder_label(item["id"]), item["id"])
+        if not self.folder.count():
+            self.folder.addItem('我的录音 · 创建录音时建立', None)
         self.folder.setCurrentIndex(max(0, self.folder.findData(folder_id)))
         layout.addWidget(self.folder)
         self.error = text_label("同名录音会自动添加序号，已有文件不会被覆盖。", "muted")
@@ -198,7 +270,7 @@ class RecordingDialog(SurfaceDialog):
     def validate(self, library):
         try:
             library.validate_name(self.name.text())
-            if self.folder.currentData() is None:
+            if self.folder.currentData() is None and library.index['folders']:
                 raise ValueError("请先创建文件夹。")
         except ValueError as exc:
             self.error.setText(str(exc))
@@ -216,6 +288,7 @@ class SettingsWorkspace(QWidget):
     choose_storage_requested = Signal()
     deleted_requested = Signal()
     refresh_devices_requested = Signal()
+    model_settings_changed = Signal()
 
     def __init__(self, frame_factory, *, storage_root, controls, manager, parent=None):
         super().__init__(parent)
@@ -237,20 +310,17 @@ class SettingsWorkspace(QWidget):
         self.search = QLineEdit()
         self.search.setPlaceholderText("搜索设置…")
         self.search.setAccessibleName('搜索设置')
-        self.search.setToolTip('搜索设置 · ' + QKeySequence('Ctrl+F').toString(QKeySequence.SequenceFormat.NativeText))
+        self.search.setToolTip('搜索设置')
         self.search.setClearButtonEnabled(True)
         nav.addWidget(self.search)
         nav.addSpacing(12)
         nav.addWidget(text_label("工作空间", "section"))
         self.navigation = QListWidget()
+        self.navigation.setMouseTracking(True)
         self.navigation.setObjectName("settingsNavigation")
         self.categories = ["常规", "聆听", "模型管理", "字幕与延迟", "运行环境", '使用指南']
         self.navigation.addItems(self.categories)
         nav.addWidget(self.navigation, 1)
-        self.advanced_navigation = QPushButton('显示更多设置')
-        self.advanced_navigation.setCheckable(True)
-        self.advanced_navigation.toggled.connect(self.show_advanced_settings)
-        nav.addWidget(self.advanced_navigation)
         nav.addWidget(text_label("更改将用于下一次录音", "timestamp"))
         layout.addWidget(sidebar)
         right = frame_factory()
@@ -292,27 +362,19 @@ class SettingsWorkspace(QWidget):
             button = QPushButton(title)
             button.clicked.connect(callback)
             buttons.addWidget(button)
-        self.row(rows, "录音保存位置", "录音与定稿按文件夹、录音名称保存，随时可以直接打开。", storage_controls)
-        rows.addWidget(self.storage_path)
-        self.storage_warning = text_label('录音仍在程序目录内。升级或清理程序前，请复制备份整个录音目录，再更改保存位置；软件不会搬移或删除旧文件。', 'infoBanner')
-        rows.addWidget(self.storage_warning)
+        self.row(rows, "录音保存位置", self.storage_path, storage_controls)
         self.set_storage_root(storage_root)
         deleted = QPushButton("查看最近删除")
         deleted.clicked.connect(self.deleted_requested.emit)
-        self.row(rows, "最近删除", "删除的文件先保留在原保存目录，可随时恢复。", deleted)
+        self.row(rows, "最近删除", "删除的文件先保留在录音目录的「垃圾桶」文件夹，可随时恢复。", deleted)
         body.addWidget(card)
         body.addSpacing(24)
         body.addWidget(text_label("使用习惯", "settingsSection"))
         card, rows = self.group()
-        rows.addWidget(text_label('字幕停留在底部时自动跟随；向上翻阅会暂停。点击字幕区的向下箭头可回到最新位置。', 'infoBanner'))
         self.row(rows, '外观', '白色或深色，切换后立即生效。', controls['appearance'])
         self.row(rows, '减少动态效果', '关闭平滑跟随、切页、弹窗和开关动画。', controls['reduce_motion'])
         self.row(rows, '体验 Beta 功能', '开启后显示课件解析、识别提示整理和课堂笔记入口。关闭会停止相关任务，已有资料保留。', controls['beta_features'])
         body.addWidget(card)
-        shortcuts = '    ·    '.join(
-            QKeySequence(key).toString(QKeySequence.SequenceFormat.NativeText) + '  ' + title
-            for key, title in [('Ctrl+,', '打开设置'), ('Ctrl+N', '新录音'), ('Escape', '返回录音')])
-        body.addWidget(text_label('键盘操作    ' + shortcuts, 'infoBanner'))
         body.addStretch()
         listening, body = self.page("聆听")
         self.listening_page = listening
@@ -324,7 +386,7 @@ class SettingsWorkspace(QWidget):
         self.row(rows, "设备列表", "连接新设备后刷新。", refresh)
         self.row(rows, "原文语言", "Qwen 需要明确选择原文语言。", controls['source'])
         self.row(rows, "翻译语言", "选择定稿与实时译文使用的语言。", controls['target'])
-        self.row(rows, "显示翻译", "关闭后仅保存原文字幕与录音。", controls['translate'])
+        self.row(rows, "启用翻译", "开启本地翻译并保存译文；关闭后仅识别和保存原文。", controls['translate'])
         body.addWidget(card)
         body.addStretch()
         from .model_browser import ModelBrowser
@@ -338,8 +400,14 @@ class SettingsWorkspace(QWidget):
         self.model_browser.deletion_changed.connect(manager.set_inventory_busy)
         self.model_browser.selected.connect(self.select_model)
         self.model_browser.assigned.connect(self.assign_model)
+        model_settings = QHBoxLayout()
+        self.download_model = QPushButton('下载模型…')
+        self.download_model.clicked.connect(self.open_model_catalog)
+        model_settings.addWidget(self.download_model)
+        model_settings.addStretch()
+        body.addLayout(model_settings)
         body.addWidget(self.model_browser, 1)
-        prepare = QPushButton('准备识别与翻译模型')
+        prepare = QPushButton('检查 / 补齐当前模型')
         prepare.clicked.connect(self.prepare_models_requested.emit)
         prepare.setObjectName('primary')
         manager.register_preparation_button(prepare)
@@ -350,7 +418,7 @@ class SettingsWorkspace(QWidget):
         for title, detail, category, action in [
             ('01  准备本地模型', '首次安装运行环境，再下载 / 检查识别模型；必要组件会一起准备。', '运行环境', '准备环境'),
             ('02  选择音频与语言', '选择麦克风或系统声音。使用 Qwen 时，指定原文语言。', '聆听', '设置聆听'),
-            ('03  按需开启翻译', '选择翻译模型和目标语言；只需要原文时，可关闭显示翻译。', '模型管理', '设置翻译'),
+            ('03  按需开启翻译', '选择翻译模型和目标语言；只需要原文时，可关闭翻译。', '模型管理', '设置翻译'),
         ]:
             button = QPushButton(action + '  →')
             button.clicked.connect(lambda checked=False, category=category:
@@ -368,6 +436,7 @@ class SettingsWorkspace(QWidget):
         self.model_back.clicked.connect(lambda: self.select(self.categories.index('模型管理')))
         self.model_back.hide()
         manager.embed_model_settings(self.model_back)
+        outer.addWidget(manager.download_card)
         index = self.pages.addWidget(manager)
         self.manager_page = index
         for category in ["字幕与延迟", "运行环境"]:
@@ -377,22 +446,14 @@ class SettingsWorkspace(QWidget):
         self.navigation.setCurrentRow(0)
         self.filter('')
 
-    def show_advanced_settings(self, enabled):
-        self.advanced_navigation.setText('收起更多设置' if enabled else '显示更多设置')
-        self.filter(self.search.text())
-
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self.sidebar.setFixedWidth(max(220, min(250, int(self.width() * .2))))
-        margin = max(24, (self.right.width() - 850) // 2)
+        self.sidebar.setFixedWidth(max(170, min(250, int(self.width() * .2))))
+        margin = max(16 if self.width() < 850 else 24, (self.right.width() - 850) // 2)
         self.content_layout.setContentsMargins(margin, 32, margin, 24)
 
     def set_storage_root(self, root):
-        from pathlib import Path
-
-        from .runtime_paths import resource_root
         self.storage_path.setText(str(root))
-        self.storage_warning.setVisible(Path(root).resolve().is_relative_to(resource_root().resolve()))
 
     def page(self, name):
         scroll = QScrollArea()
@@ -425,7 +486,7 @@ class SettingsWorkspace(QWidget):
         words = QVBoxLayout()
         words.setSpacing(6)
         words.addWidget(text_label(title, "settingsLabel"))
-        words.addWidget(text_label(description, "muted"))
+        words.addWidget(description if isinstance(description, QWidget) else text_label(description, "muted"))
         row.addLayout(words, 1)
         control.setMaximumWidth(270)
         control.setMinimumWidth(0)
@@ -460,26 +521,50 @@ class SettingsWorkspace(QWidget):
     def select_model(self, entry):
         if not entry:
             return
-        self.assign_model(entry)
-        self.pages.setCurrentIndex(self.manager_page)
-        self.manager.show_section(0 if entry['kind'] == 'asr' else 1)
-        self.model_back.show()
-        self.title.setText(entry['name'])
-        self.description.setText('已选择此模型用于' + ('语音识别' if entry['kind'] == 'asr' else '翻译') + '；参数修改用于下一次聆听。')
+        self.open_model_settings(entry['kind'], entry=entry)
+
+    def open_model_settings(self, kind, *, entry=None):
+        from .model_dialog import ModelDialog
+        dialog = ModelDialog(self.manager.model_settings_snapshot(), kind=kind, entry=entry, parent=self)
+        self.manager.preparation_changed.connect(dialog.set_preparing)
+        self.manager.inventory_changed.connect(dialog.set_inventory_busy)
+        dialog.applied.connect(self.apply_model_settings)
+        dialog.download_requested.connect(lambda selection, only: self.manager.prepare_selected(selection, only=only))
+        dialog.open()
+        return dialog
+
+    def open_model_catalog(self):
+        from .model_dialog import ModelCatalogDialog
+        dialog = ModelCatalogDialog(self.manager.model_settings_snapshot(), parent=self)
+        self.manager.preparation_changed.connect(dialog.set_preparing)
+        self.manager.inventory_changed.connect(dialog.set_inventory_busy)
+        dialog.bundle_selected.connect(self.select_model_bundle)
+        dialog.advanced_requested.connect(lambda: self.open_model_settings('asr').advanced_toggle.setChecked(True))
+        dialog.download_requested.connect(lambda selection, only: self.manager.prepare_selected(selection, only=only))
+        dialog.open()
+        return dialog
+
+    def select_model_bundle(self, selection):
+        self.manager.apply_selection(selection)
+        self.model_browser.sync_roles()
+        self.model_settings_changed.emit()
+
+    def apply_model_settings(self, values):
+        self.manager.apply_model_settings(values)
+        self.model_browser.sync_roles()
+        self.model_settings_changed.emit()
 
     def filter(self, query):
         aliases = {"模型管理": "下载 缓存 删除 ASR 翻译 Qwen HY-MT2 Whisper 本地 参数 前文 后文 GPU CPU MLX NLLB", "常规": "文件 存储 目录 路径 删除 恢复 跟随", "聆听": "设备 输入 语言",
                    "识别模型": "Qwen Whisper GPU CPU MLX 下载", "翻译模型": "NLLB HY-MT2 前文 后文 GPU CPU 下载 译文",
                    "字幕与延迟": "字幕 草稿 刷新 停顿",
                    "运行环境": "安装 修复 更新 版本 GitHub", '使用指南': '首次 使用 帮助 入门 导出 SRT 开始 说明'}
-        aliases['常规'] += ' 动画 减少动态效果 快捷键'
+        aliases['常规'] += ' 动画 减少动态效果'
         query = query.strip().casefold()
         visible = []
         for i, name in enumerate(self.categories):
             match = all(term in (name + ' ' + aliases[name] + ' ' + PAGE_DESCRIPTIONS[name]).casefold()
                         for term in query.split())
-            if not query and not self.advanced_navigation.isChecked():
-                match = match and name in ('常规', '聆听', '模型管理', '使用指南')
             self.navigation.item(i).setHidden(not match)
             if match:
                 visible.append(i)

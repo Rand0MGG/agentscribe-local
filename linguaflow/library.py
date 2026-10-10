@@ -20,7 +20,9 @@ def default_recording_name(now: datetime | None = None) -> str:
 
 class Library:
     folder_file = ".folder.json"
-    trash_name = ".最近删除"
+    trash_name = "垃圾桶"
+    legacy_trash_name = ".最近删除"
+    trash_marker = '.agentscribe-trash.json'
 
     def __init__(self, root):
         self.root = Path(root).resolve()
@@ -88,6 +90,8 @@ class Library:
             for child in children:
                 if child.name.startswith(".") or not child.is_dir():
                     continue
+                if directory == self.root and child.name == self.trash_name and (child / self.trash_marker).is_file():
+                    continue
                 try:
                     self._safe(child)
                     metadata = child / "session.json"
@@ -143,6 +147,8 @@ class Library:
 
     def _destination(self, parent, name, unique=False, source=None):
         name = self.validate_name(name)
+        if parent == self.root and name == self.trash_name:
+            raise ValueError('“垃圾桶”用于保存最近删除，请使用其他文件夹名称。')
         candidate = parent / name
         entries = {p.name.casefold(): p for p in parent.iterdir()}
         number = 2
@@ -226,7 +232,11 @@ class Library:
     def trash(self, item):
         source = self.directory(item["id"])
         trash = self._safe(self.root / self.trash_name)
-        trash.mkdir(exist_ok=True)
+        if trash.exists() and not (trash / self.trash_marker).is_file():
+            raise ValueError('保存目录已有同名“垃圾桶”文件夹，请先为它改名；不会覆盖其中的文件。')
+        if not trash.exists():
+            trash.mkdir()
+            self._write(trash / self.trash_marker, {'version': 1})
         token = uuid4().hex
         box = self._safe(trash / token)
         box.mkdir()
@@ -238,30 +248,52 @@ class Library:
 
     def deleted(self):
         result = []
-        trash = self.root / self.trash_name
-        if not trash.exists():
-            return result
-        self._safe(trash)
-        for box in trash.iterdir():
-            try:
-                self._safe(box)
-                data = self._read(box / "restore.json")
-                data["token"] = box.name
-                if self._safe(box / data["name"]).is_dir():
-                    result.append(data)
-            except (OSError, ValueError, KeyError, TypeError):
+        for trash in self._trash_roots():
+            if not trash.exists():
                 continue
+            self._safe(trash)
+            for box in trash.iterdir():
+                try:
+                    if not re.fullmatch(r'[0-9a-f]{32}', box.name):
+                        continue
+                    self._safe(box)
+                    data = self._read(box / "restore.json")
+                    self.validate_name(data['name'])
+                    if not isinstance(data['deleted'], str):
+                        continue
+                    data["token"] = box.name
+                    if self._safe(box / data["name"]).is_dir():
+                        result.append(data)
+                except (OSError, ValueError, KeyError, TypeError):
+                    continue
         return sorted(result, key=lambda x: x["deleted"], reverse=True)
+
+    def _trash_roots(self):
+        # Old deleted recordings stay in place; compatibility does not migrate user files.
+        roots = [self.root / self.legacy_trash_name]
+        current = self.root / self.trash_name
+        if (current / self.trash_marker).is_file():
+            roots.insert(0, current)
+        return roots
+
+    def _deleted_box(self, token):
+        if not isinstance(token, str) or not re.fullmatch(r'[0-9a-f]{32}', token):
+            raise ValueError('无效的最近删除标识')
+        boxes = [self._safe(root / token) for root in self._trash_roots() if (root / token).is_dir()]
+        if len(boxes) != 1:
+            raise ValueError('最近删除条目已变化或标识重复，请刷新后重试。')
+        return boxes[0]
 
     def restore_deleted(self, token):
         if not re.fullmatch(r"[0-9a-f]{32}", token):
             raise ValueError("无效的恢复标识")
-        box = self._safe(self.root / self.trash_name / token)
+        box = self._deleted_box(token)
         data = self._read(box / "restore.json")
         self.validate_name(data["name"])
         source = self._safe(box / data["name"])
         original = self._safe(self.root / data["original"])
-        if self.root / self.trash_name in original.parents:
+        if any(root == original or root in original.parents for root in
+               (self.root / self.trash_name, self.root / self.legacy_trash_name)):
             raise ValueError("无效的恢复位置")
         original.parent.mkdir(parents=True, exist_ok=True)
         destination = self._destination(original.parent, original.name, unique=True)
@@ -272,9 +304,8 @@ class Library:
     def purge_deleted(self, token):
         if not re.fullmatch(r"[0-9a-f]{32}", token):
             raise ValueError("无效的删除标识")
-        trash = self._safe(self.root / self.trash_name)
-        box = self._safe(trash / token)
-        if box.parent != trash:
+        box = self._deleted_box(token)
+        if box.parent not in self._trash_roots():
             raise ValueError("只能清理最近删除内的条目")
         self._check_course_references(box)
         # The absolute target is checked before recursive removal.
