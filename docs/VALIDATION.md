@@ -392,3 +392,18 @@ GitHub `37356634520` 的 Windows / Python 3.11.9 在后台保存 `QThread` 构�
 - Ruff 全包/脚本/测试通过，`git diff --check` 通过。隔离示例界面以 offscreen 生成模型管理、参数页及导出对话框预览，已检查；日志 `.work/cache/coupling-preview.log`，截图 `.work/browser/coupling-*.png`。
 
 第一次完整回归有一项取消测试调用了旧管理器实现位置，迁移测试调用后通过。一次补充测试误带原生菜单测试，在受限窗口服务环境初始化失败（HIServices / Cocoa）；后续不在该环境重复执行该项，完整回归明确排除它。所有测试日志均确认无原生音频导入尝试。Windows 分支模拟与共享规则测试不代替 Windows 安装/录音实机验收；本轮也未验证 macOS 原生保存对话框或长会话性能。
+
+### 2026-10-10 恢复翻译并行调度
+
+用户要求保留定稿翻译前 5 段、后 1 段上下文，并撤回 `mac/39d35b7` 新增的识别优先等待。按用户指定在现有 `windows` 分支同步该源码后修改，不合并 `main` 或替换发行包。
+
+翻译模型加载恢复为直接开始；新翻译推理仅等待 SaT 持有字幕锁的实际更新，不等待 ASR 调用结束或识别输入队列清空。删除对应的 ASR 包装、队列回调和轮询；原文提交、双重确认、字幕修订、译文发布的版本校验和取消清理保持原实现。将原来的等待行为测试替换为实际 worker 装配回归，分别保持识别调用未结束或输入队列非空，要求停止录音前已经发布译文；已有 SaT 等待与迟到译文拒绝回归保留。
+
+验证环境：Windows 11 / AMD64、Python 3.12.8，模型端点与音频输入均为模拟。全部测试从 `scripts/test_no_audio.py` 运行；沙箱内 asyncio 回环 socketpair 初始化被阻止，允许本机事件循环后运行，未访问音频设备或加载真实模型。
+
+- 实际工作区 `.venv\Scripts\python.exe scripts/test_no_audio.py -q tests/test_translation_scheduling.py tests/test_shared_qwen_worker.py tests/test_shared_finalization.py tests/test_translation_queue.py tests/test_translation_service.py tests/test_translation_context.py tests/test_translation_batch.py tests/test_translation_incremental.py`：**75 passed，1.09 秒**。
+- 在隔离源码中临时恢复 `39d35b7` 的四个调度模块，新回归两项均超时失败；随后恢复修正。这证明回归能检出被撤回的等待行为，不是性能对照。
+- 最新源码加同一修正的隔离完整无音频回归：**737 passed、17 skipped、4 failed，168.07 秒**。失败为渲染取消测试未观察到启动标记、两项符号链接夹具缺少 Windows 特权（WinError 1314），以及模型导航测试使用 Mac MLX 条目导致 Windows 断言失败。四项在未修改的 `39d35b7` 源码上复测均失败，未通过删除测试或放宽断言绕过；完整测试未全绿。
+- 实际工作区 Ruff 全包/脚本/测试和 `git diff --check` 通过。日志与反向验证保留在 `.work/cache/restore-translation-scheduling-20261010/`。
+
+本轮未重新进行真实文件推理、GPU 性能比较、音频设备采集、回听或 Mac 实机验收；上述证据只覆盖调度规则及共享流程的模拟回归。

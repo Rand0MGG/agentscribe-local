@@ -223,8 +223,8 @@ def test_source_lock_waiters_do_not_starve_live_translation(monkeypatch):
     queues = []
 
     class Queue(TranslationQueue):
-        def __init__(self, source_pending):
-            super().__init__(source_pending)
+        def __init__(self):
+            super().__init__()
             queues.append(self)
 
     class Mapper:

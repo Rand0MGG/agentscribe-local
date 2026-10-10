@@ -185,17 +185,3 @@ def finalize_whisper_once(processor):
             # drift after repeated pauses. The processor owns the PCM clock.
             return end_silence(duration, processor.end)
         processor.end_silence = advance_silence
-
-
-def prioritize_recognition(processor, translation_queue):
-    """Gate new translation during every owned ASR call, including final flush."""
-    original = processor._run_counted_transcription_call
-
-    async def counted_call(method, *args):
-        translation_queue.begin_source_update()
-        try:
-            return await original(method, *args)
-        finally:
-            translation_queue.end_source_update()
-
-    processor._run_counted_transcription_call = counted_call

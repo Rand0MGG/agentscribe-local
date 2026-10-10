@@ -80,7 +80,6 @@ async def _consume_translations(queue, create_translator, current_caption, publi
     cache = OrderedDict()
     translator, load_error = None, None
     try:
-        await queue.wait_source_ready()
         translator = await asyncio.to_thread(create_translator)
     except Exception as exc:
         load_error = str(exc)
@@ -91,9 +90,9 @@ async def _consume_translations(queue, create_translator, current_caption, publi
         try:
             if item is None:
                 return
-            # Let active/queued ASR and active SaT work finish before a HY request.
+            # Finish active SaT work before starting another HY request.
             # In-flight inference is not interrupted; its result is rechecked.
-            await queue.wait_source_ready()
+            await queue.source_ready.wait()
             caption, queued_at = item
             if not (planner.accepts(caption) if planner else translation_is_current(current_caption(caption.id), caption)):
                 continue
