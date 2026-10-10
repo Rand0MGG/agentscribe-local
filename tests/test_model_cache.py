@@ -40,12 +40,19 @@ def test_model_manager_can_still_prepare_translation(tmp_path, monkeypatch):
                         SimpleNamespace(snapshot_download=None, HfApi=None))
     completed = []
     commands = []
-    manager = SimpleNamespace(translation_engine=SimpleNamespace(currentData=lambda: 'pytorch'),
-                              prepare=lambda action: completed.append(action()),
-                              run_preparation=lambda command: commands.append(command) or 'verified in child')
+    manager = SimpleNamespace(
+        preparation_selection=lambda: dict(backend='wlk-whisper', asr_model='tiny',
+                                           translation_engine='pytorch', translation_model='old',
+                                           translation_device='cpu'),
+        prepare=lambda action, **kwargs: completed.append(action()),
+        run_preparation=lambda command: commands.append(command) or 'verified in child')
+    manager.prepare_selected = lambda selection, **kwargs: ModelManager.prepare_selected(manager, selection, **kwargs)
     ModelManager.prepare_translation(manager, str(tmp_path))
     assert completed == ['verified in child']
-    assert commands[0][-3:] == ['linguaflow.model_prepare', 'translation', str(tmp_path)]
+    assert 'linguaflow.recommended_prepare' in commands[0]
+    selection = json.loads(commands[0][commands[0].index('--selection')+1])
+    assert selection['translation_model'] == str(tmp_path)
+    assert commands[0][-2:] == ['--only', 'translation']
 
 
 def test_download_selects_one_weight_format(monkeypatch, tmp_path):
@@ -139,3 +146,18 @@ def test_whisper_preparation_keeps_old_checkpoint_on_failed_download(tmp_path, m
     assert target.read_bytes() == good
     monkeypatch.setattr(wlk_prepare.urllib.request, 'urlopen', lambda *a, **k: pytest.fail('downloaded valid cache'))
     assert wlk_prepare.prepare('tiny') == str(target.resolve())
+
+
+@pytest.mark.parametrize('config', [
+    {'model_type': 'qwen3_forced_aligner', 'quantization': {'bits': 4}},
+    {'model_type': 'qwen3_asr', 'quantization': {'bits': 4},
+     'thinker_config': {'model_type': 'qwen3_forced_aligner'}},
+])
+def test_mlx_rejects_alignment_weights_before_loading(tmp_path, config):
+    from linguaflow.model_cache import validate_mlx_model
+    (tmp_path / 'config.json').write_text(json.dumps(config))
+    with pytest.raises(ValueError, match='Qwen3-ASR'):
+        validate_mlx_model(tmp_path)
+    from linguaflow.qwen_accurate import build_official_online
+    with pytest.raises(ValueError, match='Qwen3-ASR'):
+        build_official_online(str(tmp_path), 'cpu', 'en', .5, 30)

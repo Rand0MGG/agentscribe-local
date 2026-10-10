@@ -42,6 +42,9 @@ def stub_worker(monkeypatch, platform='win32'):
     class Processor:
         def __init__(self, transcription_engine, stream_event_queue):
             self.args = transcription_engine.config
+            self.transcription_queue = asyncio.Queue()
+        async def _run_counted_transcription_call(self, method, *args):
+            return method(*args)
         async def create_tasks(self):
             async def results():
                 yield SimpleNamespace(lines=[], to_dict=lambda: {}, error='',
@@ -220,8 +223,8 @@ def test_source_lock_waiters_do_not_starve_live_translation(monkeypatch):
     queues = []
 
     class Queue(TranslationQueue):
-        def __init__(self):
-            super().__init__()
+        def __init__(self, source_pending):
+            super().__init__(source_pending)
             queues.append(self)
 
     class Mapper:

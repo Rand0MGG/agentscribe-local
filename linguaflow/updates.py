@@ -1,6 +1,7 @@
 """Release checks for startup and explicit requests; never replace a running app/data."""
 import json
 import re
+import urllib.error
 import urllib.request
 from urllib.parse import urlparse
 
@@ -70,7 +71,7 @@ def select_update(releases, current=__version__, *, target=None, installed=None)
     if candidates:
         return max(candidates, key=lambda item: item[0])[1]
     message = ('已有新源码版本，但尚无当前平台可用的安装包。' if missing_package else
-               '当前发布渠道没有可用的新版本。源码分支的新提交不等同于产品发布。')
+               f'当前已是最新版本（{current}）。')
     return {'version': current, 'url': '', 'kind': 'none', 'message': message}
 
 
@@ -84,8 +85,13 @@ def check_updates():
         if len(data) > 4 * 1024**2:
             raise ValueError('更新信息过大。')
         return select_update(json.loads(data))
-    except (OSError, ValueError) as exc:
-        raise RuntimeError('检查更新失败，请确认网络后重试；当前安装与录音未改变。') from exc
+    except urllib.error.HTTPError as exc:
+        message = ('更新服务暂时限制请求，请稍后重试。' if exc.code in (403, 429) else
+                   '更新服务暂时不可用，请稍后重试。')
+        return {'kind': 'error', 'url': '', 'version': __version__, 'message': message}
+    except (OSError, ValueError):
+        return {'kind': 'error', 'url': '', 'version': __version__,
+                'message': '暂时无法检查更新，请确认网络后重试。'}
 
 
 def main():

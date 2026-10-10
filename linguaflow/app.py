@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import time
@@ -51,7 +52,7 @@ from PySide6.QtWidgets import (
 from . import __version__
 from .audio import list_devices
 from .caption_view import CaptionScrollArea
-from .core import LANGUAGES, export_srt, translation_status
+from .core import LANGUAGES, translation_status
 from .deleted_dialog import DeletedDialog
 from .knowledge.client import KnowledgeClient
 from .knowledge.panel import KnowledgePanel
@@ -60,7 +61,7 @@ from .library import Library
 from .library_access import acquire_recording_lock, check_library_access
 from .library_startup import LibrarySelectionCancelled, open_library
 from .management import ModelManager
-from .model_options import MLX_MODEL, asr_devices, normalize_asr_selection
+from .model_options import asr_devices, normalize_asr_selection, recommended_selection
 from .preferences import PREFERENCES, read_audio_device, read_preferences, write_preferences
 from .qt_controls import data_index
 from .qt_controls import text_label as label
@@ -68,9 +69,9 @@ from .recording_save import RecordingSaver
 from .recording_state import RecordingState
 from .runtime_preparation import RuntimePreparation
 from .settings_binding import SettingsBinding
-from .ui_components import ActionMenu, Disclosure, NameDialog
+from .ui_components import ActionMenu, Disclosure, NameDialog, set_download_progress
 from .ui_components import ChoiceBox as QComboBox
-from .ui_theme import PLATFORM_STYLE, SURFACE_STYLE
+from .ui_theme import PLATFORM_STYLE, SURFACE_STYLE, appearance_style
 from .wlk_session import Session
 from .workspace_widgets import LibraryTree, RecordingDialog, SettingsWorkspace, Switch
 
@@ -252,7 +253,7 @@ class WallpaperBackdrop(QWidget):
     def __init__(self):
         super().__init__()
         self.setObjectName("appRoot")
-        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self._wallpaper_path = ""
         self._wallpaper_stamp = 0
         self._source = QPixmap()
@@ -307,7 +308,8 @@ class WallpaperBackdrop(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor(30, 30, 30))
+        light = QApplication.instance().property("appearance") != "dark"
+        painter.fillRect(self.rect(), QColor(246, 246, 249, 180) if light else QColor(30, 30, 30, 180))
         screen = self.window().screen() or QApplication.primaryScreen()
         if screen is not None:
             geometry = screen.geometry()
@@ -324,7 +326,7 @@ class WallpaperBackdrop(QWidget):
                 painter.setOpacity(0.30)
                 painter.drawPixmap(self.rect(), self._blurred, source)
                 painter.setOpacity(1.0)
-        painter.fillRect(self.rect(), QColor(25, 25, 27, 125))
+        painter.fillRect(self.rect(), QColor(248, 248, 250, 25) if light else QColor(25, 25, 27, 25))
         painter.end()
 
 
@@ -409,13 +411,14 @@ class WorkspaceFrame(QFrame):
         path.lineTo(0.5, self.height())
         path.lineTo(self.width(), self.height())
         path.closeSubpath()
-        painter.fillPath(path, QColor("#191919"))
+        light = QApplication.instance().property("appearance") != "dark"
+        painter.fillPath(path, QColor("#ffffff" if light else "#191919"))
         edge = QPainterPath()
         edge.moveTo(self.width(), 0.5)
         edge.lineTo(radius, 0.5)
         edge.quadTo(0.5, 0.5, 0.5, radius)
         edge.lineTo(0.5, self.height())
-        painter.setPen(QPen(QColor("#343436"), 1))
+        painter.setPen(QPen(QColor("#e5e5e8" if light else "#343436"), 1))
         painter.drawPath(edge)
 
 
@@ -510,7 +513,7 @@ class CaptionCard(QFrame):
         self.target = label("")
         self.source.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.target.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.target.setStyleSheet("font-size: 15px; color: #bababe;")
+        self.target.setObjectName("captionTranslation")
         layout.addWidget(self.meta)
         layout.addWidget(self.source)
         layout.addWidget(self.target)
@@ -520,7 +523,8 @@ class CaptionCard(QFrame):
     def update_caption(self, caption):
         if self.source.text() != caption.source:
             self.source.setText(caption.source)
-        source_style = "font-size: 16px; color: " + ("#efeff1;" if caption.final else "#98989f;")
+        source_style = "font-size: 16px;"
+        self.source.setObjectName("captionFinal" if caption.final else "captionDraft")
         if self.source.styleSheet() != source_style:
             self.source.setStyleSheet(source_style)
         self.meta.setText(f"{int(caption.start) // 60:02}:{int(caption.start) % 60:02}" +
@@ -537,6 +541,8 @@ class Window(QMainWindow):
 
     def __init__(self, discover=True, library_root=None, prefs=None, library=None, runtime=None):
         super().__init__()
+        if sys.platform == "darwin":
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self._backdrop_applied = False
         self._backdrop_attempted = False
         if sys.platform == "win32" and os.environ.get("QT_QPA_PLATFORM") != "offscreen":
@@ -555,6 +561,9 @@ class Window(QMainWindow):
         self.cards = {}
         self.closing = False
         self.asset_check = None
+        self.asset_check_timer = QTimer(self)
+        self.asset_check_timer.setSingleShot(True)
+        self.asset_check_timer.timeout.connect(self.check_model_assets)
         self.asset_check_generation = 0
         self.asset_check_closed = False
         self.startup_update_job = None
@@ -567,6 +576,8 @@ class Window(QMainWindow):
         self.session_dirty = False
         self.save_generation = 0
         self.caption_version = 0
+        self.export_saver = RecordingSaver(self)
+        self.export_saver.completed.connect(self.on_exported)
         self.recording_saver = RecordingSaver(self)
         self.recording_saver.completed.connect(self.on_saved)
         self.recording_saver.idle.connect(self.release_recording_lock)
@@ -643,6 +654,10 @@ class Window(QMainWindow):
         guide_button.setObjectName('navigation')
         guide_button.clicked.connect(lambda: self.open_settings('使用指南'))
         sidebar_layout.addWidget(guide_button)
+        self.ui_update_button = QPushButton("↓  检查更新")
+        self.ui_update_button.setObjectName("navigation")
+        self.ui_update_button.clicked.connect(self.check_software_updates)
+        sidebar_layout.addWidget(self.ui_update_button)
         sidebar_layout.addWidget(settings_button)
         sidebar_layout.addWidget(label("  本地工作空间", "timestamp"))
         self.settings_panel = QWidget()
@@ -721,6 +736,7 @@ class Window(QMainWindow):
             )
         )
         self.model_manager.finish_setup(asr=self.asr, translation=self.translation)
+        self.model_manager.diagnostic.connect(self.diagnostics_append)
         form_outer.addWidget(label("当前引擎", "section"))
         self.model_summary = label("", "muted")
         form_outer.addWidget(self.model_summary)
@@ -888,35 +904,33 @@ class Window(QMainWindow):
         self.quick_language.setToolTip('更改原文和目标语言')
         self.quick_language.clicked.connect(lambda: self.open_settings('聆听'))
         quick.addWidget(self.quick_language)
-        self.quick_model = QPushButton('识别模型')
-        self.quick_model.setObjectName('quiet')
-        self.quick_model.setToolTip('选择和准备本地识别模型')
-        self.quick_model.clicked.connect(lambda: self.open_settings('识别模型'))
-        quick.addWidget(self.quick_model)
-        if sys.platform == 'darwin':
-            self.quick_model.hide()
-            self.prepare_models = QPushButton('准备识别与翻译模型')
-            self.prepare_models.clicked.connect(self.prepare_recommended_models)
-            quick.addWidget(self.prepare_models)
-            self.cancel_model_preparation = QPushButton('取消准备')
-            self.cancel_model_preparation.clicked.connect(self.model_manager.cancel_preparation)
-            self.cancel_model_preparation.hide()
-            quick.addWidget(self.cancel_model_preparation)
-            self.preparation_summary = label('', 'muted')
-            self.preparation_summary.setWordWrap(True)
-            self.preparation_summary.hide()
-            content_layout.addWidget(self.preparation_summary)
-            self.model_guidance = label('检查本地模型文件…', 'muted')
-            self.model_guidance.setWordWrap(True)
-            content_layout.addWidget(self.model_guidance)
-            self.preparation_progress = QProgressBar()
-            self.preparation_progress.hide()
-            content_layout.addWidget(self.preparation_progress)
-            self.model_manager.preparation_message.connect(self.show_preparation_message)
-            self.model_manager.preparation_changed.connect(self.prepare_models.setDisabled)
-            self.model_manager.preparation_changed.connect(self.cancel_model_preparation.setVisible)
-            self.model_manager.preparation_changed.connect(self.preparation_progress.setVisible)
-            self.model_manager.download_changed.connect(self.show_download_progress)
+        self.prepare_models = QPushButton('准备识别与翻译模型')
+        self.prepare_models.clicked.connect(self.prepare_recommended_models)
+        quick.addWidget(self.prepare_models)
+        self.cancel_model_preparation = QPushButton('取消准备')
+        self.cancel_model_preparation.clicked.connect(self.model_manager.cancel_preparation)
+        self.cancel_model_preparation.hide()
+        quick.addWidget(self.cancel_model_preparation)
+        self.preparation_summary = label('', 'muted')
+        self.preparation_summary.setWordWrap(True)
+        self.preparation_summary.hide()
+        content_layout.addWidget(self.preparation_summary)
+        self.model_guidance = label('检查本地模型文件…', 'muted')
+        self.model_guidance.setWordWrap(True)
+        content_layout.addWidget(self.model_guidance)
+        self.preparation_progress = QProgressBar()
+        self.preparation_progress.setFixedHeight(24)
+        self.preparation_progress.setToolTip("当前下载文件的进度；总大小未知时显示滑动条。")
+        self.preparation_progress.hide()
+        content_layout.addWidget(self.preparation_progress)
+        self.model_manager.preparation_message.connect(self.show_preparation_message)
+        self.model_manager.preparation_changed.connect(self.prepare_models.setDisabled)
+        self.model_manager.preparation_changed.connect(lambda active: self.model_guidance.setVisible(not active))
+        self.model_manager.preparation_changed.connect(lambda active:
+            self.show_preparation_message(self.model_manager.status.text()) if not active else None)
+        self.model_manager.preparation_changed.connect(self.cancel_model_preparation.setVisible)
+        self.model_manager.preparation_changed.connect(self.preparation_progress.setVisible)
+        self.model_manager.download_changed.connect(self.show_download_progress)
         quick.addStretch()
         content_layout.addLayout(quick)
         content_layout.addWidget(footer)
@@ -930,22 +944,24 @@ class Window(QMainWindow):
         root.installEventFilter(self)
         for child in root.findChildren(QWidget):
             child.installEventFilter(self)
+        self.appearance = QComboBox()
+        self.appearance.addItem("白色", "light")
+        self.appearance.addItem("深色", "dark")
         self.settings_binding = SettingsBinding({
             pref.key: getattr(self, pref.key) if hasattr(self, pref.key) else getattr(self.model_manager, pref.key)
             for pref in PREFERENCES})
         self.restore()
+        self.initial_model_selection = self.model_manager.preparation_selection()
+        self.apply_appearance()
+        self.appearance.currentIndexChanged.connect(self.apply_appearance)
         QApplication.instance().setProperty('reduceMotion', self.reduce_motion.isChecked())
         self.model_manager.backend.currentIndexChanged.connect(self.sync_asr_device)
         self.compute.currentIndexChanged.connect(self.select_asr_device)
-        if sys.platform == 'darwin':
-            mac_profile = QPushButton('使用推荐模型组合 · Apple GPU')
-            mac_profile.clicked.connect(self.use_mac_profile)
-            self.model_manager.asr_form.addRow(mac_profile)
         self.update_model_summary()
         self.settings_workspace = SettingsWorkspace(WorkspaceFrame,
             storage_root=self.library.root, manager=self.model_manager,
             controls={key: getattr(self, key) for key in
-                      ('device', 'source', 'target', 'translate', 'reduce_motion', 'beta_features')})
+                      ('device', 'source', 'target', 'translate', 'reduce_motion', 'beta_features', 'appearance')})
         self.beta_features.toggled.connect(self.apply_beta_features)
         self.apply_beta_features(self.beta_features.isChecked(), persist=False)
         self.settings_panel = self.settings_workspace.listening_page
@@ -956,6 +972,11 @@ class Window(QMainWindow):
                 (self.settings_workspace.deleted_requested, self.show_deleted),
                 (self.settings_workspace.refresh_devices_requested, self.refresh_devices)):
             signal.connect(action)
+        self.settings_workspace.prepare_models_requested.connect(self.prepare_recommended_models)
+        self.model_manager.start_check = self.start_background_check
+        self.settings_workspace.model_browser.start_check = self.start_background_check
+        self.settings_workspace.model_browser.changed.connect(self.check_model_assets)
+        self.model_manager.selection_changed.connect(lambda *_: self.asset_check_timer.start(100))
         self.pages.addWidget(self.settings_workspace)
         for pref in PREFERENCES:
             control = self.settings_binding.controls[pref.key]
@@ -978,9 +999,9 @@ class Window(QMainWindow):
         self.knowledge_client.closing_changed.connect(self.on_knowledge_closing)
         if discover:
             QTimer.singleShot(0, self.refresh_devices)
+        self.model_manager.preparation_changed.connect(self.refresh_model_assets_after_preparation)
+        QTimer.singleShot(0, self.check_model_assets)
         if sys.platform == 'darwin':
-            self.model_manager.preparation_changed.connect(self.refresh_model_assets_after_preparation)
-            QTimer.singleShot(0, self.check_model_assets)
             self.setup_application_menu()
 
     def setup_application_menu(self):
@@ -1014,6 +1035,25 @@ class Window(QMainWindow):
             self.about_dialog.setInformativeText(f'版本 {__version__}\n本地语音识别、字幕与翻译。')
             self.about_dialog.setStandardButtons(QMessageBox.StandardButton.Ok)
         self.about_dialog.open()
+
+    def apply_appearance(self):
+        app = QApplication.instance()
+        mode = self.appearance.currentData() or 'light'
+        app.setProperty('appearance', mode)
+        from PySide6.QtGui import QPalette
+        palette = QPalette()
+        colors = ("#ffffff", "#242428", "#ededf0", "#4d4d56") if mode == "light" else ("#222224", "#f1f1f3", "#3e4149", "#f1f1f3")
+        for role, color in ((QPalette.ColorRole.Window, colors[0]), (QPalette.ColorRole.Base, colors[0]),
+                            (QPalette.ColorRole.Text, colors[1]), (QPalette.ColorRole.WindowText, colors[1]),
+                            (QPalette.ColorRole.ButtonText, colors[1]), (QPalette.ColorRole.Button, colors[0]),
+                            (QPalette.ColorRole.Highlight, colors[2]), (QPalette.ColorRole.HighlightedText, colors[3])):
+            palette.setColor(role, QColor(color))
+        app.setPalette(palette)
+        app.setStyleSheet(appearance_style(STYLE, mode))
+        self.prefs.setValue('appearance', mode)
+        self.centralWidget().update()
+        for frame in self.findChildren(WorkspaceFrame):
+            frame.update()
 
     def check_software_updates(self):
         self.open_settings('运行环境')
@@ -1049,6 +1089,7 @@ class Window(QMainWindow):
         self.model_manager.show_update(result, respect_cancel=False)
         self.model_manager.version_label.setText(f'当前版本：{__version__} · 可用新版：{result["version"]}')
         self.update_dialog = QMessageBox(self)
+        self.ui_update_button.setText('↓  有新版本')
         self.update_dialog.setWindowTitle('AgentScribe 有新版本')
         self.update_dialog.setText(f'发现新版 {result["version"]}，建议更新。')
         self.update_dialog.setInformativeText(result['message'])
@@ -1065,17 +1106,22 @@ class Window(QMainWindow):
             self.check_model_assets()
 
     def check_model_assets(self):
-        if self.asset_check_closed or self.model_manager.worker is not None:
+        if self.asset_check_closed or self.model_manager.preparing:
             return
         if self.asset_check is not None and self.asset_check in self.background_checks:
-            QTimer.singleShot(200, self.check_model_assets)
+            self.asset_check_timer.start(200)
             return
         self.asset_check_generation += 1
         generation = self.asset_check_generation
+        selection = self.preparation_selection()
         def checked(value):
+            if selection != self.preparation_selection():
+                self.check_model_assets()
+                return
             missing = value if isinstance(value, list) else ['本地模型检查失败，请点击准备按钮重试']
             self.on_model_assets_checked(generation, missing)
-        self.asset_check = self.start_background_check('linguaflow.recommended_prepare', checked, '--check')
+        self.asset_check = self.start_background_check('linguaflow.recommended_prepare', checked, '--check',
+            '--selection', json.dumps(selection, ensure_ascii=False))
 
     def on_model_assets_checked(self, generation, missing):
         if self.asset_check_closed or generation != self.asset_check_generation:
@@ -1084,14 +1130,18 @@ class Window(QMainWindow):
             self.model_guidance.setText('首次使用请准备本地模型：' + '、'.join(missing) +
                 '。点击“准备识别与翻译模型”；首次需要联网，准备时可以继续操作界面。')
         else:
-            self.model_guidance.setText('推荐模型文件已就绪：Qwen3-ASR 1.7B · MLX 4-bit ＋ HY-MT2 1.8B · Q4_K_M。请选择声音与原文语言；启动时验证推理环境。')
+            self.model_guidance.setText('所选模型文件已就绪。请选择声音与原文语言；启动时验证推理环境。')
 
     def open_settings(self, category="常规"):
         category = category if isinstance(category, str) else "常规"
+        if category in ('识别模型', '翻译模型'):
+            category = '模型管理'
         self.settings_workspace.search.clear()
         if category in ('识别模型', '翻译模型', '字幕与延迟', '运行环境'):
             self.settings_workspace.advanced_navigation.setChecked(True)
-        self.settings_workspace.navigation.setCurrentRow(self.settings_workspace.categories.index(category))
+        index = self.settings_workspace.categories.index(category)
+        self.settings_workspace.navigation.setCurrentRow(index)
+        self.settings_workspace.select(index)
         self.pages.setCurrentIndex(1)
 
     def leave_settings(self):
@@ -1112,9 +1162,6 @@ class Window(QMainWindow):
         language = self.source.currentText()
         self.quick_language.setText(language + (' → ' + self.target.currentText()
                                     if self.translate.isChecked() else ' · 仅原文') + '  ⌄')
-        backend = self.model_manager.backend.currentData()
-        self.quick_model.setText({'wlk-whisper': 'Whisper', 'qwen3-streaming': 'Qwen3-ASR',
-                                 'qwen3-mlx': 'Qwen · Apple GPU'}.get(backend, '识别模型') + '  ⌄')
 
     def open_recording_library(self, explicit_root):
         def choose_directory(root, error):
@@ -1573,32 +1620,50 @@ class Window(QMainWindow):
             manager = self.model_manager
             manager.backend.setCurrentIndex(data_index(manager.backend, 'qwen3-mlx'))
 
-    def use_mac_profile(self):
+    def use_recommended_profile(self):
+        selection = recommended_selection()
         manager = self.model_manager
-        manager.backend.setCurrentIndex(data_index(manager.backend, 'qwen3-mlx'))
-        manager.qwen_model.setCurrentText(MLX_MODEL)
+        manager.backend.setCurrentIndex(data_index(manager.backend, selection['backend']))
+        control = self.asr if selection['backend'] == 'wlk-whisper' else manager.qwen_model
+        control.setCurrentText(selection['asr_model'])
         self.sync_asr_device()
-        from .llama_assets import HY_GGUF
-        manager.translation_engine.setCurrentIndex(data_index(manager.translation_engine, 'llama'))
-        manager.llama_model.setCurrentText(HY_GGUF)
-        manager.translation_device.setCurrentIndex(data_index(manager.translation_device, 'metal'))
+        manager.translation_engine.setCurrentIndex(data_index(manager.translation_engine, selection['translation_engine']))
+        control = manager.llama_model if selection['translation_engine'] == 'llama' else self.translation
+        control.setCurrentText(selection['translation_model'])
+        manager.translation_device.setCurrentIndex(data_index(manager.translation_device, selection['translation_device']))
         self.translate.setChecked(True)
-        manager.status.setText('已选择 Qwen3-ASR 1.7B · MLX 4-bit 与 HY-MT2 1.8B · Q4_K_M。下次开始聆听生效。')
+        manager.status.setText('已选择推荐模型；下一次开始聆听时生效。')
+
+    use_mac_profile = use_recommended_profile  # Compatibility for the previous action name.
+
+    def preparation_selection(self):
+        selection = self.model_manager.preparation_selection()
+        defaults = recommended_selection()
+        # Preserve the existing first-use Apple preset, without overriding user selections.
+        if (defaults['backend'] == 'qwen3-mlx' and selection == self.initial_model_selection
+                and not any(self.prefs.contains(key) for key in ('backend', 'asr', 'qwen_model', 'translation',
+                                                                'translation_engine', 'llama_model',
+                                                                'translation_device', 'compute', 'translate'))):
+            return defaults
+        return selection
 
     def prepare_recommended_models(self):
-        self.use_mac_profile()
+        if self.preparation_selection() != self.model_manager.preparation_selection():
+            self.use_recommended_profile()
         self.model_manager.prepare_recommended()
 
+    def diagnostics_append(self, message):
+        self.diagnostics.appendPlainText(message)
+
     def show_preparation_message(self, message):
+        if not message:
+            self.preparation_summary.hide()
+            return
         self.preparation_summary.setText(message)
-        self.preparation_summary.show()
+        self.preparation_summary.setVisible(self.model_manager.worker is None)
 
     def show_download_progress(self, event):
-        total = event.get('total')
-        self.preparation_progress.setRange(0, 1000 if total else 0)
-        if total:
-            self.preparation_progress.setValue(min(1000, int(1000 * event.get('completed', 0) / total)))
-        self.preparation_progress.setFormat('%p%')
+        set_download_progress(self.preparation_progress, event)
 
     def save_next_settings(self):
         if self.recording_state.active:
@@ -1656,39 +1721,16 @@ class Window(QMainWindow):
     def start(self):
         if self.session is not None:
             return
-        if (self.model_manager.worker is not None
-                and self.model_manager.worker.affects_runtime):
-            QMessageBox.information(self, "模型准备中", "请等待模型准备完成，或在设置中取消准备。")
+        if reason := self.model_manager.start_block_reason():
+            QMessageBox.information(self, *reason)
             return
         if self.device.currentData() is None:
             QMessageBox.warning(self, "没有音频来源", "请连接录音设备并刷新列表。")
             return
-        if self.translate.isChecked() and self.model_manager.translation_engine.currentData() == 'llama':
-            from .llama_assets import resolve_assets
-            try:
-                resolve_assets(self.settings_binding.session_settings(self.device.currentData()))
-            except (ValueError, OSError) as exc:
-                QMessageBox.warning(self, "翻译模型尚未准备好", str(exc))
-                return
-        if self.model_manager.backend.currentData() in ('qwen3-streaming', 'qwen3-mlx') and self.source.currentData()[0] is None:
-            QMessageBox.warning(self, "请选择原文语言", "Qwen 流式模式需要明确原文语言，例如 English 或简体中文。")
-            return
-        if self.model_manager.backend.currentData() in ('qwen3-streaming', 'qwen3-mlx'):
-            from .model_cache import resolve_qwen_cached, validate_mlx_model
-            try:
-                path = resolve_qwen_cached(self.model_manager.qwen_model.currentText().strip())
-                if self.model_manager.backend.currentData() == 'qwen3-mlx':
-                    from .runtime_paths import mlx_python
-                    validate_mlx_model(path)
-                    if not mlx_python().is_file():
-                        raise ValueError('请先到运行环境页安装 Apple GPU / MLX 识别环境。')
-            except ValueError as exc:
-                QMessageBox.warning(self, "模型尚未准备好", str(exc))
-                return
-        if ((self.model_manager.backend.currentData() == "wlk-whisper" and not self.asr.currentText().strip())
-                or (self.translate.isChecked() and self.model_manager.translation_engine.currentData() == 'pytorch'
-                    and not self.translation.currentText().strip())):
-            QMessageBox.warning(self, "模型为空", "请选择模型名称或本地模型目录。")
+        from .inference_startup import start_problem
+        settings = self.settings_binding.session_settings(self.device.currentData())
+        if reason := start_problem(settings):
+            QMessageBox.warning(self, *reason)
             return
         if not self.current_item or self.current_item["state"] != "draft":
             if not self.new_recording():
@@ -1704,7 +1746,6 @@ class Window(QMainWindow):
         self.diagnostics.clear()
         self.on_status("正在启动本地推理环境…可点击停止取消加载。")
         self.empty.setText("正在准备模型和验证推理环境…\n准备好后自动开始录音，加载进度显示在下方。")
-        settings = self.settings_binding.session_settings(self.device.currentData())
         if self.beta_features.isChecked() and settings.backend in ('qwen3-streaming', 'qwen3-mlx'):
             try:
                 context = session_context(self.library, self.current_item['id'])
@@ -1784,6 +1825,10 @@ class Window(QMainWindow):
     def on_status(self, message):
         self.diagnostics.appendPlainText(time.strftime("%H:%M:%S") + "  " + message)
         if self.last_error:
+            return
+        # Optional Whisper advice is irrelevant to the active Qwen backend.
+        if (message.startswith('MLX Whisper not found') and self.session is not None
+                and self.session.settings.backend.startswith('qwen3-')):
             return
         self.phase_started = time.monotonic()
         self.status.setToolTip(message)
@@ -1972,14 +2017,30 @@ class Window(QMainWindow):
         self.status.setText("已复制最新字幕")
 
     def export(self):
-        path, _ = QFileDialog.getSaveFileName(self, "导出双语字幕", "字幕.srt", "SubRip 字幕 (*.srt)")
+        from .recording_export import FORMATS, export_target, write_export
+        path, selected_filter = QFileDialog.getSaveFileName(
+            self, "导出录音定稿", "字幕", ";;".join(label for label, _ in FORMATS.values()))
         if path:
-            try:
-                captions = [self.captions[k] for k in sorted(self.captions) if self.captions[k].final and self.captions[k].source]
-                Path(path).write_text(export_srt(captions), encoding="utf-8-sig")
-                self.status.setText(f"已导出 {len(captions)} 条字幕：{path}")
-            except OSError as exc:
-                QMessageBox.warning(self, "导出失败", str(exc))
+            target, kind = export_target(path, selected_filter)
+            # The native dialog confirms the entered name; confirm again only if
+            # adding a missing suffix identifies a different existing file.
+            if target != Path(path) and target.exists():
+                answer = QMessageBox.question(self, "覆盖导出文件", f"{target.name} 已存在，是否替换？",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                    QMessageBox.StandardButton.Cancel)
+                if answer != QMessageBox.StandardButton.Yes:
+                    return
+            # Freeze the captions through the existing owned saver; IO/formatting run off the UI thread.
+            captions = [self.captions[k] for k in sorted(self.captions)]
+            self.export_saver.submit(write_export, (0, str(target)), self.caption_version,
+                                     dict(path=str(target), format=kind, state='exported'), captions)
+            self.status.setText('正在导出录音定稿…')
+
+    def on_exported(self, snapshot, state, error):
+        if error:
+            QMessageBox.warning(self, "导出失败", error)
+        else:
+            self.status.setText(f"已导出录音定稿：{snapshot.item['path']}")
 
     def eventFilter(self, watched, event):
         if (event.type() == QEvent.Type.Resize and hasattr(self, "workspace_content")
@@ -2040,6 +2101,9 @@ class Window(QMainWindow):
             self.status.setText("正在释放模型，请等待当前加载或推理结束…")
             event.ignore()
             return
+        if not self.export_saver.flush():
+            event.ignore()
+            return
         if not self.persist_session():
             event.ignore()
             return
@@ -2054,6 +2118,7 @@ class Window(QMainWindow):
         if self.runtime is not None:
             self.runtime.close(wait=False)
         self.asset_check_closed = True
+        self.asset_check_timer.stop()
         if self.background_checks:
             for check in tuple(self.background_checks):
                 check.kill()
@@ -2067,7 +2132,7 @@ def main():
     app.setApplicationName("AgentScribe")
     app.setApplicationVersion(__version__)
     app.setStyle("Fusion")
-    app.setStyleSheet(STYLE)
+    app.setStyleSheet(appearance_style(STYLE))
     runtime = RuntimePreparation()
     window = Window(runtime=runtime)
     window.show()

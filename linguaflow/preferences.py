@@ -24,6 +24,7 @@ PREFERENCES = (
     *(Preference(key, 'data', default) for key, (default, _maximum) in CONTEXT_COUNTS.items()),
     Preference('update_seconds', 'float', 1.), Preference('endpoint_seconds', 'float', .5),
     Preference('draft_seconds', 'float', .5),
+    Preference('appearance', 'data', 'light'),
     Preference('reduce_motion', 'bool', False),
     Preference('beta_features', 'bool', False),
 )

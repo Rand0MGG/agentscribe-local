@@ -113,3 +113,36 @@ def export_srt(captions: list[Caption]) -> str:
             text += "\n" + prefix + caption.translation.strip()
         rows.append(f"{index}\n{srt_time(caption.start)} --> {srt_time(caption.end)}\n{text}\n")
     return "\n".join(rows)
+
+
+def export_txt(captions: list[Caption]) -> str:
+    """Readable bilingual final text; retain the distinction between initial/final translation."""
+    rows = []
+    for caption in captions:
+        if not source_is_final(caption) or not caption.source.strip():
+            continue
+        text = caption.source.strip()
+        if caption.translation.strip():
+            prefix = '[初译] ' if caption.translation_phase == 'initial' else ''
+            text += '\n' + prefix + caption.translation.strip()
+        rows.append(text)
+    return '\n\n'.join(rows)
+
+
+def export_md(captions: list[Caption]) -> str:
+    """Markdown transcript with timestamps and literal, escaped caption text."""
+    import re
+    def paragraph(text):
+        text = re.sub(r'([\\`*_{}\[\]()#+.!|>~<>-])', r'\\\1', text.strip())
+        return text.replace('\n', '  \n')
+    rows = []
+    for caption in captions:
+        if not source_is_final(caption) or not caption.source.strip():
+            continue
+        start, end = (srt_time(t).replace(',', '.') for t in (caption.start, caption.end))
+        text = f'### {start} → {end}\n\n' + paragraph(caption.source)
+        if caption.translation.strip():
+            label = '初译' if caption.translation_phase == 'initial' else '译文'
+            text += f'\n\n**{label}：** ' + paragraph(caption.translation)
+        rows.append(text)
+    return '# 录音定稿\n\n' + '\n\n'.join(rows) + ('\n' if rows else '')

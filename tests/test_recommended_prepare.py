@@ -1,37 +1,78 @@
-import subprocess
-
+"""Both platforms use the same orchestration and retain required-asset failures."""
 import pytest
 
-from linguaflow import recommended_prepare
+from linguaflow import recommended_prepare as worker
+from linguaflow.model_options import recommended_selection
 
 
+@pytest.mark.parametrize('system', ['darwin', 'win32'])
 @pytest.mark.parametrize('cached', [False, True])
-def test_recommended_preparation_reuses_assets_and_orders_missing_dependencies(monkeypatch, tmp_path, cached):
+def test_preparation_reuses_models_and_keeps_segmentation(monkeypatch, tmp_path, system, cached):
+    monkeypatch.setattr('sys.platform', system)
+    selection = recommended_selection()
+    # Exercise both shared Qwen adapters with a custom selection, not only defaults.
+    selection.update(backend='qwen3-mlx' if system == 'darwin' else 'qwen3-streaming',
+                     asr_model='fixture', translation_engine='llama', translation_model='fixture.gguf')
     calls = []
-    asset = tmp_path / 'asset'
-    if cached:
-        asset.write_bytes(b'cached')
-    monkeypatch.setattr('linguaflow.hardware.check_installation', lambda: 'macos-arm64')
-    for name in ('runtime_python', 'mlx_python', 'model_path'):
-        monkeypatch.setattr(recommended_prepare, name, lambda: asset)
-    monkeypatch.setattr(recommended_prepare, 'llama_server', lambda _: asset)
-    monkeypatch.setattr(recommended_prepare, 'digest', lambda _: recommended_prepare.MODEL_SHA256)
-    monkeypatch.setattr(recommended_prepare, 'resolve_qwen_cached', lambda _: str(asset))
-    def validate(_):
-        if not cached:
-            raise ValueError('missing')
-    monkeypatch.setattr(recommended_prepare, 'validate_mlx_model', validate)
-    monkeypatch.setattr('linguaflow.runtime_install.install', lambda kind: calls.append(kind))
+    monkeypatch.setattr('linguaflow.runtime_install.maintain', lambda value: calls.append(('runtime', value.copy())))
+    monkeypatch.setattr(worker, 'runtime_python', lambda: tmp_path/'python')
+    def resolve(_):
+        if not cached and not any(c[0] == 'qwen' for c in calls):
+            raise ValueError('missing weights')
+        return 'fixture'
+    monkeypatch.setattr(worker, 'resolve_asr', resolve)
     monkeypatch.setattr('linguaflow.model_prepare.prepare', lambda kind, model: calls.append((kind, model)))
-    monkeypatch.setattr('linguaflow.llama_install.install', lambda device, model: calls.append((device, model)))
-    monkeypatch.setattr(subprocess, 'run', lambda command, **kwargs: calls.append('semantic'))
-    recommended_prepare.main()
-    expected = ['semantic'] if cached else ['wlk', 'mlx', ('qwen', recommended_prepare.MLX_MODEL),
-                                           'semantic', ('metal', recommended_prepare.HY_GGUF)]
-    assert calls == expected
+    monkeypatch.setattr('linguaflow.runtime_install.run_command', lambda command, **kwargs: calls.append(('command', command)))
+    monkeypatch.setattr('linguaflow.llama_install.prepare_weights', lambda model: calls.append(('translation', model)))
+    worker.main(selection)
+    assert calls[0] == ('runtime', selection)
+    assert ('qwen', 'fixture') in calls if not cached else ('qwen', 'fixture') not in calls
+    assert any(c[0] == 'command' and c[1][-1] == 'linguaflow.semantic_model' for c in calls)
+    assert calls[-1] == ('translation', 'fixture.gguf')
 
 
-def test_recommended_preparation_rejects_unsupported_platform_before_installing(monkeypatch):
-    monkeypatch.setattr('linguaflow.hardware.check_installation', lambda: 'windows-x64')
-    with pytest.raises(ValueError, match='Apple Silicon'):
-        recommended_prepare.main()
+def test_windows_whisper_and_pytorch_use_shared_preparation(monkeypatch, tmp_path):
+    monkeypatch.setattr('sys.platform', 'win32')
+    selection = recommended_selection()
+    monkeypatch.setattr('linguaflow.runtime_install.maintain', lambda _: None)
+    monkeypatch.setattr(worker, 'runtime_python', lambda: tmp_path/'python')
+    calls = []
+    monkeypatch.setattr('linguaflow.runtime_install.run_command', lambda command, **kwargs: calls.append(command))
+    monkeypatch.setattr('linguaflow.model_prepare.prepare', lambda kind, model: calls.append((kind, model)))
+    worker.main(selection)
+    assert calls[0][-3:] == ['linguaflow.wlk_prepare', 'whisper', 'tiny']
+    assert calls[1][-1] == 'linguaflow.semantic_model'
+    assert calls[2] == ('translation', selection['translation_model'])
+
+
+def test_segmentation_failure_stops_translation_and_success(monkeypatch):
+    monkeypatch.setattr('linguaflow.runtime_install.maintain', lambda _: None)
+    monkeypatch.setattr(worker, 'resolve_asr', lambda _: 'fixture')
+    def fail(*args, **kwargs):
+        raise RuntimeError('required segmentation failed')
+    monkeypatch.setattr('linguaflow.runtime_install.run_command', fail)
+    monkeypatch.setattr('linguaflow.llama_install.prepare_weights', lambda _: pytest.fail('must not proceed'))
+    with pytest.raises(RuntimeError, match='segmentation'):
+        worker.main(dict(backend='qwen3-streaming', asr_model='fixture', translation_engine='llama'))
+
+
+def test_incompatible_backend_fails_before_installing(monkeypatch):
+    monkeypatch.setattr('sys.platform', 'win32')
+    monkeypatch.setattr('linguaflow.runtime_install.check_installation', lambda: 'windows-x64')
+    monkeypatch.setattr('linguaflow.runtime_install.install', lambda _: pytest.fail('must validate first'))
+    with pytest.raises(ValueError, match='识别引擎'):
+        worker.main(recommended_selection('darwin'))
+
+
+@pytest.mark.parametrize('only', ['asr', 'translation'])
+def test_single_role_preparation_propagates_scope_and_skips_other_weights(monkeypatch, tmp_path, only):
+    calls = []
+    monkeypatch.setattr('linguaflow.runtime_install.maintain',
+                        lambda selection, **kwargs: calls.append(('maintain', kwargs)))
+    monkeypatch.setattr(worker, 'runtime_python', lambda: tmp_path/'python')
+    monkeypatch.setattr(worker, 'resolve_asr', lambda _: calls.append(('asr', {})))
+    monkeypatch.setattr('linguaflow.runtime_install.run_command', lambda *args, **kwargs: None)
+    monkeypatch.setattr('linguaflow.llama_install.prepare_weights', lambda _: calls.append(('translation', {})))
+    worker.main(dict(backend='qwen3-streaming', asr_model='fixture',
+                     translation_engine='llama', translation_model='fixture.gguf'), only=only)
+    assert calls == [('maintain', {'only': only}), (only, {})]

@@ -7,6 +7,24 @@ QWEN_MODELS = ('Qwen/Qwen3-ASR-0.6B', 'Qwen/Qwen3-ASR-1.7B')
 MLX_MODEL = 'mlx-community/Qwen3-ASR-1.7B-4bit'
 
 
+def recommended_selection(system=None):
+    """Platform defaults only; orchestration always receives an explicit selection."""
+    from .llama_assets import HY_GGUF
+    from .translation_models import HY_MODEL
+    apple = (system or sys.platform) == 'darwin'
+    return dict(backend='qwen3-mlx' if apple else 'wlk-whisper',
+                asr_model=MLX_MODEL if apple else 'tiny',
+                translation_engine='llama' if apple else 'pytorch',
+                translation_model=HY_GGUF if apple else HY_MODEL,
+                translation_device='metal' if apple else 'cuda')
+
+
+def required_runtimes(backend):
+    if backend not in asr_backends():
+        raise ValueError('识别引擎不适用于当前平台。')
+    return ('wlk', 'mlx') if backend == 'qwen3-mlx' else ('wlk',)
+
+
 def asr_backends(system=None):
     """Available recognition adapters; installation/runtime checks remain separate."""
     shared = ('wlk-whisper', 'qwen3-streaming')

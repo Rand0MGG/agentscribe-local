@@ -17,7 +17,8 @@ def translation_is_current(current, requested):
 
 
 class TranslationQueue:
-    def __init__(self):
+    def __init__(self, source_pending=lambda: False):
+        self.source_pending = source_pending
         self.queue = asyncio.Queue()
         self.pending = {}
         self.deferred = _EMPTY
@@ -34,6 +35,15 @@ class TranslationQueue:
         self.source_updates -= 1
         if not self.source_updates:
             self.source_ready.set()
+
+    async def wait_source_ready(self):
+        """Admit new translation only after active/queued recognition clears."""
+        while True:
+            await self.source_ready.wait()
+            if not self.source_pending():
+                return
+            # The upstream audio queue has no drained signal. Never block its loop.
+            await asyncio.sleep(.02)
 
     def put_nowait(self, caption):
         if caption is None:

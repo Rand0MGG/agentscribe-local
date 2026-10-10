@@ -25,6 +25,12 @@ def hub_progress():
             kwargs['mininterval'] = .25
             super().__init__(*args, **kwargs)
 
+        def update(self, n=1):
+            result = super().update(n)
+            # Xet callbacks can arrive below tqdm's adaptive miniters.
+            self.display()
+            return result
+
         def display(self, msg=None, pos=None):
             now = time.monotonic()
             if now - self.last_report >= .25 or self.total is not None and self.n >= self.total:
@@ -39,14 +45,16 @@ def hub_progress():
         module.tqdm = original
 
 
-def copy_download(response, output, label):
+def copy_download(response, output, label, *, checksum=None):
     """Stream owned HTTP downloads with byte progress; unknown totals stay unknown."""
-    total = response.headers.get('Content-Length')
+    total = getattr(response, 'headers', {}).get('Content-Length')
     total = int(total) if total and total.isdigit() else None
     done, started, last = 0, time.monotonic(), 0.
     report(label, total=total)
     while block := response.read(1024 * 1024):
         output.write(block)
+        if checksum is not None:
+            checksum.update(block)
         done += len(block)
         now = time.monotonic()
         if now - last >= .25:

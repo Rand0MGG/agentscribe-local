@@ -1,6 +1,7 @@
 """Prepare pinned local llama.cpp binaries and optional HY weights; no inference."""
 import argparse
 import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -11,8 +12,8 @@ from uuid import uuid4
 
 from .download_progress import copy_download, hub_progress
 from .hardware import check_installation
-from .runtime_install import preparation_lock, publish
-from .runtime_paths import cache_root, runtime_root
+from .installation import preparation_lock, publish, run_command
+from .runtime_paths import cache_root, llama_server, runtime_root
 
 
 def unpack(archive, destination):
@@ -29,22 +30,29 @@ def unpack(archive, destination):
     return entries[0] if len(entries) == 1 and entries[0].is_dir() else destination
 
 
+def ensure_runtime(device):
+    """Check the selected binary/DLLs off the UI thread, repairing without weights."""
+    try:
+        binary = llama_server(device)
+        if not binary.is_file():
+            raise RuntimeError('缺少翻译运行组件')
+        run_command([str(binary), '--version'], timeout=30)
+    except (RuntimeError, OSError, subprocess.SubprocessError):
+        install(device, None)
+
+
 def install(device, model):
     from linguaflow.llama_assets import (
         HY_GGUF,
-        MODEL_FILE,
-        MODEL_SHA256,
         RELEASE_URL,
-        REVISION,
         digest,
-        model_path,
         runtime_archives,
         validate_weights,
     )
 
     target = check_installation()
     archives = runtime_archives(device)
-    if model != HY_GGUF:
+    if model is not None and model != HY_GGUF:
         validate_weights(model)
     name = 'llama-b11254-' + (target + '-' + device if target == 'windows-x64' else target)
     base = runtime_root() / 'components' / name
@@ -72,7 +80,23 @@ def install(device, model):
         binary = destination / ('llama-server.exe' if sys.platform == 'win32' else 'llama-server')
         if not binary.is_file():
             raise ValueError('运行组件缺少 llama-server，请检查官方发行包。')
+        run_command([str(binary), '--version'], timeout=30)
         publish(base / 'active.json', {'slot': slot})
+    if model is not None:
+        prepare_weights(model)
+    print('llama.cpp 文件已就绪；开始聆听时验证模型架构和所选设备。', flush=True)
+
+
+def prepare_weights(model):
+    from .llama_assets import (
+        HY_GGUF,
+        MODEL_FILE,
+        MODEL_SHA256,
+        REVISION,
+        digest,
+        model_path,
+        validate_weights,
+    )
     if model == HY_GGUF:
         weights = model_path()
         if not weights.is_file() or digest(weights) != MODEL_SHA256:
@@ -97,7 +121,6 @@ def install(device, model):
             finally:
                 staged.unlink(missing_ok=True)
     validate_weights(model)
-    print('llama.cpp 文件已就绪；开始聆听时验证模型架构和所选设备。', flush=True)
 
 
 def main():

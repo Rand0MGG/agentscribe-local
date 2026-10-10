@@ -51,3 +51,34 @@ async def load_components(load_recognition, load_semantic):
                 active_error.add_note(f'识别资源清理失败：{cleanup_error}')
             else:
                 raise cleanup_error
+
+
+def start_problem(settings):
+    """Return (title, actionable message) for invalid local startup input, otherwise None.
+
+    Only inspect local assets here. Backend initialization retains its own final
+    validation; this preflight never loads models or probes audio devices.
+    """
+    if settings.translate and settings.translation_engine == 'llama':
+        from .llama_assets import resolve_assets
+        try:
+            resolve_assets(settings)
+        except (ValueError, OSError) as exc:
+            return '翻译模型尚未准备好', str(exc)
+    if settings.backend in ('qwen3-streaming', 'qwen3-mlx'):
+        if settings.source is None:
+            return '请选择原文语言', 'Qwen 流式模式需要明确原文语言，例如 English 或简体中文。'
+        from .model_cache import resolve_qwen_cached, validate_mlx_model
+        try:
+            path = resolve_qwen_cached(settings.qwen_model.strip())
+            if settings.backend == 'qwen3-mlx':
+                from .runtime_paths import mlx_python
+                validate_mlx_model(path)
+                if not mlx_python().is_file():
+                    raise ValueError('请先到运行环境页检查 / 修复 Apple GPU / MLX 识别环境。')
+        except ValueError as exc:
+            return '模型尚未准备好', str(exc)
+    if ((settings.backend == 'wlk-whisper' and not settings.asr_model)
+            or (settings.translate and settings.translation_engine == 'pytorch' and not settings.translation_model)):
+        return '模型为空', '请选择模型名称或本地模型目录。'
+    return None

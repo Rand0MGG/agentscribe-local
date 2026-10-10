@@ -57,3 +57,20 @@ def test_semantic_downloads_use_progress_but_local_checks_remain_offline(monkeyp
     calls.clear()
     semantic_model.paths()
     assert all(call['local_files_only'] and 'tqdm_class' not in call for call in calls)
+
+
+def test_hub_byte_callbacks_report_below_adaptive_terminal_refresh(capsys):
+    import importlib
+    from unittest.mock import patch
+    module = importlib.import_module('huggingface_hub.utils.tqdm')
+    original = module.tqdm
+    with download_progress.hub_progress() as bar_type:
+        with patch.object(download_progress.time, 'monotonic', side_effect=range(100, 1000)):
+            with bar_type(total=1000, unit='B', desc='large weights', miniters=10**9) as bar:
+                bar.update(10)
+                bar.update(20)
+    events = [json.loads(line.removeprefix(download_progress.PREFIX))
+              for line in capsys.readouterr().out.splitlines()]
+    assert any(event['completed'] == 10 for event in events)
+    assert any(event['completed'] == 30 for event in events)
+    assert module.tqdm is original

@@ -5,6 +5,13 @@ PLATFORM_STYLE = ("\nQWidget { font-family: 'PingFang SC', 'Helvetica Neue'; }\n
                   if sys.platform == 'darwin' else '')
 
 SURFACE_STYLE = """
+QLabel#captionFinal { color: #efeff1; }
+QLabel#captionDraft { color: #98989f; }
+QLabel#captionTranslation { color: #bababe; font-size: 15px; }
+QListWidget#modelInventory { background: transparent; border: none; outline: none; }
+QListWidget#modelInventory::item { padding: 14px 16px; margin-bottom: 8px; border-radius: 10px; border: 1px solid #39393f; }
+QListWidget#modelInventory::item:selected { background: #343439; color: #f0f0f5; }
+QListWidget#modelInventory::item:hover:!selected { background: #29292d; }
 QLabel#muted { color: #a5a5ad; line-height: 1.5; }
 QLabel#settingsTitle { font-size: 26px; font-weight: 600; }
 QLabel#dialogTitle { font-size: 21px; font-weight: 600; color: #f1f1f3; }
@@ -47,4 +54,61 @@ QListWidget#deletedEntries { background: #27272a; border: 1px solid #39393f; bor
 QListWidget#deletedEntries::item { padding: 14px; border-radius: 7px; }
 QListWidget#deletedEntries::item:selected { background: #3b3d45; }
 QToolTip { background: #303036; color: #e6e6ed; border: 1px solid #555560; padding: 8px 10px; }
+"""
+
+
+def appearance_style(dark_style, appearance='light'):
+    """Keep one shared stylesheet geometry and supply a matching light palette."""
+    if appearance == 'dark':
+        return dark_style + ACCENT_STYLE + '\nQFrame#sidebar, QFrame#glassTopBar { background: rgba(28,28,30,40); }\n'
+    import re
+    palette = {
+        '#171717': '#ffffff', '#191919': '#ffffff', '#202022': '#ffffff',
+        '#222224': '#ffffff', '#242425': '#ffffff', '#272729': '#f7f7f8',
+        '#f1f1f1': '#242428', '#f1f1f3': '#242428', '#fafafa': '#242428',
+        '#ffffff': '#242428', '#eeeeee': '#303034', '#ededed': '#303034',
+    }
+    def color(match):
+        value = match[0].lower()
+        if value in palette:
+            return palette[value]
+        r, g, b = (int(value[i:i+2], 16) for i in (1, 3, 5))
+        # Neutral theme tokens share a reversed lightness, preserving hue accents.
+        if max(r, g, b) - min(r, g, b) < 42:
+            level = int((r + g + b) / 3)
+            level = max(32, min(250, 282 - level))
+            return f'#{level:02x}{level:02x}{level:02x}'
+        return value
+    style = re.sub(r'#[0-9a-fA-F]{6}', color, dark_style)
+    return style + LIGHT_SURFACES + ACCENT_STYLE
+
+
+LIGHT_SURFACES = """
+QFrame#sidebar, QFrame#glassTopBar { background: rgba(247,247,249,40); border: none; }
+QFrame#sidebar { border-right: 1px solid #e5e5e8; }
+QFrame#workspaceHeader, QWidget#workspaceContent { background: #ffffff; }
+QFrame#settingsGroup, QWidget#modelSettingsGroup { background: #ffffff; border-color: #e7e7eb; }
+QFrame#footer { background: #fafafa; border-color: #e5e5e8; }
+QPushButton#primary { background: #29292d; color: #ffffff; border-color: #29292d; }
+QPushButton#primary:hover { background: #414146; color: #ffffff; }
+QLabel#settingsTitle, QLabel#dialogTitle, QLabel#settingsSection { color: #29292d; }
+QLabel#settingsHint, QLabel#pageDescription, QLabel#muted, QLabel#timestamp { color: #666670; }
+QListWidget#settingsNavigation::item:selected, QTreeWidget::item:selected { background: #ededf0; color: #29292d; }
+QPushButton#danger { color: #b42318; border-color: #e5c0bf; }
+QPushButton#danger:disabled { color: #9999a1; border-color: #dedee3; }
+QProgressBar { background: #ededf1; border: none; border-radius: 7px; color: #303034; text-align: center; }
+QProgressBar::chunk { background: #a3b9dd; border-radius: 7px; }
+"""
+
+
+# Warm highlights identify actions without tinting the opaque reading surfaces.
+ACCENT_STYLE = """
+QPushButton#primary:enabled { background: #f3c547; color: #29251a; border-color: #f3c547; }
+QPushButton#primary:hover:enabled { background: #ffd46a; border-color: #ffd46a; }
+QPushButton#primary:pressed:enabled { background: #e8b62e; }
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus { border-color: #c59b2d; }
+QPushButton#accentAction:enabled { color: #a87911; }
+QPushButton#modelBack { background: transparent; border: none; color: #a87911; text-align: left; }
+QCheckBox::indicator:checked { background: #f3c547; border-color: #c59b2d; }
+QProgressBar::chunk { background: #f3c547; border-radius: 7px; }
 """

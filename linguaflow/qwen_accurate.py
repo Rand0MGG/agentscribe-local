@@ -305,6 +305,8 @@ class QwenAccurateOnline:
 
 
 def build_official_online(model_path, device, language, update_seconds, window_seconds, context=''):
+    from .model_cache import reject_alignment_model
+    reject_alignment_model(model_path)
     from .knowledge.schemas import MAX_CONTEXT_BYTES
     if not isinstance(context, str) or len(context.encode('utf-8')) > MAX_CONTEXT_BYTES:
         raise ValueError('课程术语上下文无效或超长，请重新审核术语。')

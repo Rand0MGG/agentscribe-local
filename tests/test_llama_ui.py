@@ -22,6 +22,7 @@ prefs = QSettings(str(folder/'prefs.ini'), QSettings.Format.IniFormat)
 def window(): return module.Window(discover=False, prefs=prefs)
 w = window()
 manager = w.model_manager
+manager.translation_engine.setCurrentIndex(manager.translation_engine.findData('pytorch'))
 assert manager.translation_engine.currentData() == 'pytorch'
 w.translation.setCurrentText(HY_MODEL)
 manager.translation_engine.setCurrentIndex(manager.translation_engine.findData('llama'))
@@ -42,10 +43,14 @@ assert settings.translation_engine == 'llama' and settings.translation_device ==
 assert settings.translation_initial_before == 1 and settings.translation_before == 5
 assert settings.llama_model.endswith('new-model-f16.gguf')
 commands = []
-manager.prepare = lambda action: action()
+manager.prepare = lambda action, **kwargs: action()
 manager.run_preparation = lambda command: commands.append(command)
 manager.prepare_translation(HY_MODEL)
-assert 'linguaflow.llama_install' in commands[0] and commands[0][-1] == settings.llama_model
+import json
+assert 'linguaflow.recommended_prepare' in commands[0]
+selection = json.loads(commands[0][commands[0].index('--selection')+1])
+assert selection['translation_model'] == settings.llama_model and selection['translation_device'] == device
+assert commands[0][-2:] == ['--only', 'translation']
 w.close()
 w = window()
 manager = w.model_manager
@@ -75,7 +80,7 @@ QMessageBox.warning = lambda *args: warnings.append(args[-1])
 w.start()
 assert w.session is None and 'fixture missing' in warnings[0]
 if sys.platform == 'darwin':
-    manager.hy_metal_button.click()
+    w.use_mac_profile()
     assert manager.translation_engine.currentData() == 'llama'
     assert manager.llama_model.currentText() == HY_GGUF
     assert manager.translation_device.currentData() == 'metal'

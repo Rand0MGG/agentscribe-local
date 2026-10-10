@@ -4,8 +4,9 @@ import hashlib
 import urllib.request
 from pathlib import Path
 
+from .download_progress import copy_download
+from .installation import preparation_lock
 from .model_cache import resolve_whisper_cached
-from .runtime_install import preparation_lock
 from .runtime_paths import whisper_cache_root
 
 
@@ -29,14 +30,9 @@ def prepare(model):
         # Stream the checksum rather than reading several GB into CPU memory.
         partial = target.with_suffix('.pt.download')
         print('正在下载 Whisper：' + model, flush=True)
-        checksum, total = hashlib.sha256(), 0
+        checksum = hashlib.sha256()
         with urllib.request.urlopen(url, timeout=60) as response, partial.open('wb') as output:
-            for block in iter(lambda: response.read(1024**2), b''):
-                output.write(block)
-                checksum.update(block)
-                total += len(block)
-                if total // (64 * 1024**2) != (total - len(block)) // (64 * 1024**2):
-                    print(f'Whisper 已下载 {total // 1024**2} MiB', flush=True)
+            copy_download(response, output, 'Whisper：' + model, checksum=checksum)
         if checksum.hexdigest() != expected:
             raise ValueError('Whisper 权重校验失败，已有模型保留，请重新下载 / 检查。')
         partial.replace(target)

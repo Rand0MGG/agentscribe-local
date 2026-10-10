@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 from threading import Event, get_ident
 
 import pytest
@@ -112,3 +113,32 @@ def test_cancelled_startup_rejects_and_closes_late_resources():
             await asyncio.wait_for(task, 3)
         assert closed == ['first', 'late'] and exited.is_set()
     asyncio.run(exercise())
+
+
+def test_startup_preflight_uses_settings_and_does_not_resolve_missing_language(monkeypatch):
+    from linguaflow.core import Settings
+    from linguaflow.inference_startup import start_problem
+    monkeypatch.setattr('linguaflow.model_cache.resolve_qwen_cached',
+                        lambda _: pytest.fail('no model checks before selecting source language'))
+    settings = Settings('fixture', backend='qwen3-mlx', translate=False)
+    assert start_problem(settings)[0] == '请选择原文语言'
+    assert settings.source is None
+
+
+def test_startup_preflight_keeps_mlx_validation_and_translation_toggle(monkeypatch, tmp_path):
+    from linguaflow.core import Settings
+    from linguaflow.inference_startup import start_problem
+    settings = Settings('fixture', backend='qwen3-mlx', source='en', translate=False)
+    monkeypatch.setattr('linguaflow.model_cache.resolve_qwen_cached', lambda _: tmp_path)
+    def invalid(_):
+        raise ValueError('wrong quantization')
+    monkeypatch.setattr('linguaflow.model_cache.validate_mlx_model', invalid)
+    assert start_problem(settings) == ('模型尚未准备好', 'wrong quantization')
+    assert settings.backend == 'qwen3-mlx'
+    settings = replace(settings, backend='wlk-whisper', translation_engine='llama')
+    def unavailable(_):
+        raise ValueError('missing GGUF')
+    monkeypatch.setattr('linguaflow.llama_assets.resolve_assets', unavailable)
+    assert start_problem(settings) is None
+    settings = replace(settings, translate=True)
+    assert start_problem(settings) == ('翻译模型尚未准备好', 'missing GGUF')

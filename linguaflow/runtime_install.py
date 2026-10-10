@@ -2,47 +2,27 @@
 import argparse
 import hashlib
 import json
-import os
+import shutil
 import subprocess
 import sys
 import urllib.request
 import zipfile
-from contextlib import contextmanager
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
 from .hardware import CUDA_WHEEL, TORCH_VERSION, check_installation
-from .process_platform import spawn_options, stop_tree
+from .installation import preparation_lock, publish, run_command
 from .runtime_base import prepare_base, python_abi
 from .runtime_paths import (
     cache_root,
     environment_python,
-    installation_command,
     knowledge_python,
     packaged,
     python_environment,
     resource_root,
+    runtime_environment,
     runtime_root,
 )
-
-
-def run_command(command, *, env=None, cwd=None, timeout=1800):
-    """Bounded command with descendant ownership, including CLI interruption."""
-    supervisor = installation_command('linguaflow.managed_process', *command)
-    with subprocess.Popen(supervisor, stdin=subprocess.PIPE, env=env or python_environment(),
-                          cwd=cwd or resource_root(), **spawn_options()) as process:
-        try:
-            code = process.wait(timeout=timeout)
-            if code:
-                raise subprocess.CalledProcessError(code, command)
-        finally:
-            process.stdin.close()
-            if process.poll() is None:
-                try:
-                    process.wait(timeout=8)
-                except subprocess.TimeoutExpired:
-                    stop_tree(process, force=True)
-                    process.wait(timeout=5)
 
 
 def prepare_sources(requirements, directory):
@@ -108,48 +88,6 @@ def prepare_sources(requirements, directory):
     local = directory / 'requirements.txt'
     local.write_text('\n'.join(lines) + '\n', encoding='utf-8')
     return local
-
-
-@contextmanager
-def preparation_lock(directory):
-    """OS releases the lock even if a cancelled preparation is forcibly killed."""
-    directory.mkdir(parents=True, exist_ok=True)
-    with (directory / 'prepare.lock').open('a+b') as handle:
-        handle.seek(0)
-        if not handle.read(1):
-            handle.write(b'0')
-            handle.flush()
-        handle.seek(0)
-        try:
-            if sys.platform == 'win32':
-                import msvcrt
-                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as exc:
-            raise RuntimeError('已有准备任务正在运行，请等待完成或取消后重试。') from exc
-        try:
-            yield
-        finally:
-            handle.seek(0)
-            if sys.platform == 'win32':
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-
-
-def publish(pointer, value):
-    """Only a successfully verified environment becomes visible to sessions."""
-    temporary = pointer.with_name(pointer.name + '.' + uuid4().hex + '.tmp')
-    try:
-        with temporary.open('w', encoding='utf-8') as handle:
-            json.dump(value, handle)
-            handle.flush()
-            os.fsync(handle.fileno())
-        temporary.replace(pointer)
-    finally:
-        temporary.unlink(missing_ok=True)
 
 
 def verify(kind):
@@ -229,12 +167,121 @@ def install(kind):
     print('运行环境已就绪：' + str(python) + '\n请先下载 / 检查模型，再开始聆听。', flush=True)
 
 
+def process_commands():
+    """Read process ownership conservatively; unavailable inventory forbids cleanup."""
+    if sys.platform == 'win32':
+        command = ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command',
+                   'Get-CimInstance Win32_Process | Select-Object -ExpandProperty CommandLine']
+    else:
+        command = ['ps', '-axo', 'command=']
+    return subprocess.check_output(command, text=True, timeout=15).casefold()
+
+
+def clean_environments(kind):
+    """Remove only unreferenced managed slots; preserve rollback chain and live processes.
+
+    Unknown/corrupt pointer records and failed process inspection fail closed.
+    Legacy venvs, models, recordings and shared base Python never enter this scan.
+    The caller must hold the environment's preparation lock.
+    """
+    base = runtime_root() / 'python' / kind
+    if any(path.is_symlink() for path in (base, *base.parents)):
+        return 0
+    def slot_name(value):
+        return isinstance(value, str) and len(value) == 32 and all(c in '0123456789abcdef' for c in value)
+    protected = set()
+    try:
+        pointer = base / 'active.json'
+        if not pointer.is_file():
+            return 0
+        value = json.loads(pointer.read_text(encoding='utf-8'))
+        while True:
+            if not isinstance(value, dict) or len(protected) >= 256:
+                return 0
+            slot = value['slot']
+            if not slot_name(slot) or slot in protected:
+                return 0
+            protected.add(slot)
+            previous = value.get('previous')
+            if previous is None:
+                break
+            if not slot_name(previous):
+                return 0
+            record = base / previous / 'environment.json'
+            # An interrupted old publication may have no record; protect it anyway.
+            if not record.is_file():
+                protected.add(previous)
+                break
+            value = json.loads(record.read_text(encoding='utf-8'))
+            if not isinstance(value, dict) or value.get('slot') != previous:
+                return 0
+        commands = process_commands()
+        if not commands.strip():
+            return 0
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        print('暂未清理旧环境：无法确认环境引用或进程状态。', flush=True)
+        return 0
+    removed = 0
+    for directory in base.iterdir():
+        if (not slot_name(directory.name) or directory.name in protected or directory.is_symlink()
+                or not directory.is_dir() or str(directory).casefold() in commands):
+            continue
+        shutil.rmtree(directory)
+        removed += 1
+    return removed
+
+
+def ensure_runtime(kind):
+    """Reuse healthy environments; repairs publish only after their normal verification."""
+    try:
+        python = environment_python(runtime_environment(kind))
+        if not python.is_file():
+            raise RuntimeError('缺少解释器')
+        run_command([str(python), '-m', 'linguaflow.runtime_check', kind], timeout=180)
+    except (RuntimeError, OSError, subprocess.SubprocessError):
+        print('环境缺失或检查未通过，正在重新准备：' + kind, flush=True)
+        install(kind)
+
+
+def maintain(selection=None, *, only=None):
+    """One background operation validates all required runtimes and repairs failures."""
+    check_installation()
+    from .model_options import recommended_selection, required_runtimes, translation_devices
+    selection = recommended_selection() if selection is None else selection
+    if only not in (None, 'asr', 'translation'):
+        raise ValueError('未知模型准备范围。')
+    kinds = (() if only == 'translation' else required_runtimes(selection['backend']))
+    engine, device = selection['translation_engine'], selection['translation_device']
+    if only != 'asr' and device not in translation_devices(engine):
+        raise ValueError('翻译设备不适用于当前引擎和平台。')
+    if only == 'translation' and engine != 'llama':
+        kinds = ('wlk',)
+    for kind in kinds:
+        print('检查运行环境：' + kind, flush=True)
+        ensure_runtime(kind)
+        with preparation_lock(runtime_root() / 'python' / kind):
+            removed = clean_environments(kind)
+        print(f'{kind} 检查通过，清理 {removed} 个未使用的环境。', flush=True)
+    if only != 'asr' and engine == 'llama':
+        from .llama_install import ensure_runtime as ensure_llama
+        ensure_llama(device)
+    print('所需运行环境检查完成；模型与录音已保留。', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('kind', choices=('wlk', 'mlx'))
+    parser.add_argument('kind', choices=('wlk', 'mlx', 'all'))
     parser.add_argument('--verify', action='store_true')
+    parser.add_argument('--maintain', action='store_true')
+    parser.add_argument('--selection', type=json.loads)
     args = parser.parse_args()
-    if args.verify:
+    if args.kind == 'all':
+        if not args.maintain or args.verify:
+            parser.error('all requires --maintain')
+        maintain(args.selection)
+    elif args.maintain:
+        parser.error('--maintain requires all')
+    elif args.verify:
         verify(args.kind)
     else:
         install(args.kind)

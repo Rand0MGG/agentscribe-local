@@ -3,12 +3,10 @@
 from PySide6.QtCore import QEasingCurve, QRectF, QSize, Qt, QVariantAnimation, Signal
 from PySide6.QtGui import QColor, QKeySequence, QLinearGradient, QPainter, QPixmap
 from PySide6.QtWidgets import (
-    QAbstractSpinBox,
+    QApplication,
     QCheckBox,
-    QFormLayout,
     QFrame,
     QHBoxLayout,
-    QLabel,
     QLineEdit,
     QListWidget,
     QPushButton,
@@ -27,6 +25,7 @@ from .ui_components import ChoiceBox as QComboBox
 from .ui_components import PageTransition, SurfaceDialog, motion_enabled
 
 PAGE_DESCRIPTIONS = {
+    '模型管理': '查看、设置或删除已下载的识别与翻译模型。',
     '常规': '管理本地录音、保存位置和使用习惯。',
     '聆听': '从哪里听、听什么语言，以及你想看到的译文。',
     '识别模型': '把声音变成原文。选择引擎和计算设备，再准备模型。',
@@ -89,10 +88,11 @@ class LibraryDelegate(QStyledItemDelegate):
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(Qt.PenStyle.NoPen)
+        light = QApplication.instance().property("appearance") != "dark"
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
         hover = bool(option.state & QStyle.StateFlag.State_MouseOver)
         if selected or hover:
-            painter.setBrush(QColor(255, 255, 255, 22 if selected else 10))
+            painter.setBrush(QColor(20, 20, 25, 14 if selected else 7) if light else QColor(255, 255, 255, 22 if selected else 10))
             painter.drawRoundedRect(QRectF(option.rect).adjusted(2, 2, -2, -2), 8, 8)
         depth, parent = 0, index.parent()
         while parent.isValid():
@@ -103,7 +103,7 @@ class LibraryDelegate(QStyledItemDelegate):
         painter.setBrush(QColor("#d1d1d6" if selected else "#68686f"))
         painter.drawRoundedRect(QRectF(x, option.rect.center().y() - 7, 3, 14), 1.5, 1.5)
         painter.setFont(option.font)
-        painter.setPen(QColor("#eeeeef" if selected else "#bdbdc3"))
+        painter.setPen(QColor(("#303034" if selected else "#60606a") if light else ("#eeeeef" if selected else "#bdbdc3")))
         rect = option.rect.adjusted(x - option.rect.x() + 13, 0, -53, 0)
         title = str(index.data())
         if option.fontMetrics.horizontalAdvance(title) <= rect.width():
@@ -210,6 +210,7 @@ class RecordingDialog(SurfaceDialog):
 
 
 class SettingsWorkspace(QWidget):
+    prepare_models_requested = Signal()
     back_requested = Signal()
     open_storage_requested = Signal()
     choose_storage_requested = Signal()
@@ -243,7 +244,7 @@ class SettingsWorkspace(QWidget):
         nav.addWidget(text_label("工作空间", "section"))
         self.navigation = QListWidget()
         self.navigation.setObjectName("settingsNavigation")
-        self.categories = ["常规", "聆听", "识别模型", "翻译模型", "字幕与延迟", "运行环境", '使用指南']
+        self.categories = ["常规", "聆听", "模型管理", "字幕与延迟", "运行环境", '使用指南']
         self.navigation.addItems(self.categories)
         nav.addWidget(self.navigation, 1)
         self.advanced_navigation = QPushButton('显示更多设置')
@@ -304,6 +305,7 @@ class SettingsWorkspace(QWidget):
         body.addWidget(text_label("使用习惯", "settingsSection"))
         card, rows = self.group()
         rows.addWidget(text_label('字幕停留在底部时自动跟随；向上翻阅会暂停。点击字幕区的向下箭头可回到最新位置。', 'infoBanner'))
+        self.row(rows, '外观', '白色或深色，切换后立即生效。', controls['appearance'])
         self.row(rows, '减少动态效果', '关闭平滑跟随、切页、弹窗和开关动画。', controls['reduce_motion'])
         self.row(rows, '体验 Beta 功能', '开启后显示课件解析、识别提示整理和课堂笔记入口。关闭会停止相关任务，已有资料保留。', controls['beta_features'])
         body.addWidget(card)
@@ -325,13 +327,30 @@ class SettingsWorkspace(QWidget):
         self.row(rows, "显示翻译", "关闭后仅保存原文字幕与录音。", controls['translate'])
         body.addWidget(card)
         body.addStretch()
+        from .model_browser import ModelBrowser
+        _, body = self.page('模型管理')
+        from .model_options import asr_backends
+        self.model_browser = ModelBrowser(manager.preparation_selection, manager.inventory_selection,
+                                          asr_backends())
+        manager.selection_changed.connect(lambda *_: self.model_browser.sync_roles())
+        manager.session_changed.connect(self.model_browser.set_session_active)
+        manager.preparation_changed.connect(self.model_browser.set_preparing)
+        self.model_browser.deletion_changed.connect(manager.set_inventory_busy)
+        self.model_browser.selected.connect(self.select_model)
+        self.model_browser.assigned.connect(self.assign_model)
+        body.addWidget(self.model_browser, 1)
+        prepare = QPushButton('准备识别与翻译模型')
+        prepare.clicked.connect(self.prepare_models_requested.emit)
+        prepare.setObjectName('primary')
+        manager.register_preparation_button(prepare)
+        body.addWidget(prepare, 0, Qt.AlignmentFlag.AlignLeft)
         _, body = self.page('使用指南')
         body.addWidget(text_label('第一次使用', 'settingsSection'))
         card, rows = self.group()
         for title, detail, category, action in [
             ('01  准备本地模型', '首次安装运行环境，再下载 / 检查识别模型；必要组件会一起准备。', '运行环境', '准备环境'),
             ('02  选择音频与语言', '选择麦克风或系统声音。使用 Qwen 时，指定原文语言。', '聆听', '设置聆听'),
-            ('03  按需开启翻译', '选择翻译模型和目标语言；只需要原文时，可关闭显示翻译。', '翻译模型', '设置翻译'),
+            ('03  按需开启翻译', '选择翻译模型和目标语言；只需要原文时，可关闭显示翻译。', '模型管理', '设置翻译'),
         ]:
             button = QPushButton(action + '  →')
             button.clicked.connect(lambda checked=False, category=category:
@@ -341,54 +360,17 @@ class SettingsWorkspace(QWidget):
         body.addWidget(text_label('聆听中的文字会发生什么？', 'settingsSection'))
         body.addWidget(text_label('未提交  →  已提交，可修订  →  原文已定稿\n\n首次提交和已提交原文的变化立即排队初译，固定参考前后各 1 段已有的已定稿原文。识别段结束后原文独立定稿，再参考前 5 段、后 1 段已有的已定稿原文生成最终译文。相邻待译内容可以合并、共享背景；等待更新时保留已有译文并标注。翻译不阻挡原文更新，也不等待尚未出现的后文。暂停会停止收音并继续处理已有内容；点击“继续录音”可接着录，暂停时间不计入录音。停止聆听会处理剩余内容，请等待收尾完成。', 'infoBanner'))
         body.addWidget(text_label('录音结束以后', 'settingsSection'))
-        body.addWidget(text_label('从侧栏打开录音，可回听音频或导出双语 SRT。使用「···」重命名、移动或打开保存位置；删除的录音先进入「最近删除」，可在那里恢复。', 'muted'))
+        body.addWidget(text_label('从侧栏打开录音，可回听音频或导出双语 SRT、TXT 和 Markdown。使用「···」重命名、移动或打开保存位置；删除的录音先进入「最近删除」，可在那里恢复。', 'muted'))
         body.addStretch()
-        manager.setWindowFlags(Qt.WindowType.Widget)
-        manager.tabs.tabBar().hide()
-        manager.done_button.hide()
-        manager.cancel_button.setVisible(manager.worker is not None)
-        manager.setObjectName("embeddedModels")
-        manager.setStyleSheet("QDialog#embeddedModels { background: transparent; } QTabWidget::pane { border: none; }")
-        manager.layout().setContentsMargins(0, 0, 0, 0)
-        manager.layout().setSpacing(14)
-        for form in manager.findChildren(QFormLayout):
-            form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
-            form.setAlignment(Qt.AlignmentFlag.AlignTop)
-            form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-            form.setVerticalSpacing(16)
-            form.setHorizontalSpacing(24)
-            form.setContentsMargins(18, 18, 18, 18)
-            form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            for row in range(form.rowCount()):
-                field = form.itemAt(row, QFormLayout.ItemRole.FieldRole)
-                if field and field.widget() and isinstance(field.widget(), (QComboBox, QAbstractSpinBox)):
-                    field.widget().setMaximumWidth(380)
-                    field.widget().setMinimumWidth(170)
-        for button in manager.findChildren(QPushButton):
-            button.setMaximumWidth(340)
-            if button.parentWidget().layout():
-                button.parentWidget().layout().setAlignment(button, Qt.AlignmentFlag.AlignLeft)
-        for tab in range(manager.tabs.count()):
-            scroll = manager.tabs.widget(tab)
-            page = scroll.takeWidget()
-            page.setObjectName("modelSettingsGroup")
-            page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
-            wrapper = QWidget()
-            column = QVBoxLayout(wrapper)
-            column.setContentsMargins(0, 0, 6, 0)
-            column.addWidget(page)
-            column.addStretch()
-            scroll.setWidget(wrapper)
-            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        for hint in manager.findChildren(QLabel):
-            hint.setWordWrap(True)
-            if hint.objectName() not in ('settingsSection', 'preparationStatus'):
-                hint.setObjectName('settingsHint')
-        for subsection in (manager.whisper_page, manager.qwen_page):
-            subsection.setObjectName('modelSubsection')
-            subsection.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        self.model_back = QPushButton('← 返回模型管理')
+        self.model_back.setObjectName('modelBack')
+        self.model_back.setMaximumWidth(230)
+        self.model_back.clicked.connect(lambda: self.select(self.categories.index('模型管理')))
+        self.model_back.hide()
+        manager.embed_model_settings(self.model_back)
         index = self.pages.addWidget(manager)
-        for category in ["识别模型", "翻译模型", "字幕与延迟", "运行环境"]:
+        self.manager_page = index
+        for category in ["字幕与延迟", "运行环境"]:
             self.mapping[category] = index
         self.navigation.currentRowChanged.connect(self.select)
         self.search.textChanged.connect(self.filter)
@@ -462,14 +444,31 @@ class SettingsWorkspace(QWidget):
         name = self.categories[index]
         self.title.setText(name)
         self.description.setText(PAGE_DESCRIPTIONS[name])
+        entering = self.pages.currentIndex() != self.mapping[name]
         self.pages.setCurrentIndex(self.mapping[name])
-        tabs = {"识别模型": 0, "翻译模型": 1, "字幕与延迟": 2, "运行环境": 3}
+        self.model_back.hide()
+        tabs = {"字幕与延迟": 2, "运行环境": 3}
         if name in tabs:
-            self.manager.tabs.setCurrentIndex(tabs[name])
+            self.manager.show_section(tabs[name])
+        if name == "模型管理" and entering:
+            self.model_browser.refresh()
         self.transition.start()
 
+    def assign_model(self, entry):
+        self.manager.assign_model(entry)
+
+    def select_model(self, entry):
+        if not entry:
+            return
+        self.assign_model(entry)
+        self.pages.setCurrentIndex(self.manager_page)
+        self.manager.show_section(0 if entry['kind'] == 'asr' else 1)
+        self.model_back.show()
+        self.title.setText(entry['name'])
+        self.description.setText('已选择此模型用于' + ('语音识别' if entry['kind'] == 'asr' else '翻译') + '；参数修改用于下一次聆听。')
+
     def filter(self, query):
-        aliases = {"常规": "文件 存储 目录 路径 删除 恢复 跟随", "聆听": "设备 输入 语言",
+        aliases = {"模型管理": "下载 缓存 删除 ASR 翻译 Qwen HY-MT2 Whisper 本地 参数 前文 后文 GPU CPU MLX NLLB", "常规": "文件 存储 目录 路径 删除 恢复 跟随", "聆听": "设备 输入 语言",
                    "识别模型": "Qwen Whisper GPU CPU MLX 下载", "翻译模型": "NLLB HY-MT2 前文 后文 GPU CPU 下载 译文",
                    "字幕与延迟": "字幕 草稿 刷新 停顿",
                    "运行环境": "安装 修复 更新 版本 GitHub", '使用指南': '首次 使用 帮助 入门 导出 SRT 开始 说明'}
@@ -480,7 +479,7 @@ class SettingsWorkspace(QWidget):
             match = all(term in (name + ' ' + aliases[name] + ' ' + PAGE_DESCRIPTIONS[name]).casefold()
                         for term in query.split())
             if not query and not self.advanced_navigation.isChecked():
-                match = match and name in ('常规', '聆听', '使用指南')
+                match = match and name in ('常规', '聆听', '模型管理', '使用指南')
             self.navigation.item(i).setHidden(not match)
             if match:
                 visible.append(i)

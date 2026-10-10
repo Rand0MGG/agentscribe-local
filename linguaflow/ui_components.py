@@ -18,6 +18,16 @@ from PySide6.QtWidgets import (
 from .qt_controls import text_label
 
 
+def set_download_progress(bar, event):
+    total, done = event.get('total'), event.get('completed', 0)
+    known = isinstance(total, (int, float)) and total > 0
+    bar.setRange(0, 1000 if known else 0)
+    if known:
+        bar.setValue(max(0, min(1000, int(1000 * done / total))))
+    bar.setTextVisible(known)
+    bar.setFormat('%p%')
+
+
 class ChoiceBox(QComboBox):
     """Keep the dropdown affordance visible with the dark stylesheet on every OS."""
     def paintEvent(self, event):
@@ -173,8 +183,8 @@ class ActionMenu(QMenu):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setBrush(QColor('#252527'))
-        painter.setPen(QPen(QColor('#424247'), 1))
+        painter.setBrush(self.palette().window())
+        painter.setPen(QPen(self.palette().mid().color(), 1))
         painter.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), 12, 12)
         painter.end()
         super().paintEvent(event)

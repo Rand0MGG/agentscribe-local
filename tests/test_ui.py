@@ -371,9 +371,8 @@ w.on_caption(Caption(2, 0, 2, 'First phrase. Second phrase.', 'en', final=False,
 w.on_caption(Caption(3, 1, 2, '', 'en', final=True, revision=2))
 assert 3 not in w.cards and w.cards[2].source.text() == 'First phrase. Second phrase.'
 assert w.model_manager.draft_seconds.value() >= .25
-w.model_manager.classroom_drafts()
+assert not hasattr(w.model_manager, 'profile')
 assert w.model_manager.draft_seconds.value() == .5
-assert w.model_manager.endpoint_seconds.value() == 1.5
 w.clear_captions()
 assert w.model_manager.tabs.count() == 4
 assert w.model_manager.tabs.tabText(3) == '运行环境'

@@ -7,25 +7,30 @@ import sys
 def test_recognition_prepares_internal_segmentation_and_propagates_failure(tmp_path):
     program = '''
 from pathlib import Path
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QComboBox, QPushButton
 from linguaflow.management import ModelManager
 import linguaflow.model_cache as cache
 
 app = QApplication([])
 manager = ModelManager()
-manager.prepare = lambda action: action()
+asr, translation = QComboBox(), QComboBox()
+asr.setEditable(True); translation.setEditable(True)
+manager.choose_translation = QPushButton('fixture', manager)
+manager.translation_form.addRow(manager.choose_translation)
+manager.finish_setup(asr=asr, translation=translation)
+manager.prepare = lambda action, **kwargs: action()
 commands = []
 manager.run_preparation = lambda command: commands.append(command) or 'ready'
 manager.prepare_whisper('tiny')
-assert len(commands) == 2
-assert commands[0][-3:] == ['linguaflow.wlk_prepare', 'whisper', 'tiny']
-assert commands[1][-1] == 'linguaflow.semantic_model'
+import json
+assert len(commands) == 1 and 'linguaflow.recommended_prepare' in commands[0]
+selection = json.loads(commands[0][commands[0].index('--selection')+1])
+assert selection['backend'] == 'wlk-whisper' and selection['asr_model'] == 'tiny'
+assert commands[0][-2:] == ['--only', 'asr']
 commands.clear()
-cache.resolve_qwen_cached = lambda model: Path(model)
 manager.prepare_qwen('.')
-assert len(commands) == 2
-assert commands[0][-3:] == ['linguaflow.model_prepare', 'qwen', '.']
-assert commands[1][-1] == 'linguaflow.semantic_model'
+selection = json.loads(commands[0][commands[0].index('--selection')+1])
+assert selection['backend'] == 'qwen3-streaming' and selection['asr_model'] == '.'
 assert not hasattr(manager, 'semantic_device') and not hasattr(manager, 'semantic_lookahead')
 def fail(command):
     raise RuntimeError('required model missing')

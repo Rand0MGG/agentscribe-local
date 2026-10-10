@@ -1,31 +1,37 @@
-"""Prepare the existing Apple GPU 4-bit models through the production installers."""
+"""Shared selection preparation/checks; the legacy module name remains compatible."""
+import argparse
+import json
+
 from .download_progress import report
-from .llama_assets import HY_GGUF, MODEL_SHA256, digest, model_path
-from .model_cache import resolve_qwen_cached, validate_mlx_model
-from .model_options import MLX_MODEL
-from .runtime_paths import llama_server, mlx_python, runtime_python
+from .model_cache import resolve_qwen_cached, resolve_translation, resolve_whisper_cached, validate_mlx_model
+from .model_options import recommended_selection, required_runtimes
+from .runtime_paths import environment_python, llama_server, runtime_environment, runtime_python
 
 
-def missing_assets():
-    """Check the fixed preset locally; call off the UI thread, never download/load models."""
+def missing_assets(selection=None):
+    """Inspect local files only, never install or load model libraries."""
+    selection = recommended_selection() if selection is None else selection
     missing = []
-    for label, interpreter in [('识别运行环境', runtime_python), ('Apple GPU 运行环境', mlx_python)]:
+    for kind in required_runtimes(selection['backend']):
         try:
-            if not interpreter().is_file():
-                missing.append(label)
+            if not environment_python(runtime_environment(kind)).is_file():
+                missing.append('运行环境：' + kind)
         except RuntimeError:
-            missing.append(label)
+            missing.append('运行环境：' + kind)
     try:
-        validate_mlx_model(resolve_qwen_cached(MLX_MODEL))
+        resolve_asr(selection)
     except (ValueError, OSError):
-        missing.append('Qwen3-ASR 1.7B · MLX 4-bit')
+        missing.append('识别模型：' + selection['asr_model'])
     try:
-        from .llama_assets import validate_weights
-        if not llama_server('metal').is_file():
-            missing.append('翻译运行组件')
-        validate_weights(HY_GGUF)
+        if selection['translation_engine'] == 'llama':
+            from .llama_assets import validate_weights
+            if not llama_server(selection['translation_device']).is_file():
+                missing.append('翻译运行组件')
+            validate_weights(selection['translation_model'])
+        else:
+            resolve_translation(selection['translation_model'], lambda _: None)
     except (ValueError, OSError, RuntimeError):
-        missing.append('HY-MT2 1.8B · Q4_K_M')
+        missing.append('翻译模型：' + selection['translation_model'])
     try:
         from .semantic_model import paths
         paths(prepare=False)
@@ -34,46 +40,52 @@ def missing_assets():
     return missing
 
 
-def main():
-    from .hardware import check_installation
-    if check_installation() != 'macos-arm64':
-        raise ValueError('此推荐组合使用 Apple GPU，请在原生 Apple Silicon Mac 上准备。')
-    from .runtime_install import install
-    for kind, interpreter in [('wlk', runtime_python), ('mlx', mlx_python)]:
-        try:
-            ready = interpreter().is_file()
-        except RuntimeError:
-            ready = False
-        if not ready:
-            report('准备识别运行环境：' + kind, unit='stage')
-            install(kind)
-    report('下载 / 检查 Qwen3-ASR 1.7B · 4-bit', unit='stage')
+def resolve_asr(selection):
+    model, backend = selection['asr_model'], selection['backend']
+    if backend == 'wlk-whisper':
+        return resolve_whisper_cached(model)
+    path = resolve_qwen_cached(model)
+    if backend == 'qwen3-mlx':
+        validate_mlx_model(path)
+    return path
+
+
+def main(selection=None, *, only=None):
+    """One owned worker coordinates dependencies and model adapters on both platforms."""
+    selection = recommended_selection() if selection is None else selection
+    from .runtime_install import maintain, run_command
+    maintain(selection, only=only) if only else maintain(selection)
     from .model_prepare import prepare
-    try:
-        validate_mlx_model(resolve_qwen_cached(MLX_MODEL))
-    except ValueError:
-        prepare('qwen', MLX_MODEL)
-    report('准备字幕分句组件', unit='stage')
-    import subprocess
-
-    from .runtime_paths import python_environment
-    subprocess.run([str(runtime_python()), '-u', '-m', 'linguaflow.semantic_model'],
-                   env=python_environment(), check=True)
-    report('下载 / 检查 HY-MT2 1.8B · Q4_K_M', unit='stage')
-    from .llama_install import install as install_llama
-    weights = model_path()
-    if not llama_server('metal').is_file() or not weights.is_file() or digest(weights) != MODEL_SHA256:
-        install_llama('metal', HY_GGUF)
-    print('推荐模型已准备完成。请选择原文语言，下一次开始聆听时生效。', flush=True)
-
+    if only != 'translation':
+        report('下载 / 检查识别模型', unit='stage')
+        if selection['backend'] == 'wlk-whisper':
+            run_command([str(runtime_python()), '-m', 'linguaflow.wlk_prepare',
+                         'whisper', selection['asr_model']])
+        else:
+            try:
+                resolve_asr(selection)
+            except ValueError:
+                prepare('qwen', selection['asr_model'])
+                resolve_asr(selection)
+        report('准备字幕分句组件', unit='stage')
+        run_command([str(runtime_python()), '-u', '-m', 'linguaflow.semantic_model'])
+    if only != 'asr':
+        report('下载 / 检查翻译模型', unit='stage')
+        if selection['translation_engine'] == 'llama':
+            from .llama_install import prepare_weights
+            prepare_weights(selection['translation_model'])
+        else:
+            prepare('translation', selection['translation_model'])
+    print('所选模型已准备完成；下一次开始聆听时生效。', flush=True)
 
 
 if __name__ == '__main__':
-    import argparse
-    import json
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--check', action='store_true', help='Only inspect local files; never download or load models')
-    if parser.parse_args().check:
-        print(json.dumps(missing_assets(), ensure_ascii=False), flush=True)
+    parser.add_argument('--check', action='store_true')
+    parser.add_argument('--selection', type=json.loads)
+    parser.add_argument('--only', choices=('asr', 'translation'))
+    args = parser.parse_args()
+    if args.check:
+        print(json.dumps(missing_assets(args.selection), ensure_ascii=False), flush=True)
     else:
-        main()
+        main(args.selection, only=args.only)

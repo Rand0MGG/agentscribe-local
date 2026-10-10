@@ -5,7 +5,7 @@ import subprocess
 from uuid import uuid4
 
 from .hardware import check_installation
-from .runtime_install import preparation_lock, publish, run_command
+from .installation import preparation_lock, publish, run_command
 from .runtime_paths import DOCUMENT_RENDERER_VERSION, cache_root, node_executable, npm_command, runtime_root
 
 

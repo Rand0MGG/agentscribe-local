@@ -59,8 +59,22 @@ def resolve_qwen_cached(model):
     raise ValueError(f"Qwen 模型未下载完整：{model}。请打开模型管理 → 识别模型 → 下载 / 检查 Qwen 模型，完成后再聆听。")
 
 
+def reject_alignment_model(path):
+    """Reject auxiliary alignment weights before importing/loading ASR backends."""
+    hint = str(path).casefold()
+    try:
+        config = json.loads((Path(path) / 'config.json').read_text(encoding='utf-8'))
+        hint += ' ' + str(config.get('model_type', ''))
+        hint += ' ' + str(config.get('thinker_config', {}).get('model_type', ''))
+    except (OSError, ValueError, AttributeError):
+        pass
+    if 'forcedaligner' in hint or 'forced_aligner' in hint:
+        raise ValueError('时间对齐模型不能用于语音识别，请选择 Qwen3-ASR 模型。')
+
+
 def validate_mlx_model(path):
     """Reject incompatible weights before starting a GPU worker."""
+    reject_alignment_model(path)
     try:
         config = json.loads((Path(path) / 'config.json').read_text(encoding='utf-8'))
         quant = config.get('quantization', config.get('quantization_config', {}))

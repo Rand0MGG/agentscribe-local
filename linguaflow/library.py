@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
-from .core import Caption, export_srt
+from .core import Caption, export_srt, export_txt
 from .recording_document import read_recording_document
 
 
@@ -192,10 +192,7 @@ class Library:
         self._write(directory / "session.json", data)
         final = [Caption(**c) for c in data["captions"] if c["final"] and c["source"]]
         for filename, text in [("定稿.srt", export_srt(final)),
-                               ("定稿.txt", "\n\n".join("\n".join(filter(None, [c.source,
-                                                       ('[初译] ' if c.translation_phase == 'initial' else '') + c.translation
-                                                       if c.translation else '']))
-                                                      for c in final))]:
+                               ("定稿.txt", export_txt(final))]:
             path = directory / filename
             temporary = path.with_suffix(path.suffix + ".tmp")
             temporary.write_text(text, encoding="utf-8-sig")

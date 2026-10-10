@@ -212,7 +212,7 @@ def test_atomic_pointer_write_error_preserves_old(tmp_path, monkeypatch):
 
 
 def test_cancel_preparation_reaps_download_and_descendants(tmp_path):
-    from linguaflow.management import ModelManager
+    from linguaflow.preparation_task import Preparation
     saved = tmp_path / '已下载部分.bin'
     code = '''
 import subprocess, sys, time
@@ -225,10 +225,9 @@ time.sleep(30)
     logs, errors = [], []
     worker = SimpleNamespace(cancelled=False, process=None, progress=SimpleNamespace(emit=logs.append),
                              download=SimpleNamespace(emit=lambda event: None))
-    manager = SimpleNamespace(worker=worker)
     def run():
         try:
-            ModelManager.run_preparation(manager, [sys.executable, '-u', '-c', code, str(saved)])
+            Preparation.run_command(worker, [sys.executable, '-u', '-c', code, str(saved)])
         except RuntimeError as exc:
             errors.append(str(exc))
     thread = Thread(target=run, daemon=True)

@@ -173,7 +173,10 @@ async def _run_session(settings, emit, read_message, config, engine, online, sem
                            lookahead=3.)
     from .translation_queue import TranslationQueue
     from .translation_service import publish_translation_batch, publish_translation_result, run_translations
-    translation_queue = TranslationQueue()
+    translation_queue = TranslationQueue(lambda: bool(
+        processor.transcription_queue is not None and not processor.transcription_queue.empty()))
+    from .runtime_compat import prioritize_recognition
+    prioritize_recognition(processor, translation_queue)
     from .translation_config import (
         DEFAULT_CONTEXT_AFTER,
         DEFAULT_CONTEXT_BEFORE,

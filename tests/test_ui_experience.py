@@ -25,7 +25,7 @@ s.search.setText('  草稿  ')
 assert s.title.text() == '字幕与延迟'
 assert not s.pages.isHidden()
 s.search.setText('HY-MT2 前文')
-assert s.title.text() == '翻译模型'
+assert s.title.text() == '模型管理'
 s.search.setText('no-such-feature')
 assert s.pages.isHidden() and not s.no_results.isHidden()
 clear = next(b for b in s.no_results.findChildren(QPushButton) if b.text() == '清除搜索')

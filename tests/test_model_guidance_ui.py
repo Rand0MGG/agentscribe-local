@@ -112,7 +112,7 @@ def check(module, callback, *arguments):
 w.start_background_check = check
 visible = [workspace.categories[i] for i in range(workspace.navigation.count())
            if not workspace.navigation.item(i).isHidden()]
-assert visible == ['常规', '聆听', '使用指南']
+assert visible == ['常规', '聆听', '模型管理', '使用指南']
 assert manager.translation_before.isHidden() and manager.translation_after.isHidden()
 settings = w.settings_binding.session_settings(('file', False))
 assert (settings.translation_before, settings.translation_after, settings.translation_initial_before) == (5, 1, 1)

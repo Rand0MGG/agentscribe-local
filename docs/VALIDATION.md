@@ -1,4 +1,30 @@
+## 2026-10-10 共享准备流程与平台边界修复
+
+范围：本地 `mac` 分支候选，保留此前未提交工作；未合并、推送、构建或发布。macOS 26.6.2 / arm64，Python 3.12.14。修复 Windows 空模型列表的准备入口、自定义 Qwen 被当前 Whisper 后端误分类、环境维护遗漏 llama.cpp。两端共用模型准备、分句依赖准备、文件引导、取消和进度渲染；环境健康检查按所选后端执行，公共进程/锁/发布工具放在 `installation.py`，没有新增平台业务副本。
+
+- 完整受保护回归：`scripts/test_no_audio.py -q -k 'not native_version_menu'`，**738 passed，1 deselected，122.98 秒**，日志 `.work/cache/shared-full-tests-final.log`。在允许 macOS 图形会话及本地测试 HTTP 服务的环境执行；受限环境的图形和端口失败单独保留在 `.work/cache/shared-full-tests.log`。本轮不重复原生菜单测试。
+- 完整回归后补充部分旧偏好的保护条件，以及 llama.cpp 修复发布前失败/成功的回归：**22 passed，4.61 秒**，日志 `.work/cache/shared-boundaries-tests.log`。覆盖 Mac / Windows 空列表准备、自定义选择保留、同一百分比/未知总量进度、组件缺损修复、修复失败保留旧指针、健康组件复用、不下载模型权重、未选择 MLX 不安装 MLX、无循环依赖。
+- 静态检查与差异空白检查通过。所有回归启用原生音频导入保护，没有音频访问尝试；未枚举音频设备，未启动或停止用户录音。
+- Windows 为模拟平台分支；实际 Windows 安装、动态库、CUDA 与真实识别/翻译仍待该平台验收。环境修复和模型协议通过临时目录、固定小夹具与故障注入验证；这些结果不是实际重新下载安装模型或长会话性能证明。
+
 ## 2026-10-10 两端集成审查与独立 Python
+
+## 2026-10-10 Mac 界面与模型管理审核候选
+
+后续入口精简：撤销未经性能对照验证的聆听预设，保持已有参数；模型选择与参数入口合并到模型管理；环境维护统一验证、修复及保守清理。完整无音频回归 **726 passed，137.89 秒**（`.work/cache/ui-consolidated-full.log`），其后删除重复按钮和课堂预设入口、补空元数据保护并做相关回归 **23 passed，30.37 秒**（`.work/cache/ui-consolidated-target.log`）。原生窗口 **1 passed，4.28 秒**，浅色/深色、900×650 和模型详情截图在 `.work/browser/ui-consolidated/`。环境安装、清理以临时目录和故障注入验证，没有重装或清理本机环境；Windows 仅模拟分支，未实机验收。Codex 样式参考用户截图及 OpenAI 公开产品截图，未操作 Codex 应用。最终环境提示和清理保护补测 **14 passed，11.47 秒**（`.work/cache/ui-consolidated-final.log`）；原生菜单检查在具备窗口服务的执行环境通过。以上不是字幕预设性能实验。
+
+范围：`mac` 分支本地源码候选，未提交、未合并、未构建新安装包。macOS 26.6.2 / arm64，桌面 Python 3.12.14；测试通过 `scripts/test_no_audio.py` 阻止原生音频导入，没有访问用户音频设备。
+
+- 完整无音频回归：**720 passed，120.13 秒**，日志 `.work/cache/ui-finish-full.log`。覆盖百分比进度、下载回调、模型清单/删除边界、外观、更新失败、最新版本提示，以及下载和模拟录音期间独立检查更新。最后的模型导航/主题收尾另做相关回归，日志 `.work/cache/ui-finish-target.log`。
+- 真实下载链路：本机 HTTP 服务分块发送 4 MiB 测试文件，经实际下载子进程、进度协议和 Qt 控件；切换设置后多个进度回调继续到达，界面计时器持续运行。**2 passed，10.80 秒**，日志 `.work/cache/ui-real-download.log`。没有重新下载完整 Hugging Face 模型；不证明 Hub/Xet 网络长时间稳定性。
+- 原生 Cocoa：独立窗口检查默认浅色、深色、1280×840 / 900×650、模型清单/选中/空内容、更新限流和最新版本提示。验证外层透明、内容不透明；截图 `.work/browser/ui-redesign/`。模型清单取自本机缓存，字幕与更新结果为示例状态；没有操作用户正在运行的应用。
+- 实际短音频回放：5.6236 秒 `tests/fixtures/hello.wav`，使用 Qwen3-ASR 1.7B MLX 4-bit 和 HY-MT2 1.8B Q4_K_M。识别报告 Apple GPU / Metal；翻译报告 llama.cpp / METAL、33 层 GPU。完整输入、两段原文定稿、两段中文译文和正常收尾均存在；模型原稿与字幕文字一致。记录 `.work/browser/ui-redesign/review-replay/`，受保护回放 **1 passed，31.13 秒**。
+- 此次回放不是实时性能达标证据：会话从启动到结束约 29.55 秒，约 10.10 秒准备就绪，两次识别计算分别约 11.62 / 5.62 秒，MLX 分配峰值约 2.23 GiB（不包含 HY 和系统总内存）。未定位此次较慢原因；没有同环境前后性能对照，不能宣称调度改动提升速度。识别忙碌/排队时让新翻译等待，已执行翻译或加载不抢占，也不保证没有积压。ASR 窗口、稳定识别和定稿参数保持不变。
+- ForcedAligner 缓存经用户明确授权删除，释放 1,840,073,771 字节。MLX 与普通 Qwen 入口在加载前拒绝对齐模型；没有自动下载入口。其他模型、录音和字幕保留。
+- 项目安装并应用 Uizze 官方 `ui-design`，固定官方提交 `56f965dbd377dd73af256e0d3ded757d8747ed9d`，路径 `.agents/skills/ui-design`；完整文件摘要通过。官方当前没有 `ui-taste` 名称，未把当前技能伪装成旧名，也未接入付费服务。
+
+Ruff 与 `git diff --check` 通过。待验收：真实采集/回听、长会话、长时间 Hub 下载、Windows 实机，以及候选安装包；本轮只交付源码与界面审核证据。
+
 
 环境：Windows 11 x64（10.0.26200）、Python 3.12.8、PySide6 6.11.2。审查范围为 `main/6a41ed0` 之后的 Windows 代码、`mac/0782a9b` 的两个新增提交及本次运行环境和文档整理；最终来源以本节所在提交为准。没有启动普通应用入口、访问音频设备或运行模型推理，也没有创建或替换 Release。
 
@@ -350,3 +376,19 @@ GitHub `37356634520` 的 Windows / Python 3.11.9 在后台保存 `QThread` 构�
 - 证据位于 `.work/cache/shared-startup-20261006/`，包含源码基线、阶段日志、逐轮 manifest / 事件 / 修订审计、RSS、`comparison.json`、`sat-prepared.json` 和 `sat-boundary-parity.json`；最终双语产物在 `.work/cache/github-fixes-20261006/shared-startup-final/`。缓存及个人课堂材料不提交 Git，没有下载模型、升级依赖或改动原始录音。
 
 本轮没有 Mac / Apple GPU 实机验证、Whisper 真模型验证、真实采集 / 回听、低性能 CPU 或长课堂压力测试。共享装配和受控 MLX 管道测试不能替代这些验收；旧 Mac 实测只证明当时的代码。应用打开时仍只预热运行库，权重在会话开始后加载；设备、联网、识别窗口及翻译参数未改变。
+
+### 2026-10-10 模型界面依赖收敛与录音导出
+
+环境：macOS / arm64，Python 3.12.14。保留已有工作区改动，在 `mac` 分支修改共享实现；未进行真实音频采集、设备枚举或真实模型推理。
+
+- ModelBrowser 使用选择/库存数据接口与操作信号，不持有 ModelManager；模型选择、内部表单布局及准备互斥由管理器负责。子进程监督、进度与取消归入独立 Preparation 任务；原取消测试改为调用任务接口，仍验证后代进程退出及已下载文件保留。
+- 单独准备识别与翻译限制运行组件范围，测试覆盖无关引擎/设备配置不阻止对应任务，以及 PyTorch 翻译仍使用 WLK 环境。连续模型配置修改合并为一次最新选择检查。启动预检接收冻结 Settings，保留语言、MLX 格式及翻译启用条件校验。
+- 新增 TXT、Markdown 手动导出，与 SRT 保持确认定稿规则及初译标记；Markdown 保留时间范围并转义录音文本中的格式字符。通过原有后台保存机制持有字幕快照并原子发布，失败保留旧文件；缺少扩展名时补齐，补齐后目标已存在则再次确认覆盖。自动保存 TXT 复用同一格式化函数。
+
+验证证据：
+
+- `.venv/bin/python scripts/test_no_audio.py -q -k 'not native_version_menu'`：**756 passed, 1 deselected，122.90 秒**；日志 `.work/cache/coupling-full-tests-final.log`。
+- 导出文件名/覆盖确认最后调整后的相关回归：`tests/test_model_ui_boundaries.py tests/test_recording_export.py`，**6 passed，1.78 秒**；日志 `.work/cache/coupling-export-final.log`。涵盖取消覆盖、原文与译文、草稿排除、快照一致性、发布失败不损坏目标文件。
+- Ruff 全包/脚本/测试通过，`git diff --check` 通过。隔离示例界面以 offscreen 生成模型管理、参数页及导出对话框预览，已检查；日志 `.work/cache/coupling-preview.log`，截图 `.work/browser/coupling-*.png`。
+
+第一次完整回归有一项取消测试调用了旧管理器实现位置，迁移测试调用后通过。一次补充测试误带原生菜单测试，在受限窗口服务环境初始化失败（HIServices / Cocoa）；后续不在该环境重复执行该项，完整回归明确排除它。所有测试日志均确认无原生音频导入尝试。Windows 分支模拟与共享规则测试不代替 Windows 安装/录音实机验收；本轮也未验证 macOS 原生保存对话框或长会话性能。

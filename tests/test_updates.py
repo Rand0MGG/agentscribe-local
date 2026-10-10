@@ -51,3 +51,27 @@ def test_semantic_versions_and_no_downgrade():
     assert select_update([release('0.4.0')], target='windows-x64', installed=True)['kind'] == 'none'
     with pytest.raises(ValueError):
         version_key('latest')
+
+
+@pytest.mark.parametrize('failure, message', [(403, '限制请求'), (429, '限制请求'), (500, '不可用'), (None, '确认网络')])
+def test_network_errors_return_short_results_without_tracebacks(monkeypatch, failure, message):
+    import urllib.error
+
+    from linguaflow import updates
+    def fail(*args, **kwargs):
+        if failure:
+            raise urllib.error.HTTPError(updates.RELEASES_URL, failure, 'fixture', {}, None)
+        raise OSError('secret diagnostic detail')
+    monkeypatch.setattr(updates.urllib.request, 'urlopen', fail)
+    result = updates.check_updates()
+    assert result['kind'] == 'error' and result['url'] == ''
+    assert message in result['message']
+    assert 'Traceback' not in result['message'] and 'secret' not in result['message']
+
+
+@pytest.mark.parametrize('installed', [True, False])
+def test_no_new_release_explicitly_reports_current_version(installed):
+    result = select_update([release('0.6.0-beta.2')], '0.6.0-beta.2',
+                           target='windows-x64', installed=installed)
+    assert result['kind'] == 'none' and result['url'] == ''
+    assert result['message'] == '当前已是最新版本（0.6.0-beta.2）。'

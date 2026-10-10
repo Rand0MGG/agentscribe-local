@@ -1,13 +1,10 @@
 """Model preparation lives outside the listening flow."""
 import json
-import subprocess
-import sys
-from collections import deque
-from threading import Event, Thread
 
-from PySide6.QtCore import QThread, QUrl, Signal, Slot
+from PySide6.QtCore import Qt, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
+    QAbstractSpinBox,
     QDialog,
     QDoubleSpinBox,
     QFileDialog,
@@ -22,41 +19,19 @@ from PySide6.QtWidgets import (
 )
 
 from . import __version__
-from .download_progress import PREFIX
-from .listening_profiles import PROFILES
 from .model_options import asr_backends, qwen_models, translation_devices
-from .process_platform import spawn_options, stop_tree
+from .preparation_task import Preparation
 from .qt_controls import text_label
-from .runtime_paths import installation_command, python_environment, resource_root
+from .runtime_paths import installation_command
 from .translation_config import CONTEXT_COUNTS
 from .ui_components import ChoiceBox as QComboBox
-
-
-class Preparation(QThread):
-    result = Signal(str)
-    progress = Signal(str)
-    download = Signal(dict)
-
-    def __init__(self, action, parent, *, affects_runtime=True, beta_only=False):
-        super().__init__(parent)
-        self.action = action
-        self.affects_runtime = affects_runtime
-        self.beta_only = beta_only
-        self.process = None
-        self.cancelled = False
-
-    def cancel(self):
-        self.cancelled = True
-
-    def run(self):
-        try:
-            result = self.action()
-            self.result.emit('准备已取消；已完成文件保留。' if self.cancelled else result)
-        except Exception as exc:
-            self.result.emit(f"未完成：{exc}")
+from .ui_components import set_download_progress
 
 
 class ModelManager(QDialog):
+    selection_changed = Signal(dict)
+    diagnostic = Signal(str)
+    session_changed = Signal(bool)
     update_checked = Signal(dict)
     preparation_changed = Signal(bool)
     preparation_message = Signal(str)
@@ -70,6 +45,10 @@ class ModelManager(QDialog):
         self.worker = None
         self.close_requested = False
         self.session_active = False
+        self.inventory_busy = False
+        self.consolidated = False
+        self.start_check = None
+        self.update_busy = False
         self.preparation_buttons = []
         layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
@@ -100,13 +79,7 @@ class ModelManager(QDialog):
         self.add_page(self.translation_page, "翻译模型")
         advanced = QWidget()
         self.advanced_form = QFormLayout(advanced)
-        self.profile = QComboBox()
-        for key, (name, *_rest) in PROFILES.items():
-            self.profile.addItem(name, key)
-        self.profile.addItem('自定义', 'custom')
-        self.profile.setCurrentIndex(1)
-        self.advanced_form.addRow('聆听预设', self.profile)
-        self.profile_hint = self.hint(self.advanced_form, PROFILES['balanced'][2])
+        self.hint(self.advanced_form, '沿用当前识别参数。以下时间是请求与停顿检测目标，不是动态窗口长度，也不保证实际刷新速度。')
         self.advanced_toggle = QPushButton('显示高级参数')
         self.advanced_toggle.setCheckable(True)
         self.advanced_form.addRow(self.advanced_toggle)
@@ -138,28 +111,17 @@ class ModelManager(QDialog):
         parameter_form.addRow("Qwen 原文草稿刷新目标", self.draft_seconds)
         parameter_form.addRow("ASR 停顿检测（不直接定稿）", self.endpoint_seconds)
         self.endpoint_seconds.setToolTip("Qwen：连续静音达到该时间后才结束语音段，保留犹豫和短停顿的上下文。Whisper 保留原有检测节奏，此值仅辅助上游分段。两者都不直接决定字幕定稿。")
-        classroom = QPushButton("课堂草稿 · 保留短停顿")
-        classroom.clicked.connect(self.classroom_drafts)
-        parameter_form.addRow(classroom)
         self.behavior_hint = QLabel()
         self.behavior_hint.setWordWrap(True)
         parameter_form.addRow(self.behavior_hint)
         self.add_page(advanced, "字幕与延迟")
         environment = QWidget()
         environment_form = QFormLayout(environment)
-        from .runtime_paths import runtime_python
-        self.runtime_status = QLabel()
+        self.runtime_status = QLabel('统一检查识别与翻译所需组件；缺失或损坏时自动修复。')
         self.runtime_status.setWordWrap(True)
-        self.runtime_status.setToolTip('文件存在不代表依赖和 GPU 已通过检查；启动时会显示各阶段进度。')
-        try:
-            python = runtime_python()
-            self.runtime_status.setText(("推理环境已创建" if python.is_file() else "尚未安装推理环境")
-                                       + f"\n{python}")
-        except RuntimeError as exc:
-            self.runtime_status.setText(str(exc))
         environment_form.addRow(text_label('本地推理组件', 'settingsSection'))
         environment_form.addRow(self.runtime_status)
-        install = QPushButton("安装 / 修复本地推理环境")
+        install = QPushButton("检查 / 修复运行环境")
         install.clicked.connect(self.install_runtime)
         self.preparation_buttons.append(install)
         environment_form.addRow(install)
@@ -168,32 +130,32 @@ class ModelManager(QDialog):
         self.install_documents_button.clicked.connect(self.install_documents)
         self.preparation_buttons.append(self.install_documents_button)
         environment_form.addRow(self.install_documents_button)
-        if sys.platform == 'darwin':
-            install_mlx = QPushButton('安装 / 修复 Apple GPU · MLX 识别环境')
-            install_mlx.clicked.connect(lambda: self.prepare(lambda: self.run_preparation(
-                installation_command('linguaflow.runtime_install', 'mlx')), affects_runtime=True))
-            self.preparation_buttons.append(install_mlx)
-            environment_form.addRow(install_mlx)
-        self.hint(environment_form, "桌面界面与模型推理使用独立环境。无需手动启动服务。安装后请先到识别模型和翻译模型页下载所需权重，再开始聆听。")
-        update = QPushButton('检查软件更新')
+        self.hint(environment_form, "桌面界面与模型推理使用独立环境。无需手动启动服务。统一检查所需组件，补齐或重建损坏环境，并清理未发布的残留环境。模型在模型管理中准备。")
+        update = self.update_button = QPushButton('检查软件更新')
         update.clicked.connect(self.check_updates)
-        self.preparation_buttons.append(update)
         self.update_url = ''
         self.update_link = QPushButton('查看发行页')
         self.update_link.hide()
         self.update_link.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(self.update_url)))
-        self.update_checked.connect(self.show_update)
+        self.update_checked.connect(lambda result: self.show_update(result, respect_cancel=False))
         environment_form.addRow(text_label('版本与更新', 'settingsSection'))
         self.version_label = QLabel(f'当前版本：{__version__}')
         environment_form.addRow(self.version_label)
         environment_form.addRow(update)
         environment_form.addRow(self.update_link)
+        self.update_status = QLabel('')
+        self.update_status.setWordWrap(True)
+        self.update_status.setObjectName('settingsHint')
+        environment_form.addRow(self.update_status)
         self.hint(environment_form, '启动后后台检查 GitHub 发布版本，也可在此手动检查。源码版查看源码更新；未发布的安装包不会显示为可安装更新。目前需从发行页下载安装。')
         self.add_page(environment, "运行环境")
         self.status = QLabel("下载只准备文件；开始聆听时才加载模型。")
         self.status.setObjectName('preparationStatus')
         self.status.setWordWrap(True)
+        self.status.setFixedHeight(64)
         self.progress_bar = QProgressBar()
+        self.progress_bar.setFixedHeight(24)
+        self.progress_bar.setToolTip("当前下载文件的进度；总大小未知时显示滑动条。")
         self.progress_bar.setRange(0, 0)
         self.progress_bar.setTextVisible(False)
         self.progress_bar.hide()
@@ -214,43 +176,13 @@ class ModelManager(QDialog):
     def set_session_active(self, active):
         self.session_active = active
         self.pending_settings.setVisible(active)
-
-    def apply_profile(self):
-        key = self.profile.currentData()
-        if key not in PROFILES:
-            self.profile_hint.setText('使用你保存的高级参数。实际速度和效果取决于模型与设备。')
-            return
-        _name, interval, hint = PROFILES[key]
-        self._applying_profile = True
-        for control in (self.update_seconds, self.draft_seconds):
-            control.setValue(interval)
-        self.endpoint_seconds.setValue(1.5)
-        self._applying_profile = False
-        self.sync_profile()
-        self.profile_hint.setText(hint + ' 不改变字幕确认规则；下次开始聆听生效。')
-
-    def sync_profile(self):
-        if getattr(self, '_applying_profile', False):
-            return
-        key = next((key for key, (_name, interval, _hint) in PROFILES.items()
-                    if self.update_seconds.value() == self.draft_seconds.value() == interval
-                    and self.endpoint_seconds.value() == 1.5),
-                   'custom')
-        self.profile.blockSignals(True)
-        self.profile.setCurrentIndex(self.profile.findData(key))
-        self.profile.blockSignals(False)
-        self.profile_hint.setText(PROFILES[key][2] if key in PROFILES else '使用你保存的高级参数；可直接选择预设。')
+        self.session_changed.emit(active)
 
     def add_page(self, widget, title):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(widget)
         self.tabs.addTab(scroll, title)
-
-    def classroom_drafts(self):
-        self.draft_seconds.setValue(.5)
-        self.endpoint_seconds.setValue(1.5)
-        self.status.setText("已应用课堂设置：每 0.5 秒请求草稿，保留 1.5 秒短停顿。下一次聆听生效；实际更新速度取决于模型。")
 
     def hint(self, form, text):
         widget = QLabel(text)
@@ -313,23 +245,108 @@ class ModelManager(QDialog):
         translation_download.clicked.connect(lambda: self.prepare_translation(translation.currentText().strip()))
         self.preparation_buttons.append(translation_download)
         self.translation_form.addRow(translation_download)
-        if sys.platform == 'darwin':
-            self.hy_metal_button = QPushButton('使用 HY 1.8B · Apple GPU')
-            def select_hy_metal():
-                self.translation_engine.setCurrentIndex(self.translation_engine.findData('llama'))
-                self.llama_model.setCurrentText(HY_GGUF)
-                self.translation_device.setCurrentIndex(self.translation_device.findData('metal'))
-                self.status.setText('已选择 HY 1.8B Q4_K_M · llama.cpp / Metal。首次请准备模型，下次聆听生效。')
-            self.hy_metal_button.clicked.connect(select_hy_metal)
-            self.translation_form.addRow(self.hy_metal_button)
         self.update_translation_engine()
         self.backend.currentIndexChanged.connect(self.update_backend)
         self.update_backend()
-        self.profile.currentIndexChanged.connect(self.apply_profile)
-        for control in (self.update_seconds, self.draft_seconds, self.endpoint_seconds):
-            control.valueChanged.connect(self.sync_profile)
-        for control in (self.translation_before, self.translation_after, self.translation_initial_before):
-            control.currentIndexChanged.connect(self.sync_profile)
+        for control in (self.backend, self.qwen_model, asr, self.translation_engine,
+                        translation, self.llama_model, self.translation_device):
+            control.currentTextChanged.connect(lambda *_: self.selection_changed.emit(self.preparation_selection()))
+
+    def inventory_selection(self):
+        """All configured paths, including inactive engines, for local inventory."""
+        return [dict(path=control.currentText(), kind=kind, engine=engine)
+                for control, kind, engine in (
+                    (self.qwen_model, 'asr', 'qwen3-streaming'),
+                    (self.whisper_widgets[0], 'asr', 'wlk-whisper'),
+                    (self.translation_model, 'translation', 'pytorch'),
+                    (self.llama_model, 'translation', 'llama'))]
+
+    def assign_model(self, entry):
+        """Select a compatible downloaded model; leave the active session untouched."""
+        kind, engine = entry['kind'], entry['engine']
+        choice = self.backend if kind == 'asr' else self.translation_engine
+        index = choice.findData(engine)
+        if kind not in ('asr', 'translation') or index < 0:
+            raise ValueError('这个模型的引擎不适用于当前平台。')
+        choice.setCurrentIndex(index)
+        control = ((self.whisper_widgets[0] if engine == 'wlk-whisper' else self.qwen_model)
+                   if kind == 'asr' else (self.llama_model if engine == 'llama' else self.translation_model))
+        control.setCurrentText(entry['path'])
+
+    @property
+    def preparing(self):
+        return self.worker is not None
+
+    def start_block_reason(self):
+        if self.inventory_busy:
+            return '模型管理', '正在删除模型，请完成后再开始聆听。'
+        if self.worker is not None and self.worker.affects_runtime:
+            return '模型准备中', '请等待模型准备完成，或在设置中取消准备。'
+        return None
+
+    def register_preparation_button(self, button):
+        self.preparation_buttons.append(button)
+        button.setEnabled(not self.preparing)
+
+    def show_section(self, index):
+        self.tabs.setCurrentIndex(index)
+
+    def set_inventory_busy(self, busy):
+        self.inventory_busy = busy
+
+    def embed_model_settings(self, back_button):
+        """Own internal form visibility when embedded beneath the inventory page."""
+        self.setWindowFlags(Qt.WindowType.Widget)
+        self.tabs.tabBar().hide()
+        self.done_button.hide()
+        self.cancel_button.setVisible(self.worker is not None)
+        self.setObjectName("embeddedModels")
+        self.setStyleSheet("QDialog#embeddedModels { background: transparent; } QTabWidget::pane { border: none; }")
+        self.layout().setContentsMargins(0, 0, 0, 0)
+        self.layout().setSpacing(14)
+        for form in self.findChildren(QFormLayout):
+            form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+            form.setAlignment(Qt.AlignmentFlag.AlignTop)
+            form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+            form.setVerticalSpacing(16)
+            form.setHorizontalSpacing(24)
+            form.setContentsMargins(18, 18, 18, 18)
+            form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            for row in range(form.rowCount()):
+                field = form.itemAt(row, QFormLayout.ItemRole.FieldRole)
+                if field and field.widget() and isinstance(field.widget(), (QComboBox, QAbstractSpinBox)):
+                    field.widget().setMaximumWidth(380)
+                    field.widget().setMinimumWidth(170)
+        for button in self.findChildren(QPushButton):
+            button.setMaximumWidth(340)
+            if button.parentWidget().layout():
+                button.parentWidget().layout().setAlignment(button, Qt.AlignmentFlag.AlignLeft)
+        for tab in range(self.tabs.count()):
+            scroll = self.tabs.widget(tab)
+            page = scroll.takeWidget()
+            page.setObjectName("modelSettingsGroup")
+            page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+            wrapper = QWidget()
+            column = QVBoxLayout(wrapper)
+            column.setContentsMargins(0, 0, 6, 0)
+            column.addWidget(page)
+            column.addStretch()
+            scroll.setWidget(wrapper)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        for hint in self.findChildren(QLabel):
+            hint.setWordWrap(True)
+            if hint.objectName() not in ('settingsSection', 'preparationStatus'):
+                hint.setObjectName('settingsHint')
+        for subsection in (self.whisper_page, self.qwen_page):
+            subsection.setObjectName('modelSubsection')
+            subsection.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        self.layout().insertWidget(0, back_button)
+        self.consolidated = True
+        for form, control in ((self.asr_form, self.backend), (self.qwen_form, self.qwen_model),
+                              (self.whisper_form, self.whisper_widgets[0]),
+                              (self.translation_form, self.translation_engine)):
+            form.setRowVisible(control, False)
+        self.update_translation_engine()
 
     def update_translation_context(self):
         from .translation_models import is_hy_model
@@ -349,10 +366,11 @@ class ModelManager(QDialog):
         for device in available:
             self.translation_device.addItem(labels[device], device)
         self.translation_device.setCurrentIndex(max(0, self.translation_device.findData(selected)))
-        self.translation_form.setRowVisible(self.translation_model, not llama)
-        self.translation_form.setRowVisible(self.choose_translation, not llama)
-        self.translation_form.setRowVisible(self.llama_model, llama)
-        self.translation_form.setRowVisible(self.choose_gguf, llama)
+        consolidated = self.consolidated
+        self.translation_form.setRowVisible(self.translation_model, not llama and not consolidated)
+        self.translation_form.setRowVisible(self.choose_translation, not llama and not consolidated)
+        self.translation_form.setRowVisible(self.llama_model, llama and not consolidated)
+        self.translation_form.setRowVisible(self.choose_gguf, llama and not consolidated)
         self.translation_hint.setText(
             '内置 HY 1.8B 为 Q4_K_M。也可选择受当前 llama.cpp 支持、带聊天模板的本地 GGUF 指令模型；精度由权重文件决定。新模型的翻译质量需验证。'
             if llama else '支持 HY-MT2、NLLB 及兼容模型目录。模型与 GGUF 分别保存，切换引擎不会覆盖选择。')
@@ -381,6 +399,9 @@ class ModelManager(QDialog):
 
     def prepare(self, action, *, message='正在准备，可返回录音或修改下次设置；已有文件会复用。',
                 affects_runtime=False, beta_only=False):
+        if self.inventory_busy:
+            self.preparation_status("正在删除模型，请稍后再准备。")
+            return
         if self.worker is not None:
             self.preparation_status('已有准备任务正在运行，可查看进度或取消后再准备。')
             return
@@ -394,10 +415,11 @@ class ModelManager(QDialog):
         self.progress_bar.show()
         self.progress_bar.setRange(0, 0)
         self.progress_bar.setTextVisible(False)
+        self.status.hide()
         self.status.setText(message)
         self.worker = Preparation(action, self, affects_runtime=affects_runtime, beta_only=beta_only)
         self.worker.result.connect(self.preparation_status)
-        self.worker.progress.connect(self.preparation_status)
+        # Raw download logs stay in the worker tail, never resize the UI.
         self.worker.download.connect(self.show_download)
         self.worker.finished.connect(self.prepared)
         self.worker.start()
@@ -405,32 +427,15 @@ class ModelManager(QDialog):
         self.preparation_message.emit(message)
 
     def preparation_status(self, text):
+        if text.startswith("未完成：") and ("Traceback" in text or "File " in text):
+            self.diagnostic.emit(text)
+            text = "准备未完成，请稍后重试；详细原因可在诊断记录中查看。"
         self.status.setText(text)
+        self.status.setToolTip(text)
         self.preparation_message.emit(text)
 
     def show_download(self, event):
-        total, done = event.get('total'), event.get('completed', 0)
-        if total and total > 0:
-            self.progress_bar.setRange(0, 1000)
-            self.progress_bar.setValue(min(1000, int(1000 * done / total)))
-            self.progress_bar.setTextVisible(True)
-            self.progress_bar.setFormat('%p%')
-        else:
-            self.progress_bar.setRange(0, 0)
-            self.progress_bar.setTextVisible(False)
-        detail = event.get('label', '准备中')
-        if event.get('unit') == 'B':
-            detail += f' · {done / 1024**2:.1f} MB'
-            if total:
-                detail += f' / {total / 1024**2:.1f} MB'
-            rate = event.get('rate')
-            if rate and rate > 0:
-                detail += f' · {rate / 1024**2:.1f} MB/s'
-                if total and done < total:
-                    detail += f' · 约剩 {int((total - done) / rate)} 秒'
-        elif total:
-            detail += f' · {int(done)} / {int(total)} 个文件'
-        self.preparation_status(detail)
+        set_download_progress(self.progress_bar, event)
         self.download_changed.emit(event)
 
     def set_beta_enabled(self, enabled):
@@ -453,6 +458,7 @@ class ModelManager(QDialog):
         self.cancel_button.setEnabled(False)
         self.cancel_button.hide()
         self.progress_bar.hide()
+        self.status.setVisible(bool(self.status.text()))
         self.preparation_changed.emit(False)
         from .runtime_paths import runtime_python
         try:
@@ -471,117 +477,80 @@ class ModelManager(QDialog):
             self.preparation_status("已请求取消；正在结束准备任务…")
 
     def prepare_whisper(self, model):
-        def action():
-            from .runtime_paths import runtime_python
-            result = self.run_preparation([str(runtime_python()), "-m", "linguaflow.wlk_prepare", "whisper", model])
-            self.prepare_segmentation()
-            return result
-        self.prepare(action)
+        selection = self.preparation_selection()
+        selection.update(backend='wlk-whisper', asr_model=model)
+        self.prepare_selected(selection, only='asr')
 
     def run_preparation(self, command, *, show_progress=True):
-        if self.worker.cancelled:
-            raise RuntimeError('准备已取消。')
-        tail = deque(maxlen=20)
-        if show_progress:
-            self.worker.download.emit(dict(label='准备组件', unit='stage'))
-        # The supervisor owns descendants even when the desktop exits unexpectedly.
-        command = installation_command('linguaflow.managed_process', *command)
-        with subprocess.Popen(command, cwd=resource_root(), stdin=subprocess.PIPE,
-                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                              text=True, encoding="utf-8", errors="replace",
-                              env=python_environment(),
-                              **spawn_options()) as process:
-            self.worker.process = process
-            finished = Event()
-            def watch():
-                while not finished.wait(.05):
-                    if self.worker.cancelled:
-                        process.stdin.close()  # EOF lets the supervisor reap its tree.
-                        try:
-                            process.wait(timeout=8)
-                        except subprocess.TimeoutExpired:
-                            stop_tree(process, force=True)
-                        return
-            watcher = Thread(target=watch, daemon=True)
-            watcher.start()
-            try:
-                for line in process.stdout:
-                    if line.strip():
-                        if line.startswith(PREFIX):
-                            try:
-                                event = json.loads(line[len(PREFIX):])
-                                if isinstance(event, dict):
-                                    self.worker.download.emit(event)
-                                    continue
-                            except ValueError:
-                                pass
-                        tail.append(line.strip())
-                        if show_progress:
-                            self.worker.progress.emit(line.strip()[-350:])
-                code = process.wait(timeout=10)
-                if self.worker.cancelled:
-                    raise RuntimeError('准备已取消；已有文件保留，可稍后继续。')
-                if code:
-                    raise RuntimeError("\n".join(tail)[-1500:])
-            finally:
-                finished.set()
-                watcher.join(timeout=10)
-                self.worker.process = None
-        return tail[-1] if tail else "准备完成"
+        return self.worker.run_command(command, show_progress=show_progress)
+
+    def preparation_selection(self):
+        backend = self.backend.currentData()
+        engine = self.translation_engine.currentData()
+        return dict(backend=backend,
+                    asr_model=(self.whisper_widgets[0] if backend == 'wlk-whisper' else self.qwen_model).currentText().strip(),
+                    translation_engine=engine,
+                    translation_model=(self.llama_model if engine == 'llama' else self.translation_model).currentText().strip(),
+                    translation_device=self.translation_device.currentData())
 
     def install_runtime(self):
-        command = installation_command('linguaflow.runtime_install', 'wlk')
+        selection = json.dumps(self.preparation_selection(), ensure_ascii=False)
+        command = installation_command('linguaflow.runtime_install', 'all', '--maintain', '--selection', selection)
         self.prepare(lambda: self.run_preparation(command), affects_runtime=True)
 
+    def prepare_selected(self, selection, *, only=None):
+        arguments = ['--selection', json.dumps(selection, ensure_ascii=False)]
+        if only:
+            arguments += ['--only', only]
+        command = installation_command('linguaflow.recommended_prepare', *arguments)
+        self.prepare(lambda: self.run_preparation(command), affects_runtime=True,
+                     message='检查环境并准备所选模型；可离开此页，取消保留已下载缓存。')
+
     def prepare_recommended(self):
-        from .runtime_paths import mlx_python, runtime_python
-        try:
-            changes_runtime = not (runtime_python().is_file() and mlx_python().is_file())
-        except RuntimeError:
-            changes_runtime = True
-        command = installation_command('linguaflow.recommended_prepare')
-        self.prepare(lambda: self.run_preparation(command), affects_runtime=changes_runtime,
-                     message='准备 Qwen3-ASR 1.7B 4-bit 和 HY 1.8B Q4_K_M；可离开此页，取消保留已下载缓存。')
+        self.prepare_selected(self.preparation_selection())
 
     def check_updates(self):
-        def action():
-            result = json.loads(self.run_preparation(installation_command('linguaflow.updates'), show_progress=False))
-            self.update_checked.emit(result)
-            return result['message']
+        if self.update_busy:
+            return
         self.update_url = ''
         self.update_link.hide()
-        self.prepare(action, message='正在检查已发布的软件版本…', affects_runtime=False)
+        self.update_status.setText('正在检查更新…')
+        if self.start_check is None:
+            self.update_status.setText('暂时无法检查更新，请重新打开应用后重试。')
+            return
+        self.update_busy = True
+        self.update_button.setEnabled(False)
+
+        def checked(result):
+            self.update_busy = False
+            self.update_button.setEnabled(True)
+            if not isinstance(result, dict) or result.get('kind') not in ('none', 'error', 'package', 'source'):
+                result = {'kind': 'error', 'url': '',
+                          'message': '暂时无法检查更新，请确认网络后重试。'}
+            self.update_checked.emit(result)
+
+        self.start_check('linguaflow.updates', checked)
 
     @Slot(dict)
     def show_update(self, result, *, respect_cancel=True):
         if respect_cancel and self.worker is not None and self.worker.cancelled:
             return
         from .updates import trusted_release_url
+        self.update_status.setText(result.get('message', ''))
         self.update_url = result.get('url', '')
         self.update_link.setVisible(bool(self.update_url) and trusted_release_url(self.update_url))
 
     def prepare_translation(self, model):
-        if self.translation_engine.currentData() == 'llama':
-            command = installation_command('linguaflow.llama_install',
-                       '--device', self.translation_device.currentData(),
-                       '--model', self.llama_model.currentText().strip())
-            self.prepare(lambda: self.run_preparation(command))
-            return
-        def action():
-            return self.run_preparation(installation_command('linguaflow.model_prepare', 'translation', model))
-        self.prepare(action)
-
-    def prepare_segmentation(self):
-        """Prepare the required internal CPU model through the cancellable worker."""
-        from .runtime_paths import runtime_python
-        return self.run_preparation([str(runtime_python()), '-u', '-m', 'linguaflow.semantic_model'])
+        selection = self.preparation_selection()
+        if selection['translation_engine'] != 'llama':
+            selection['translation_model'] = model
+        self.prepare_selected(selection, only='translation')
 
     def prepare_qwen(self, model):
-        def action():
-            result = self.run_preparation(installation_command('linguaflow.model_prepare', 'qwen', model))
-            self.prepare_segmentation()
-            return result
-        self.prepare(action)
+        selection = self.preparation_selection()
+        selection.update(backend='qwen3-mlx' if self.backend.currentData() == 'qwen3-mlx' else 'qwen3-streaming',
+                         asr_model=model)
+        self.prepare_selected(selection, only='asr')
 
     def reject(self):
         if self.worker is None:

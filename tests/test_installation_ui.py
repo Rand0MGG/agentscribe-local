@@ -60,20 +60,27 @@ w.close()
 def test_slow_update_check_does_not_block_local_recording_and_save(tmp_path):
     from test_beta_features import run_ui
     run_ui('''
-import json
 from threading import Event
 from linguaflow.core import Caption
 from PySide6.QtWidgets import QMessageBox
 w.device.addItem('fixture',('fixture',False));w.translate.setChecked(False)
 assert w.new_recording(name='更新期间录音')
 started,finish=Event(),Event()
-def slow_check(command,**kwargs):
-    assert command[-1]=='linguaflow.updates'
+def slow_download():
     started.set()
     assert finish.wait(8)
-    return json.dumps({'url':'','message':'检查完成','version':'0.5.0','kind':'none'})
-w.model_manager.run_preparation=slow_check
+    return '下载完成'
+jobs=[]
+def update_check(module, callback, *args):
+    assert module=='linguaflow.updates'
+    jobs.append(callback)
+w.model_manager.start_check=update_check
+w.model_manager.prepare(slow_download)
+assert w.model_manager.update_button.isEnabled()
 w.model_manager.check_updates()
+assert w.model_manager.update_busy
+w.model_manager.check_updates()
+assert len(jobs)==1
 wait(started.is_set)
 def unexpected(*args): raise AssertionError('Update checks must not prevent recording')
 QMessageBox.information=unexpected
@@ -91,6 +98,16 @@ try:
     w.stop();wait(lambda:w.session is None)
     assert w.library.load(w.current_item)[1][0].source=='Saved during update'
     assert w.model_manager.worker is not None
+    jobs[0]({'url':'','message':'当前已是最新版本（0.6.0-beta.2）。','version':'0.6.0-beta.2','kind':'none'})
+    assert not w.model_manager.update_busy
+    assert '最新版本' in w.model_manager.update_status.text()
+    assert w.model_manager.worker is not None
+    w.model_manager.check_updates()
+    assert w.model_manager.update_busy
+    jobs[1](None)
+    assert not w.model_manager.update_busy and w.model_manager.update_button.isEnabled()
+    assert '无法检查更新' in w.model_manager.update_status.text()
+    assert w.model_manager.update_link.isHidden()
 finally:
     finish.set();wait(lambda:w.model_manager.worker is None)
     w.close();app.processEvents()
