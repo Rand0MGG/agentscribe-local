@@ -20,9 +20,14 @@ from ui_support import settle_geometry, wait_until as wait
 w=window()
 '''
     bootstrap = f'import sys; sys.path.insert(0, {str(Path(__file__).resolve().parent)!r})\n'
-    result = subprocess.run([sys.executable, '-c', bootstrap + prefix + code], capture_output=True, text=True, timeout=35,
-        env={**os.environ, 'QT_QPA_PLATFORM': os.environ.get('AGENTSCRIBE_UI_PLATFORM', 'offscreen'),
-             'AGENTSCRIBE_LIBRARY': str(tmp_path)})
+    try:
+        result = subprocess.run([sys.executable, '-c', bootstrap + prefix + code], capture_output=True, text=True, timeout=35,
+            env={**os.environ, 'QT_QPA_PLATFORM': os.environ.get('AGENTSCRIBE_UI_PLATFORM', 'offscreen'),
+                 'AGENTSCRIBE_LIBRARY': str(tmp_path)})
+    except subprocess.TimeoutExpired as exc:
+        output = b'\n'.join(value if isinstance(value, bytes) else (value or '').encode('utf-8')
+                            for value in (exc.stdout, exc.stderr))
+        raise AssertionError('Qt child timed out after 35 seconds:\n' + output.decode('utf-8', errors='replace')) from exc
     assert result.returncode == 0, result.stdout + result.stderr
 
 
