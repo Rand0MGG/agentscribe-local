@@ -75,13 +75,30 @@ def test_group_cleanup_permission_error_requires_reaped_mac_child(monkeypatch, f
         seen.append((pid, signum))
         raise PermissionError(1, 'Operation not permitted')
     monkeypatch.setattr(os, 'killpg', kill_group, raising=False)
-    process = SimpleNamespace(pid=12345, poll=lambda: 0 if exited else None)
+    waits = []
+    def wait(timeout):
+        waits.append(timeout)
+        raise subprocess.TimeoutExpired('fixture process', timeout)
+    process = SimpleNamespace(pid=12345, poll=lambda: 0 if exited else None, wait=wait)
     if system == 'darwin' and exited:
         process_platform.stop_tree(process, force=force)
     else:
         with pytest.raises(PermissionError):
             process_platform.stop_tree(process, force=force)
     assert seen == [(process.pid, signal.SIGKILL if force else signal.SIGTERM)]
+    assert waits == ([.1] if system == 'darwin' and not exited else [])
+
+
+def test_mac_group_cleanup_confirms_child_in_exit_transition(monkeypatch):
+    monkeypatch.setattr(sys, 'platform', 'darwin')
+    def kill_group(*args):
+        raise PermissionError(1, 'Operation not permitted')
+    monkeypatch.setattr(os, 'killpg', kill_group, raising=False)
+    waits = []
+    process = SimpleNamespace(pid=12345, poll=lambda: None,
+                              wait=lambda timeout: waits.append(timeout) or 0)
+    process_platform.stop_tree(process)
+    assert waits == [.1]
 
 
 def test_group_cleanup_signals_descendants_even_when_parent_exited(monkeypatch):

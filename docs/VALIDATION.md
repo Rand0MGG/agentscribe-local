@@ -18,6 +18,8 @@ Mac [诊断运行](https://github.com/Rand0MGG/agentscribe-local/actions/runs/38
 
 `89d1713` 的 [后续检查](https://github.com/Rand0MGG/agentscribe-local/actions/runs/38064901331) 八项通过，新增 Mac 子进程回收回归在三个 Python 版本通过；Mac / Python 3.12 单独出现原生菜单测试 15 秒超时，未产生输出，尚不能确认根因（同一测试在此前运行及本轮另外两种 Python 版本通过）。为该测试补充 8 秒堆栈与完整超时输出，保留原有 15 秒截止时间和 Cocoa 菜单断言，不重试或跳过。Windows 相关受保护回归 **3 passed、1 skipped，4.81 秒**；跳过项正是 Mac 原生菜单，不能据此声称该问题已修复。
 
+`530f5e3` 的 [诊断回归](https://github.com/Rand0MGG/agentscribe-local/actions/runs/38065312849) 中原生菜单通过，但新增 Mac / Python 3.12 子进程回归复现 `killpg()` 已返回 `EPERM`、首次 `poll()` 仍未回收的退出过渡状态。确认结束改为最多 100 毫秒等待该自有子进程，不重发信号；若仍存活，继续抛出原权限错误。增加过渡状态与等待上限的模拟断言，保留实际子进程回归。本机相关受保护回归 **89 passed、3 skipped，10.72 秒**；Ruff 与差异检查通过。
+
 ## 2026-10-10 beta.3 共享界面与音频来源切换
 
 范围：Windows 分支上的共享界面、字幕展示、音频来源切换、模型下载目录和平台窗口边界；源码版本 `0.6.0-beta.3`。Windows 11 / AMD64、Python 3.12.8。界面对照与 18 张示例图见 [UI_DESIGN](UI_DESIGN.md)。示例窗口只使用模拟字幕、音量、回放和下载进度，没有访问声卡或下载模型。

@@ -62,14 +62,22 @@ def stop_tree(process, force=False):
             os.killpg(process.pid, signal.SIGKILL if force else signal.SIGTERM)
         except ProcessLookupError:
             pass
-        except PermissionError:
+        except PermissionError as exc:
             # Darwin filters zombies from killpg and can return EPERM when a
             # concurrent cancellation has already killed the last group member.
             # Reap our child to confirm that case; live permission failures
             # still propagate. Signal the group first so surviving descendants
             # are not skipped just because their parent has exited.
-            if sys.platform != 'darwin' or process.poll() is None:
+            if sys.platform != 'darwin':
                 raise
+            if process.poll() is None:
+                # The kernel can exclude an exiting group before waitpid can
+                # reap its last child. Confirm completion without retrying a
+                # signal or hiding a permission failure for a live process.
+                try:
+                    process.wait(timeout=.1)
+                except subprocess.TimeoutExpired:
+                    raise exc
 
 
 def parent_disconnected(fd):
