@@ -468,16 +468,24 @@ export async function createConverter() {
     monkeypatch.setattr(module, 'document_renderer', lambda: (Path(node), entry))
     async def scenario():
         task = asyncio.create_task(module.render_material(library, path, document, 3))
-        for _ in range(100):
-            if (base / 'render-started').exists():
-                break
-            await asyncio.sleep(.05)
-        assert (base / 'render-started').exists()
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        assert (base / 'render-disposed').read_text() == 'child exited'
-        assert not list(base.glob('.render-*')) and not (base / 'pages').exists()
+        async def started():
+            while not (base / 'render-started').exists():
+                if task.done():
+                    await task  # Surface startup errors, rather than a missing-file assertion.
+                    raise AssertionError('renderer returned before starting')
+                await asyncio.sleep(.01)
+        try:
+            # Synchronize with the child, not an assumed five-second startup.
+            await asyncio.wait_for(started(), 10)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert (base / 'render-disposed').read_text() == 'child exited'
+            assert not list(base.glob('.render-*')) and not (base / 'pages').exists()
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
     asyncio.run(scenario())
 
 

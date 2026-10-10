@@ -4,6 +4,8 @@
 
 本地 HTTP 下载夹具用事件控制部分下载、切换设置和继续下载的顺序；仅夹具绕过主机代理，套接字设有超时，失败路径先取消自有下载，再回收服务器及线程。继续检查多个真实字节进度、Qt 心跳、最终字节数与退出后的控件状态。未改变应用联网选择、平台设备校验或业务流程，也未删掉失败测试。
 
+Mac [诊断运行](https://github.com/Rand0MGG/agentscribe-local/actions/runs/38063948332) 的超时堆栈进一步定位到 `HTTPServer.server_bind()` 调用 `socket.getfqdn('127.0.0.1')`，尚未启动下载。夹具改为直接执行 TCP 绑定并使用固定 `localhost` 名称，额外断言服务器创建不能调用反向 DNS；UI 子进程超时保留输出与堆栈，避免以后只收到 `TimeoutExpired`。同轮发现的字幕初始布局和 Node 渲染取消测试，分别等待实际滚动范围就绪及子进程开始标记；阅读位置、子进程退出和派生文件清理仍严格检查，启动错误立即暴露，失败时也回收任务。上述后续定向无音频回归 **6 passed，12.21 秒**。
+
 - Windows 11 / AMD64，Python 3.12.8、PySide6 6.11.2。针对本轮失败项的无音频回归 **19 passed、1 skipped，34.32 秒**；追加首次模型推荐与完整提示流程的 Windows/Mac 模拟分支 **6 passed，7.36 秒**。
 - 完整无音频回归：`.venv\Scripts\python.exe scripts/test_no_audio.py -q --basetemp=.work/cache/ci-all-1`，**794 passed、6 skipped、2 failed，204.76 秒**；运行期间增加的提示流程模拟参数另由上述 6 项回归覆盖。两项失败仍为本机创建符号链接缺少权限的 `WinError 1314`，与上一轮相同；保留检查，未变更系统权限。日志 `.work/cache/shared-ui-20261010/ci-fix-full.log`。
 - Ruff 与差异空白检查通过；上述测试均报告零原生音频导入尝试。受限沙箱拒绝 localhost 连接及测试进程清理后，在授权的沙箱外运行同一音频保护测试。
