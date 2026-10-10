@@ -2,6 +2,7 @@
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 
 def run_ui(code, tmp_path):
@@ -15,14 +16,11 @@ app=QApplication([])
 path=Path(os.environ['AGENTSCRIBE_LIBRARY'])/'prefs.ini'
 def window():
     return module.Window(discover=False,prefs=QSettings(str(path),QSettings.Format.IniFormat))
-def wait(predicate):
-    deadline=time.monotonic()+10
-    while not predicate() and time.monotonic()<deadline:
-        app.processEvents();time.sleep(.02)
-    assert predicate()
+from ui_support import settle_geometry, wait_until as wait
 w=window()
 '''
-    result = subprocess.run([sys.executable, '-c', prefix + code], capture_output=True, text=True, timeout=35,
+    bootstrap = f'import sys; sys.path.insert(0, {str(Path(__file__).resolve().parent)!r})\n'
+    result = subprocess.run([sys.executable, '-c', bootstrap + prefix + code], capture_output=True, text=True, timeout=35,
         env={**os.environ, 'QT_QPA_PLATFORM': os.environ.get('AGENTSCRIBE_UI_PLATFORM', 'offscreen'),
              'AGENTSCRIBE_LIBRARY': str(tmp_path)})
     assert result.returncode == 0, result.stdout + result.stderr

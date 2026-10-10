@@ -91,7 +91,6 @@ def test_failed_source_switch_retains_previous_pcm(monkeypatch, tmp_path):
 def test_source_category_feedback_meter_and_live_selector(tmp_path):
     run_ui(r'''
 from types import SimpleNamespace
-from PySide6.QtTest import QTest
 from linguaflow.audio import Device
 from linguaflow.recording_state import RecordingState
 module.list_devices = lambda: [Device('speaker', '系统声音 · 扬声器', True),
@@ -120,7 +119,7 @@ w.on_source_changed(1)
 assert '实时音量' in w.volume_caption.text()
 w.on_level(.01)
 assert 40 < w.meter.value() < 50  # Quiet input is visible, without amplifying audio.
-QTest.qWait(100)
+wait(lambda: w.meter.display_level == w.meter.value())
 assert w.meter.display_level == w.meter.value()
 w.meter.set_rms(float('nan'))
 assert w.meter.value() == w.meter.display_level == 0
@@ -138,7 +137,8 @@ assert w.meter.value() == 0
 w.session = None
 w.set_recording_state(RecordingState.IDLE)
 assert '开始后显示' in w.volume_caption.text()
-QTest.qWait(1550)
+assert w.refresh_feedback.interval() == 1500
+wait(lambda: not w.refresh_feedback.isActive())
 assert not w.refresh_feedback.isActive()
 assert w.refresh_source.toolTip() == '刷新音频设备列表'
 w.close()

@@ -5,6 +5,7 @@ from test_beta_features import run_ui
 def test_model_editor_keeps_inspection_readonly_and_download_selection_explicit(tmp_path):
     run_ui(r'''
 from linguaflow.llama_assets import HY_GGUF
+from linguaflow.model_options import translation_devices
 workspace, manager = w.settings_workspace, w.model_manager
 w.open_settings('模型管理')
 before = manager.preparation_selection()
@@ -45,12 +46,15 @@ assert manager.preparation_selection()['asr_model'] == 'base'
 assert manager.endpoint_seconds.value() == 1.5
 dialog = workspace.open_model_settings('translation')
 dialog.engine.setCurrentIndex(dialog.engine.findData('llama'))
-dialog.device.setCurrentIndex(dialog.device.findData('vulkan'))
+device = 'metal' if 'metal' in translation_devices('llama') else 'vulkan'
+invalid_device = 'vulkan' if device == 'metal' else 'metal'
+assert dialog.device.findData(device) >= 0
+dialog.device.setCurrentIndex(dialog.device.findData(device))
 dialog.apply()
-assert manager.preparation_selection()['translation_device'] == 'vulkan'
+assert manager.preparation_selection()['translation_device'] == device
 before_invalid = manager.preparation_selection()
 try:
-    manager.apply_model_settings(dict(kind='translation', selection=before_invalid, device='metal', parameters={}))
+    manager.apply_model_settings(dict(kind='translation', selection=before_invalid, device=invalid_device, parameters={}))
 except ValueError:
     pass
 else:
@@ -168,7 +172,6 @@ def test_overlay_background_alpha_and_hidden_controls_keep_text_and_geometry(tmp
     run_ui(r'''
 from PySide6.QtCore import QEvent, QPointF
 from PySide6.QtGui import QEnterEvent
-from PySide6.QtTest import QTest
 from linguaflow.subtitles_overlay import Overlay
 overlay = w.overlay
 overlay.show()
@@ -176,6 +179,7 @@ overlay.resize(700, 290)
 app.processEvents()
 app.sendEvent(overlay, QEnterEvent(QPointF(10,10), QPointF(10,10), QPointF(10,10)))
 assert not overlay.header.isHidden() and not overlay.resize_handle.isHidden()
+settle_geometry(overlay, overlay.source)
 geometry, source_rect = overlay.geometry(), overlay.source.geometry()
 overlay.background_opacity.setValue(0)
 app.processEvents()
@@ -185,8 +189,9 @@ overlay.background_opacity.setValue(45)
 app.processEvents()
 assert 110 <= overlay.grab().toImage().pixelColor(25, overlay.height()-40).alpha() <= 120
 app.sendEvent(overlay, QEvent(QEvent.Type.Leave))
-QTest.qWait(500)
+wait(lambda: overlay.header.isHidden() and overlay.resize_handle.isHidden())
 assert overlay.header.isHidden() and overlay.resize_handle.isHidden()
+settle_geometry(overlay, overlay.source)
 assert overlay.geometry() == geometry and overlay.source.geometry() == source_rect
 assert overlay.source.isVisibleTo(overlay)
 overlay.hide()

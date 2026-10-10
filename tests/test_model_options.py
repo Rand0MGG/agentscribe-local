@@ -29,7 +29,7 @@ from pathlib import Path
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication
 from linguaflow.app import STYLE, Window
-from linguaflow.model_options import MLX_MODEL
+from linguaflow.model_options import MLX_MODEL, recommended_selection
 sys.platform = os.environ['FIXTURE_PLATFORM']
 app = QApplication([])
 app.setStyleSheet(STYLE)
@@ -39,6 +39,16 @@ def values(combo): return tuple(combo.itemData(i) for i in range(combo.count()))
 w = window()
 m = w.model_manager
 mac = sys.platform == 'darwin'
+# The missing-model prompt downloads the effective first-use choice. Only Mac
+# has a first-use preset; explicit choices must never be replaced by it.
+initial = m.preparation_selection()
+expected = recommended_selection() if mac else initial
+assert w.preparation_selection() == expected
+downloads = []
+m.prepare_selected = lambda selection, **kwargs: downloads.append((selection.copy(), kwargs))
+w.prepare_recommended_models(only='asr')
+assert downloads == [(expected, {'only': 'asr'})]
+assert m.preparation_selection() == expected
 assert values(m.backend) == (('wlk-whisper', 'qwen3-streaming', 'qwen3-mlx') if mac else
                              ('wlk-whisper', 'qwen3-streaming'))
 assert values(w.compute) == (('cpu', 'mlx') if mac else ('cpu', 'cuda'))
@@ -70,6 +80,10 @@ chosen = 'metal' if mac else 'cuda'
 m.translation_device.setCurrentIndex(m.translation_device.findData(chosen))
 m.update_translation_engine()
 assert m.translation_device.currentData() == chosen
+explicit = m.preparation_selection()
+w.prepare_recommended_models()
+assert downloads[-1] == (explicit, {'only': None})
+assert m.preparation_selection() == explicit
 m.translation_engine.setCurrentIndex(m.translation_engine.findData('pytorch'))
 assert values(m.translation_device) == (('cpu',) if mac else ('cpu', 'cuda'))
 assert m.translation_device.currentData() == ('cpu' if mac else 'cuda')

@@ -3,6 +3,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 
 def test_hover_darkens_existing_colour_and_application_shortcuts_are_removed(tmp_path):
     from test_beta_features import run_ui
@@ -38,12 +40,17 @@ w.close()
 def test_caption_reveal_is_bounded_and_preserves_complete_text_and_layout():
     code = r'''
 from dataclasses import replace
+from types import SimpleNamespace
+import time
+from linguaflow import caption_view
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 from linguaflow.app import CaptionCard
 from linguaflow.core import Caption
 app = QApplication([])
 app.setProperty('reduceMotion', False)
+clock = [100.]
+caption_view.time = SimpleNamespace(monotonic=lambda: clock[0])
 caption = Caption(1, 0, 1, '', 'en', final=False)
 card = CaptionCard(caption, True)
 card.resize(300, 250)
@@ -56,14 +63,17 @@ app.processEvents()
 assert label.text() == text and label.reveal.isActive()
 assert card.meta.text() == '00:00 · 优化中'
 size, hint = label.size(), label.sizeHint()
-QTest.qWait(45)
+assert label._duration <= .32 and label.reveal.interval() == 16
+clock[0] += .045
+label._advance()
 assert 0 < label._visible_units < label._boundaries[-1], (label._visible_units, label._boundaries[-1], label.reveal.isActive(), label.isVisible())
 label.grab()  # Exercise shaping and painting during the reveal.
 assert label.size() == size and label.sizeHint() == hint
 deadline = label._started + label._duration
 card.update_caption(replace(caption, source=text+'更多文字', ready=True))
 assert label._started + label._duration == deadline
-QTest.qWait(350)
+clock[0] = deadline + .000001
+label._advance()
 assert not label.reveal.isActive() and label.text() == text+'更多文字'
 card.update_caption(replace(caption, source='修订后的原文', final=True))
 assert not label.reveal.isActive() and label.text() == '修订后的原文'
@@ -71,7 +81,9 @@ assert card.meta.text() == '00:00 · 已定稿'
 card.update_caption(replace(caption, source='修订后的原文继续扩展'))
 assert label.reveal.isActive()
 app.setProperty('reduceMotion', True)
-QTest.qWait(25)
+real_deadline = time.monotonic() + 2
+while label.reveal.isActive() and time.monotonic() < real_deadline:
+    QTest.qWait(10)
 assert not label.reveal.isActive()
 card.update_caption(replace(caption, source='历史字幕全文'), animate=False)
 assert label.text() == '历史字幕全文' and not label.reveal.isActive()
@@ -235,13 +247,16 @@ with patch.object(ui_backdrop, 'sys', SimpleNamespace(platform='linux')):
 
 
 
-def test_recording_actions_prompt_for_models_without_automatic_downloads(tmp_path):
+@pytest.mark.parametrize('system', ['win32', 'darwin'])
+def test_recording_actions_prompt_for_models_without_automatic_downloads(tmp_path, system):
     code = r"""
 import os
+import sys
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication, QPushButton
 from linguaflow.app import Window
 app = QApplication([])
+sys.platform = os.environ['FIXTURE_PLATFORM']
 Window.start_background_check = lambda *args, **kwargs: None
 w = Window(discover=False, prefs=QSettings(os.environ['AGENTSCRIBE_LIBRARY']+'/prefs.ini', QSettings.Format.IniFormat))
 w.show()
@@ -266,9 +281,10 @@ assert w.session is None and w.model_action == 'start'
 checks[-1][0](['识别模型：fixture'])
 assert w.model_prompt.isVisible() and not downloads
 button = next(b for b in w.model_prompt.findChildren(QPushButton) if b.text() == '下载所选模型')
-expected = w.model_manager.preparation_selection()
+expected = w.preparation_selection()
 button.click()
 assert downloads == [(expected, {'only': None})]
+assert w.model_manager.preparation_selection() == expected
 assert w.settings_workspace.navigation.currentItem().text() == '模型管理'
 assert w.session is None
 w.leave_settings()
@@ -282,7 +298,11 @@ assert downloads[-1][1] == {'only': 'asr'}
 w.leave_settings()
 start()
 old = checks[-1][0]
-w.asr.setCurrentText('medium')
+from linguaflow.model_options import model_catalog
+manager = w.model_manager
+backend = manager.backend.currentData()
+selector = w.asr if backend == 'wlk-whisper' else manager.qwen_model
+selector.setCurrentText(next(value for _, value in model_catalog(backend) if value != selector.currentText()))
 old([])
 assert w.model_action == 'start' and w.session is None
 w.start = lambda **kwargs: started.append(kwargs)
@@ -302,6 +322,7 @@ w.close()
 """
     result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=20,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
+                                 'FIXTURE_PLATFORM': system,
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path)})
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'Painter not active' not in result.stderr and 'one painter at a time' not in result.stderr
@@ -310,12 +331,16 @@ w.close()
 def test_floating_controls_choices_and_hover_preserve_geometry(tmp_path):
     code = r"""
 import os
+import sys
+from pathlib import Path
 from PySide6.QtCore import QEvent, QSettings, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QPushButton
 from linguaflow.app import Window
 from linguaflow.core import Caption
 from linguaflow.recording_state import RecordingState
+sys.path.insert(0, str(Path(__import__('linguaflow').__file__).resolve().parent.parent / 'tests'))
+from ui_support import settle_geometry, wait_until
 app = QApplication([])
 Window.start_background_check = lambda *args, **kwargs: None
 w = Window(discover=False, prefs=QSettings(os.environ['AGENTSCRIBE_LIBRARY']+'/prefs.ini', QSettings.Format.IniFormat))
@@ -325,29 +350,31 @@ w.device.addItem('Fixture microphone with a long descriptive name', ('fixture', 
 for i in range(20):
     w.on_caption(Caption(i, i*10, i*10+5, 'Caption content stays visible beside the floating controls. '*4, 'en', '字幕可以从小岛下方经过。'*5))
 w.set_recording_state(RecordingState.LISTENING)
-QTest.qWait(40)
+geometry_widgets = (w.control_island, w.scroll, w.cards[1])
+settle_geometry(*geometry_widgets)
 assert w.control_island.parentWidget() is w.scroll.viewport()
 assert w.control_island.width() < w.scroll.viewport().width()
 assert w.meter.isVisibleTo(w) and w.transport.currentWidget() is w.live_transport
 for size in [(1280, 840), (900, 650)]:
     w.resize(*size)
-    QTest.qWait(30)
+    settle_geometry(*geometry_widgets)
     before = (w.control_island.geometry(), w.scroll.geometry(), w.cards[1].geometry())
     w.appearance.setCurrentIndex(1)
-    QTest.qWait(30)
-    assert before == (w.control_island.geometry(), w.scroll.geometry(), w.cards[1].geometry())
+    settle_geometry(*geometry_widgets)
+    after = tuple(widget.geometry() for widget in geometry_widgets)
+    assert before == after, (size, before, after)
     w.appearance.setCurrentIndex(0)
-    QTest.qWait(30)
+    settle_geometry(*geometry_widgets)
     assert w.scroll.viewport().rect().contains(w.control_island.geometry())
 w.quick_language.click()
-QTest.qWait(30)
+wait_until(lambda: w.language_popup.isVisible())
 popup = w.language_popup
 assert popup.isVisible()
 popup.source_choice.setCurrentIndex((w.source.currentIndex()+1) % w.source.count())
 assert popup.source_choice.currentIndex() == w.source.currentIndex()
 popup.target_choice.showPopup()
-QTest.qWait(30)
 choices = popup.target_choice.view().window()
+wait_until(choices.isVisible)
 assert choices.isVisible() and choices.screen().availableGeometry().contains(choices.geometry())
 previous = popup.target_choice.currentIndex()
 QTest.keyClick(popup.target_choice, Qt.Key.Key_Down)
@@ -360,7 +387,7 @@ assert not popup.isVisible()
 w.set_recording_state(RecordingState.IDLE)
 w.playback.setProperty('available', True)
 w.update_transport()
-QTest.qWait(30)
+settle_geometry(*geometry_widgets)
 assert w.transport.currentWidget() is w.playback and w.play_button.isVisibleTo(w) and w.meter.isHidden()
 button = w.start_button
 app.sendEvent(button, QEvent(QEvent.Type.Enter))

@@ -161,27 +161,33 @@ w.close()
 
 def test_knowledge_cleanup_dispatches_ui_events_and_guards_file_changes(tmp_path):
     code = '''
-import os, time
+import os
+from threading import Event
 from PySide6.QtCore import QSettings, QTimer
 from PySide6.QtWidgets import QApplication
 from linguaflow.app import Window
 app = QApplication([])
 w = Window(discover=False, prefs=QSettings(os.environ['AGENTSCRIBE_LIBRARY']+'/prefs.ini', QSettings.Format.IniFormat))
+events_serviced = Event()
 class Process:
     stdin = stdout = stderr = None
     code = None
     def poll(self): return self.code
     def terminate(self): pass
     def wait(self, timeout):
-        time.sleep(.2)
+        # Completion depends on UI dispatch, not on host scheduling in 200 ms.
+        assert events_serviced.wait(timeout), 'cleanup blocked the Qt event loop'
         self.code = 0
 w.knowledge_client.process = Process()
 w.knowledge_client.epoch = 'old'
 ticks, guards = [], []
 timer = QTimer()
 def tick():
-    ticks.append(1)
-    guards.append(w.can_edit_library())
+    if w.knowledge_client.closing:
+        ticks.append(1)
+        guards.append(w.can_edit_library())
+        if len(ticks) >= 3:
+            events_serviced.set()
 timer.timeout.connect(tick)
 timer.start(10)
 assert w.close_knowledge()
