@@ -9,6 +9,8 @@ import pytest
 def test_native_version_menu_and_update_entry(tmp_path):
     code = '''
 import os
+import faulthandler
+faulthandler.dump_traceback_later(8, repeat=True)
 from PySide6.QtCore import QSettings
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication
@@ -36,10 +38,16 @@ w.model_manager.check_updates = lambda: calls.append('check')
 w.update_action.trigger()
 assert calls == ['check']
 w.close()
+faulthandler.cancel_dump_traceback_later()
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=15,
-                            env={**os.environ, 'QT_QPA_PLATFORM': 'cocoa',
-                                 'AGENTSCRIBE_LIBRARY': str(tmp_path)})
+    try:
+        result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=15,
+                                env={**os.environ, 'QT_QPA_PLATFORM': 'cocoa',
+                                     'AGENTSCRIBE_LIBRARY': str(tmp_path)})
+    except subprocess.TimeoutExpired as exc:
+        output = b''.join(value if isinstance(value, bytes) else (value or '').encode()
+                          for value in (exc.stdout, exc.stderr)).decode('utf8', errors='replace')
+        raise AssertionError('Native menu timed out; captured startup/Qt stacks:\n' + output) from exc
     assert result.returncode == 0, result.stdout + result.stderr
 
 
