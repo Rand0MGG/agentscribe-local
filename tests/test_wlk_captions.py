@@ -43,6 +43,21 @@ def test_elapsed_time_submits_stable_tail_but_does_not_finalize():
     assert not events[0].final and not events[0].ready
 
 
+def test_unconfirmed_boundary_needs_fresh_sat_context_not_just_elapsed_heartbeats():
+    clock = [0.]
+    prefix = 'A provisional sentence.'
+    mapper = CaptionMapper('en', predictor=lambda text: [len(prefix)], clock=lambda: clock[0])
+    snapshot = {'revision_text': prefix + ' More words', 'stable_end': 0, 'revision_spans': []}
+    first = mapper.update(snapshot)[0]
+    clock[0] = 60.
+    for _ in range(20):
+        assert mapper.update(snapshot) == []
+    assert not mapper.previous[first.id].ready and not mapper.previous[first.id].final
+    snapshot['revision_text'] += ' provide fresh context'
+    submitted = mapper.update(snapshot)[0]
+    assert submitted.ready and not submitted.asr_final and not submitted.final
+
+
 def test_boundary_needs_fresh_context_and_confirmed_asr_characters():
     clock = [0.]
     mapper = CaptionMapper("zh", predictor=lambda text: [9] if len(text) > 9 else [], clock=lambda: clock[0])

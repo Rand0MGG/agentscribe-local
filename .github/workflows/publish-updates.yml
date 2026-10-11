@@ -1,0 +1,70 @@
+name: Publish verified update feed
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 已发布且不可变的发行标签，例如 v0.7.0
+        required: true
+        type: string
+      target:
+        description: 已验收的平台（只推进此平台的对应渠道）
+        required: true
+        type: choice
+        options: [macos-arm64, windows-x64]
+      accepted:
+        description: 此平台已完成安装、旧版升级、数据保留与失败恢复验收
+        required: true
+        default: false
+        type: boolean
+      initialize:
+        description: 仅首次发布且 GitHub Pages 尚不存在时选中
+        required: true
+        default: false
+        type: boolean
+
+# Pages replaces the whole site: all platforms and channels share one queue.
+concurrency:
+  group: agentscribe-update-pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  publish:
+    if: inputs.accepted
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: release-updates
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install 'cryptography==50.0.2'
+      - name: Verify published assets and merge subscription snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TARGET: ${{ inputs.target }}
+          INITIALIZE_SITE: ${{ inputs.initialize }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from scripts.prepare_update_site import prepare
+          prepare(os.environ['RELEASE_TAG'], os.environ['RELEASE_TARGET'], Path('.work/update-site'),
+                  initialize=os.environ['INITIALIZE_SITE'] == 'true')
+          PY
+      - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
+        with:
+          path: .work/update-site/site
+      - uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

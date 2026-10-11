@@ -233,7 +233,14 @@ class CaptionMapper:
                 and len(units(text[end:stable_end])) >= 4))
             final = asr_final and boundary_final
             old = self.previous.get(cid)
-            ready = bool(old and old.ready) or (stable and (
+            # A rollover can retain unconfirmed words outside the current PCM
+            # window, stopping the contiguous ASR prefix until utterance EOF.
+            # That must not stop all initial translations behind it. A sentence
+            # retained by SaT in fresh contexts and unchanged for the existing
+            # lookahead can be submitted as a draft, never as confirmed source.
+            sat_ready = (reason == '上下文分句' and observations >= 2
+                         and now - since >= self.lookahead)
+            ready = bool(old and old.ready) or sat_ready or (stable and (
                 reason != '等待后文' or now - since >= self.lookahead))
             language = next((row[4] for row in spans if row[1] > start), self.language)
             raw = text[start:end]

@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QProgressBar,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QStyle,
     QStyledItemDelegate,
@@ -42,7 +43,7 @@ from .ui_theme import CONTROL_RADIUS, theme_colors
 
 
 class AudioLevelMeter(QProgressBar):
-    """Visible input segments; RMS is mapped to a useful quiet-to-loud range.
+    """A quiet continuous input rail; RMS maps to a useful quiet-to-loud range.
 
     This is presentation only: it neither changes PCM nor opens audio devices.
     """
@@ -50,10 +51,10 @@ class AudioLevelMeter(QProgressBar):
         super().__init__(parent)
         self.setRange(0, 100)
         self.setTextVisible(False)
-        self.setFixedHeight(22)
-        self.setStyleSheet('min-height: 22px; max-height: 22px; padding: 0;')
-        self.setMinimumWidth(72)
-        self.setMaximumWidth(144)
+        self.setFixedHeight(16)
+        self.setStyleSheet('min-height: 16px; max-height: 16px; padding: 0;')
+        self.setMinimumWidth(64)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setAccessibleName('音频输入音量')
         self.display_level = 0.
         self.motion = QVariantAnimation(self)
@@ -62,7 +63,7 @@ class AudioLevelMeter(QProgressBar):
         super().setValue(0)
 
     def sizeHint(self):
-        return QSize(144, 22)
+        return QSize(120, 16)
 
     def paint_level(self, value):
         self.display_level = float(value)
@@ -92,15 +93,13 @@ class AudioLevelMeter(QProgressBar):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         colors = theme_colors(QApplication.instance().property('appearance'))
         painter.setPen(Qt.PenStyle.NoPen)
-        count, spacing = 16, 3
-        width = max(1., (self.width() - spacing * (count-1)) / count)
-        active = math.ceil(count * self.display_level / 100)
-        for index in range(count):
-            height = 5 + 16 * index / (count-1)
-            painter.setOpacity(1. if index < active else .25)
-            painter.setBrush(QColor(colors['text'] if index < active else colors['muted']))
-            painter.drawRoundedRect(QRectF(index * (width + spacing), (self.height()-height)/2,
-                                          width, height), min(1.8, width/2), min(1.8, width/2))
+        rail = QRectF(1, (self.height()-4)/2, self.width()-2, 4)
+        painter.setBrush(QColor(colors['border']))
+        painter.drawRoundedRect(rail, 2, 2)
+        if self.display_level > 0:
+            rail.setWidth(max(4., rail.width()*self.display_level/100))
+            painter.setBrush(QColor(colors['warning'] if self.value() > 96 else colors['accent']))
+            painter.drawRoundedRect(rail, 2, 2)
 
 
 def set_download_progress(bar, event):

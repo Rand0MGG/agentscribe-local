@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentscribe-local"
-version = "0.7.0"
+version = "0.8.0"
 description = "Local live speech recognition and translation for Windows and macOS"
 requires-python = ">=3.11,<3.14"
 dependencies = [
@@ -18,7 +18,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8,<10", "ruff>=0.9"]
+dev = ["pytest>=8,<10", "ruff>=0.9", "cryptography==50.0.2"]
+release = ["cryptography==50.0.2"]
 knowledge = ["deepagents==0.7.23", "langchain-deepseek==1.1.1", "pypdf==6.19.0", "keyring==25.7.0"]
 
 [project.scripts]

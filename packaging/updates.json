@@ -1,0 +1,17 @@
+{
+  "feed_base": "https://rand0mgg.github.io/agentscribe-local/updates",
+  "targets": {
+    "macos-arm64": {
+      "public_key": "zZlUlcB3DpPvbHcrYthLFR6HJ02uNDZDixOI+zsPICc=",
+      "filename": "Sparkle-2.10.0.tar.xz",
+      "url": "https://github.com/sparkle-project/Sparkle/releases/download/2.10.0/Sparkle-2.10.0.tar.xz",
+      "sha256": "c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0c"
+    },
+    "windows-x64": {
+      "public_key": "lNMY66+80gP6XF10AMwlhoLNFyQTIE23OGzBiDLjfyE=",
+      "filename": "WinSparkle-0.9.4.zip",
+      "url": "https://github.com/vslavik/winsparkle/releases/download/v0.9.4/WinSparkle-0.9.4.zip",
+      "sha256": "6037df37fc263bd1650a1c4949681a9d40ffe991d01f35892a406cb5d103c976"
+    }
+  }
+}

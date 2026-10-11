@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..notifications import FeedbackLabel
 from ..ui_components import ChoiceBox as QComboBox
 from .rendering import IMPORT_SUFFIXES
 from .schemas import fingerprint
@@ -46,9 +47,10 @@ def refs_html(refs, sources):
 class KnowledgePanel(QDialog):
     seekRequested = Signal(float)
 
-    def __init__(self, client, cancel, before_notes, parent=None):
+    def __init__(self, client, cancel, before_notes, parent=None, *, feedback=None):
         super().__init__(parent)
         self.client, self.cancel, self.before_notes = client, cancel, before_notes
+        self.feedback = feedback
         self.view = {}
         self.active = self.busy = self.rendering = self.terms_dirty = False
         self.terms_fingerprint = ''
@@ -69,7 +71,7 @@ class KnowledgePanel(QDialog):
         title = QLabel('课件辅助识别 · 有来源的课堂笔记')
         title.setStyleSheet('font-size: 18px; font-weight: 600;')
         layout.addWidget(title)
-        self.status = QLabel('正在读取本机课程资料…')
+        self.status = FeedbackLabel(feedback) if feedback else QLabel('正在读取本机课程资料…')
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         self.tabs = QTabWidget()
@@ -208,7 +210,14 @@ class KnowledgePanel(QDialog):
                 + refs_html(value['refs'], self.answer_sources))
             self.tabs.setCurrentIndex(2)
         elif value.get('message'):
-            self.status.setText(value['message'])
+            if self.feedback:
+                self.status.set_state_text(value['message'])
+                self.feedback.post('knowledge', '课程任务未完成，请查看详情。' if kind == 'error' else
+                                   '正在处理课程资料与笔记' if value.get('busy') else value['message'],
+                                   kind='error' if kind == 'error' else 'progress' if value.get('busy') else 'success',
+                                   details=value['message'] if kind == 'error' else '')
+            else:
+                self.status.setText(value['message'])
         if 'busy' in value:
             self.busy = value['busy']
         self.update_controls()

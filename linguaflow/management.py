@@ -52,6 +52,7 @@ class ModelManager(QDialog):
         self.inventory_busy = False
         self.start_check = start_check
         self.update_busy = False
+        self.update_fenced = False
         self.preparation_buttons = []
         layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
@@ -485,6 +486,9 @@ class ModelManager(QDialog):
 
     def prepare(self, action, *, message='正在准备，可返回录音或修改下次设置；已有文件会复用。',
                 affects_runtime=False, beta_only=False):
+        if self.update_fenced:
+            self.preparation_message.emit('正在准备重启更新，完成后可继续准备模型。')
+            return
         if self.inventory_busy:
             self.preparation_status("正在删除模型，请稍后再准备。")
             return

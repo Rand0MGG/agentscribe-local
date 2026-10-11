@@ -20,6 +20,7 @@ class ModelBrowser(QWidget):
     changed = Signal()
     assigned = Signal(dict)
     deletion_changed = Signal(bool)
+    feedback = Signal(str, str)
 
     def __init__(self, selection, selected_models, supported_backends, parent=None):
         super().__init__(parent)
@@ -32,6 +33,7 @@ class ModelBrowser(QWidget):
         self.entries = []
         self.inventory_loaded = False
         self.busy = False
+        self.deleting = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         from .ui_components import ChoiceBox
@@ -106,6 +108,7 @@ class ModelBrowser(QWidget):
         if entry:
             self.assigned.emit(entry)
             self.status.setText('模型选择已保存，下次开始聆听生效。')
+            self.feedback.emit(self.status.text(), 'success')
 
     def current(self):
         item = self.list.currentItem()
@@ -123,8 +126,10 @@ class ModelBrowser(QWidget):
         if self.busy or self.start_check is None:
             return
         self.busy = True
+        self.deleting = bool(identifier)
         self.deletion_changed.emit(bool(identifier))
         self.status.setText('正在删除模型…' if identifier else '正在读取本地模型…')
+        self.feedback.emit(self.status.text(), 'progress')
         self.update_actions()
         arguments = ['--selected', json.dumps(self.selected_models(), ensure_ascii=False)]
         if identifier:
@@ -140,6 +145,7 @@ class ModelBrowser(QWidget):
         if not isinstance(result, dict) or 'error' in result:
             self.status.setText(result.get('error', '读取模型未完成，请刷新重试。') if isinstance(result, dict)
                                 else '读取模型未完成，请刷新重试。')
+            self.feedback.emit(self.status.text(), 'error')
         else:
             self.inventory_loaded = True
             self.entries = result.get('models', [])
@@ -158,6 +164,8 @@ class ModelBrowser(QWidget):
                 self.list.setCurrentRow(0)
             self.sync_roles()
             self.changed.emit()
+            self.feedback.emit('模型已删除。' if self.deleting else '模型列表已刷新。', 'success')
+        self.deleting = False
         self.update_actions()
 
     def refresh(self):

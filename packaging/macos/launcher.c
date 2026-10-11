@@ -32,17 +32,12 @@ int main(int argc, char **argv) {
             >= (int)sizeof certificates) return 1;
         setenv("SSL_CERT_FILE", certificates, 1);
     }
-    const char *inherited = getenv("PYTHONPATH");
-    size_t length = strlen(resources) + (inherited ? strlen(inherited) : 0) + 2;
-    char *path = malloc(length);
-    if (!path) return 1;
-    snprintf(path, length, "%s%s%s", resources, inherited ? ":" : "", inherited ? inherited : "");
-    setenv("PYTHONPATH", path, 1);
-    free(path);
+    setenv("PYTHONPATH", resources, 1);
 
     PyConfig config;
     PyConfig_InitPythonConfig(&config);
     config.user_site_directory = 0;
+    config.safe_path = 1;  /* Never load another checkout from the launch cwd. */
     config.write_bytecode = 0;
     PyStatus status = PyConfig_SetBytesString(&config, &config.home, python);
     if (PyStatus_Exception(status)) goto failed;

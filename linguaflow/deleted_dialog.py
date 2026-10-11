@@ -9,9 +9,10 @@ from .ui_components import SurfaceDialog
 class DeletedDialog(SurfaceDialog):
     changed = Signal()
 
-    def __init__(self, library, parent=None):
+    def __init__(self, library, parent=None, *, warn=None):
         super().__init__('最近删除', '恢复后回到原文件夹；同名文件会自动添加序号。', parent)
         self.library = library
+        self.warn = warn or (lambda title, message: QMessageBox.warning(self, title, message))
         self.setWindowTitle("最近删除")
         self.resize(560, 440)
         layout = self.body
@@ -43,7 +44,7 @@ class DeletedDialog(SurfaceDialog):
             self.empty.setVisible(self.entries.count() == 0)
             self.entries.setVisible(self.entries.count() > 0)
         except (OSError, ValueError) as exc:
-            QMessageBox.warning(self, "无法读取最近删除", str(exc))
+            self.warn("无法读取最近删除", str(exc))
 
     def recover(self):
         row = self.entries.currentItem()
@@ -53,7 +54,7 @@ class DeletedDialog(SurfaceDialog):
                 self.changed.emit()
                 self.populate()
             except (OSError, ValueError) as exc:
-                QMessageBox.warning(self, "恢复失败", str(exc))
+                self.warn("恢复失败", str(exc))
 
     def purge_selected(self):
         row = self.entries.currentItem()
@@ -67,5 +68,5 @@ class DeletedDialog(SurfaceDialog):
                 self.library.purge_deleted(row.data(Qt.ItemDataRole.UserRole))
                 self.populate()
             except (OSError, ValueError) as exc:
-                QMessageBox.warning(self, "删除失败", str(exc))
+                self.warn("删除失败", str(exc))
 

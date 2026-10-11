@@ -1,3 +1,10 @@
-from .app import main
+from .update_recovery import startup
 
-main()
+
+def run():
+    startup()
+    from .app import main
+    main()
+
+
+run()

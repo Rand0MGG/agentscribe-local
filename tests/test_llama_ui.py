@@ -74,7 +74,7 @@ import linguaflow.llama_assets as assets
 def missing(settings): raise ValueError('fixture missing assets')
 assets.resolve_assets = missing
 warnings = []
-QMessageBox.warning = lambda *args: warnings.append(args[-1])
+w.show_warning = lambda title, message: warnings.append(message)
 w.start(models_checked=True)
 assert w.session is None and 'fixture missing' in warnings[0]
 if sys.platform == 'darwin':
@@ -113,7 +113,7 @@ manager.translation_engine.setCurrentIndex(manager.translation_engine.findData('
 w.translate.setChecked(True)
 checks, warnings, next_steps = [], [], []
 assets.resolve_assets = lambda settings: checks.append(settings.translation_engine)
-QMessageBox.warning = lambda *args: warnings.append(args[-1])
+w.show_warning = lambda title, message: warnings.append(message)
 # Stop after preflight, before a recording or inference process is created.
 def new_recording(**kwargs):
     assert kwargs == {'check_models': False}  # The preflight has already checked files.

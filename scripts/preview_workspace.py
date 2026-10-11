@@ -102,7 +102,7 @@ def main():
                 w.set_recording_state(RecordingState.IDLE)
                 capture('workspace-'+name)
                 geometry.append(w.control_island.geometry().getRect())
-            assert geometry[0] == geometry[1], 'Themes must preserve layout geometry'
+            assert geometry[0] == geometry[1], f'Themes must preserve layout geometry: {geometry}'
             w.appearance.setCurrentIndex(0)
             QTest.mouseMove(w.settings_button)
             w.settings_button.setAttribute(Qt.WidgetAttribute.WA_UnderMouse, True)
@@ -119,13 +119,22 @@ def main():
             w.set_recording_state(RecordingState.LISTENING)
             w.meter.set_rms(.025)
             capture('recording')
+            for width,height in ((900,650),(640,480)):
+                w.resize(width,height)
+                capture(f'recording-{width}x{height}')
+            w.resize(1280,840)
             w.set_recording_state(RecordingState.IDLE)
             w.playback.setProperty('available', True)
+            from linguaflow.playback import PlaybackIndex
+            w.playback_index = PlaybackIndex(w.captions.values())
+            w.scroll.set_playback(True)
             w.playback_duration(94_000)
-            w.playback_position(27_000)
+            w.playback_position(7_000)
             w.update_transport()
             capture('playback')
             w.playback.setProperty('available', False)
+            w.scroll.set_playback(False)
+            w.highlight_playback(0)
             w.update_transport()
             w.quick_device.showPopup()
             capture('audio-sources', w.quick_device.view().window())
@@ -159,16 +168,29 @@ def main():
                 dialog.open()
                 capture('model-catalog-mac-layout', dialog)
                 dialog.reject()
-            w.model_manager.download_card.show()
-            w.model_manager.status.setText('正在下载示例模型文件；可离开此页。')
-            w.model_manager.progress_bar.show()
-            w.model_manager.cancel_button.setEnabled(True)
-            w.model_manager.cancel_button.show()
             w.model_manager.show_download(dict(label='HY-MT2 Q4_K_M · 示例进度',
                 completed=640*1024**2, total=1280*1024**2, rate=12*1024**2, unit='B'))
             capture('model-download')
-            w.model_manager.download_card.hide()
+            capture('download-popup', w.notifications)
             w.leave_settings()
+            capture('download-other-page')
+            w.notifications.clear('preparation')
+            w.notifications.post('fixture-error', '保存失败，字幕仍保留。', kind='error',
+                                 action=lambda: None, action_text='重试保存', details='示例错误，不是实际保存失败。')
+            capture('feedback-error')
+            capture('feedback-popup', w.notifications)
+            w.resize(640, 480)
+            capture('feedback-error-640x480')
+            capture('feedback-popup-640x480', w.notifications)
+            w.appearance.setCurrentIndex(1)
+            capture('feedback-popup-dark', w.notifications)
+            w.appearance.setCurrentIndex(0)
+            w.resize(1280, 840)
+            w.notifications.clear('fixture-error')
+            w.missing_model_assets = ('识别模型：示例文件尚未准备',)
+            w.show_first_run()
+            capture('first-run', w.first_run)
+            w.first_run.reject()
             overlay = w.overlay
             overlay.update_caption(w.captions[1], animate=False)
             overlay.background_opacity.setValue(70)
@@ -208,7 +230,7 @@ def main():
 
         QTimer.singleShot(100, screenshots)
         if args.capture:
-            QTimer.singleShot(20000, lambda: app.exit(2))
+            QTimer.singleShot(45000, lambda: app.exit(2))
         return app.exec()
 
 

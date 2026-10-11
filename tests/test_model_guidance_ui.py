@@ -35,7 +35,7 @@ assert w.settings_workspace.navigation.currentItem().text() == '运行环境'
 assert __version__ in w.model_manager.version_label.text()
 assert w.model_manager.version_label.isVisible()
 calls = []
-w.model_manager.check_updates = lambda: calls.append('check')
+w.check_software_updates = lambda: calls.append('check')
 w.update_action.trigger()
 assert calls == ['check']
 w.close()
@@ -86,13 +86,12 @@ app.processEvents()
 assert not hasattr(w, 'update_dialog')
 w.on_startup_update_checked({'kind':'package', 'version':'0.6.0-beta.2',
     'message':'新版已发布', 'url':updates.RELEASE_PAGE+'/tag/v0.6.0-beta.2'})
-assert w.update_dialog.isVisible()
-assert w.update_dialog.windowModality() == Qt.WindowModality.NonModal
+assert not hasattr(w, 'update_dialog')
+assert w.notifications.notices[w.notifications.current_key].kind == 'attention' and w.notifications.notices[w.notifications.current_key].text == '新版已发布'
 assert '0.6.0-beta.2' in w.model_manager.version_label.text()
-w.update_dialog.accept()
 w.close()
 w.on_startup_update_checked({'kind':'package', 'url':updates.RELEASE_PAGE+'/tag/v0.6.0-beta.3'})
-assert not w.update_dialog.isVisible()
+assert not hasattr(w, 'update_dialog')
 '''
     result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=12,
                             env={**os.environ, 'QT_QPA_PLATFORM':'offscreen',

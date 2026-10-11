@@ -1,6 +1,6 @@
 # 开发集成、安装包与更新
 
-本文件是开发集成与发行的唯一操作入口。长期开发约束见 [AGENTS](../AGENTS.md)，模块契约见 [ARCHITECTURE](ARCHITECTURE.md)，使用说明见 [README](../README.md)。下面的自动构建、签名与应用内更新是实施方案；是否已完成以“当前状态”和实际工作流为准。
+本文件是开发集成与发行的唯一操作入口。长期开发约束见 [AGENTS](../AGENTS.md)，模块契约见 [ARCHITECTURE](ARCHITECTURE.md)，使用说明见 [README](../README.md)。构建、签名与应用内更新是否已完成以“当前状态”和实际工作流为准，源码接入不代表安装态验收。
 
 ## 日常只需做三件事
 
@@ -34,7 +34,7 @@
                          更新对应 appcast → 应用内收到更新
 ```
 
-计划在 `.github/workflows/` 提供“准备发行”工作流，使用手动输入选择固定 `main` 提交、目标平台和渠道；版本从该提交读取，不能在构建中临时改源码。版本准备仍先在平台分支提交、审核并集成。一个版本对应一个来源提交，两端可以仅发布已验收的一端。
+`.github/workflows/prepare-release.yml` 提供“准备发行”工作流，手动选择固定 `main` 完整提交 SHA、已存在的不可变版本标签与目标平台；版本和渠道从该提交读取，不能在构建中临时改源码。版本准备仍先在平台分支提交、审核并集成。一个版本对应一个来源提交，两端可以仅发布已验收的一端。构建、签署已封存字节、草稿上传分别受 `release-build` / `release-draft` 环境保护；正式发布后再显式触发订阅工作流。工作流随 0.8.0 源码集成上传，尚未运行远程发行任务。
 
 工作流只调用仓库中的生产构建脚本；本地复现与 CI 不维护两份打包标准。平台锁文件、原生启动器、更新组件和构建脚本一起提交，变更构建方式后仍从新固定提交构建。选择支持目标架构的运行器，不能把 `macos-latest` 的名字当作 arm64 保证；需要系统窗口服务的探针在具备条件的环境执行。
 
@@ -89,7 +89,27 @@ Pages 发布会替换整个静态站点，因此全仓订阅发布共用一个�
 
 ## 当前状态
 
-2026-10-11：用户授权将当前 Mac 适配与电脑音频修复集成到 `main`，统一源码版本正式进入 `0.7.0`，不带 beta 后缀。内容与验收边界见 [0.7.0 源码集成说明](RELEASE_v0.7.0.md)；本次只集成源码，没有构建、打标签或发布安装包，下载入口继续保留已发布 beta.2。版本号变更不代替安装态、长会话和 Windows 实机验收；应用内下载安装仍未实施。
+2026-10-11（0.8.0 源码集成，未发行安装包）：已实现共享安装门禁、Sparkle / WinSparkle 接入、启动恢复、两端锁定载荷构建、Inno 安装器及发行草稿/订阅工作流。安装前等待录音、文件写入、资料保存和自有进程释放，录音中不强制退出。两端生产公钥已固定，私钥由本机登录钥匙串保存，未导出或部署到 CI。Mac 使用完整隔离应用完成真实 Sparkle 下载、校验、安装、重启，以及故意破坏新版启动后的旧版恢复；证据与边界见 VALIDATION。尚无 Developer ID / Authenticode 签名配置，未部署生产 Pages / 受保护 CI 凭据，Windows 未做原生安装升级验收；不能称作线上已安装应用已收到自动更新。
+
+本次源码集成内容见 [0.8.0 源码集成说明](RELEASE_v0.8.0.md)。依赖声明与两端打包锁一致性、新增顶层目录遗漏检查、完整安装包功能探针的强制接入尚不完整；现有单元检查和启动探针不能代替安装验收。
+
+### 更新发布操作
+
+1. `packaging/updates.json` 已固定对应平台的 Base64 公钥。生产私钥由 Sparkle 官方工具生成并存放于登录钥匙串账户 `io.github.rand0mgg.agentscribe.macos` / `.windows`，当前未导出；部署 CI 时分别托管为 `release-build` 环境的 `MACOS_UPDATE_PRIVATE_KEY` / `WINDOWS_UPDATE_PRIVATE_KEY`，不得进源码、构建清单、日志或普通检查。`sign_update_artifact.py` 只接受与固定公钥匹配的 32-byte seed 或 64-byte seed+public 格式。
+2. 审查并集成源码、选择新版本、固定不可变标签。Mac 运行 `scripts/build_macos.py --fetch` 后运行 `scripts/build_macos.py`，默认嵌入固定 Sparkle、更新身份、原生驱动与恢复组件。`--without-updater` 仅供开发/过渡包，不能进入订阅。Windows 在 x64 MSVC 开发命令行运行 `python scripts/build_windows.py --fetch`，再运行同一脚本生成载荷，随后运行 `python scripts/build_windows_installer.py --payload <载荷目录> --fetch`；使用完整便携 CPython、Node、锁定桌面依赖、Qt 实际 PE 依赖和许可，不能复制开发虚拟环境。两端启动探针从外部目录与干扰 PYTHONPATH 运行，要求只导入包内代码。
+3. 正式发行还需配置 Mac Developer ID / 公证与 Windows Authenticode；当前脚本未自动执行这两种系统签名，不能把更新 Ed25519 签名当作系统签名。对最终文件完成系统签名后同步构建清单摘要/字节数，再用 `scripts/sign_update_artifact.py --artifact <文件> --manifest <构建清单> --target <平台>` 签署，密钥只通过受保护环境传入；得到纯 Base64 `.dmg.ed25519` / `.exe.ed25519`。已封存文件不可再改变，修改后必须重新封存、签名和验收。
+4. 将安装包、SHA256、同名 `.build.json` 和 `.ed25519` 放入 Release 草稿；`prepare-release.yml` 会拒绝覆盖已发布 Release 和同名附件。验收下载、取消、签名篡改拒绝、断网、录音中等待、保存失败、退出资源释放、安装失败保留旧版、重新启动、启动失败恢复及数据/模型/运行环境兼容。Mac 隔离探针不是正式签名候选包，也不能替代 Windows 原生验收；只发布通过验收的平台。
+5. 配置 GitHub Pages 使用 Actions 部署，以及 `release-updates` 受保护环境。发布已验收的同一批 Release 文件后，手动触发 `publish-updates.yml`，填写固定 `tag`、`target`，仅在该平台真实升级已验收时勾选 `accepted`。首次空站点才使用 `initialize`；已有站点必须先导入整站快照，不能覆盖。工作流串行保留其他平台、其他渠道及站点文件；使用无缓存快照请求减少陈旧 CDN 快照覆盖风险。生产环境首次部署仍需核查 Pages 地址和订阅可达性。
+
+稳定/测试版按版本后缀生成各自订阅，安装器保留稳定应用身份。Mac 自定义驱动将检查、进度和结果送回共享反馈弹窗；Windows 原生 API 的下载/安装界面由 WinSparkle 提供，仍有原生提示，不能声称已经完全采用共享样式。已发行 beta.2 没有更新器，需要一次手动安装过渡包，之后才可使用上述流程。当前开发不移动已有标签、不覆盖已发布附件，也不自动发布订阅。
+
+### 新版启动失败恢复
+
+安装前后台复制并逐文件校验完整旧程序，在稳定用户目录准备独立基础解释器和恢复观察器，完成握手后才允许原生更新器安装。入口在导入 Qt 前登记新版进程身份；主窗口成功显示后确认启动健康。健康范围是桌面引导成功，不包含 GPU 推理、真实录音或所有课程组件。故意在登记身份后、窗口创建前抛出异常已验证恢复旧包、重新启动并告知用户；录音、模型和偏好不参与程序替换。
+
+观察器只退出登记且创建时间仍一致的自有进程，完整退出后原子交换目录，保留失败的新包。若解释器在登记前损坏、观察器无法确认进程归属或无法退出，保留旧备份并标记需要恢复，不自动覆盖可能正在使用的安装。最新健康旧备份保留到下一次更新已准备并校验新备份后清理；失败或人工恢复材料不自动删除。
+
+2026-10-11：用户授权将当时的 Mac 适配与电脑音频修复集成到 `main`，统一源码版本正式进入 `0.7.0`，不带 beta 后缀。内容与验收边界见 [0.7.0 源码集成说明](RELEASE_v0.7.0.md)；该次只集成源码，没有构建、打标签或发布安装包，下载入口继续保留已发布 beta.2。版本号变更不代替安装态、长会话和 Windows 实机验收；该次集成尚未包含应用内下载安装，后续本地接入见本节开头。
 
 2026-10-10：本轮源码版本为 `0.6.0-beta.3`，用户授权将共享界面、录音来源切换、模型目录与适配边界修正集成到 `main` 并推送 GitHub。界面与 Mac 对照见 [UI_DESIGN](UI_DESIGN.md)，模拟验证与限制见 [VALIDATION](VALIDATION.md)。本轮未构建或发布 beta.3 安装包，当前下载入口仍为下面的 beta.2；Mac 原生界面、分屏与真实音频切换仍待目标机器验收。
 
@@ -99,10 +119,10 @@ Pages 发布会替换整个静态站点，因此全仓订阅发布共用一个�
 | --- | --- | --- |
 | 开发检查 | `checks.yml` 的两端无音频回归、SDK 检查与 Ruff | 安装包构建/升级验证不能由源码检查代替 |
 | Mac 包 | 已集成 `scripts/build_macos.py`、锁/许可/原生启动器及包探针；此前已有 `v0.6.0-beta.1` DMG | CI 构建、Developer ID/公证及候选版本目标机器验收 |
-| Windows 包 | 共享环境准备、数据路径及硬件门槛 | 生产构建、Inno Setup 与包/升级探针 |
-| 更新 | `updates.py` 的启动/手动 Release 检查、Mac 系统菜单版本入口 | Sparkle/WinSparkle、签名 appcast、Pages 发布与应用内安装 |
+| Windows 包 | 完整锁定载荷生产构建、81 项哈希锁、原生启动/恢复组件与 Inno 安装器 | Windows 原生构建运行、系统签名与旧包升级验收 |
+| 更新 | 原生下载/签名/安装、共享恢复、生产公钥、发行与 Pages 工作流；Mac 隔离真实升级及启动失败恢复通过 | CI 私钥/受保护环境、生产站点和系统签名、Windows 原生验收及正式候选包兼容检查 |
 | 运行环境 | 独立基础 Python、依赖/平台/ABI 标识、兼容旧环境选择、验证后切换、旧文件保留 | 安装包升级实测、自动升级与恢复协调 |
 
-落实顺序：通过当前代码审查后同步主线；再补两端构建/更新接入及实际升级验证；随后用 Actions 生成草稿，测试旧版到新版；最后启用验收后的发布和订阅推送。已发行但没有更新器的 Mac beta 无法凭空自动更新，需要一次安装含更新器的新版本，后续走应用内更新。
+落实顺序：当前代码审查后同步主线；配置受保护发行环境、系统签名与 Pages；在目标机器执行两端候选包构建和实际升级验收；发布已验收文件并推进对应订阅。已发行但没有更新器的 Mac beta 需要一次安装含更新器的新版本，后续走应用内更新。
 
 官方依据：[GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages)、[Release 资产](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases)、[发布环境](https://docs.github.com/en/actions/concepts/workflows-and-actions/deployment-environments)、[Sparkle](https://sparkle-project.org/documentation/)、[WinSparkle](https://winsparkle.org/guides/getting-started/)、[Inno Setup](https://jrsoftware.org/ishelp/topic_setupcmdline.htm)。

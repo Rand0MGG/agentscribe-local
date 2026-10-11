@@ -232,6 +232,43 @@ def test_copied_prefix_after_one_backlog_decode_is_not_new_asr_agreement():
     assert store.rows[0]['stable_end'] == 0 and not store.rows[0]['closed']
 
 
+def test_frozen_asr_prefix_does_not_block_initial_translation_of_a_stable_sat_sentence():
+    from linguaflow.translation_service import run_translations
+
+    async def exercise():
+        clock = [0.]
+        prefix = 'The next complete sentence.'
+        mapper = CaptionMapper('en', predictor=lambda text: [len(prefix)],
+                               clock=lambda: clock[0])
+        planner, queue = ContextPlanner(), TranslationQueue()
+        first = mapper.update(snapshot(prefix + ' Following words', stable=0))
+        assert planner.update_changes(first) == []
+        clock[0] = 1.
+        changed = mapper.update(snapshot(prefix + ' Following words keep arriving', stable=0))
+        assert planner.update_changes(changed) == []
+        clock[0] = 3.1
+        changed = mapper.update(snapshot(prefix + ' Following words keep arriving', stable=0))
+        jobs = planner.update_changes(changed)
+        assert len(jobs) == 1 and jobs[0].source == prefix
+        assert jobs[0].translation_phase == 'initial'
+        assert not jobs[0].asr_final and not jobs[0].boundary_final and not jobs[0].final
+        assert not mapper.previous[2].ready
+        for job in jobs:
+            queue.put_nowait(job)
+        queue.put_nowait(None)
+        outputs = []
+        async def publish(caption, context):
+            await publish_translation_result(caption, mapper.previous.get, asyncio.Lock(),
+                outputs.append, context, planner.get, planner)
+        await run_translations(queue, lambda: SimpleNamespace(translate=lambda *args: '初译'),
+            mapper.previous.get, publish, lambda _: None, lambda _: None, planner.get, planner)
+        await asyncio.wait_for(queue.join(), 1)
+        assert len(outputs) == 1 and outputs[0].translation == '初译'
+        assert not source_is_final(outputs[0])
+
+    asyncio.run(exercise())
+
+
 def test_sat_priority_defers_new_hy_until_latest_source_update_finishes():
     from threading import Event
 

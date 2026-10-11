@@ -149,7 +149,7 @@ for state in (RecordingState.STARTING, RecordingState.LISTENING, RecordingState.
 w.set_recording_state(RecordingState.IDLE)
 devices.pop(1)
 warnings = []
-desktop.QMessageBox.warning = lambda *args: warnings.append(args[1:])
+w.show_warning = lambda title, message: warnings.append((title, message))
 w.refresh_devices()
 assert w.device.currentIndex() == w.quick_device.currentIndex() == -1
 assert w.quick_device.currentData() is None

@@ -12,11 +12,13 @@ THEMES = {
     'light': dict(surface='#ffffff', glass='#f7f5f5', text='#29292d', muted='#666670',
                   draft='#707078', translation='#515158', border='#e7e5e7',
                   control='#f5f5f6', hover='#16141419', selected='#26141419', disabled='#8b8b93',
-                  primary='#29292d', primary_text='#ffffff', focus='#74747e', error='#a62d27'),
+                  primary='#29292d', primary_text='#ffffff', focus='#74747e', error='#a62d27',
+                  accent='#487867', warning='#a16b25', playback='#f0f5f2'),
     'dark': dict(surface='#191919', glass='#272629', text='#ededf0', muted='#aaaab2',
                  draft='#aaaab2', translation='#c4c4cb', border='#353538',
                  control='#2b2b2e', hover='#24000000', selected='#40000000', disabled='#8d8d96',
-                 primary='#ededf0', primary_text='#242428', focus='#b1b1bb', error='#efa4a4'),
+                 primary='#ededf0', primary_text='#242428', focus='#b1b1bb', error='#efa4a4',
+                 accent='#91bfac', warning='#d7ac6a', playback='#222d27'),
 }
 
 
@@ -33,6 +35,10 @@ QFrame#glassTopBar, QFrame#sidebar {{ background: transparent; border: none; }}
 QFrame#workspaceHeader {{ background: transparent; border: none; border-radius: 0;
     border-bottom: 1px solid {c['border']}; }}
 QWidget#workspaceContent {{ background: transparent; }}
+QFrame#feedbackToast {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: 9px; }}
+QLabel#feedbackText {{ color: {c['muted']}; font-size: 12px; }}
+QLabel#feedbackText[error="true"] {{ color: {c['error']}; }}
+QFrame#feedbackToast QPushButton {{ padding: 4px 6px; min-height: 18px; color: {c['accent']}; }}
 QLabel#captionFinal {{ color: {c['text']}; }}
 QLabel#captionDraft {{ color: {c['draft']}; }}
 QLabel#captionTranslation {{ color: {c['translation']}; }}

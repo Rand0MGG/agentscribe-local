@@ -173,7 +173,7 @@ assert card.target.text() == 'old translation' and card.pending.isVisibleTo(w)
 card.update_caption(replace(w.captions[1], translation_source='new source'))
 assert card.pending.isHidden()
 w.set_recording_state(RecordingState.IDLE)
-assert w.pipeline.isHidden() and not w.meter.isHidden()
+assert w.pipeline.isHidden() and w.meter.isHidden()
 workspace, manager = w.settings_workspace, w.model_manager
 w.open_settings('模型管理')
 browser = workspace.model_browser

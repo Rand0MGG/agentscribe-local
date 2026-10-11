@@ -2,6 +2,19 @@
 from PySide6.QtCore import QLockFile
 
 
+def acquire_library_migration_lock(root):
+    lock = QLockFile(str(root / '.library-migration.lock'))
+    lock.setStaleLockTime(0)
+    if not lock.tryLock(0):
+        raise ValueError('这个保存目录正在其他窗口迁移，请等待迁移完成。')
+    return lock
+
+
+def check_library_migration(root):
+    lock = acquire_library_migration_lock(root)
+    lock.unlock()
+
+
 def acquire_recording_lock(directory):
     lock = QLockFile(str(directory / '.recording.lock'))
     lock.setStaleLockTime(0)

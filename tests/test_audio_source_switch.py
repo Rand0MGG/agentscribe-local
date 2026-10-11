@@ -99,8 +99,8 @@ w.refresh_devices()
 w.show()
 app.processEvents()
 assert w.quick_device.currentText().startswith('系统音频 · ')
-assert '系统音频' in w.volume_caption.text() and '开始后显示' in w.volume_caption.text()
-assert not w.meter.isHidden() and w.meter.height() == 22
+assert '系统音频' in w.volume_caption.toolTip() and w.volume_caption.isHidden()
+assert w.meter.isHidden() and w.meter.height() == 16
 assert w.refresh_feedback.isActive() and '已刷新' in w.refresh_source.toolTip()
 assert not w.device.itemIcon(0).isNull() and not w.device.itemIcon(1).isNull()
 requests = []
@@ -116,7 +116,7 @@ assert w.meter.value() == 0  # A queued old-source level cannot illuminate the n
 w.on_source_changed(0)
 assert '正在切换' in w.volume_caption.text()  # Ignore acknowledgement of the previous source.
 w.on_source_changed(1)
-assert '实时音量' in w.volume_caption.text()
+assert w.volume_caption.text() == '输入音量'
 w.on_level(.01)
 assert 40 < w.meter.value() < 50  # Quiet input is visible, without amplifying audio.
 wait(lambda: w.meter.display_level == w.meter.value())
@@ -136,7 +136,7 @@ w.on_level(.5)
 assert w.meter.value() == 0
 w.session = None
 w.set_recording_state(RecordingState.IDLE)
-assert '开始后显示' in w.volume_caption.text()
+assert w.volume_caption.isHidden() and w.meter.isHidden()
 assert w.refresh_feedback.interval() == 1500
 wait(lambda: not w.refresh_feedback.isActive())
 assert not w.refresh_feedback.isActive()

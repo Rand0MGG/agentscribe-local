@@ -74,3 +74,10 @@ SOFTWARE.
 ```
 
 Three small public legacy Office regression fixtures are adapted from Apache POI under Apache-2.0. Their fixed source revision, SHA-256, attribution and full license are retained in `tests/fixtures/course_formats/NOTICE.md` and `LICENSE.txt`; no private course materials are included.
+
+## Native application updates
+
+- Sparkle 2.10.0: https://github.com/sparkle-project/Sparkle — BSD-style license; official framework includes its helpers. Mac builds retain the upstream LICENSE in `Licenses/Sparkle-LICENSE.txt`.
+- WinSparkle 0.9.4: https://github.com/vslavik/winsparkle — MIT; Windows installer assembly retains the upstream COPYING in `Licenses/WinSparkle.txt`.
+- Inno Setup: https://jrsoftware.org/isinfo.php — Windows installer compiler used on the build machine, not a desktop runtime dependency.
+- cryptography 50.0.2: https://github.com/pyca/cryptography — Apache-2.0 OR BSD-3-Clause; release/development dependency for independently verifying Ed25519 installer signatures. Bundled dependencies are recorded in each platform's desktop.lock.

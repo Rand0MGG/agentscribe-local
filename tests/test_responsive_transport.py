@@ -2,6 +2,30 @@
 from test_beta_features import run_ui
 
 
+def test_input_level_has_no_idle_placeholder_and_fills_available_width(tmp_path):
+    run_ui('''
+from linguaflow.recording_state import RecordingState
+w.show(); settle_geometry(w)
+assert w.meter.isHidden() and w.volume_caption.isHidden()
+assert '开始后显示' not in w.volume_caption.text()
+w.set_recording_state(RecordingState.LISTENING)
+lengths=[]
+for width,height in ((1280,840),(900,650),(640,480)):
+    w.resize(width,height); settle_geometry(w)
+    assert w.volume_caption.text()=='输入音量'
+    assert not w.meter.isHidden()
+    assert w.meter.geometry().right()>=w.live_transport.width()-2
+    assert w.meter.width()>=64
+    lengths.append(w.meter.width())
+assert lengths[0]>lengths[-1]
+w.set_recording_state(RecordingState.PAUSED)
+assert w.volume_caption.text()=='已暂停' and w.meter.value()==0
+w.set_recording_state(RecordingState.IDLE)
+assert w.meter.isHidden() and w.volume_caption.isHidden()
+w.close()
+''',tmp_path)
+
+
 def test_device_refresh_is_atomic_and_start_uses_visible_source(tmp_path):
     run_ui(r'''
 from PySide6.QtCore import QSignalBlocker
@@ -40,7 +64,7 @@ with QSignalBlocker(w.device):
     w.device.setCurrentIndex(0)
 devices[:] = [Device('speaker', '系统声音 · 扬声器', True)]
 messages = []
-module.QMessageBox.warning = lambda *args: messages.append(args[1:])
+w.show_warning = lambda title, message: messages.append((title, message))
 w.refresh_devices()
 assert w.device.currentIndex() == w.quick_device.currentIndex() == -1
 assert read_audio_device(w.prefs) == ('mic', False)
@@ -84,7 +108,8 @@ w.status.setText('删除成功')
 w.update_activity()
 assert w.status.isHidden()
 w.on_failure('录音失败：测试错误')
-assert not w.status.isHidden() and '测试错误' in w.status.text()
+assert w.status.isHidden()
+assert w.notifications.notices[w.notifications.current_key].kind == 'error' and '测试错误' in w.notifications.notices[w.notifications.current_key].details
 w.set_recording_state(RecordingState.IDLE)
 w.current_item = None
 w.close()

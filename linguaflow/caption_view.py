@@ -152,6 +152,8 @@ class CaptionScrollArea(QScrollArea):
         self._position = 0.
         self._last_tick = 0.
         self._overlay_height = 0
+        self.playback_mode = False
+        self.playback_card = None
         self.latest_button = LatestButton(self.viewport())
         self.latest_button.clicked.connect(self.jump_to_latest)
         self.latest_button.hide()
@@ -186,7 +188,8 @@ class CaptionScrollArea(QScrollArea):
     def _update_button(self):
         viewport = self.viewport()
         self.latest_button.move((viewport.width()-40)//2, max(0, viewport.height()-56-self._overlay_height))
-        self.latest_button.setVisible(not self.following and not self._at_bottom())
+        self.latest_button.setVisible(not self.following and
+                                      (self.playback_card is not None if self.playback_mode else not self._at_bottom()))
         self.latest_button.raise_()
 
     def set_overlay_height(self, height):
@@ -203,14 +206,14 @@ class CaptionScrollArea(QScrollArea):
     def _sync_position(self):
         # A queued input check must not cancel following already restored by a
         # valueChanged signal, if new content arrived in the meantime.
-        if not self.following and not self.animation.isActive() and not self.verticalScrollBar().isSliderDown():
+        if not self.playback_mode and self._anchor is None and not self.following and not self.animation.isActive() and not self.verticalScrollBar().isSliderDown():
             self._set_following(self._at_bottom())
 
     def _position_changed(self, value):
         if not self._moving:
             self._anchor = None
             self.animation.stop()
-            self._set_following(self._at_bottom())
+            self._set_following(False if self.playback_mode else self._at_bottom())
 
     def eventFilter(self, watched, event):
         kind = event.type()
@@ -248,6 +251,11 @@ class CaptionScrollArea(QScrollArea):
         self.layout_timer.start(0)
 
     def _settle_layout(self):
+        if self.playback_mode:
+            self._update_button()
+            if self.following and self.playback_card is not None:
+                self._follow_playback()
+            return
         if self._anchor is not None:
             card, offset = self._anchor
             # Keep the reading anchor through subsequent layout passes. Qt can
@@ -298,6 +306,37 @@ class CaptionScrollArea(QScrollArea):
         self._anchor = None
         self._set_following(True)
         self.content_changed()
+
+    def reveal_card(self, card):
+        """Locate a search result without resuming live/playback following."""
+        self.animation.stop()
+        self._set_following(False)
+        self._move(max(0, card.y()-24))
+        self._anchor = (card, card.y()-self.verticalScrollBar().value())
+
+    def set_playback(self, enabled):
+        self.animation.stop()
+        self._anchor = None
+        self.playback_mode = enabled
+        self.playback_card = None
+        self.latest_button.setToolTip('返回播放位置' if enabled else '回到最新字幕')
+        self.latest_button.setAccessibleName('返回播放位置并恢复跟随' if enabled else '回到最新字幕并恢复自动跟随')
+        self._set_following(True)
+
+    def follow_playback(self, card, *, seek=False):
+        self.playback_card = card
+        if seek:
+            self._set_following(True)
+        if self.following and card is not None:
+            self._follow_playback(force=seek)
+        self._update_button()
+
+    def _follow_playback(self, *, force=False):
+        card = self.playback_card
+        top = self.verticalScrollBar().value()
+        bottom = top + self.viewport().height()-self._overlay_height-12
+        if force or card.y() < top+12 or card.y()+min(card.height(), 80) > bottom:
+            self._move(max(0, card.y()-24))
 
     def reset_follow(self):
         self.animation.stop()

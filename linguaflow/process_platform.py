@@ -6,6 +6,27 @@ import signal
 import subprocess
 import sys
 
+_installation_mutex = None
+
+
+def hold_installation_mutex(*, installed):
+    """Keep Inno from replacing a running installed app, until process exit.
+
+    The OS releases this handle after all Python cleanup threads have ended.
+    Source/worker processes do not acquire it. It is not a single-instance lock.
+    """
+    global _installation_mutex
+    if os.name != 'nt' or not installed or _installation_mutex is not None:
+        return
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+    kernel.CreateMutexW.restype = wintypes.HANDLE
+    _installation_mutex = kernel.CreateMutexW(None, False, 'AgentScribe.InstallationActive')
+    if not _installation_mutex:
+        raise ctypes.WinError(ctypes.get_last_error())
+
 
 def spawn_options():
     return ({'creationflags': subprocess.CREATE_NO_WINDOW} if sys.platform == 'win32'

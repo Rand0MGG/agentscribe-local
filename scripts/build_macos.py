@@ -4,7 +4,6 @@ Run with the source desktop Python. No microphone, model or normal app startup i
 Downloads and products stay under .work/packaging; no system environment is installed.
 """
 import argparse
-import hashlib
 import json
 import os
 import platform
@@ -13,11 +12,19 @@ import re
 import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.packaging_common import (
+    QT_MODULES,
+    QT_PLUGIN_GROUPS,
+    digest,
+    extract,
+    obtain,
+    python_notices,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / 'packaging' / 'macos'
@@ -29,44 +36,8 @@ def run(*command, **kwargs):
     return subprocess.run(list(map(str, command)), check=True, **kwargs)
 
 
-def digest(path):
-    with path.open('rb') as handle:
-        return hashlib.file_digest(handle, 'sha256').hexdigest()
-
-
 def assets():
     return json.loads((CONFIG / 'assets.json').read_text()), json.loads((CONFIG / 'licenses.json').read_text())
-
-
-def obtain(item, base, download=False):
-    path = base / item['filename']
-    if not path.is_file() and download:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(path.suffix + '.part')
-        with urllib.request.urlopen(item['url'], timeout=90) as response, temporary.open('wb') as handle:
-            shutil.copyfileobj(response, handle)
-        if digest(temporary) != item['sha256']:
-            raise ValueError('下载校验失败：' + item['filename'])
-        temporary.replace(path)
-    if not path.is_file() or digest(path) != item['sha256']:
-        raise ValueError('缺少已校验的依赖，请先使用 --fetch：' + item['filename'])
-    return path
-
-
-def extract(archive, destination):
-    with tarfile.open(archive) as handle:
-        handle.extractall(destination, filter='data')
-
-
-def python_notices(archive, destination):
-    import zstandard
-    destination.mkdir(parents=True)
-    with archive.open('rb') as handle, zstandard.ZstdDecompressor().stream_reader(handle) as reader:
-        with tarfile.open(fileobj=reader, mode='r|') as source:
-            for member in source:
-                if member.isfile() and (member.name.startswith('python/licenses/')
-                                        or member.name == 'python/PYTHON.json'):
-                    (destination / Path(member.name).name).write_bytes(source.extractfile(member).read())
 
 
 def native_files(root):
@@ -96,11 +67,9 @@ def qt_subset(python):
     plugins. Unused developer apps and unrelated GPL-only modules are omitted.
     """
     qt = python / 'lib/python3.12/site-packages/PySide6'
-    modules = {'QtCore', 'QtGui', 'QtWidgets', 'QtNetwork', 'QtOpenGL', 'QtOpenGLWidgets',
-               'QtPrintSupport', 'QtSvg', 'QtMultimedia', 'QtWebChannel', 'QtWebEngineCore',
-               'QtWebEngineWidgets'}
+
     for path in qt.glob('Qt*'):
-        if path.is_file() and path.name.split('.')[0] not in modules:
+        if path.is_file() and path.name.split('.')[0] not in QT_MODULES:
             path.unlink()
     for name in ('Assistant.app', 'Designer.app', 'Linguist.app', 'include', 'glue', 'typesystems',
                  'doc', 'QtAsyncio', 'scripts'):
@@ -109,8 +78,7 @@ def qt_subset(python):
             shutil.rmtree(path)
     plugins = qt / 'Qt/plugins'
     for path in plugins.iterdir():
-        if path.name not in {'platforms', 'styles', 'imageformats', 'iconengines', 'tls',
-                             'networkinformation', 'multimedia'}:
+        if path.name not in QT_PLUGIN_GROUPS:
             shutil.rmtree(path)
     libraries = qt / 'Qt/lib'
     roots = list(qt.glob('*.so')) + list(qt.glob('*.dylib')) + list(native_files(plugins))
@@ -162,7 +130,7 @@ def make_icon(resources):
 
 def sign(app):
     bundles = [p for p in app.rglob('*') if p.is_dir() and not p.is_symlink()
-               and p.suffix in {'.framework', '.app'}] + [app]
+               and p.suffix in {'.framework', '.app', '.xpc'}] + [app]
     mains = set()
     for bundle in bundles:
         info_path = bundle / ('Resources/Info.plist' if bundle.suffix == '.framework' else 'Contents/Info.plist')
@@ -207,14 +175,16 @@ def sign(app):
     return len(native)
 
 
-def build(downloads):
+def build(downloads, *, without_updater=False):
+    from linguaflow.update_config import bundle_version, update_identity
     runtimes, notices = assets()
     paths = {name: obtain(item, downloads) for name, item in runtimes.items()}
     for item in notices:
         obtain(item, downloads / 'licenses')
     version = re.search(r'__version__ = "([^"]+)"', (ROOT / 'linguaflow/__init__.py').read_text())[1]
     short = version.split('-')[0]
-    bundle_version = short + ('b' + version.split('-beta.')[1] if '-beta.' in version else '')
+    update_config = json.loads((ROOT / 'packaging/updates.json').read_text())
+    identity = None if without_updater else update_identity(update_config, 'macos-arm64', version)
     stage = Path(tempfile.mkdtemp(prefix='build-', dir=WORK))
     volume = stage / 'volume'
     app = volume / 'AgentScribe.app'
@@ -222,6 +192,25 @@ def build(downloads):
     resources, frameworks, executable = [contents / name for name in ('Resources', 'Frameworks', 'MacOS')]
     for path in (resources, frameworks, executable):
         path.mkdir(parents=True)
+    if identity:
+        archive = obtain(update_config['targets']['macos-arm64'], downloads)
+        extract(archive, stage / 'sparkle')
+        shutil.copytree(stage / 'sparkle/Sparkle.framework', frameworks / 'Sparkle.framework', symlinks=True)
+        # Headers/tools remain build inputs, not application resources.
+        for name in ('Headers', 'PrivateHeaders', 'Modules'):
+            path = frameworks / 'Sparkle.framework/Versions/B' / name
+            if path.is_dir():
+                shutil.rmtree(path)
+            link = frameworks / 'Sparkle.framework' / name
+            if link.is_symlink():
+                link.unlink()
+        run('clang', '-arch', 'arm64', '-mmacosx-version-min=15.0', '-fobjc-arc', '-fblocks',
+            '-shared', '-Wall', '-Wextra', '-Wno-unused-parameter', '-F', stage / 'sparkle',
+            '-framework', 'Cocoa', '-framework', 'Sparkle', '-Wl,-rpath,@loader_path',
+            '-o', frameworks / 'AgentScribeUpdater.dylib', CONFIG / 'updater.m')
+        run('clang', '-arch', 'arm64', '-mmacosx-version-min=15.0', '-shared', '-O2', '-Wall', '-Wextra',
+            '-o', frameworks / 'AgentScribeRecovery.dylib', ROOT / 'packaging/recovery.c')
+        (resources / 'update-config.json').write_text(json.dumps(identity, indent=2) + '\n')
     python_framework = frameworks / 'Python.framework'
     python_version = python_framework / 'Versions/A'
     python_version.parent.mkdir(parents=True)
@@ -278,6 +267,8 @@ def build(downloads):
     python_notices(paths['python-notices'], resources / 'Licenses/Python-build')
     shutil.copy2(node / 'LICENSE', resources / 'Licenses/Node-LICENSE.txt')
     shutil.copy2(CONFIG / 'THIRD_PARTY.md', resources / 'Licenses/README.md')
+    if identity:
+        shutil.copy2(stage / 'sparkle/LICENSE', resources / 'Licenses/Sparkle-LICENSE.txt')
     shutil.copy2(CONFIG / '安装说明.txt', volume / '安装说明.txt')
     shutil.copy2(CONFIG / 'desktop.lock', resources / 'desktop.lock')
     resources.joinpath('应用授权.txt').write_text(
@@ -286,11 +277,15 @@ def build(downloads):
     info = dict(CFBundleName='AgentScribe', CFBundleDisplayName='AgentScribe',
                 CFBundleInfoDictionaryVersion='6.0', CFBundleSupportedPlatforms=['MacOSX'],
                 CFBundleIdentifier='io.github.rand0mgg.agentscribe', CFBundleExecutable='AgentScribe',
-                CFBundlePackageType='APPL', CFBundleShortVersionString=short, CFBundleVersion=bundle_version,
+                CFBundlePackageType='APPL', CFBundleShortVersionString=short, CFBundleVersion=bundle_version(version),
                 AgentScribeVersion=version, CFBundleIconFile='AgentScribe', LSMinimumSystemVersion='15.0',
                 LSApplicationCategoryType='public.app-category.productivity',
                 LSRequiresNativeExecution=True, NSHighResolutionCapable=True,
                 NSMicrophoneUsageDescription='AgentScribe 使用你选择的音频输入进行本地录音、识别和字幕翻译。')
+    if identity:
+        info.update(SUFeedURL=identity['feed_url'], SUPublicEDKey=identity['public_key'],
+                    SUEnableAutomaticChecks=False, SUAutomaticallyUpdate=False,
+                    SUSendProfileInfo=False, SUVerifyUpdateBeforeExtraction=True)
     with (contents / 'Info.plist').open('wb') as handle:
         plistlib.dump(info, handle)
     make_icon(resources)
@@ -305,6 +300,8 @@ def build(downloads):
         shutil.rmtree(path)
     source_files = sorted(p for p in (ROOT / 'linguaflow').rglob('*') if p.suffix in {'.py', '.mjs'})
     build_files = sorted(p for p in CONFIG.rglob('*') if p.is_file()) + [Path(__file__).resolve()]
+    build_files.extend([ROOT / 'packaging/updates.json', ROOT / 'packaging/recovery.c',
+                        ROOT / 'scripts/packaging_common.py'])
     source = {str(p.relative_to(ROOT)): digest(p) for p in source_files + build_files
               + [ROOT / 'pyproject.toml', ROOT / 'requirements-runtime.txt', ROOT / 'requirements-mlx.txt',
                  ROOT / 'THIRD_PARTY_NOTICES.md']}
@@ -315,7 +312,7 @@ def build(downloads):
                     source_commit=run('git', '-C', ROOT, 'rev-parse', 'HEAD', capture_output=True, text=True).stdout.strip(),
                     source_modified=modified, source_files=source, portable_runtimes=runtimes,
                     desktop_lock_sha256=digest(CONFIG / 'desktop.lock'), qt_frameworks=qt_frameworks,
-                    signature='ad-hoc', notarized=False, models_included=False)
+                    signature='ad-hoc', notarized=False, models_included=False, updater=identity)
     (resources / 'build-manifest.json').write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + '\n')
     index = resources / 'Licenses/Qt-PySide/qtwebengine/documentation/qtwebengine-licensing.html'
     if not index.is_file():
@@ -325,6 +322,8 @@ def build(downloads):
                      r'href="Qt-PySide/qtwebengine/documentation/\1"', credits)
     (resources / 'Licenses/QtWebEngine-credits.html').write_text(credits, encoding='utf-8')
     count = sign(app)
+    from scripts.probe_packaged_launcher import probe
+    probe(app)
     volume.joinpath('Applications').symlink_to('/Applications', target_is_directory=True)
     output = WORK / 'dist'
     output.mkdir(exist_ok=True)
@@ -345,6 +344,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--fetch', action='store_true', help='只下载校验后的构建依赖')
     parser.add_argument('--downloads', type=Path, default=WORK / 'downloads')
+    parser.add_argument('--without-updater', action='store_true',
+                        help='只用于开发/过渡包：不带更新器，不能进入自动更新订阅')
     args = parser.parse_args()
     if sys.platform != 'darwin' or platform.machine() != 'arm64':
         raise SystemExit('必须在原生 Apple Silicon Mac 构建此安装包。')
@@ -355,10 +356,13 @@ def main():
             obtain(item, args.downloads, download=True)
         for item in notices:
             obtain(item, args.downloads / 'licenses', download=True)
+        if not args.without_updater:
+            configuration = json.loads((ROOT / 'packaging/updates.json').read_text())
+            obtain(configuration['targets']['macos-arm64'], args.downloads, download=True)
         run(sys.executable, '-m', 'pip', 'download', '--only-binary=:all:', '--require-hashes',
             '--cache-dir', WORK / 'pip-cache', '--dest', args.downloads / 'wheels', '-r', CONFIG / 'desktop.lock')
     else:
-        build(args.downloads)
+        build(args.downloads, without_updater=args.without_updater)
 
 
 if __name__ == '__main__':

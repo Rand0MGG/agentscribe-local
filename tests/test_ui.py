@@ -34,6 +34,8 @@ class Window(QWidget):
     def show(self):
         super().show()
         calls.append('shown')
+    def show_first_run(self):
+        pass
     def check_startup_updates(self):
         raise AssertionError('Update check must not delay showing or runtime preparation')
 module.RuntimePreparation=Runtime
@@ -209,7 +211,7 @@ data.pop('captions')
 path.write_text(json.dumps(data), encoding='utf8')
 before = path.read_bytes()
 warnings = []
-QMessageBox.warning = lambda *args: warnings.append(args[-1])
+w.show_warning = lambda title, message: warnings.append(message)
 row = SimpleNamespace(data=lambda *_: ('session', w.current_item['id']))
 w.open_library_item(row, 0)
 assert warnings and '录音元数据格式无效' in warnings[0]
@@ -305,8 +307,7 @@ import linguaflow.app as module
 app = QApplication([])
 w = module.Window(discover=False, prefs=QSettings(os.environ['AGENTSCRIBE_LIBRARY'] + '/prefs.ini', QSettings.Format.IniFormat))
 messages = []
-QMessageBox.warning = lambda parent, title, text: messages.append(title)
-QMessageBox.information = QMessageBox.warning
+w.show_warning = lambda title, text: messages.append(title)
 def unexpected(*args, **kwargs): raise AssertionError('session must not launch')
 module.Session = unexpected
 w.start(models_checked=True)
@@ -320,7 +321,7 @@ w.asr.setCurrentText('small')
 from linguaflow.management import Preparation
 w.model_manager.worker = Preparation(lambda: 'ready', w.model_manager)
 w.start(models_checked=True)
-assert messages.pop() == '模型准备中'
+assert w.notifications.notices['session'].text == '模型准备中 · 请等待模型准备完成，或在设置中取消准备。'
 w.model_manager.worker = None
 w.model_manager.backend.setCurrentIndex(w.model_manager.backend.findData('qwen3-streaming'))
 w.source.setCurrentIndex(0)
@@ -376,12 +377,12 @@ assert 'Qwen' in w.model_manager.behavior_hint.text()
 w.session = SimpleNamespace(deleteLater=lambda: None)
 w.on_failure('GPU 运行库缺失: cublas64_12.dll')
 w.on_status('音频队列已满')
-assert 'cublas64_12.dll' in w.status.text()
+assert w.notifications.notices[w.notifications.current_key].kind == 'error' and 'cublas64_12.dll' in w.notifications.notices[w.notifications.current_key].details
 w.on_finished()
 app.processEvents()
-assert 'cublas64_12.dll' in w.status.text()
+assert w.notifications.notices[w.notifications.current_key].kind == 'error' and 'cublas64_12.dll' in w.notifications.notices[w.notifications.current_key].details
 assert w.start_button.isEnabled()
-assert 'cublas64_12.dll' in w.empty.text()
+assert 'cublas64_12.dll' not in w.empty.text() and w.last_error.endswith('cublas64_12.dll')
 w.close()
 """
     result = subprocess.run(
@@ -567,7 +568,7 @@ module.Session = failed_constructor
 w.start(models_checked=True)
 assert w.session is None and w.recording_lock is None
 assert w.start_button.isEnabled() and w.library_tree.isEnabled()
-assert 'cannot construct session' in w.status.text()
+assert 'cannot construct session' in w.notifications.notices[w.notifications.current_key].details and w.last_error
 w.close()
 """
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, errors='backslashreplace', timeout=20,

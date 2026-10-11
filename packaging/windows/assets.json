@@ -1,0 +1,17 @@
+{
+  "python": {
+    "filename": "cpython-3.12.15+20261003-x86_64-pc-windows-msvc-install_only.tar.gz",
+    "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261003/cpython-3.12.15%2B20261003-x86_64-pc-windows-msvc-install_only.tar.gz",
+    "sha256": "4b6f0beebbb695a0f3ea237b8c3eaa5bd424f47a7bc25b2fbe3a43390c770f08"
+  },
+  "node": {
+    "filename": "node-v22.23.0-win-x64.zip",
+    "url": "https://nodejs.org/dist/v22.23.0/node-v22.23.0-win-x64.zip",
+    "sha256": "425a5bd68cc95e8eb16bcccd0a75081b48983fc6a26f67126bd4d6c7198231e8"
+  },
+  "python-notices": {
+    "filename": "cpython-3.12.15+20261003-x86_64-pc-windows-msvc-pgo-full.tar.zst",
+    "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261003/cpython-3.12.15%2B20261003-x86_64-pc-windows-msvc-pgo-full.tar.zst",
+    "sha256": "200c8cd8b3b157d5c415c4cddb84ba4cb9def5499a08fe311f1e661fd195d116"
+  }
+}

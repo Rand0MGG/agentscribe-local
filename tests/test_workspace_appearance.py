@@ -64,7 +64,8 @@ def action():
     assert release.wait(3)
     return '完成'
 manager.prepare(action)
-assert manager.status.isVisible() and manager.download_card.isVisible()
+assert manager.status.isHidden() and manager.download_card.isHidden()
+assert w.notifications.notices[w.notifications.current_key].kind == 'progress'
 ticks=[]
 def advance():
     ticks.append(1)
@@ -80,7 +81,8 @@ dialog = workspace.open_model_settings('asr')
 assert not dialog.download.isEnabled()
 dialog.reject()
 app.processEvents()
-assert manager.progress_bar.value()>=300 and manager.status.isVisible()
+assert manager.progress_bar.value()>=300 and w.notifications.notices[w.notifications.current_key].progress>=30
+assert w.notifications.isVisibleTo(w)
 width,height=manager.progress_bar.size().toTuple()
 while len(ticks)<6 and time.monotonic()<deadline:
     app.processEvents()
