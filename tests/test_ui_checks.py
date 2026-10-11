@@ -3,6 +3,8 @@ import os
 import subprocess
 import sys
 
+from ui_support import assert_ui_process
+
 
 def test_isolated_checks_deliver_on_qt_thread_and_reap_failure_timeout(tmp_path):
     code = '''
@@ -39,6 +41,6 @@ for name in ['good','bad','error','slow','missing']:
     assert done == [1] and len(results) == 1
 assert len(ticks)>3
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=15,
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=15,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen'})
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert_ui_process(result)

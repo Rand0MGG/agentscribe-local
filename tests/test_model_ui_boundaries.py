@@ -3,6 +3,8 @@ import os
 import subprocess
 import sys
 
+from ui_support import assert_ui_process
+
 
 def test_inventory_interfaces_and_background_export(tmp_path):
     code = r'''
@@ -72,6 +74,6 @@ w.export()
 assert not w.export_saver.busy
 w.close()
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=30,
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=30,
                             env={**os.environ, 'TEST_ROOT': str(tmp_path), 'QT_QPA_PLATFORM': 'offscreen'})
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert_ui_process(result)

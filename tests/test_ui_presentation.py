@@ -4,6 +4,7 @@ import subprocess
 import sys
 
 import pytest
+from ui_support import assert_ui_process
 
 
 def test_hover_darkens_existing_colour_and_application_shortcuts_are_removed(tmp_path):
@@ -95,10 +96,9 @@ label.finish_reveal()
 assert label.text() == 'a👩‍💻'
 card.close()
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=15,
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=15,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen'})
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert 'Painter not active' not in result.stderr and 'one painter at a time' not in result.stderr
+    assert_ui_process(result)
 
 
 def test_save_feedback_model_inspection_and_recording_tree(tmp_path):
@@ -196,11 +196,10 @@ assert next(b for b in dialog.findChildren(QPushButton) if b.text() == '创建�
 dialog.validate(library)
 assert dialog.result() == dialog.DialogCode.Accepted and not library.index['folders']
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=30,
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=30,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path)})
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert 'Painter not active' not in result.stderr and 'one painter at a time' not in result.stderr
+    assert_ui_process(result)
 
 
 def test_frosted_material_is_subdued_opaque_and_shared(tmp_path):
@@ -240,10 +239,9 @@ with patch.object(ui_backdrop, 'sys', SimpleNamespace(platform='darwin')):
 with patch.object(ui_backdrop, 'sys', SimpleNamespace(platform='linux')):
     assert ui_backdrop.desktop_wallpaper_path() == ''
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=15,
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=15,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen'})
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert 'Painter not active' not in result.stderr and 'one painter at a time' not in result.stderr
+    assert_ui_process(result)
 
 
 
@@ -320,12 +318,11 @@ w.current_item = None
 w.session_dirty = False
 w.close()
 """
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=20,
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=20,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'FIXTURE_PLATFORM': system,
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path)})
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert 'Painter not active' not in result.stderr and 'one painter at a time' not in result.stderr
+    assert_ui_process(result)
 
 
 def test_floating_controls_choices_and_hover_preserve_geometry(tmp_path):
@@ -410,8 +407,7 @@ w.current_item = None
 w.session_dirty = False
 w.close()
 """
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=20,
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=20,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path)})
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert 'Painter not active' not in result.stderr and 'one painter at a time' not in result.stderr
+    assert_ui_process(result)

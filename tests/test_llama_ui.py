@@ -3,6 +3,7 @@ import subprocess
 import sys
 
 import pytest
+from ui_support import assert_ui_process
 
 
 @pytest.mark.parametrize('system', ['darwin', 'win32'])
@@ -27,11 +28,6 @@ assert manager.translation_engine.currentData() == 'pytorch'
 w.translation.setCurrentText(HY_MODEL)
 manager.translation_engine.setCurrentIndex(manager.translation_engine.findData('llama'))
 manager.llama_model.setCurrentText(str(folder/'new-model-f16.gguf'))
-assert manager.translation_before.isEnabled()
-assert manager.translation_initial_before.isEnabled()
-assert manager.translation_before.currentData() == 5
-assert manager.translation_initial_before.currentData() == 1
-manager.translation_initial_before.setCurrentIndex(0)
 device = 'metal' if sys.platform == 'darwin' else 'cuda'
 manager.translation_device.setCurrentIndex(manager.translation_device.findData(device))
 if sys.platform == 'win32':
@@ -55,7 +51,6 @@ w.close()
 w = window()
 manager = w.model_manager
 assert manager.translation_engine.currentData() == 'llama'
-assert manager.translation_initial_before.currentData() == 1
 assert manager.translation_device.currentData() == device
 assert manager.llama_model.currentText() == settings.llama_model
 manager.translation_engine.setCurrentIndex(manager.translation_engine.findData('pytorch'))
@@ -64,11 +59,8 @@ assert w.translation.currentText() == HY_MODEL
 assert manager.translation_device.findData('vulkan') == -1
 assert manager.translation_device.findData('metal') == -1
 w.translation.setCurrentText('facebook/nllb-200-distilled-600M')
-assert not manager.translation_before.isEnabled()
-assert not manager.translation_initial_before.isEnabled()
 manager.translation_engine.setCurrentIndex(manager.translation_engine.findData('llama'))
 assert manager.llama_model.currentText() == settings.llama_model
-assert manager.translation_before.isEnabled()
 manager.llama_model.setCurrentText('models/custom-f16.gguf')
 assert Path(w.settings_binding.session_settings(('fixture', False)).llama_model).is_absolute()
 reference = 'hf://tencent/Hy-MT2-1.8B-GGUF/Hy-MT2-1.8B-Q8_0.gguf'
@@ -93,10 +85,10 @@ if sys.platform == 'darwin':
 assert 'soundcard' not in sys.modules and 'PySide6.QtMultimedia' not in sys.modules
 w.close()
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=20,
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=20,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path), 'FIXTURE_PLATFORM': system})
-    assert result.returncode == 0, result.stderr
+    assert_ui_process(result)
 
 
 @pytest.mark.parametrize('system', ['darwin', 'win32'])
@@ -145,7 +137,7 @@ w.start(models_checked=True)
 assert len(warnings) == 2 and len(next_steps) == 3
 w.close()
 """
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=20,
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=20,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path), 'FIXTURE_PLATFORM': system})
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert_ui_process(result)

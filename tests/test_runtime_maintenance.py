@@ -15,7 +15,7 @@ def slot(base, name, previous=None):
     return directory
 
 
-def test_cleanup_keeps_active_rollback_live_custom_and_symlink(monkeypatch, tmp_path):
+def test_cleanup_keeps_active_rollback_live_and_custom(monkeypatch, tmp_path):
     monkeypatch.setattr(runtime, 'runtime_root', lambda: tmp_path)
     base = tmp_path / 'python' / 'wlk'
     previous = slot(base, 'a' * 32)
@@ -30,12 +30,27 @@ def test_cleanup_keeps_active_rollback_live_custom_and_symlink(monkeypatch, tmp_
     external = tmp_path / 'models'
     external.mkdir()
     (external / 'weights').write_text('keep')
-    link = base / ('f' * 32)
-    link.symlink_to(external, target_is_directory=True)
     monkeypatch.setattr(runtime, 'process_commands', lambda: str(live).casefold())
     assert runtime.clean_environments('wlk') == 2
     assert not unused.exists() and not failed.exists()
-    assert all(path.exists() for path in (active, previous, live, custom, link, external / 'weights'))
+    assert all(path.exists() for path in (active, previous, live, custom, external / 'weights'))
+
+
+def test_cleanup_preserves_real_directory_link_and_external_files(monkeypatch, tmp_path):
+    from filesystem_support import directory_symlink
+    monkeypatch.setattr(runtime, 'runtime_root', lambda: tmp_path)
+    base = tmp_path / 'python' / 'wlk'
+    active = slot(base, 'a' * 32)
+    (base / 'active.json').write_text((active / 'environment.json').read_text())
+    unused = slot(base, 'b' * 32)
+    external = tmp_path / 'models'
+    external.mkdir()
+    (external / 'weights').write_text('keep')
+    link = base / ('f' * 32)
+    directory_symlink(link, external)
+    monkeypatch.setattr(runtime, 'process_commands', lambda: 'python fixture-process')
+    assert runtime.clean_environments('wlk') == 1 and not unused.exists()
+    assert link.is_symlink() and (external / 'weights').read_text() == 'keep'
 
 
 @pytest.mark.parametrize('failure', ['pointer', 'empty', 'process'])

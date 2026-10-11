@@ -41,8 +41,8 @@ def test_inventory_reuses_managed_hub_and_whisper_without_model_imports(monkeypa
     assert not repo.exists() and whisper.exists()
 
 
-def test_delete_rejects_custom_paths_unknown_ids_and_links(monkeypatch, tmp_path):
-    managed, _, _ = fixture_models(monkeypatch, tmp_path)
+def test_delete_rejects_custom_paths_and_unknown_ids(monkeypatch, tmp_path):
+    fixture_models(monkeypatch, tmp_path)
     custom = tmp_path / 'my models'
     weights(custom)
     selected = [dict(path=str(custom), kind='asr', engine='qwen3-mlx')]
@@ -50,9 +50,18 @@ def test_delete_rejects_custom_paths_unknown_ids_and_links(monkeypatch, tmp_path
     for identifier in (str(custom), str(tmp_path), str(custom / '..')):
         with pytest.raises(ValueError):
             inventory.delete_model(identifier, selected)
+    assert (custom / 'model.safetensors').exists()
+
+
+def test_delete_rejects_real_directory_links(monkeypatch, tmp_path):
+    from filesystem_support import directory_symlink
+    managed, _, _ = fixture_models(monkeypatch, tmp_path)
+    custom = tmp_path / 'my models'
+    weights(custom)
+    selected = [dict(path=str(custom), kind='asr', engine='qwen3-mlx')]
     managed.mkdir()
     link = managed / 'Qwen3-ASR-1.7B-4bit'
-    link.symlink_to(custom, target_is_directory=True)
+    directory_symlink(link, custom)
     with pytest.raises(ValueError):
         inventory.delete_model(str(link), selected)
     assert (custom / 'model.safetensors').exists()

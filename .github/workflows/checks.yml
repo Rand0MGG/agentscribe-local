@@ -48,12 +48,14 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
       - run: python -m pip install -e ".[dev]"
-      - run: python scripts/test_no_audio.py -q
+      - run: python scripts/test_no_audio.py -q -rs
 
   knowledge:
     name: Optional course SDKs (${{ matrix.os }}, Python 3.12)
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    env:
+      AGENTSCRIBE_REQUIRE_INTEGRATIONS: '1'
     strategy:
       fail-fast: false
       matrix:
@@ -68,4 +70,48 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
       - run: python -m pip install -e ".[dev,knowledge]"
-      - run: python scripts/test_no_audio.py tests/test_knowledge.py tests/test_knowledge_api.py tests/test_knowledge_adapters.py tests/test_knowledge_worker.py tests/test_knowledge_ui.py tests/test_architecture.py -q
+      - run: python -c "import deepagents, langchain_deepseek, pypdf"
+      - run: >-
+          python scripts/test_no_audio.py tests/test_knowledge.py tests/test_knowledge_api.py
+          tests/test_knowledge_adapters.py tests/test_knowledge_worker.py tests/test_knowledge_ui.py
+          tests/test_architecture.py
+          tests/test_knowledge_visual.py::test_real_sdk_image_payload_budget_and_consent
+          tests/test_knowledge_visual.py::test_harness_can_recheck_original_page_as_user_image
+          tests/test_knowledge_visual.py::test_actual_sdk_harness_page_tool_and_revoked_image_consent -q -rs
+
+  renderer:
+    name: Native document rendering (${{ matrix.os }}, Python 3.12)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      AGENTSCRIBE_REQUIRE_INTEGRATIONS: '1'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - run: python -m pip install -e ".[dev,knowledge]"
+      # Install only the rendering dependency; ASR GPU eligibility is unrelated to these tests.
+      - run: >-
+          python -c "import subprocess, sys;
+          from linguaflow.runtime_paths import DOCUMENT_RENDERER_VERSION, runtime_root;
+          subprocess.run(['npm.cmd' if sys.platform == 'win32' else 'npm', 'install',
+          '--prefix', str(runtime_root() / 'document-renderer'), '--no-audit', '--no-fund',
+          '--fetch-timeout=60000', '--fetch-retries=0', '--save-exact',
+          '@deepseek-ai/libreoffice-kit@' + DOCUMENT_RENDERER_VERSION], check=True)"
+      - run: python -c "import pypdf; from linguaflow.runtime_paths import document_renderer; document_renderer()"
+      - run: >-
+          python scripts/test_no_audio.py tests/test_knowledge_formats.py
+          tests/test_knowledge_visual.py::test_real_offline_renderer_includes_every_page
+          tests/test_knowledge_visual.py::test_renderer_cancellation_awaits_disposal -q -rs

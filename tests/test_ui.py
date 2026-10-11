@@ -2,6 +2,8 @@ import os
 import subprocess
 import sys
 
+from ui_support import assert_ui_process
+
 
 def test_main_prepares_runtime_after_show_and_closes_on_quit():
     code = """
@@ -41,9 +43,9 @@ except SystemExit as exc: assert exc.code==0
 assert calls==['shown','prepared','closed'],calls
 assert (1500, 'check_startup_updates') in timers
 """
-    result=subprocess.run([sys.executable,'-c',code],capture_output=True,text=True,timeout=10,
+    result=subprocess.run([sys.executable,'-c',code],capture_output=True,text=True, errors='backslashreplace',timeout=10,
                           env={**os.environ,'QT_QPA_PLATFORM':'offscreen'})
-    assert result.returncode==0,result.stderr
+    assert_ui_process(result)
 
 
 def test_background_autosave_keeps_new_revisions_dirty_and_rejects_other_recording_results(tmp_path):
@@ -92,10 +94,10 @@ w.library.save = original
 assert w.persist_session() and not w.session_dirty
 w.close()
 """
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=20,
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=20,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path)})
-    assert result.returncode == 0, result.stderr
+    assert_ui_process(result)
 
 
 def test_finish_does_not_dispose_signal_sender_while_background_save_is_pending(tmp_path):
@@ -153,10 +155,10 @@ app.processEvents()
 assert w.session is None and w.library.load(w.current_item)[1][0].source == 'new source'
 w.close()
 """
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=20,
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=20,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path)})
-    assert result.returncode == 0, result.stderr
+    assert_ui_process(result)
 
 
 def test_failed_retranslation_preserves_text_and_corrupt_recording_is_rejected(tmp_path):
@@ -215,10 +217,10 @@ assert not w.loading_saved and w.captions[1].translation == 'updated'
 assert path.read_bytes() == before
 w.close()
 """
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=20,
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=20,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path)})
-    assert result.returncode == 0, result.stderr
+    assert_ui_process(result)
 
 
 def test_preferences_roundtrip_and_recording_guards(tmp_path):
@@ -244,9 +246,6 @@ assert not any('严格离线' in control.text() for control in w.findChildren(QC
 w.asr.setCurrentText('fixture-model')
 w.translation.setCurrentText('fixture-translator')
 w.translation.setCurrentText('tencent/Hy-MT2-1.8B')
-assert w.model_manager.translation_before.isEnabled()
-w.model_manager.translation_before.setCurrentIndex(2)
-w.model_manager.translation_after.setCurrentIndex(2)
 w.translate.setChecked(False)
 w.model_manager.update_seconds.setValue(1.75)
 assert not hasattr(w.model_manager, "semantic_device")
@@ -256,15 +255,11 @@ w.close()
 w = window()
 assert w.asr.currentText() == 'fixture-model'
 assert w.translation.currentText() == 'tencent/Hy-MT2-1.8B'
-assert w.model_manager.translation_before.currentData() == 5
-assert w.model_manager.translation_after.currentData() == 1
 settings = w.settings_binding.session_settings(('fixture', True))
 assert settings.translation_before == 5 and settings.translation_after == 1
 assert not hasattr(settings, 'offline')
 w.translation.setCurrentText('facebook/nllb-200-distilled-600M')
-assert not w.model_manager.translation_before.isEnabled()
 w.translation.setCurrentText('tencent/Hy-MT2-1.8B')
-assert w.model_manager.translation_after.isEnabled()
 assert not w.translate.isChecked()
 assert w.model_manager.update_seconds.value() == 1.75
 assert not hasattr(settings, "semantic_device")
@@ -295,10 +290,10 @@ assert original_path.exists() and w.library.directory(item['id']) == original_pa
 w.session = None
 w.close()
 """
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=20,
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=20,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path)})
-    assert result.returncode == 0, result.stderr
+    assert_ui_process(result)
 
 
 def test_start_validation_and_cancelled_naming_do_not_launch(tmp_path):
@@ -339,10 +334,10 @@ assert w.current_item is None and not w.library.index['sessions']
 assert w.session is None and w.start_button.isEnabled()
 w.close()
 """
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=20,
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=20,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path)})
-    assert result.returncode == 0, result.stderr
+    assert_ui_process(result)
 
 
 def test_fatal_error_survives_late_status_and_finish(tmp_path):
@@ -393,10 +388,10 @@ w.close()
         [sys.executable, "-c", code],
         env={**os.environ, "QT_QPA_PLATFORM": "offscreen", "AGENTSCRIBE_LIBRARY": str(tmp_path)},
         capture_output=True,
-        text=True,
+        text=True, errors='backslashreplace',
         timeout=20,
     )
-    assert result.returncode == 0, result.stderr
+    assert_ui_process(result)
 
 
 def test_library_navigation_preserves_session_and_draft(tmp_path):
@@ -431,10 +426,10 @@ assert w.captions[2].translation == '你好'
 w.session = None
 w.close()
 """
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=20,
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, errors='backslashreplace', timeout=20,
                             env={**os.environ, "QT_QPA_PLATFORM": "offscreen",
                                  "AGENTSCRIBE_LIBRARY": str(tmp_path)})
-    assert result.returncode == 0, result.stderr
+    assert_ui_process(result)
 
 
 def test_named_recording_start_finish_and_settings_routes(tmp_path):
@@ -575,7 +570,7 @@ assert w.start_button.isEnabled() and w.library_tree.isEnabled()
 assert 'cannot construct session' in w.status.text()
 w.close()
 """
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=20,
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, errors='backslashreplace', timeout=20,
                             env={**os.environ, "QT_QPA_PLATFORM": "offscreen",
                                  "AGENTSCRIBE_LIBRARY": str(tmp_path)})
-    assert result.returncode == 0, result.stderr
+    assert_ui_process(result)

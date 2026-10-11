@@ -67,7 +67,8 @@ def test_legacy_metal_migrates_to_llama_without_overriding_explicit_engine():
     assert read_preferences(Store(translation_device='metal', translation_engine='pytorch'))['translation_engine'] == 'pytorch'
 
 
-def test_draft_final_context_defaults_preserve_saved_user_choices():
+def test_legacy_context_preferences_parse_without_defining_session_policy():
+    """Old values remain readable; session policy is tested at SettingsBinding."""
     assert read_preferences(Store())['translation_before'] == 5
     assert read_preferences(Store())['translation_initial_before'] == 1
     for before in range(11):

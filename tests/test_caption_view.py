@@ -3,12 +3,14 @@ import os
 import subprocess
 import sys
 
+from ui_support import assert_ui_process
+
 
 def run_qt(code, tmp_path):
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=35,
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=35,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path)})
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert_ui_process(result)
 
 
 def test_smooth_follow_manual_interrupt_return_and_reduce_motion(tmp_path):

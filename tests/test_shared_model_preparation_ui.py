@@ -4,6 +4,7 @@ import subprocess
 import sys
 
 import pytest
+from ui_support import assert_ui_process
 
 
 @pytest.mark.parametrize('system', ['darwin', 'win32'])
@@ -67,11 +68,10 @@ if sys.platform == 'darwin':
 assert w.session is None and not {'soundcard', 'sounddevice', 'pyaudio', 'PySide6.QtMultimedia'} & sys.modules.keys()
 w.close()
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=30,
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=30,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'AGENTSCRIBE_LIBRARY': str(tmp_path),
                                  'FIXTURE_PLATFORM': system})
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert 'Painter not active' not in result.stderr and 'one painter at a time' not in result.stderr
+    assert_ui_process(result)
 
 
 @pytest.mark.parametrize('system', ['darwin', 'win32'])
@@ -114,10 +114,10 @@ for total, expected_max, expected_value in [(100, 1000, 500), (None, 0, None), (
 assert 'soundcard' not in sys.modules and 'PySide6.QtMultimedia' not in sys.modules
 w.close()
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=20,
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=20,
                             env={**os.environ, 'QT_QPA_PLATFORM':'offscreen', 'AGENTSCRIBE_LIBRARY':str(tmp_path),
                                  'FIXTURE_PLATFORM':system})
-    assert result.returncode == 0, result.stderr
+    assert_ui_process(result)
 
 
 def test_prepare_preserves_partial_legacy_model_preferences(tmp_path):
@@ -144,6 +144,6 @@ actual = json.loads(commands[0][commands[0].index('--selection')+1])
 assert actual == expected and actual['translation_model'].endswith('custom.gguf')
 w.close()
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=20,
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=20,
                             env={**os.environ, 'QT_QPA_PLATFORM':'offscreen', 'AGENTSCRIBE_LIBRARY':str(tmp_path)})
-    assert result.returncode == 0, result.stderr
+    assert_ui_process(result)

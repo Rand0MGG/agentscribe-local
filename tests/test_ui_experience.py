@@ -3,12 +3,13 @@ import os
 import subprocess
 import sys
 
+from ui_support import assert_ui_process
+
 
 def test_search_navigation_motion_and_menu_stay_in_sync(tmp_path):
     code = '''
 import os
-from PySide6.QtCore import QSettings, Qt, QTimer
-from PySide6.QtTest import QTest
+from PySide6.QtCore import QSettings, QTimer
 from PySide6.QtWidgets import QApplication, QPushButton
 from linguaflow.app import STYLE, Window
 from linguaflow.ui_components import ActionMenu, Disclosure, NameDialog
@@ -24,7 +25,7 @@ s = w.settings_workspace
 s.search.setText('  草稿  ')
 assert s.title.text() == '字幕与延迟'
 assert not s.pages.isHidden()
-s.search.setText('HY-MT2 前文')
+s.search.setText('HY-MT2')
 assert s.title.text() == '模型管理'
 s.search.setText('no-such-feature')
 assert s.pages.isHidden() and not s.no_results.isHidden()
@@ -45,14 +46,6 @@ w.leave_settings()
 assert not any(a.text() == '跟随最新字幕' for m in w.findChildren(ActionMenu) for a in m.actions())
 assert w.scroll.following
 assert not w.scroll.latest_button.isVisible()
-w.translate.setChecked(False)
-assert '仅原文' in w.quick_language.text()
-w.quick_language.click()
-assert s.title.text() == '聆听'
-# Escape closes only settings; it never starts or stops a recording.
-w.activateWindow()
-QTest.qWait(30)
-QTest.keyClick(w, Qt.Key.Key_Escape)
 assert w.pages.currentIndex() == 0
 assert w.session is None
 dialog = RecordingDialog(w.library, w.folder_id, w)
@@ -68,7 +61,25 @@ w = Window(discover=False, prefs=prefs)
 assert w.reduce_motion.isChecked() and QApplication.instance().property('reduceMotion')
 w.close()
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=30,
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=30,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path)})
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert_ui_process(result)
+
+
+def test_language_entry_opens_popup_and_escape_closes_it_without_starting(tmp_path):
+    from test_beta_features import run_ui
+    run_ui('''
+from PySide6.QtTest import QTest
+w.show()
+app.processEvents()
+w.translate.setChecked(False)
+assert '仅原文' in w.quick_language.text()
+assert not w.language_popup.isVisible()
+w.quick_language.click()
+wait(w.language_popup.isVisible)
+QTest.keyClick(w.language_popup, Qt.Key.Key_Escape)
+wait(lambda: not w.language_popup.isVisible())
+assert w.pages.currentIndex() == 0 and w.session is None
+w.close()
+''', tmp_path)

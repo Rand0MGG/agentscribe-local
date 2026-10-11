@@ -3,6 +3,7 @@ import subprocess
 import sys
 
 import pytest
+from ui_support import assert_ui_process
 
 
 @pytest.mark.skipif(sys.platform != 'darwin', reason='macOS native application menu')
@@ -41,14 +42,14 @@ w.close()
 faulthandler.cancel_dump_traceback_later()
 '''
     try:
-        result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=15,
+        result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=15,
                                 env={**os.environ, 'QT_QPA_PLATFORM': 'cocoa',
                                      'AGENTSCRIBE_LIBRARY': str(tmp_path)})
     except subprocess.TimeoutExpired as exc:
         output = b''.join(value if isinstance(value, bytes) else (value or '').encode()
                           for value in (exc.stdout, exc.stderr)).decode('utf8', errors='replace')
         raise AssertionError('Native menu timed out; captured startup/Qt stacks:\n' + output) from exc
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert_ui_process(result)
 
 
 def test_startup_update_check_is_independent_quiet_and_nonmodal(tmp_path):
@@ -93,20 +94,22 @@ w.close()
 w.on_startup_update_checked({'kind':'package', 'url':updates.RELEASE_PAGE+'/tag/v0.6.0-beta.3'})
 assert not w.update_dialog.isVisible()
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=12,
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=12,
                             env={**os.environ, 'QT_QPA_PLATFORM':'offscreen',
                                  'AGENTSCRIBE_LIBRARY':str(tmp_path)})
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert_ui_process(result)
 
 
-def test_direct_settings_fixed_context_and_responsive_preparation(tmp_path):
+@pytest.mark.parametrize('system', ['win32', 'darwin'])
+def test_direct_settings_fixed_context_and_responsive_preparation(tmp_path, system):
     code = '''
-import os, time
+import os, sys, time
 from threading import Event
 from PySide6.QtCore import QSettings, QTimer
 from PySide6.QtWidgets import QApplication
 from linguaflow.app import Window
 from linguaflow.recording_state import RecordingState
+sys.platform = os.environ['FIXTURE_PLATFORM']
 app = QApplication([])
 prefs = QSettings(os.environ['AGENTSCRIBE_LIBRARY']+'/prefs.ini', QSettings.Format.IniFormat)
 prefs.setValue('translation_before', 10)
@@ -161,10 +164,10 @@ assert w.missing_model_assets and w.model_prompt is None
 w.set_recording_state(RecordingState.IDLE)
 w.close()
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=12,
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=12,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
-                                 'AGENTSCRIBE_LIBRARY': str(tmp_path)})
-    assert result.returncode == 0, result.stdout + result.stderr
+                                 'AGENTSCRIBE_LIBRARY': str(tmp_path), 'FIXTURE_PLATFORM': system})
+    assert_ui_process(result)
 
 
 def test_knowledge_cleanup_dispatches_ui_events_and_guards_file_changes(tmp_path):
@@ -205,7 +208,7 @@ assert not w.knowledge_client.closing and w.knowledge_client.process is None
 assert 'soundcard' not in __import__('sys').modules
 w.close()
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=12,
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=12,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path)})
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert_ui_process(result)

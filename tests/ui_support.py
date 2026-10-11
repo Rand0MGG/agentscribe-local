@@ -1,7 +1,16 @@
 """Bounded Qt waits for isolated UI tests; never access native audio."""
 import time
+from subprocess import CompletedProcess
 
 from PySide6.QtWidgets import QApplication
+
+
+def assert_ui_process(result: CompletedProcess[str]):
+    """Reject failed children and Qt drawing errors; allow unrelated platform hints."""
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, f'Qt child exited {result.returncode}:\n{output}'
+    assert not any(marker in output for marker in ('QPainter::', 'QWidgetEffectSourcePrivate::pixmap:')), (
+        'Qt drawing failure:\n' + output)
 
 
 def wait_until(predicate, *, timeout=10):

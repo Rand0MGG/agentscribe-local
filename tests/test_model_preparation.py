@@ -1,10 +1,12 @@
-"""Required internal assets follow the existing cancellable ASR preparation."""
+"""UI selection delegates to preparation; model IO is tested by recommended_prepare."""
 import os
 import subprocess
 import sys
 
+from ui_support import assert_ui_process
 
-def test_recognition_prepares_internal_segmentation_and_propagates_failure(tmp_path):
+
+def test_recognition_delegates_selection_and_propagates_command_failure(tmp_path):
     program = '''
 from pathlib import Path
 from PySide6.QtWidgets import QApplication, QComboBox, QPushButton
@@ -42,7 +44,7 @@ except RuntimeError as exc:
 else:
     raise AssertionError('preparation must not report success without required assets')
 '''
-    child = subprocess.run([sys.executable, '-c', program], text=True, encoding='utf-8',
+    child = subprocess.run([sys.executable, '-c', program], text=True, errors='backslashreplace', encoding='utf-8',
                            capture_output=True, timeout=30,
                            env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen'})
-    assert child.returncode == 0, child.stdout + child.stderr
+    assert_ui_process(child)
