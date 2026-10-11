@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 from .caption_view import CaptionText
 from .qt_controls import text_label
 from .ui_theme import theme_colors
+from .window_platform import configure_overlay, visible_window_geometry
 
 
 class SubtitleBackdrop(QFrame):
@@ -208,7 +209,11 @@ class Overlay(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        # A Tool stays above application windows and does not add a second taskbar entry.
+        geometry = visible_window_geometry(self.geometry(),
+                                           [screen.availableGeometry() for screen in QApplication.screens()])
+        if geometry != self.geometry():
+            self.setGeometry(geometry)
+        configure_overlay(int(self.winId()))
         self.raise_()
 
     def update_caption(self, caption, translating=True, *, animate=True):

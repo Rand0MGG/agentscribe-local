@@ -1,4 +1,4 @@
-AgentScribe 0.6.0-beta.3 · Apple Silicon 测试安装包
+AgentScribe 0.7.0 · Apple Silicon 安装包
 
 安装
 1. 将 AgentScribe.app 拖到右侧的 Applications（应用程序）。
@@ -11,17 +11,19 @@ AgentScribe 0.6.0-beta.3 · Apple Silicon 测试安装包
 
 首次使用
 软件包含桌面与课件功能的 Python 依赖、Qt（含回听与网页渲染）、Node.js/npm。
-首次点击主界面的“准备识别与翻译模型”，会准备 Qwen3-ASR 1.7B MLX 4-bit
+在“设置 → 模型管理”点击“下载模型…”并选择推荐组合，会准备 Qwen3-ASR 1.7B MLX 4-bit
 和 HY-MT2 1.8B Q4_K_M / Metal 的运行环境、模型与字幕分句组件。
 准备过程显示进度，可取消；已有兼容文件复用，旧自定义路径继续保留。
 课件 Office/PDF 渲染组件也由设置中的安装/修复按钮准备。
 首次准备需要网络和足够磁盘空间，建议至少预留 20 GB；准备后识别和翻译可在本地运行。
 DeepSeek 课件理解/课堂笔记仍须你主动启用并配置密钥；安装应用不会自动启用。
 首次使用音频输入时 macOS 会请求权限；请只在准备开始录音时允许。
-系统声音输入沿用你已配置的输入设备/BlackHole，本包不安装音频驱动或修改系统音频设置。
+电脑声音选择“系统音频 · 电脑声音”，首次聆听需允许系统录制权限。
+BlackHole 等已配置输入仍可选择；应用只保存声音，不保存屏幕图像。
+本包不安装音频驱动或修改系统音频设置。
 
 签名
-此测试包使用本地 ad-hoc 签名，没有 Apple Developer ID，也未做 Apple 公证。
+当前构建默认使用本地 ad-hoc 签名，没有 Apple Developer ID，也未做 Apple 公证。
 从网络下载后可能被 Gatekeeper 拦截；确认来自本项目发行页或自己的构建后，先尝试打开，
 再前往“系统设置 → 隐私与安全性 → 仍要打开”。无需全局关闭安全保护。
 Apple 说明：https://support.apple.com/102445
@@ -39,6 +41,8 @@ Mac 系统菜单栏的 AgentScribe 菜单提供关于、版本与更新、检查
 许可与验证范围
 第三方许可和来源位于 AgentScribe.app/Contents/Resources/Licenses/。
 构建版本、依赖和源码哈希位于 Contents/Resources/build-manifest.json。
-这是预览版，发行记录见 https://github.com/Rand0MGG/agentscribe-local/releases。
+版本号为 0.7.0；已发布产物、签名和验收状态以发行记录及构建清单为准。
+发行记录见 https://github.com/Rand0MGG/agentscribe-local/releases。
 应用源码尚未指定开源许可证；第三方组件保持各自许可证。
-本轮在音频访问守卫下验证；真实麦克风权限、采集/回听、其他 Mac 及长录音安装版验收仍待进行。
+源码已验证短电脑声音捕获、暂停/继续、来源切换和 WAV 保存，推理在该探针中为模拟实现。
+首次安装态权限、真实麦克风、采集与 GPU 模型联动、回听、其他 Mac 及长录音仍待安装包验收。

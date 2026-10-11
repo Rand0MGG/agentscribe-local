@@ -71,14 +71,40 @@ def test_mac_rejects_windows_loopback_before_importing_audio(monkeypatch):
 
 @pytest.mark.parametrize('platform, loopback', [('darwin', False), ('win32', True)])
 def test_device_discovery_uses_platform_loopback_policy(monkeypatch, platform, loopback):
-    from linguaflow.audio import list_devices
+    import linguaflow.audio as audio
     monkeypatch.setattr(sys, 'platform', platform)
+    monkeypatch.setattr(audio, 'mac_ver', lambda: ('15.0', (), 'arm64'))
 
     def devices(**kwargs):
         assert kwargs == {'include_loopback': loopback}
         return [SimpleNamespace(id='device', name='fixture', isloopback=loopback)]
 
     monkeypatch.setitem(sys.modules, 'soundcard', SimpleNamespace(all_microphones=devices))
-    device, = list_devices()
+    devices_ = audio.list_devices()
+    if platform == 'darwin':
+        assert devices_[0] == audio.Device(audio.MAC_SYSTEM_AUDIO, '系统音频 · 电脑声音', True)
+    else:
+        assert len(devices_) == 1
+    device = devices_[-1]
     assert device.loopback is loopback and device.id == 'device'
     assert device.name == ('系统音频 · fixture' if loopback else '外部输入 · fixture')
+
+
+def test_mac_native_system_audio_routes_without_soundcard(monkeypatch):
+    import linguaflow.audio as audio
+    import linguaflow.audio_macos as mac
+    monkeypatch.setattr(sys, 'platform', 'darwin')
+    monkeypatch.setitem(sys.modules, 'soundcard', None)
+    calls = []
+    monkeypatch.setattr(mac, 'capture_system_audio', lambda *args: calls.append(args))
+    settings, stop, callback = Settings(audio.MAC_SYSTEM_AUDIO, loopback=True), Event(), lambda block: None
+    capture(settings, stop, callback)
+    assert calls == [(settings, stop, callback)]
+
+
+def test_old_mac_does_not_advertise_unavailable_native_audio(monkeypatch):
+    import linguaflow.audio as audio
+    monkeypatch.setattr(sys, 'platform', 'darwin')
+    monkeypatch.setattr(audio, 'mac_ver', lambda: ('12.7', (), 'arm64'))
+    monkeypatch.setitem(sys.modules, 'soundcard', SimpleNamespace(all_microphones=lambda **kwargs: []))
+    assert audio.list_devices() == []

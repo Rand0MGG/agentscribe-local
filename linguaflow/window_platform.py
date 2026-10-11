@@ -5,6 +5,34 @@ import sys
 from PySide6.QtCore import Qt
 
 
+def expand_window_content(window):
+    """Qt 6.9+ lets the shared glass extend beneath native Mac title controls."""
+    if sys.platform != 'darwin' or not hasattr(Qt.WindowType, 'ExpandedClientAreaHint'):
+        return False
+    window.setWindowFlag(Qt.WindowType.ExpandedClientAreaHint, True)
+    window.setWindowFlag(Qt.WindowType.NoTitleBarBackgroundHint, True)
+    # The shared 44 px toolbar already reserves room for title controls. Qt's
+    # automatic safe-area inset would leave an empty strip above the backdrop.
+    window.setAttribute(Qt.WidgetAttribute.WA_ContentsMarginsRespectsSafeArea, False)
+    return True
+
+
+def configure_main_window(native_handle):
+    """Hide only the Mac title/background, retaining its native window controls."""
+    if sys.platform != 'darwin' or os.environ.get('QT_QPA_PLATFORM') == 'offscreen':
+        return False
+    from PySide6.QtWidgets import QApplication
+    if QApplication.platformName() != 'cocoa':
+        return False
+    from .ui_macos import configure_main_window as configure
+    try:
+        return configure(native_handle)
+    except (AttributeError, OSError, ValueError):
+        import logging
+        logging.getLogger(__name__).exception('Could not integrate Mac titlebar')
+        return False
+
+
 def resize_edges(point, size, *, margin=7):
     """Hit-test the shared frame boundary in logical pixels."""
     edges = Qt.Edge(0)
@@ -94,3 +122,34 @@ def enable_native_resize(native_handle):
         return bool(get_style(hwnd, -16) & 0x00040000)
     except (AttributeError, OSError, TypeError, ValueError, ctypes.ArgumentError):
         return False
+
+
+def configure_overlay(native_handle):
+    """Mac floating subtitles join Spaces/fullscreen; no native calls in offscreen."""
+    if sys.platform != 'darwin' or os.environ.get('QT_QPA_PLATFORM') == 'offscreen':
+        return False
+    from PySide6.QtWidgets import QApplication
+    if QApplication.platformName() != 'cocoa':
+        return False
+    from .ui_macos import configure_overlay as configure
+    try:
+        return configure(native_handle)
+    except (AttributeError, OSError, ValueError):
+        import logging
+        logging.getLogger(__name__).exception('Could not configure Mac subtitle window')
+        return False
+
+
+def visible_window_geometry(geometry, available):
+    """Keep restored windows reachable after unplugging or rearranging displays."""
+    from PySide6.QtCore import QRect
+    if not available:
+        return geometry
+    if any(bounds.contains(geometry) for bounds in available):
+        return geometry
+    bounds = max(available, key=lambda rect: rect.intersected(geometry).width()
+                 * rect.intersected(geometry).height())
+    width, height = min(geometry.width(), bounds.width()), min(geometry.height(), bounds.height())
+    x = min(max(geometry.x(), bounds.left()), bounds.right()-width+1)
+    y = min(max(geometry.y(), bounds.top()), bounds.bottom()-height+1)
+    return QRect(x, y, width, height)

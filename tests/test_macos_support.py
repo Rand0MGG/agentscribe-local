@@ -121,19 +121,24 @@ assert not hasattr(w, 'audio_config')
 # Simulated CoreAudio inputs must retain their IDs and non-loopback flag in
 # both selectors, including after a refresh, reorder or device disconnection.
 import linguaflow.app as desktop
-from linguaflow.audio import Device
+from linguaflow.audio import MAC_SYSTEM_AUDIO, Device
 from linguaflow.recording_state import RecordingState
 devices = [Device('coreaudio:mic', '输入 · MacBook 麦克风', False),
-           Device('coreaudio:blackhole', '输入 · BlackHole 2ch', False)]
+           Device('coreaudio:blackhole', '输入 · BlackHole 2ch', False),
+           Device(MAC_SYSTEM_AUDIO, '系统音频 · 电脑声音', True)]
 desktop.list_devices = lambda: devices
 w.refresh_devices()
+w.quick_device.setCurrentIndex(2)
+assert w.quick_device.currentText() == '系统音频 · 电脑声音'
+snapshot = w.settings_binding.session_settings(w.device.currentData())
+assert snapshot.device_id == MAC_SYSTEM_AUDIO and snapshot.loopback
 w.quick_device.setCurrentIndex(1)
 assert w.device.currentData() == ('coreaudio:blackhole', False)
 snapshot = w.settings_binding.session_settings(w.device.currentData())
 assert snapshot.device_id == 'coreaudio:blackhole' and not snapshot.loopback
 devices.reverse()
 w.refresh_devices()
-assert w.quick_device.currentIndex() == w.device.currentIndex() == 0
+assert w.quick_device.currentIndex() == w.device.currentIndex() == 1
 assert w.quick_device.currentData() == ('coreaudio:blackhole', False)
 for state in (RecordingState.STARTING, RecordingState.LISTENING, RecordingState.PAUSING,
               RecordingState.PAUSED, RecordingState.RESUMING, RecordingState.STOPPING):
@@ -142,7 +147,7 @@ for state in (RecordingState.STARTING, RecordingState.LISTENING, RecordingState.
     assert w.quick_device.isEnabled() == w.device.isEnabled() == enabled
     assert w.refresh_source.isEnabled() == enabled
 w.set_recording_state(RecordingState.IDLE)
-devices.pop(0)
+devices.pop(1)
 warnings = []
 desktop.QMessageBox.warning = lambda *args: warnings.append(args[1:])
 w.refresh_devices()
@@ -150,6 +155,7 @@ assert w.device.currentIndex() == w.quick_device.currentIndex() == -1
 assert w.quick_device.currentData() is None
 assert warnings and warnings[-1][0] == '音频来源不可用'
 assert 'soundcard' not in sys.modules and 'PySide6.QtMultimedia' not in sys.modules
+assert 'ScreenCaptureKit' not in sys.modules
 w.close()
 '''
     result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=20,

@@ -41,8 +41,8 @@ def test_invalid_or_unpublished_asset_never_counts_as_an_update(damage):
 def test_source_only_release_is_distinguished_from_installable_update():
     item = release('0.6.0')
     item['assets'] = []
-    assert select_update([item], target='windows-x64', installed=False)['kind'] == 'source'
-    installed = select_update([item], target='windows-x64', installed=True)
+    assert select_update([item], '0.5.0', target='windows-x64', installed=False)['kind'] == 'source'
+    installed = select_update([item], '0.5.0', target='windows-x64', installed=True)
     assert installed['kind'] == 'none' and '尚无' in installed['message']
 
 

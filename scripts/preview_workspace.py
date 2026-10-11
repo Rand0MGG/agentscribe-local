@@ -3,6 +3,7 @@ import argparse
 import json
 import platform
 import sys
+import time
 from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
@@ -58,6 +59,9 @@ def main():
          patch.object(Window, 'check_model_assets', return_value=None), \
          patch.object(Window, 'prepare_playback', return_value=None):
         w = Window(discover=False, library_root=library.root, prefs=prefs)
+        # Inventory is supplied below as sample data. A suppressed check must
+        # not leave the interactive preview stuck in a fake "reading" state.
+        w.settings_workspace.model_browser.start_check = None
         w.reduce_motion.setChecked(True)
         w.refresh_devices()
         w.start = lambda **kwargs: w.set_recording_state(RecordingState.LISTENING)
@@ -82,6 +86,11 @@ def main():
             records = []
             def capture(name, widget=w):
                 QTest.qWait(100)
+                backdrop = w.centralWidget()
+                deadline = time.monotonic() + 5
+                while backdrop._rendered != backdrop._key() and time.monotonic() < deadline:
+                    QTest.qWait(10)
+                assert backdrop._rendered == backdrop._key(), 'Background material did not settle'
                 assert widget.grab().save(str(output/(name+'.png')))
                 records.append(dict(image=name+'.png', logical_size=widget.size().toTuple(),
                                     dpr=widget.devicePixelRatioF()))

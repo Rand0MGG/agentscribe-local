@@ -8,7 +8,6 @@ from pathlib import Path
 from PySide6.QtCore import (
     QEvent,
     QPoint,
-    QRect,
     QSettings,
     QSignalBlocker,
     QSize,
@@ -69,7 +68,7 @@ from .recording_state import RecordingState
 from .runtime_preparation import RuntimePreparation
 from .settings_binding import SettingsBinding
 from .subtitles_overlay import Overlay
-from .ui_backdrop import desktop_wallpaper_path, frosted_wallpaper
+from .ui_backdrop import WallpaperBackdrop
 from .ui_components import (
     ActionMenu,
     AudioLevelMeter,
@@ -79,71 +78,15 @@ from .ui_components import (
 )
 from .ui_components import ChoiceBox as QComboBox
 from .ui_theme import STYLE, WORKSPACE_RADIUS, appearance_style, theme_colors
-from .window_platform import enable_native_resize, enable_system_backdrop, start_edge_resize
+from .window_platform import (
+    configure_main_window,
+    enable_native_resize,
+    enable_system_backdrop,
+    expand_window_content,
+    start_edge_resize,
+)
 from .wlk_session import Session
 from .workspace_widgets import LanguagePopup, LibraryTree, RecordingDialog, SettingsWorkspace, Switch
-
-
-class WallpaperBackdrop(QWidget):
-    """Paint a blurred, screen-aligned wallpaper beneath the L-shaped glass."""
-
-    def __init__(self):
-        super().__init__()
-        self.setObjectName("appRoot")
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self._wallpaper_path = ""
-        self._wallpaper_stamp = 0
-        self._source = QPixmap()
-        self._blurred = QPixmap()
-        self._blurred_size = None
-        self._blurred_appearance = None
-        self.refresh_wallpaper()
-        self.wallpaper_timer = QTimer(self)
-        self.wallpaper_timer.timeout.connect(self.refresh_wallpaper)
-        self.wallpaper_timer.start(30000)
-
-    def refresh_wallpaper(self):
-        path = desktop_wallpaper_path()
-        try:
-            stamp = Path(path).stat().st_mtime_ns if path else 0
-        except OSError:
-            stamp = 0
-        if path == self._wallpaper_path and stamp == self._wallpaper_stamp:
-            return
-        wallpaper = QPixmap(path) if path else QPixmap()
-        self._wallpaper_path = path
-        self._wallpaper_stamp = stamp
-        self._source = wallpaper
-        self._blurred = QPixmap()
-        self._blurred_size = None
-        self.update()
-
-    def _build_blurred_wallpaper(self, size):
-        if size.isEmpty():
-            return
-        self._blurred_appearance = QApplication.instance().property('appearance') or 'light'
-        self._blurred = frosted_wallpaper(self._source, size, self._blurred_appearance)
-        self._blurred_size = size
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        appearance = QApplication.instance().property('appearance') or 'light'
-        painter.fillRect(self.rect(), QColor(theme_colors(appearance)['glass']))
-        screen = self.window().screen() or QApplication.primaryScreen()
-        if screen is not None:
-            geometry = screen.geometry()
-            if self._blurred_size != geometry.size() or self._blurred_appearance != appearance:
-                self._build_blurred_wallpaper(geometry.size())
-            if not self._blurred.isNull():
-                origin = self.mapToGlobal(QPoint(0, 0))
-                source = QRect(
-                    origin.x() - geometry.x(),
-                    origin.y() - geometry.y(),
-                    self.width(),
-                    self.height(),
-                )
-                painter.drawPixmap(self.rect(), self._blurred, source)
-        painter.end()
 
 
 def panel(title, subtitle=None):
@@ -192,9 +135,10 @@ class GlassTitleBar(QFrame):
         self.setObjectName("glassTopBar")
         self.setFixedHeight(44)
         bar = QHBoxLayout(self)
-        bar.setContentsMargins(13, 0, 0, 0)
+        # macOS owns the traffic lights on the left; Windows owns our buttons on the right.
+        bar.setContentsMargins(96 if window.integrated_titlebar else 13, 0, 0, 0)
         bar.setSpacing(8)
-        title = label("AgentScribe · 本地同声字幕")
+        title = label("AgentScribe" if window.integrated_titlebar else "AgentScribe · 本地同声字幕")
         title.setWordWrap(False)
         bar.addWidget(title)
         bar.addStretch()
@@ -213,6 +157,8 @@ class GlassTitleBar(QFrame):
         bar.addWidget(minimize)
         bar.addWidget(self.maximize)
         bar.addWidget(close)
+        for button in (minimize, self.maximize, close):
+            button.setVisible(not window.integrated_titlebar)
 
     def toggle_maximized(self):
         if self.host.isMaximized():
@@ -391,6 +337,8 @@ class Window(QMainWindow):
         super().__init__()
         if sys.platform == "darwin":
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.integrated_titlebar = expand_window_content(self)
+        self._native_titlebar_attempted = False
         self._backdrop_applied = False
         self._backdrop_attempted = False
         self._native_resize_applied = False
@@ -447,7 +395,7 @@ class Window(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         self.title_bar = GlassTitleBar(self)
-        self.title_bar.setVisible(sys.platform == "win32")
+        self.title_bar.setVisible(sys.platform == "win32" or self.integrated_titlebar)
         layout.addWidget(self.title_bar)
         split = QSplitter()
         split.setHandleWidth(1)
@@ -529,7 +477,7 @@ class Window(QMainWindow):
         form.addRow(refresh)
         hint = "Windows：选择“系统音频”录制电脑播放内容。"
         if sys.platform == "darwin":
-            hint = "Mac：系统声音请选择 BlackHole 输入，并在音频 MIDI 设置中配置多输出设备。"
+            hint = "电脑声音选择“系统音频”。首次使用时需允许系统录制权限。"
         form.addRow(label(hint, "muted"))
         self.source = QComboBox()
         self.source.addItem("自动检测", (None, None))
@@ -808,7 +756,7 @@ class Window(QMainWindow):
         self.compute.currentIndexChanged.connect(self.select_asr_device)
         self.update_model_summary()
         self.settings_workspace = SettingsWorkspace(WorkspaceFrame,
-            storage_root=self.library.root, manager=self.model_manager,
+            storage_root=self.library.root, manager=self.model_manager, audio_source_hint=hint,
             controls={key: getattr(self, key) for key in
                       ('device', 'source', 'target', 'translate', 'reduce_motion', 'beta_features', 'appearance', 'compute')})
         self.beta_features.toggled.connect(self.apply_beta_features)
@@ -2110,12 +2058,23 @@ class Window(QMainWindow):
 
     def showEvent(self, event):
         super().showEvent(event)
+        if self.integrated_titlebar and not self._native_titlebar_attempted:
+            self._native_titlebar_attempted = True
+            configure_main_window(int(self.winId()))
+            # In fullscreen, a notched display can need more room than the
+            # normal title controls. Keep the content below that safe area.
+            handle = self.windowHandle()
+            handle.safeAreaMarginsChanged.connect(self.update_titlebar_inset)
+            self.update_titlebar_inset(handle.safeAreaMargins())
         if (not self._backdrop_attempted
                 and sys.platform == "win32"
                 and os.environ.get("QT_QPA_PLATFORM") != "offscreen"):
             self._backdrop_attempted = True
             self._native_resize_applied = enable_native_resize(int(self.winId()))
             self._backdrop_applied = enable_system_backdrop(int(self.winId()))
+
+    def update_titlebar_inset(self, margins):
+        self.title_bar.setFixedHeight(max(44, margins.top()))
 
     def closeEvent(self, event):
         if self.model_manager.worker is not None:
@@ -2156,6 +2115,7 @@ class Window(QMainWindow):
                 check.kill()
             event.ignore()
             return
+        self.centralWidget().shutdown()
         event.accept()
 
 

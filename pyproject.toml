@@ -4,12 +4,17 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentscribe-local"
-version = "0.6.0-beta.3"
+version = "0.7.0"
 description = "Local live speech recognition and translation for Windows and macOS"
 requires-python = ">=3.11,<3.14"
 dependencies = [
   "PySide6>=6.7,<7", "numpy>=1.26,<3", "scipy>=1.12,<2",
   "SoundCard>=0.4.3,<0.5", "huggingface-hub>=0.34,<1", "hf_xet>=1.1,<2",
+  "pyobjc-framework-ScreenCaptureKit==11.1; sys_platform == 'darwin'",
+  "pyobjc-framework-CoreMedia==11.1; sys_platform == 'darwin'",
+  "pyobjc-framework-libdispatch==11.1; sys_platform == 'darwin'",
+  "pyobjc-framework-Cocoa==11.1; sys_platform == 'darwin'",
+  "pyobjc-core==11.1; sys_platform == 'darwin'",
 ]
 
 [project.optional-dependencies]

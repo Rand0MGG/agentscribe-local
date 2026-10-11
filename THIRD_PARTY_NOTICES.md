@@ -17,6 +17,10 @@ LinguaFlow 0.3 consumes the full WhisperLiveKit pipeline as a pinned dependency.
 
 No model weights are distributed in this repository. Dependency and model licenses remain separate from application code. Upstream benchmark figures do not constitute LinguaFlow performance measurements.
 
+## macOS system audio
+
+- PyObjC 11.1: https://github.com/ronaldoussoren/pyobjc — MIT. The macOS desktop distribution includes the core bridge and Cocoa/CoreMedia/ScreenCaptureKit/libdispatch bindings; Windows and the inference environments do not install them. The Cocoa wheel retains the upstream full MIT copyright and license in its distribution metadata. ScreenCaptureKit is an operating-system framework; no virtual audio driver is bundled.
+
 ## Optional contextual segmentation
 
 - wtpsplit 2.2.1 / SaT: https://github.com/segment-any-text/wtpsplit

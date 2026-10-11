@@ -11,7 +11,7 @@ import sys
 
 class NoNativeAudio:
     def find_spec(self, fullname, path=None, target=None):
-        if (fullname.split('.')[0] in {'soundcard', 'sounddevice', 'pyaudio'}
+        if (fullname.split('.')[0] in {'soundcard', 'sounddevice', 'pyaudio', 'ScreenCaptureKit'}
                 or fullname == 'PySide6.QtMultimedia'):
             with open(os.environ['AGENTSCRIBE_AUDIO_GUARD_LOG'], 'a', encoding='utf-8') as log:
                 log.write(fullname + '\\n')

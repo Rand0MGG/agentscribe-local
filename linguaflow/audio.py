@@ -2,9 +2,12 @@
 
 import sys
 from dataclasses import dataclass
+from platform import mac_ver
 
 import numpy as np
 from scipy.signal import resample_poly
+
+MAC_SYSTEM_AUDIO = "macos:system-audio"
 
 
 @dataclass(frozen=True)
@@ -17,7 +20,9 @@ class Device:
 def list_devices() -> list[Device]:
     import soundcard as sc
 
-    result = []
+    # A virtual source needs no display enumeration or permission prompt here.
+    result = ([Device(MAC_SYSTEM_AUDIO, "系统音频 · 电脑声音", True)]
+              if sys.platform == "darwin" and int(mac_ver()[0].split('.')[0] or 0) >= 13 else [])
     for mic in sc.all_microphones(include_loopback=sys.platform == "win32"):
         loopback = bool(mic.isloopback)
         prefix = "系统音频" if loopback else "外部输入"
@@ -27,6 +32,10 @@ def list_devices() -> list[Device]:
 
 def capture(settings, stop, on_block):
     if stop.is_set():
+        return
+    if sys.platform == "darwin" and settings.device_id == MAC_SYSTEM_AUDIO:
+        from .audio_macos import capture_system_audio
+        capture_system_audio(settings, stop, on_block)
         return
     if sys.platform == "darwin" and settings.loopback:
         raise RuntimeError("macOS 不支持 Windows 系统回环录音，请选择已配置的 BlackHole 输入。")

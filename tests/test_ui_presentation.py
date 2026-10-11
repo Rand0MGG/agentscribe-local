@@ -7,6 +7,30 @@ import pytest
 from ui_support import assert_ui_process
 
 
+def test_mac_shared_toolbar_avoids_duplicate_controls_and_respects_notch(tmp_path):
+    from test_beta_features import run_ui
+    run_ui(r'''
+from PySide6.QtCore import QMargins
+from linguaflow.app import WindowButton
+w.show(); settle_geometry(w)
+if sys.platform == 'darwin' and hasattr(Qt.WindowType, 'ExpandedClientAreaHint'):
+    assert w.integrated_titlebar and w.title_bar.isVisible()
+    # The offscreen platform renders the app menu inside the window; Cocoa
+    # places it in the system menu bar. Neither may add a second safe-area strip.
+    menu_height = w.menuBar().height() if w.menuBar().isVisible() else 0
+    assert w.centralWidget().geometry().top() == menu_height, w.centralWidget().geometry()
+    assert not w.testAttribute(Qt.WidgetAttribute.WA_ContentsMarginsRespectsSafeArea)
+    assert all(button.isHidden() for button in w.title_bar.findChildren(WindowButton))
+    w.update_titlebar_inset(QMargins(0, 59, 0, 0))
+    app.processEvents()
+    assert w.title_bar.height() == 59 and w.pages.y() == 59, (w.title_bar.geometry(), w.pages.geometry())
+    w.update_titlebar_inset(QMargins(0, 28, 0, 0))
+    app.processEvents()
+    assert w.title_bar.height() == 44 and w.pages.y() == 44, (w.title_bar.geometry(), w.pages.geometry())
+w.close()
+''', tmp_path)
+
+
 def test_hover_darkens_existing_colour_and_application_shortcuts_are_removed(tmp_path):
     from test_beta_features import run_ui
     run_ui(r'''
@@ -234,8 +258,13 @@ for mode in ['light', 'dark']:
     a, b = sorted([luminance(QColor(c['draft'])), luminance(QColor(c['surface']))])
     assert (b+.05)/(a+.05) >= 4.5
 with patch.object(ui_backdrop, 'sys', SimpleNamespace(platform='darwin')):
-    with patch.object(ui_backdrop, 'mac_wallpaper_path', return_value='/fixture/wallpaper.jpg'):
-        assert ui_backdrop.desktop_wallpaper_path() == '/fixture/wallpaper.jpg'
+    with patch.object(ui_backdrop, 'mac_wallpaper_path') as native:
+        assert ui_backdrop.desktop_wallpaper_path() == ''
+        native.assert_not_called()
+    with patch.object(QApplication, 'platformName', return_value='cocoa'):
+        with patch.object(ui_backdrop, 'mac_wallpaper_path', return_value='/fixture/wallpaper.jpg') as native:
+            assert ui_backdrop.desktop_wallpaper_path(123) == '/fixture/wallpaper.jpg'
+            native.assert_called_once_with(123)
 with patch.object(ui_backdrop, 'sys', SimpleNamespace(platform='linux')):
     assert ui_backdrop.desktop_wallpaper_path() == ''
 '''

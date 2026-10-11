@@ -290,7 +290,8 @@ class SettingsWorkspace(QWidget):
     refresh_devices_requested = Signal()
     model_settings_changed = Signal()
 
-    def __init__(self, frame_factory, *, storage_root, controls, manager, parent=None):
+    def __init__(self, frame_factory, *, storage_root, controls, manager, parent=None,
+                 audio_source_hint="选择麦克风或正在播放声音的设备。"):
         super().__init__(parent)
         self.manager = manager
         layout = QHBoxLayout(self)
@@ -380,7 +381,7 @@ class SettingsWorkspace(QWidget):
         self.listening_page = listening
         body.addWidget(text_label("输入与语言", "settingsSection"))
         card, rows = self.group()
-        self.row(rows, "音频来源", "选择麦克风或正在播放声音的设备。", controls['device'])
+        self.row(rows, "音频来源", audio_source_hint, controls['device'])
         refresh = QPushButton("刷新设备")
         refresh.clicked.connect(self.refresh_devices_requested.emit)
         self.row(rows, "设备列表", "连接新设备后刷新。", refresh)

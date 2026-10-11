@@ -1,5 +1,55 @@
 # macOS 适配记录
 
+## 2026-10-11：0.7.0 源码集成检查
+
+用户授权将下述 Mac UI 与电脑音频修复集成到 `main`，统一版本正式改为 `0.7.0`。Apple M2 / macOS 26.6.2 / Python 3.12.14：最终完整无音频回归 **857 passed，160.09 秒**，Ruff 与 `git diff --check` 通过，零原生音频导入尝试；日志为 `.work/cache/v070-main-final.log`。本轮集成检查没有重新采集、播放或加载模型，真实电脑音频证据沿用下节注明的两个短探针。
+
+首轮完整回归为 776 通过、1 失败：更新测试默认使用当前应用版本，版本升到 0.7.0 后，夹具中的 0.6.0 不再是新版。修正夹具为显式旧版本 0.5.0，保留源码更新与平台安装包区别的断言，不改生产更新策略；更新专项 16 通过，随后重新运行完整回归。首轮日志保留在 `.work/cache/v070-main-full.log`，专项在 `.work/cache/v070-updates.log`。
+
+本次只集成源码，不创建标签、安装包或 Release。已发布包与应用内更新状态见 RELEASING；最新确认的两端操作需求在 UI_DESIGN 标为待实施。以下未提交状态描述对应合入前的验收阶段。
+
+## 2026-10-11：电脑音频来源缺口修复
+
+`mac` 分支本地源码补上“系统音频 · 电脑声音”。此前共享列表没有过滤来源，但 Mac 的 CoreAudio 路径只枚举输入，原生电脑音频捕获缺失。现在由 `audio.py` 提供 Mac 13+ 的稳定来源标识，通过 `audio_macos.py` 按需接入 ScreenCaptureKit；Windows 保持 SoundCard/WASAPI，BlackHole 保持普通输入。列表刷新不导入 ScreenCaptureKit、不请求录制权限、不启动捕获；权限与显示过滤仅在采集线程开始聆听时处理。设备选择、暂停/继续、切换、字幕和保存继续复用共享流程，未改变模型或识别参数。
+
+桌面依赖新增 PyObjC 11.1 的 core/Cocoa/CoreMedia/ScreenCaptureKit/libdispatch，均限定 macOS；推理环境和 Windows 不安装。Mac CPython 3.12 安装包锁同步固定五个 wheel 的 SHA-256，离线 `--require-hashes` 校验和 `pip check` 通过；未构建或发布安装包。
+
+模拟回归覆盖不规则音频块聚合、16/48 kHz 输出、权限/开始失败、输出连接失败、中断、队列溢出、开始过程中取消后的迟到流清理、格式/无效采样，以及生产 `Session` 中切换来源和暂停后继续写入 WAV。设置与主页面使用模拟来源验证新入口可选、会话来源快照正确、BlackHole 兼容；离屏截图只用于提示文字和控件布局检查，不代表 Cocoa 权限或采集验收。测试守卫新增 ScreenCaptureKit 导入阻断。
+
+完整无音频回归 **854 passed，159.74 秒**；随后静态核对 PyObjC 的 CoreMedia 元数据，修正 ASBD 未注册命名结构时的元组读取，并补上每帧字节数校验。最终音频/界面专项 **47 passed，8.01 秒**，包含新增的两项 Session 来源切换/暂停集成用例；Ruff 和 `git diff --check` 通过，没有原生音频导入尝试。首次受限环境回归在需要图形会话的 HTML 课件渲染处失败，重新在具备桌面窗口服务的环境完整通过，仍启用音频守卫。证据：`.work/cache/system-audio-full-native.log`、`.work/cache/system-audio-final.log`，界面提示截图在 `.work/cache/system-audio-ui/`。
+
+用户授权真实电脑音频采集与短暂播放后，在 Apple M2 / macOS 26.6.2 / Python 3.12.14 上完成两轮独立实机探针；只停止探针创建的捕获与播放进程，没有操作其他录音。当前 Python 已有录制权限，没有出现新的授权弹窗，因此首次授权和拒绝路径仍只经过模拟验证。
+
+- 第一轮直接使用生产 `audio.capture → ScreenCaptureKit`，捕获 48 kHz 单声道 **8.1 秒 / 81 块**。实际系统 PCM 的 ASBD 为 48 kHz、32-bit float、每帧 4 字节；捕获波形与独立 `afplay` 播放的短夹具对齐相关度为 **0.99939**。正常退出、原生流释放、零错误，保存 `captured.wav`。该轮 GUI 间隔统计包含 Qt 启动，不用于判断运行期间阻塞。
+- 第二轮使用生产 `Session / CaptureControl / AudioJournal` 和真实电脑音频，推理子进程替换为仅统计 PCM 的夹具；没有加载 ASR 或翻译模型。暂停约 0.85 秒期间写入帧数为 **0**，继续后重新采集；切到合成外部来源再切回电脑音频，各次旧流均先释放。三个原生流全部关闭，保存 **16 kHz / 144000 帧 / 9 秒 WAV**，worker 收到的帧数与保存一致，零错误。停止到线程结束及资源释放约 **0.10 秒**；运行事件循环 50 ms 计时器的最大间隔约 **64.9 ms**，只证明该短探针保持响应。
+- 实机证据与输入、事件、生产模块 SHA-256 保存在 `.work/mac-audio-tests/system-audio-20261011/`：`summary.json`、`session-summary.json`、两轮日志及 WAV。临时探针与模拟推理不进入生产代码，不把其中的统计字幕当作识别结果。
+- 授权后的实际来源枚举包含 `macos:system-audio / 系统音频 · 电脑声音`，并保留现有输入设备；清单见同目录 `devices.json`。该枚举没有启动麦克风捕获。
+
+前期另一个临时 CoreMedia 人工缓冲构造夹具误用了内存分配/释放约定，退出时触发 SIGABRT；崩溃栈为 `BBufFinalize → POINTER_BEING_FREED_WAS_NOT_ALLOCATED`，已停止该构造试验。生产适配只复制系统提供的缓冲，不使用这个构造方法；上述实机探针验证的是生产缓冲读取，不重试或掩盖那个夹具失败。
+
+长时间静音/播放、设备恢复、保存回听、真实麦克风切换、原生采集与 GPU 识别/翻译联动、首次权限提示和安装包身份仍待对应验收；Windows 未做实机验证。本轮改动仍在本地 `mac` 分支，没有提交、推送、构建或发布。API 依据：[Apple ScreenCaptureKit 示例](https://developer.apple.com/documentation/screencapturekit/capturing-screen-content-in-macos)、[PyObjC CoreMedia 绑定约束](https://pyobjc.readthedocs.io/en/latest/apinotes/CoreMedia.html)。
+
+## 2026-10-11：新版共享界面的 Mac 适配
+
+本轮为 `mac` 分支基于 `8a37f15` 的本地改动，沿用 `docs/UI_DESIGN.md` 和项目内 Uizze UI Design 技能的 polish/craft 指引。主题、布局、模型目录与下载保持两端共用；没有改变识别窗口、翻译上下文、调度、模型默认组合或版本号。
+
+- `WallpaperBackdrop` 从桌面装配入口移入共享材质模块。文件读取与纹理生成在自有后台线程使用 QImage 完成，复用已有 NumPy/SciPy Gaussian 滤波，不引入新依赖；GUI 不在绘制事件中读文件或模糊。每次仅一个任务，连续变化合并为最新请求，旧主题/屏幕结果不发布。未变化的文件复用缓存，关闭时停止检查与交付，后台任务仅持有自己的图像和结果队列。
+- Mac 按窗口的 NSView → NSWindow → NSScreen 读取壁纸，换屏触发刷新；AppKit 桥接按需加载，offscreen 不初始化原生框架。悬浮字幕配置 `canJoinAllSpaces`、`fullScreenAuxiliary`，macOS 13+ 加 `canJoinAllApplications`，移除与之冲突的 Qt 窗口策略并保留其余标志。恢复字幕窗口时按当前屏幕可用区域校正，避免断开外接屏后无法找到窗口。
+- Apple M2、macOS 26.6.2 / arm64、Python 3.12.14、PySide6 6.11.2：完整无音频回归 **826 passed，161.30 秒**，新增后台响应与窗口位置恢复专项 **2 passed**，Ruff 和 `git diff --check` 通过，无原生音频导入尝试。原生应用菜单检查也在允许窗口服务的环境执行。
+- Cocoa / Retina 2x 的隔离预览生成 18 张图，检查白色、深色、640×480 窄窗口、设置、下载和字幕。没有缺字或 painter 错误；763 逻辑像素可用高度下，请求 700×960 的窗口被系统限制为 700×763，保留真实尺寸，不称已验收 960 高度。预览证据：`.work/browser/ui-design-mac-after/`，元数据在 `.work/workspace-preview/shared-ui/render.json`。
+- 原生探针确认真实壁纸路径可读、窗口对应 NSScreen 一致、悬浮窗口策略回读为 `262401`。1512×982 纹理的单次对照：旧同步生成 19.66 ms，后台生成总耗时 47.86 ms；GUI 计时器最大间隔从 19.70 ms 到 8.54 ms。收益是事件响应，不是降低 CPU 总耗时，也不能据此推断识别速度。证据：`.work/cache/mac-ui-probe.json`。
+
+未访问声卡、播放录音、加载模型或修改用户录音库；没有重跑 GPU 推理。没有外接显示器实测或跨应用全屏空间的可见性验收，原生标志回读不能代替这些操作；Windows 实机、安装包与升级仍待对应验收。本轮未提交、推送、合入 main 或发布。
+
+### 同日补充：完整原生窗口检查与标题栏融合
+
+用户指出此前只检查客户端截图，遗漏了独立的白色系统标题条。Qt 6.9+ 现在用公开的 `ExpandedClientAreaHint` / `NoTitleBarBackgroundHint` 延伸共享磨砂背景；原生适配仅隐藏 NSWindow 的重复标题。保留原生红黄绿按钮、窗口缩放与全屏，不改成 Mac 无边框窗，也不复制 Windows 按钮。顶栏自身预留按钮位置，取消 Qt 自动叠加的安全边距；全屏安全边距变化仍提高顶栏高度，避免正文进入刘海区。Qt 6.7/6.8 保留既有原生标题栏。
+
+- 使用 computer use 操作独立示例窗口，检查完整原生窗口、常规设置、搜索进入模型管理、下载弹窗、原生应用菜单；确认白色系统标题条消失，磨砂顶栏与侧栏连续。原生“缩放窗口”放大与还原通过；原生按钮进入全屏后主页面和设置可见。没有据此宣称系统分屏、全屏退出、外接屏和跨应用字幕置顶已经验收。
+- 部分 Qt 列表和弹出菜单无法通过 computer use 的辅助功能节点稳定操作；设置分类改用搜索入口检查，组合框与共享菜单仍以自动测试和脚本渲染为证据。记录了 `QAccessibleList::child: Invalid index` 警告，未把工具未能操作的项目称为实机通过。
+- 修正示例脚本的模型清单检查：既然后台检查被禁止，示例也不应进入永远无法完成的“读取本地模型”状态。此修正只影响预览夹具，生产模型检查流程不变。
+- 最终完整无音频回归 **832 passed，171.68 秒**，Ruff 与 `git diff --check` 通过。新增检查覆盖顶部没有重复安全边距、不生成 Mac 自绘窗口按钮、模拟刘海区域高度与还原、其他平台及旧 Qt 的边界。证据：`.work/cache/mac-chrome-full.log`；最终 Cocoa / Retina 2x 的 18 张隔离预览在 `.work/browser/ui-mac-chrome-final/`，白色与深色布局一致，640×480 可用，受系统限高的 700×960 请求实际为 700×795。PNG 客户端预览仍不代替 computer use 的完整窗口检查。
+
 ## 2026-10-10：发行检查中的 Qt 回收隔离修复
 
 `cc03dfa` 首轮远程检查中，mac 分支 Python 3.11 的字幕界面子进程出现 `SIGSEGV`：日志显示主线程正在 GC，另一个线程正从新增模型文件检查导入缓存依赖。main 的 Windows 3.11、3.13 分别在既有渲染启动和课程后台首次就绪等待中超时。同一提交重跑后两个分支全部通过；保留首轮日志，不以重跑通过掩盖 Qt 崩溃。
