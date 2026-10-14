@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.packaging_common import (
     QT_MODULES,
     QT_PLUGIN_GROUPS,
+    copy_application,
     digest,
     extract,
     obtain,
@@ -257,8 +258,7 @@ def build(downloads, *, without_updater=False):
     for path in (python / 'bin').iterdir():
         if path.name not in {'python', 'python3', 'python3.12'}:
             path.unlink()
-    shutil.copytree(ROOT / 'linguaflow', resources / 'linguaflow',
-                    ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+    application_files = copy_application(ROOT, resources / 'linguaflow')
     for name in ('requirements-runtime.txt', 'requirements-mlx.txt', 'THIRD_PARTY_NOTICES.md'):
         shutil.copy2(ROOT / name, resources / name)
     shutil.copytree(downloads / 'licenses', resources / 'Licenses/Qt-PySide')
@@ -298,13 +298,13 @@ def build(downloads, *, without_updater=False):
     # Python operations explicitly use the bundled interpreter with -m.
     for path in app.rglob('__pycache__'):
         shutil.rmtree(path)
-    source_files = sorted(p for p in (ROOT / 'linguaflow').rglob('*') if p.suffix in {'.py', '.mjs'})
     build_files = sorted(p for p in CONFIG.rglob('*') if p.is_file()) + [Path(__file__).resolve()]
     build_files.extend([ROOT / 'packaging/updates.json', ROOT / 'packaging/recovery.c',
-                        ROOT / 'scripts/packaging_common.py'])
-    source = {str(p.relative_to(ROOT)): digest(p) for p in source_files + build_files
+                        ROOT / 'scripts/packaging_common.py', ROOT / 'scripts/probe_package.py',
+                        ROOT / 'scripts/probe_packaged_launcher.py'])
+    source = {**application_files, **{p.relative_to(ROOT).as_posix(): digest(p) for p in build_files
               + [ROOT / 'pyproject.toml', ROOT / 'requirements-runtime.txt', ROOT / 'requirements-mlx.txt',
-                 ROOT / 'THIRD_PARTY_NOTICES.md']}
+                 ROOT / 'THIRD_PARTY_NOTICES.md']}}
     modified = bool(run('git', '-C', ROOT, 'status', '--porcelain', '--untracked-files=all',
                         '--', *source, capture_output=True, text=True).stdout.strip())
     manifest = dict(version=version, target='macos-arm64', minimum_macos='15.0',
@@ -332,12 +332,27 @@ def build(downloads, *, without_updater=False):
     run('hdiutil', 'create', '-volname', f'AgentScribe {version}', '-srcfolder', volume,
         '-format', 'UDZO', '-fs', 'HFS+', '-imagekey', 'zlib-level=9', temporary)
     run('hdiutil', 'verify', temporary)
+    probe_image(temporary, stage / 'probe-volume')
     temporary.replace(dmg)
     sha = digest(dmg)
     dmg.with_suffix('.dmg.sha256').write_text(f'{sha}  {dmg.name}\n')
     manifest.update(dmg_sha256=sha, dmg_bytes=dmg.stat().st_size, native_files=count)
     dmg.with_suffix('.build.json').write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + '\n')
     print(json.dumps(dict(dmg=str(dmg), app=str(app), sha256=sha, bytes=dmg.stat().st_size), indent=2))
+
+
+def probe_image(image, mount):
+    """Validate the final read-only DMG contents, detaching even after probe failure."""
+    from scripts.probe_package import run_probe
+    from scripts.probe_packaged_launcher import probe
+    mount.mkdir()
+    run('hdiutil', 'attach', '-readonly', '-nobrowse', '-mountpoint', mount, image,
+        capture_output=True, timeout=60)
+    try:
+        probe(mount / 'AgentScribe.app')
+        run_probe(mount / 'AgentScribe.app')
+    finally:
+        run('hdiutil', 'detach', mount, capture_output=True, timeout=60)
 
 
 def main():

@@ -91,12 +91,14 @@ Pages 发布会替换整个静态站点，因此全仓订阅发布共用一个�
 
 2026-10-11（0.8.0 源码集成，未发行安装包）：已实现共享安装门禁、Sparkle / WinSparkle 接入、启动恢复、两端锁定载荷构建、Inno 安装器及发行草稿/订阅工作流。安装前等待录音、文件写入、资料保存和自有进程释放，录音中不强制退出。两端生产公钥已固定，私钥由本机登录钥匙串保存，未导出或部署到 CI。Mac 使用完整隔离应用完成真实 Sparkle 下载、校验、安装、重启，以及故意破坏新版启动后的旧版恢复；证据与边界见 VALIDATION。尚无 Developer ID / Authenticode 签名配置，未部署生产 Pages / 受保护 CI 凭据，Windows 未做原生安装升级验收；不能称作线上已安装应用已收到自动更新。
 
-本次源码集成内容见 [0.8.0 源码集成说明](RELEASE_v0.8.0.md)。依赖声明与两端打包锁一致性、新增顶层目录遗漏检查、完整安装包功能探针的强制接入尚不完整；现有单元检查和启动探针不能代替安装验收。
+本次源码集成内容见 [0.8.0 源码集成说明](RELEASE_v0.8.0.md)。依赖声明与两端打包锁一致性、新增顶层目录遗漏检查仍需持续核对；完整包探针已在下述平台分支修正中接入，模拟检查和包功能探针均不能代替安装升级验收。
+
+2026-10-14：`windows` 分支补上两端应用文件边界与共享完整包探针，保留旧 Mac 探针命令入口。Windows 安装器保留旧 JSON 构建清单，新载荷写完并校验后，仅移除旧清单中内容未变化、且新版已移除的程序文件；不清理录音、模型、未知文件或目录。缺少旧清单时不猜测删除；清理失败停止重启并保留清单供重试，既有升级备份仍由共享恢复流程负责。GitHub `release-build` / `release-draft` / `release-updates` 环境已配置，现有两端更新私钥尚未部署；缺少该平台密钥时在下载/构建前明确停止，不借用另一平台密钥。代码在 `windows` 分支供审查，尚未集成到 `main` 或发行；Mac 真实构建、两端正式候选安装升级与系统签名仍待验收。
 
 ### 更新发布操作
 
-1. `packaging/updates.json` 已固定对应平台的 Base64 公钥。生产私钥由 Sparkle 官方工具生成并存放于登录钥匙串账户 `io.github.rand0mgg.agentscribe.macos` / `.windows`，当前未导出；部署 CI 时分别托管为 `release-build` 环境的 `MACOS_UPDATE_PRIVATE_KEY` / `WINDOWS_UPDATE_PRIVATE_KEY`，不得进源码、构建清单、日志或普通检查。`sign_update_artifact.py` 只接受与固定公钥匹配的 32-byte seed 或 64-byte seed+public 格式。
-2. 审查并集成源码、选择新版本、固定不可变标签。Mac 运行 `scripts/build_macos.py --fetch` 后运行 `scripts/build_macos.py`，默认嵌入固定 Sparkle、更新身份、原生驱动与恢复组件。`--without-updater` 仅供开发/过渡包，不能进入订阅。Windows 在 x64 MSVC 开发命令行运行 `python scripts/build_windows.py --fetch`，再运行同一脚本生成载荷，随后运行 `python scripts/build_windows_installer.py --payload <载荷目录> --fetch`；使用完整便携 CPython、Node、锁定桌面依赖、Qt 实际 PE 依赖和许可，不能复制开发虚拟环境。两端启动探针从外部目录与干扰 PYTHONPATH 运行，要求只导入包内代码。
+1. `packaging/updates.json` 已固定对应平台的 Base64 公钥。生产私钥由 Sparkle 官方工具生成并存放于登录钥匙串账户 `io.github.rand0mgg.agentscribe.macos` / `.windows`，仍需从原钥匙串安全部署；三个发行环境已建立，仅允许 `main` 工作流并要求仓库所有者审批。部署 CI 时分别托管为 `release-build` 环境的 `MACOS_UPDATE_PRIVATE_KEY` / `WINDOWS_UPDATE_PRIVATE_KEY`，不得进源码、构建清单、日志或普通检查。`sign_update_artifact.py` 只接受与固定公钥匹配的 32-byte seed 或 64-byte seed+public 格式。
+2. 审查并集成源码、选择新版本、固定不可变标签。Mac 运行 `scripts/build_macos.py --fetch` 后运行 `scripts/build_macos.py`，默认嵌入固定 Sparkle、更新身份、原生驱动与恢复组件。`--without-updater` 仅供开发/过渡包，不能进入订阅。Windows 在 x64 MSVC 开发命令行运行 `python scripts/build_windows.py --fetch`，再运行同一脚本生成载荷，随后运行 `python scripts/build_windows_installer.py --payload <载荷目录> --fetch`；使用完整便携 CPython、Node、锁定桌面依赖、Qt 实际 PE 依赖和许可，不能复制开发虚拟环境。两端共用受 Git 跟踪的 `.py` / `.mjs` 应用文件清单完成复制与来源摘要；新增资源格式须在共享复制入口声明，本地忽略/未跟踪文件不入包。启动探针从外部目录与干扰 PYTHONPATH 运行，要求只导入包内代码。完整无音频包探针还检查窗口、WebEngine 渲染、Node/npm、venv、依赖及更新/恢复组件加载；Windows 在加入更新组件后、封装前执行，Mac 在最终 DMG 只读挂载后执行，失败不封存产物。
 3. 正式发行还需配置 Mac Developer ID / 公证与 Windows Authenticode；当前脚本未自动执行这两种系统签名，不能把更新 Ed25519 签名当作系统签名。对最终文件完成系统签名后同步构建清单摘要/字节数，再用 `scripts/sign_update_artifact.py --artifact <文件> --manifest <构建清单> --target <平台>` 签署，密钥只通过受保护环境传入；得到纯 Base64 `.dmg.ed25519` / `.exe.ed25519`。已封存文件不可再改变，修改后必须重新封存、签名和验收。
 4. 将安装包、SHA256、同名 `.build.json` 和 `.ed25519` 放入 Release 草稿；`prepare-release.yml` 会拒绝覆盖已发布 Release 和同名附件。验收下载、取消、签名篡改拒绝、断网、录音中等待、保存失败、退出资源释放、安装失败保留旧版、重新启动、启动失败恢复及数据/模型/运行环境兼容。Mac 隔离探针不是正式签名候选包，也不能替代 Windows 原生验收；只发布通过验收的平台。
 5. 配置 GitHub Pages 使用 Actions 部署，以及 `release-updates` 受保护环境。发布已验收的同一批 Release 文件后，手动触发 `publish-updates.yml`，填写固定 `tag`、`target`，仅在该平台真实升级已验收时勾选 `accepted`。首次空站点才使用 `initialize`；已有站点必须先导入整站快照，不能覆盖。工作流串行保留其他平台、其他渠道及站点文件；使用无缓存快照请求减少陈旧 CDN 快照覆盖风险。生产环境首次部署仍需核查 Pages 地址和订阅可达性。

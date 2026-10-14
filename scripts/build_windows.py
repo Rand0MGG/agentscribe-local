@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.packaging_common import (
     QT_MODULES,
     QT_PLUGIN_GROUPS,
+    copy_application,
     digest,
     extract,
     obtain,
@@ -108,7 +109,7 @@ def build(downloads):
     # Windows resolves the launcher's imports before wWinMain can set paths.
     for library in python.glob('*.dll'):
         shutil.copy2(library, payload / library.name)
-    shutil.copytree(ROOT / 'linguaflow', payload / 'linguaflow', ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+    application_files = copy_application(ROOT, payload / 'linguaflow')
     for name in ('requirements-runtime.txt', 'requirements-mlx.txt', 'THIRD_PARTY_NOTICES.md'):
         shutil.copy2(ROOT / name, payload / name)
     shutil.copy2(CONFIG / 'desktop.lock', payload / 'desktop.lock')
@@ -124,12 +125,13 @@ def build(downloads):
     for path in payload.rglob('__pycache__'):
         shutil.rmtree(path)
     version = re.search(r'__version__ = "([^"]+)"', (ROOT / 'linguaflow/__init__.py').read_text())[1]
-    sources = sorted(p for p in (ROOT / 'linguaflow').rglob('*') if p.suffix in {'.py', '.mjs'})
-    sources += sorted(p for p in CONFIG.rglob('*') if p.is_file()) + [ROOT / 'packaging/recovery.c',
+    sources = sorted(p for p in CONFIG.rglob('*') if p.is_file()) + [ROOT / 'packaging/recovery.c',
                 ROOT / 'scripts/build_windows.py', ROOT / 'scripts/packaging_common.py', ROOT / 'packaging/updates.json',
+                ROOT / 'scripts/build_windows_installer.py', ROOT / 'scripts/probe_package.py',
+                ROOT / 'scripts/probe_packaged_launcher.py',
                 ROOT / 'pyproject.toml', ROOT / 'requirements-runtime.txt', ROOT / 'requirements-mlx.txt',
                 ROOT / 'THIRD_PARTY_NOTICES.md', ROOT / 'packaging/macos/licenses.json']
-    source_files = {p.relative_to(ROOT).as_posix(): digest(p) for p in sources}
+    source_files = {**application_files, **{p.relative_to(ROOT).as_posix(): digest(p) for p in sources}}
     modified = bool(run('git', '-C', ROOT, 'status', '--porcelain', '--', *source_files,
                         capture_output=True, text=True).stdout.strip())
     manifest = dict(version=version, target='windows-x64', minimum_windows='10.0',

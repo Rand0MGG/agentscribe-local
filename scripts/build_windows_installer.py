@@ -20,6 +20,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from linguaflow import __version__
 from linguaflow.update_config import update_identity
+from scripts.probe_package import run_probe
+from scripts.probe_packaged_launcher import probe
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -123,6 +125,9 @@ def build(payload, compiler, downloads, *, fetch=False):
             if p.is_file() and p.name != "build-manifest.json"
         }
         (sealed / "build-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        # Probe the actual final payload, including the updater and its identity.
+        probe(sealed)
+        run_probe(sealed)
         subprocess.run(
             [
                 str(compiler),

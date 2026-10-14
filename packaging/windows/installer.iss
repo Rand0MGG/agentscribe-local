@@ -57,3 +57,35 @@ begin
   if not Result then
     MsgBox('请先结束录音并正常退出 AgentScribe，再安装更新。', mbInformation, MB_OK);
 end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var Previous: String;
+begin
+  Result := '';
+  if CheckForMutexes('AgentScribe.InstallationActive') then begin
+    Result := '请先结束录音并正常退出 AgentScribe，再安装更新。';
+    Exit;
+  end;
+  { Keep the existing JSON inventory, including after an interrupted retry.
+    User data and the updater's verified old-program backup are not touched. }
+  Previous := ExpandConstant('{app}\.agentscribe-previous-build.json');
+  if FileExists(ExpandConstant('{app}\build-manifest.json')) and not FileExists(Previous) then
+    if not FileCopy(ExpandConstant('{app}\build-manifest.json'), Previous, True) then
+      Result := '无法保留旧程序清单；未开始安装，请检查目录权限。';
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var Code: Integer; Previous, Parameters: String;
+begin
+  if CurStep = ssPostInstall then begin
+    Previous := ExpandConstant('{app}\.agentscribe-previous-build.json');
+    Parameters := '--python -m linguaflow.windows_install_cleanup --previous "' + Previous + '"';
+    { Use the new, already copied runtime. It reads both manifests with stdlib
+      only; failure stops relaunch and leaves the old inventory for retry. }
+    if not Exec(ExpandConstant('{app}\AgentScribe.exe'), Parameters,
+                ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, Code) then
+      RaiseException('新版程序无法验证；请保留旧版恢复材料，重试安装。');
+    if Code <> 0 then
+      RaiseException('旧程序文件清理未完成；已保留清单与恢复材料，请检查目录后重试。');
+  end;
+end;

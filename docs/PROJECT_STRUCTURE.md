@@ -36,7 +36,7 @@ requirements-*.txt    推理环境约束；桌面依赖见 pyproject.toml
 
 保留原有 `media/`、`srt/` 和评测证据。清理前检查引用与授权，不将用户数据当缓存。基准协议见 [AMI](testing/AMI_BENCHMARK.md)、[音频处理](archive/testing/AUDIO_PRESET_BENCHMARK.md)、[评分](testing/SCORING_SYSTEM.md)。
 
-当前新增的共享操作模块为 `notifications.py`、`onboarding.py`、`playback.py`、`recording_search.py` 与 `library_migration.py`；原生更新桥接为 `native_updates.py` 和 `packaging/macos/updater.m`，启动恢复由 `update_recovery.py` 共用，只将进程身份、定向退出与原子移动留在 `packaging/recovery.c`。签名身份在 `packaging/updates.json`。两端生产构建分别为 `scripts/build_macos.py` / `build_windows.py`，共用 `packaging_common.py`；Windows 再由 `build_windows_installer.py` 封装 Inno 安装器。不可变产物签名、发行草稿与整站订阅入口见 RELEASING。
+当前新增的共享操作模块为 `notifications.py`、`onboarding.py`、`playback.py`、`recording_search.py` 与 `library_migration.py`；原生更新桥接为 `native_updates.py` 和 `packaging/macos/updater.m`，启动恢复由 `update_recovery.py` 共用，只将进程身份、定向退出与原子移动留在 `packaging/recovery.c`。签名身份在 `packaging/updates.json`。两端生产构建分别为 `scripts/build_macos.py` / `build_windows.py`，共用 `packaging_common.py` 和 `probe_package.py`；`probe_macos_package.py` 保留兼容入口。Windows 再由 `build_windows_installer.py` 封装 Inno 安装器，`windows_install_cleanup.py` 仅按构建清单清理升级后的失效程序文件。不可变产物签名、发行草稿与整站订阅入口见 RELEASING。
 
 ## 文档索引
 

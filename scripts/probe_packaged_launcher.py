@@ -13,7 +13,9 @@ def probe(bundle):
     resources = bundle / 'Contents/Resources' if mac else bundle
     executable = bundle / 'Contents/MacOS/AgentScribe' if mac else bundle / 'AgentScribe.exe'
     manifest = json.loads((resources / 'build-manifest.json').read_text())
-    with tempfile.TemporaryDirectory(prefix='launcher-isolation-', dir=bundle.parent) as name:
+    work = Path(__file__).resolve().parents[1] / '.work/packaging/probes'
+    work.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='launcher-isolation-', dir=work) as name:
         foreign = Path(name)
         (foreign / 'linguaflow').mkdir()
         (foreign / 'linguaflow/__init__.py').write_text("raise RuntimeError('Loaded foreign checkout')\n")

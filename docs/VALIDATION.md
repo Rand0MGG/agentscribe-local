@@ -503,3 +503,54 @@ GitHub `37356634520` 的 Windows / Python 3.11.9 在后台保存 `QThread` 构�
 - macOS / arm64、项目 `.venv` Python 3.12.14，完整无音频回归：`.venv/bin/python scripts/test_no_audio.py -q --tb=short`，**913 passed，182.86 秒**，日志 `.work/cache/v080-main-full.log`；没有原生音频导入尝试。允许 Mac 图形会话和本机回环，未运行真实采集、播放或模型推理。
 - Ruff 全包/脚本/测试通过，暂存差异空白检查通过；应用版本与 `pyproject.toml` 均为 `0.8.0`，新增 Python/JSON 与全部工作流 YAML 解析通过。暂存源码未含大型二进制或检测到的私钥/token 模式；无关实验文件 `:memory:.ses` 保留在提交之外。
 - 本次只集成源码及发行工作流，不运行远程发行构建、不创建标签或 Release、不发布更新订阅。生产凭据/系统签名、Windows 原生构建与升级、两端真实录音/回听和长会话验收仍按 RELEASING 保留边界；913 项检查不代替这些验收。
+
+### 2026-10-14 Windows 无音频回归夹具修复
+
+基于 `7abd4c1`（0.8.0），在现有 `windows` 分支修复测试边界。Mac 系统音频来源切换用例只替换音频模块的平台视图，不再全局修改 `sys.platform`；真实测试子进程沿用宿主平台的启动和清理，避免 Windows 调用 `os.killpg`。生产音频、Mac 进程组清理和字幕流程未修改。
+
+Windows 无音频入口默认在 `.work/t-*` 创建独立短临时目录，退出后清理；显式 `--basetemp` 仍优先，Mac 默认参数不变。此前较长测试目录下的 18 项课件导入/渲染失败，在短目录专项中 52 项通过。此修复只避免普通回归人为耗尽 Windows 路径预算，不证明任意深层用户录音库或外部渲染器已具备长路径支持，不修改系统长路径设置或用户数据位置。
+
+- 环境：Windows 11 x64（10.0.26200）、项目 `.venv` Python 3.12.8。
+- 专项：`.venv\Scripts\python.exe scripts/test_no_audio.py tests/test_no_audio_runner.py tests/test_audio_macos.py tests/test_llama_platform.py tests/test_wlk_session.py -q -rs --tb=short`，**62 passed、3 skipped，10.53 秒**。覆盖 Windows/Mac 默认测试参数、两种显式临时目录参数、失败退出码、临时数据清理、音频守卫拒绝及 Mac 进程组清理模拟。
+- 全量：`.venv\Scripts\python.exe scripts/test_no_audio.py -v -rs --tb=short`，**897 passed、23 skipped，233.37 秒**，日志 `.work/cache/v080-fixed-windows-full.log`；零原生音频导入尝试。Ruff 全包/脚本/测试及差异空白检查通过。
+- 跳过项涉及 Mac 专属行为、真实符号链接权限及当前命令行不可用的 MSVC 原生恢复编译器。未进行真实采集、播放、模型推理或安装升级。Windows 模拟不能替代 Mac 原生验收；远程 Mac Python 3.11 原生菜单超时仍需目标系统定位，本轮未通过修改生产 Mac UI 猜测修复。
+
+### 2026-10-14 迁移重试与任务反馈修复
+
+同一 `windows` 工作区继续修复 0.8.0 审查中复现的问题：已复制的迁移记录只校验旧文件清单，可能漏掉后来新增的录音或目录；下载弹窗过期后，设置页任务卡片也被隐藏，无法取消；普通状态使用错误的同一通知键，可能覆盖未解决错误与详情。
+
+迁移首次复制与重试共用完整目录快照，在发布前后及重试校验后重新核对原目录；变化时停止，保留原数据，重试失败时保留已有副本。旧记录缺少目录快照时拒绝继续，并提示选择其他空目录。设置页恢复已有进度卡片及取消按钮，任务结束后隐藏，主界面通知仍自动收起。普通状态改用独立通知键，通用操作错误只通过明确清除结束，不被无关提示覆盖。Mac 旧 Windows 回环配置的错误提示改为引导重新选择原生系统音频，不再引导安装 BlackHole；未改采集实现，保留普通 CoreAudio 输入兼容。
+
+- 环境仍为 Windows 11 x64、项目 `.venv` Python 3.12.8。专项命令：`.venv\Scripts\python.exe scripts/test_no_audio.py tests/test_library_migration.py tests/test_user_workflows.py tests/test_workspace_appearance.py tests/test_audio.py -q -rs --tb=short`，**41 passed、1 skipped，30.41 秒**，日志 `.work/cache/v080-audit-fixes-targeted.log`。新增回归覆盖新增录音/文件/空目录、复制中新增文件、旧迁移记录、弹窗过期后的取消及普通消息保留错误详情。符号链接检查因本机权限跳过。
+- 完整无音频回归：`.venv\Scripts\python.exe scripts/test_no_audio.py -v -rs --tb=short`，**904 passed、23 skipped，233.40 秒**，日志 `.work/cache/v080-audit-fixes-full.log`；零原生音频导入尝试。跳过范围与上一节一致；Ruff 全包/脚本/测试和差异空白检查通过。
+- Windows 原生 Qt 隔离预览在音频守卫下通过，模拟下载、独立偏好与录音目录，未加载模型。深浅主题、1200×800 / 900×700、系统 150% 缩放截图见 `.work/browser/v080-audit-fixes/`，弹窗过期后进度与取消按钮仍显示，文字和布局已检查。预览日志 `.work/cache/v080-download-preview-native.log`，**1 passed，3.30 秒**，零原生音频导入尝试；早先 offscreen 预览字体缺字，不作为文字显示证据。
+- 修复留在本地 `windows` 分支，未提交、推送、合并或发布。没有改 Mac 原生采集与模型推理实现；共享迁移与通知仍需 Mac 实机回归，此前 Python 3.11 原生菜单超时仍未解决。不以 Windows 检查宣称 Mac、真实录音或安装升级已验收。
+
+### 2026-10-14 三项已确认缺陷修复
+
+同一 `windows` 工作区修复后续调研中独立复现的三项问题。迁移重试复用首次迁移的目标库身份/索引检查，拒绝生成的文件夹标识缺失、损坏或改变的副本，保留两端数据。保存复用已有 `save_target_state`，普通补存继承失败的 `complete` / `incomplete` 目标；较旧保存结果不能清除较新的完成目标，重置视图时清理该目标。更新取消或失败后，沿用既有关闭任务和取消标记，在关闭线程完成前保持操作限制，完成后重建已关闭的共享运行环境并恢复；阻止期间重新检查/确认安装及取消后的迟到安装请求。
+
+本次没有新增配置、依赖或平台专属流程，没有修改原生音频、模型推理、Sparkle / WinSparkle 适配实现或数据格式。主要代价是取消更新准备后仍需等待已开始的资源关闭完成，避免恢复使用后旧任务关闭正在使用的运行环境。
+
+- 环境：Windows 11 x64（10.0.26200）、项目 `.venv` Python 3.12.8。新增回归的前 8 项在生产修复前均失败，日志 `.work/cache/three-confirmed-before.log`；随后补充旧自动保存结果与新完成目标交错的用例，共新增 9 项回归。
+- 专项：`.venv\Scripts\python.exe scripts/test_no_audio.py tests/test_user_workflows.py tests/test_library_migration.py tests/test_recording_save.py tests/test_runtime_preparation.py tests/test_audio_macos.py -q -rs --tb=short`，**93 passed、1 skipped，40.85 秒**，日志 `.work/cache/three-confirmed-shared.log`；符号链接检查因本机权限跳过，零原生音频导入尝试。覆盖三种目标标识变化、两种完成状态的失败补存、旧保存结果交错、用户取消/原生取消/原生错误与运行环境锁竞争，以及迟到安装请求。
+- 完整无音频回归：`.venv\Scripts\python.exe scripts/test_no_audio.py -v -rs --tb=short`，**913 passed、23 skipped，247.97 秒**，日志 `.work/cache/three-confirmed-full.log`；零原生音频导入尝试。跳过项仍为 Mac 专属行为、真实符号链接权限及当前命令行不可用的原生恢复编译器。Ruff 全包/脚本/测试与差异空白检查通过。
+- 本轮没有真实采集、播放、模型推理或原生安装升级；Mac 仍需实测共享迁移、停止后保存及更新准备取消/失败后的恢复，不以 Windows 模拟代替验收。此前 Mac Python 3.11 原生菜单超时仍未解决。已有未提交工作保留，修复仍在本地 `windows` 分支，未提交、推送、合并或发布。
+
+### 2026-10-14 两端自动打包边界与探针修复
+
+同一 `windows` 工作区修复打包审查发现的问题。两端构建共用受 Git 跟踪的 `.py` / `.mjs` 应用文件清单，复制和来源摘要使用同一清单，拒绝缺失文件、目录映射与未声明的资源格式；本地忽略/未跟踪文件不入包。已复现的“忽略 `.env` 被打包但源码仍标为未修改”在实际 Windows 构建函数的隔离回归中修复，依赖下载与编译在该回归中模拟。
+
+原有 Mac 完整包探针收敛到共享 `probe_package.py`，旧命令入口保留。Windows 在加入更新/恢复组件和身份配置后验证最终载荷；Mac 在最终 DMG 只读挂载后验证，失败仍卸载镜像，挂载/卸载有超时，验证失败不封存输出。探针隔离用户目录、偏好和 PATH，检查窗口、WebEngine、Node/npm、venv、SDK/依赖及更新/恢复导出。原生启动器替换 PYTHONPATH 后，探针在应用导入前显式安装音频守卫，子进程继承守卫文件；不调用普通应用入口、设备或模型推理。
+
+Windows 安装清理只复用旧 JSON 构建清单和现有摘要函数，不复制 Mac 替换流程或添加用户设置。新载荷整体校验后，仅删除旧清单中的、仍与原摘要一致的失效程序文件；大小写别名、越界路径、目录映射、旧代码被修改和 IO 失败均有回归。录音、模型、未知文件保留，失败保留旧清单供重试并阻止重启；缺少旧清单时不猜测清理。源码尚未提交，正式旧包到新包的安装恢复仍待实测。
+
+- 环境：Windows 11 x64（10.0.26200）、项目 `.venv` Python 3.12.8。新增 30 项回归；相关命令 `.venv\Scripts\python.exe scripts/test_no_audio.py tests/test_packaging.py tests/test_update_distribution.py tests/test_packaged_node.py -q -rs --tb=short`，**50 passed，1.92 秒**，日志 `.work/reports/packaging-fixes-20261014/targeted-final.log`。Mac 镜像挂载/卸载和包启动器在测试中模拟，不能作为 Mac 原生验收。
+- 最终完整无音频回归：`.venv\Scripts\python.exe scripts/test_no_audio.py -v -rs --tb=short`，**943 passed、23 skipped，261.85 秒**，日志 `.work/reports/packaging-fixes-20261014/full-final.log`；零原生音频导入尝试。跳过范围仍为 Mac 专属行为、真实符号链接权限和当前测试 shell 未配置的 MSVC 原生恢复编译器。Ruff 全包/脚本/测试、工作流 YAML 解析与差异空白检查通过。
+- 实际安装脚本由官方 Inno Setup 6.7.1 成功原生编译，载荷仅为不可执行文本夹具，未执行生成的安装器。工具使用官方 portable 模式放在 `.work/tools/inno-6.7.1/`，没有注册文件关联、快捷方式或卸载项；下载 SHA256 与官方固定 Release 元数据一致。日志 `.work/reports/packaging-fixes-20261014/native-compile.log`。编译不等于真实程序安装/升级验收。
+- GitHub 三个发行环境已建立并复核：`release-build` / `release-draft` / `release-updates`，只允许 `main` 工作流，由仓库所有者审批。工作流提前检查所选平台密钥，缺失时停止；不因 Mac 密钥为空借用 Windows 密钥。用户当前无法访问保存现有私钥的 Mac，因此密钥部署仍待办，未读取/导出私钥、修改生产公钥、触发构建或发布订阅。
+- 已保留原有未提交工作，本轮修复仍在本地 `windows` 分支，未提交、推送、合并或发布。没有改变 Mac 音频、GPU 推理或 Sparkle 替换逻辑；Mac 真实构建/挂载/窗口探针、两端正式候选安装升级、系统签名与公证仍未验收。
+
+### 2026-10-14 Windows 分支提交范围
+
+用户随后授权提交并推送现有 `windows` 分支，上文“未提交/推送”描述各轮验证完成时的状态。此次范围包括 Windows 无音频夹具、迁移重试、保存终态、通知/取消入口、更新取消竞态，以及两端打包边界、最终载荷探针和 Windows 升级清理。版本保持 `0.8.0`，完整检查采用上一节 943 项通过的最终代码；提交或推送不代表已合入 `main`、同步到 `mac`、完成 Mac 原生验收或发布安装包。原有私钥部署及正式安装升级缺口继续保留。
