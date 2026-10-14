@@ -44,6 +44,71 @@ def test_retry_completed_copy_before_preference_commit(tmp_path):
     assert verified
 
 
+@pytest.mark.parametrize('change', ['missing', 'invalid', 'changed'])
+def test_retry_checks_generated_folder_identity_before_committing(tmp_path, change):
+    source = Library(tmp_path / 'old')
+    folder = source.root / '手工文件夹'
+    folder.mkdir()
+    source.refresh()
+    identifier = next(row['id'] for row in source.index['folders'] if row['name'] == folder.name)
+    item = source.create(identifier, {}, '课堂')
+    original = source.directory(item['id']) / '录音.wav'
+    original.write_bytes(b'fixture PCM')
+    copied, _ = migrate_library(source, tmp_path / 'new')
+    marker = copied.directory(identifier) / Library.folder_file
+    assert not (folder / Library.folder_file).exists()
+    if change == 'missing':
+        marker.unlink()
+    else:
+        marker.write_text('{"id":"invalid"}' if change == 'invalid' else '{"id":"' + 'a' * 32 + '"}',
+                          encoding='utf-8')
+    with pytest.raises(ValueError, match='索引不完整'):
+        migrate_library(source, copied.root)
+    assert original.read_bytes() == b'fixture PCM'
+    assert (copied.root / folder.name / '课堂' / '录音.wav').read_bytes() == b'fixture PCM'
+    assert (copied.root / '.agentscribe-migration.json').is_file()
+
+
+@pytest.mark.parametrize('addition', ['file', 'directory', 'recording'])
+def test_retry_rejects_source_entries_added_after_copy(tmp_path, addition):
+    source, item, _ = populated(tmp_path / 'old')
+    copied, _ = migrate_library(source, tmp_path / 'new')
+    if addition == 'recording':
+        new = source.create('inbox', {}, '新增录音')
+        path = source.directory(new['id'])
+    else:
+        path = source.root / '新增资料'
+        path.write_text('new material') if addition == 'file' else path.mkdir()
+    with pytest.raises(ValueError, match='原目录内容已变化'):
+        migrate_library(source, copied.root)
+    assert path.exists() and source.load(item)[1][0].source == 'original'
+    assert copied.load(item)[1][0].source == 'original'
+
+
+def test_addition_during_copy_prevents_publication(tmp_path):
+    source, item, _ = populated(tmp_path / 'old')
+    target = tmp_path / 'new'
+    def progress(_):
+        (source.root / '新增资料.txt').write_text('keep new material')
+    with pytest.raises(OSError, match='原目录内容在迁移时发生变化'):
+        migrate_library(source, target, progress=progress)
+    assert not list(target.iterdir())
+    assert source.load(item)[1][0].source == 'original'
+    assert (source.root / '新增资料.txt').is_file()
+
+
+def test_legacy_journal_cannot_prove_complete_directory_copy(tmp_path):
+    import json
+    source, _, _ = populated(tmp_path / 'old')
+    copied, _ = migrate_library(source, tmp_path / 'new')
+    journal = copied.root / '.agentscribe-migration.json'
+    record = json.loads(journal.read_text())
+    record.pop('directories')
+    journal.write_text(json.dumps(record))
+    with pytest.raises(ValueError, match='迁移记录不完整'):
+        migrate_library(source, copied.root)
+
+
 def test_cancel_halfway_leaves_originals_and_empty_destination(tmp_path):
     source, item, _ = populated(tmp_path / 'old')
     cancelled = [False]

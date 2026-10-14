@@ -119,6 +119,52 @@ w.close()
 ''',tmp_path)
 
 
+def test_download_cancel_remains_available_after_popup_expires(tmp_path):
+    run_ui('''
+from types import SimpleNamespace
+import linguaflow.notifications as feedback
+w.show();settle_geometry(w)
+manager=w.model_manager
+cancelled=[]
+manager.worker=SimpleNamespace(cancel=lambda:cancelled.append(True))
+manager.cancel_button.setEnabled(True);manager.cancel_button.show()
+w.on_preparation_changed(True)
+w.on_download_progress({'completed':1,'total':100,'unit':'B'})
+w.notifications.notices['preparation'].expires=feedback.time.monotonic()-1
+w.on_download_progress({'completed':2,'total':100,'unit':'B'})
+assert w.notifications.isHidden()
+before=w.pages.geometry()
+w.open_settings('模型管理');settle_geometry(w)
+assert manager.download_card.isVisible() and manager.cancel_button.isVisible()
+manager.cancel_button.click();assert cancelled==[True]
+w.leave_settings();settle_geometry(w);assert not manager.download_card.isVisible()
+assert w.pages.geometry()==before
+manager.worker=None
+w.on_preparation_changed(False)
+w.open_settings('模型管理');app.processEvents()
+assert manager.download_card.isHidden()
+w.close()
+''',tmp_path)
+
+
+def test_normal_status_and_attention_preserve_unresolved_operation_error(tmp_path):
+    run_ui('''
+w.show();settle_geometry(w)
+w.show_warning('保存失败','原始错误详情')
+center=w.notifications
+center.notices['operation'].expires=time.monotonic()-1
+w.status.setText('普通状态消息')
+center.post('operation','请先选择录音',kind='attention')
+assert center.notices['operation'].kind=='error'
+assert center.notices['operation'].details=='原始错误详情'
+assert center.notices['status'].text=='普通状态消息'
+center.clear('operation')
+center.post('operation','操作完成',kind='success')
+assert center.notices['operation'].kind=='success'
+w.close()
+''',tmp_path)
+
+
 def test_startup_guidance_checks_models_before_opening_and_ignores_old_completion(tmp_path):
     run_ui('''
 checks=[]
@@ -278,6 +324,112 @@ w.start(models_checked=True); assert w.session is None
 released.set(); wait(lambda:bool(installed))
 assert w.native_updater.ready.is_set()
 w.native_updater.installing=False; w.runtime=None; w.close()
+''', tmp_path)
+
+
+@pytest.mark.parametrize('final_state', ['complete', 'incomplete'])
+def test_library_operation_retries_failed_final_state(tmp_path, final_state):
+    run_ui('''
+from linguaflow.core import Caption
+w.show();settle_geometry(w)
+assert w.new_recording(name='保存恢复',check_models=False)
+w.library.begin(w.current_item,{})
+w.on_caption(Caption(1,0,1,'keep caption','en',final=True))
+original_save=w.library.save
+failed=[]
+def save(item,captions,state=None):
+    if state==FINAL_STATE and not failed:
+        failed.append(True)
+        raise OSError('transient disk failure')
+    return original_save(item,captions,state)
+w.library.save=save
+assert not w.persist_session(FINAL_STATE)
+assert w.save_target_state==FINAL_STATE and w.session_dirty
+assert w.can_edit_library()
+observed=(w.current_item['state'],w.save_target_state,w.session_dirty,
+          w.library.load(w.current_item)[0]['session']['state'])
+captions=w.library.load(w.current_item)[1]
+w.close();wait(lambda:not w.isVisible())
+assert observed==(FINAL_STATE,None,False,FINAL_STATE),observed
+assert captions[0].source=='keep caption'
+'''.replace('FINAL_STATE', repr(final_state)), tmp_path)
+
+
+@pytest.mark.parametrize('event', ['cancel', 'cancelled', 'error'])
+def test_update_abandonment_waits_for_runtime_shutdown_and_recovers(tmp_path, event):
+    run_ui('''
+from linguaflow.runtime_preparation import RuntimePreparation
+w.show();settle_geometry(w)
+wait(lambda:not w.background_checks)
+runtime=RuntimePreparation()
+w.runtime=runtime
+w.native_updater.installed=True
+observations=[]
+try:
+    with runtime.lock:
+        w.try_install_update()
+        observations.append(w.update_fenced and w.native_updater.shutdown_job is not None)
+        if EVENT=='cancel':
+            w.native_updater.cancel()
+        else:
+            w.native_updater.event.emit({'stage':EVENT,'text':'fixture update abandoned'})
+        observations.append(w.update_fenced and w.model_manager.update_fenced)
+        observations.append(not w.start_button.isEnabled())
+        w.native_updater.confirm_install()
+        observations.append(not w.native_updater.pending)
+        observations.append(not w.native_updater.check())
+finally:
+    wait(lambda:w.native_updater.shutdown_job is None)
+new_runtime=w.runtime
+observations.append(new_runtime is not runtime and not new_runtime.closed)
+observations.append(not w.update_fenced and not w.model_manager.update_fenced)
+observations.append(w.start_button.isEnabled() and w.library_tree.isEnabled())
+observations.append(not w.native_updater.ready.is_set() and not w.native_updater.installing)
+# A native shutdown request queued before cancellation must not revive it.
+w.native_updater.request_install.emit();app.processEvents()
+observations.append(not w.native_updater.pending and not w.update_fenced)
+w.native_updater.installed=False
+w.close();wait(lambda:not w.isVisible())
+assert all(observations),observations
+'''.replace('EVENT', repr(event)), tmp_path)
+
+
+def test_older_auto_save_cannot_clear_pending_final_state(tmp_path):
+    run_ui('''
+from dataclasses import replace
+from threading import Event
+from linguaflow.core import Caption
+w.show();settle_geometry(w)
+assert w.new_recording(name='最终保存排队',check_models=False)
+w.library.begin(w.current_item,{})
+caption=Caption(1,0,1,'first','en',final=True)
+w.on_caption(caption);w.autosave.stop()
+original_save=w.library.save
+initial_started,initial_release,final_started,final_release=Event(),Event(),Event(),Event()
+calls=[]
+def save(item,captions,state=None):
+    calls.append(state)
+    if len(calls)==1:
+        initial_started.set();assert initial_release.wait(5)
+    elif len(calls)==2:
+        final_started.set();assert final_release.wait(5)
+    return original_save(item,captions,state)
+w.library.save=save
+try:
+    w.queue_session_save();wait(initial_started.is_set)
+    w.queue_session_save('complete')
+    initial_release.set();wait(final_started.is_set)
+    observed=(w.save_target_state,w.session_dirty)
+    w.on_caption(replace(caption,source='latest',revision=2));w.autosave.stop()
+    w.queue_session_save()
+finally:
+    initial_release.set();final_release.set()
+    wait(lambda:not w.recording_saver.busy)
+saved=w.library.load(w.current_item)
+w.close();wait(lambda:not w.isVisible())
+assert observed==('complete',True),observed
+assert calls==[None,'complete','complete'],calls
+assert saved[0]['session']['state']=='complete' and saved[1][0].source=='latest'
 ''', tmp_path)
 
 

@@ -29,7 +29,7 @@ class FeedbackLabel(QLabel):
             return
         super().setText(text)
         if text:
-            self.center.post('operation', text)
+            self.center.post('status', text)
 
     def setVisible(self, visible):
         super().setVisible(False)
@@ -103,6 +103,10 @@ class NotificationCenter(QFrame):
 
     def post(self, key, text, *, kind='info', action=None, action_text='', progress=None, details=''):
         previous = self.notices.get(key)
+        # Only the owning operation can explicitly clear its unresolved error.
+        # A generic status/attention message is not evidence that it succeeded.
+        if key == 'operation' and previous and previous.kind == 'error' and kind != 'error':
+            return
         if previous and (previous.text, previous.kind, previous.progress, previous.details,
                          previous.action_text, previous.action is not None) == (
                          text, kind, progress, details, action_text, action is not None):

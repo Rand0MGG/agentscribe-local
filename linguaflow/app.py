@@ -940,8 +940,7 @@ class Window(QMainWindow):
         self.notifications.post('onboarding', '模型正在后台准备，完成后可开始聆听。')
 
     def on_preparation_message(self, text):
-        self.model_manager.download_card.hide()
-        self.model_manager.status.hide()
+        self.model_manager.download_card.setVisible(self.model_manager.preparing)
         error = any(word in text for word in ('未完成', '失败'))
         self.notifications.post('preparation', '模型或环境准备失败，请重试。' if error else
                                 '正在准备本地模型与组件' if self.model_manager.preparing else text,
@@ -952,6 +951,7 @@ class Window(QMainWindow):
                                 action_text='取消' if self.model_manager.preparing else '模型管理')
 
     def on_download_progress(self, event):
+        self.model_manager.download_card.setVisible(self.model_manager.preparing)
         done, total = event.get('completed', 0), event.get('total')
         known = isinstance(total, (int, float)) and total > 0 and event.get('unit') != 'stage'
         self.notifications.post('preparation', '正在下载模型' if event.get('unit') == 'B' else '正在准备本地组件',
@@ -959,8 +959,7 @@ class Window(QMainWindow):
                                 action=self.model_manager.cancel_preparation, action_text='取消')
 
     def on_preparation_changed(self, active):
-        self.model_manager.download_card.hide()
-        self.model_manager.status.hide()
+        self.model_manager.download_card.setVisible(active)
         if not active:
             text = self.model_manager.status.text()
             if any(word in text for word in ('未完成', '失败')):
@@ -1100,14 +1099,13 @@ class Window(QMainWindow):
             # Acknowledging an error must not erase its recovery information.
             return
         if stage in ('error', 'cancelled'):
-            self.update_fenced = False
-            self.model_manager.update_fenced = False
             self.native_updater.pending = False
             self.native_updater.installing = False
             self.native_updater.ready.clear()
-            self.set_recording_state(self.recording_state)
-            if self.runtime is not None and self.runtime.closed:
-                self.runtime = RuntimePreparation()
+            # A cancelled release may still be waiting for the runtime lock.
+            # Keep its gate until the owning shutdown thread has finished.
+            if self.native_updater.shutdown_job is None:
+                self.restore_after_update()
         kinds = {'checking': 'progress', 'downloading': 'progress', 'verifying': 'progress',
                  'installing': 'progress', 'available': 'attention', 'ready': 'attention',
                  'error': 'error', 'native': 'attention', 'informational': 'attention'}
@@ -1172,10 +1170,21 @@ class Window(QMainWindow):
         self.notifications.post('update', '已取消等待，下载的更新可稍后安装。', kind='success')
 
     def on_update_runtime_released(self, error):
+        if not self.native_updater.pending:
+            self.restore_after_update()
+            return
         if error:
             self.native_updater.event.emit({'stage': 'error', 'text': '更新准备失败，当前版本保留。', 'details': error})
             return
         self.native_updater.install()
+
+    def restore_after_update(self):
+        """Resume normal use only after the updater no longer owns shutdown work."""
+        if self.runtime is not None and self.runtime.closed:
+            self.runtime = RuntimePreparation()
+        self.update_fenced = False
+        self.model_manager.update_fenced = False
+        self.set_recording_state(self.recording_state)
 
     def start_background_check(self, module, callback, *arguments):
         from .ui_checks import BackgroundCheck
@@ -1405,6 +1414,11 @@ class Window(QMainWindow):
     def queue_session_save(self, state=None):
         if not self.current_item or self.loading_saved or (not self.session_dirty and state is None):
             return
+        # Ordinary retries must retain the terminal state that failed to save.
+        if state is not None:
+            self.save_target_state = state
+        else:
+            state = self.save_target_state
         token = (self.save_generation, self.current_item['id'])
         self.recording_saver.submit(self.library.save, token, self.caption_version,
                                    self.current_item, self.captions.values(), state)
@@ -1415,13 +1429,14 @@ class Window(QMainWindow):
         if error:
             self.session_dirty = True
             self.save_error = error
-            self.save_target_state = snapshot.state
+            self.save_target_state = self.save_target_state or snapshot.state
             self.update_activity()
             return
         self.current_item['state'] = state
         if self.knowledge_client.identifier == self.current_item['id']:
             self.knowledge_client.saved(snapshot.captions, final=state in ('complete', 'incomplete'))
-        if snapshot.revision == self.caption_version:
+        if (snapshot.revision == self.caption_version
+                and (self.save_target_state is None or state == self.save_target_state)):
             self.session_dirty = False
             self.save_error = ''
             self.save_target_state = None
@@ -1467,6 +1482,7 @@ class Window(QMainWindow):
         self.close_recording_button.hide()
         self.session_dirty = False
         self.save_error = ''
+        self.save_target_state = None
         self.status.setToolTip('')
         self.update_activity()
         self.clear_captions()

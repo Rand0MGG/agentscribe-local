@@ -38,7 +38,7 @@ def capture(settings, stop, on_block):
         capture_system_audio(settings, stop, on_block)
         return
     if sys.platform == "darwin" and settings.loopback:
-        raise RuntimeError("macOS 不支持 Windows 系统回环录音，请选择已配置的 BlackHole 输入。")
+        raise RuntimeError("macOS 不支持 Windows 系统回环配置，请在音频来源中重新选择“系统音频 · 电脑声音”；macOS 13 以下请选择已配置的音频输入。")
     import soundcard as sc
 
     # Resolve inside the capture thread; native audio handles stay thread-local.

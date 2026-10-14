@@ -21,6 +21,32 @@ def checksum(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
+def library_entries(root, cancelled):
+    """Snapshot all user entries, rejecting mappings and excluding process-owned locks."""
+    directories, files = [], {}
+    for path in sorted(root.rglob('*')):
+        if cancelled():
+            raise MigrationCancelled('迁移已取消，原录音保留。')
+        if path.is_symlink() or (hasattr(path, 'is_junction') and path.is_junction()):
+            raise ValueError('保存目录包含快捷映射，请移除映射后重试；原文件未修改。')
+        if path.name in ('.recording.lock', '.knowledge.lock', '.library-migration.lock', '.agentscribe-migration.json'):
+            continue
+        relative = path.relative_to(root)
+        if path.is_dir():
+            directories.append(relative)
+        elif path.is_file():
+            files[relative] = path.stat().st_size
+    return directories, files
+
+
+def checked_library_copy(source, target):
+    """Keep folder/recording identities intact before committing either copy path."""
+    library = Library(target)
+    if set(source.paths) - set(library.paths):
+        raise ValueError('新目录中的录音索引不完整，原目录仍保留。')
+    return library
+
+
 def migrate_library(source, destination, *, cancelled=lambda: False, progress=lambda value: None):
     """Copy the complete library, including trash/materials, without overwriting.
 
@@ -39,6 +65,10 @@ def migrate_library(source, destination, *, cancelled=lambda: False, progress=la
         saved = json.loads(journal.read_text(encoding='utf-8'))
         if saved.get('source') == str(root) and saved.get('state') == 'copied':
             verified = saved['verified']
+            directories, current_files = library_entries(root, cancelled)
+            if (set(current_files) != {Path(relative) for relative, _ in verified}
+                    or saved.get('directories') != [str(relative) for relative in directories]):
+                raise ValueError('原目录内容已变化或迁移记录不完整，请选择其他空目录；原文件和副本均保留。')
             for relative, digest in verified:
                 relative = Path(relative)
                 if relative.is_absolute() or '..' in relative.parts:
@@ -47,7 +77,9 @@ def migrate_library(source, destination, *, cancelled=lambda: False, progress=la
                     raise MigrationCancelled('迁移已取消，原录音保留。')
                 if checksum(target / relative) != digest or checksum(root / relative) != digest:
                     raise ValueError('迁移副本或原文件已变化，请选择其他空目录。')
-            return Library(target), [(Path(relative), digest) for relative, digest in verified]
+            if library_entries(root, cancelled) != (directories, current_files):
+                raise ValueError('原目录内容在校验时发生变化，请选择其他空目录；原文件和副本均保留。')
+            return checked_library_copy(source, target), [(Path(relative), digest) for relative, digest in verified]
     if any(target.iterdir()):
         raise ValueError('新目录已有文件。请选择空目录，已有内容不会被覆盖。')
     stage = target / ('.agentscribe-migration-' + uuid4().hex)
@@ -60,17 +92,10 @@ def migrate_library(source, destination, *, cancelled=lambda: False, progress=la
 
     try:
         check()
-        for path in sorted(root.rglob('*')):
-            check()
-            if path.is_symlink() or (hasattr(path, 'is_junction') and path.is_junction()):
-                raise ValueError('保存目录包含快捷映射，请移除映射后重试；原文件未修改。')
-            relative = path.relative_to(root)
-            if path.name in ('.recording.lock', '.knowledge.lock', '.library-migration.lock', '.agentscribe-migration.json'):
-                continue  # Ownership belongs to the running process, never to a copied lock.
-            if path.is_dir():
-                (stage / relative).mkdir(parents=True, exist_ok=True)
-            elif path.is_file():
-                files.append((relative, path.stat().st_size))
+        directories, snapshot_files = library_entries(root, cancelled)
+        for relative in directories:
+            (stage / relative).mkdir(parents=True, exist_ok=True)
+        files = list(snapshot_files.items())
         total = sum(size for _, size in files)
         if shutil.disk_usage(target).free < total + 1024**2:
             raise OSError('新位置的磁盘空间不足，请释放空间或选择其他目录。')
@@ -106,6 +131,8 @@ def migrate_library(source, destination, *, cancelled=lambda: False, progress=la
             check()
             if checksum(root / relative) != digest:
                 raise OSError('原文件在校验后发生变化，迁移未完成；原录音保留。')
+        if library_entries(root, cancelled) != (directories, snapshot_files):
+            raise OSError('原目录内容在迁移时发生变化，迁移未完成；原录音保留。')
         check()
         if any(path != stage for path in target.iterdir()):
             raise FileExistsError('新目录已出现其他文件，迁移停止；已有内容未覆盖。')
@@ -142,10 +169,11 @@ def migrate_library(source, destination, *, cancelled=lambda: False, progress=la
                         raise OSError('迁移副本校验失败，原录音保留。')
                     continue
             published.append(final)
-        library = Library(target)
-        if set(source.paths) - set(library.paths):
-            raise ValueError('新目录中的录音索引不完整，原目录仍保留。')
+        library = checked_library_copy(source, target)
+        if library_entries(root, cancelled) != (directories, snapshot_files):
+            raise OSError('原目录内容在迁移时发生变化，迁移未完成；原录音保留。')
         Library._write(journal, {'source': str(root), 'state': 'copied',
+                                'directories': [str(relative) for relative in directories],
                                 'verified': [(str(relative), digest) for relative, digest in verified]})
         progress(100.)
         return library, verified

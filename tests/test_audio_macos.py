@@ -114,14 +114,16 @@ def test_cancelled_start_stops_a_late_native_stream(monkeypatch):
 
 @pytest.mark.parametrize('paused', [False, True])
 def test_system_audio_source_switch_uses_shared_session_and_saves_pcm(monkeypatch, tmp_path, paused):
-    import sys
     import wave
 
     from test_wlk_session import PROGRAM, execute
 
+    from linguaflow import audio
     from linguaflow.audio import MAC_SYSTEM_AUDIO, capture
 
-    monkeypatch.setattr(sys, 'platform', 'darwin')
+    # Simulate the audio adapter only: the real worker still belongs to the
+    # host OS and must keep its native spawn and process-tree cleanup behavior.
+    monkeypatch.setattr(audio, 'sys', SimpleNamespace(platform='darwin'))
     _, stream, removed, _, _, _ = fixture_native(monkeypatch, chunks=[np.full(4800, .25)])
     received = Event()
     phase, pause_events = [], []

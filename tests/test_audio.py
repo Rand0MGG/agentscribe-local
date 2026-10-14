@@ -65,7 +65,7 @@ def test_cancelled_capture_never_imports_audio(monkeypatch):
 def test_mac_rejects_windows_loopback_before_importing_audio(monkeypatch):
     monkeypatch.setattr(sys, 'platform', 'darwin')
     monkeypatch.setitem(sys.modules, 'soundcard', None)
-    with pytest.raises(RuntimeError, match='BlackHole'):
+    with pytest.raises(RuntimeError, match='系统音频 · 电脑声音'):
         capture(Settings('test', loopback=True), Event(), lambda block: None)
 
 

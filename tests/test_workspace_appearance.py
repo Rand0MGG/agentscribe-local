@@ -64,7 +64,7 @@ def action():
     assert release.wait(3)
     return '完成'
 manager.prepare(action)
-assert manager.status.isHidden() and manager.download_card.isHidden()
+assert manager.download_card.isVisible() and manager.cancel_button.isVisible()
 assert w.notifications.notices[w.notifications.current_key].kind == 'progress'
 ticks=[]
 def advance():

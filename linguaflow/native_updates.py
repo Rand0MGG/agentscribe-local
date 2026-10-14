@@ -82,7 +82,7 @@ class NativeUpdater(QObject):
             return False
 
     def check(self, *, manual=True):
-        if self.active or self.pending or self.installing:
+        if self.active or self.pending or self.installing or self.shutdown_job is not None:
             return False
         if not self.initialize():
             self.event.emit({'stage': 'error', 'text': '此安装包尚未配置应用内更新，请安装含更新器的过渡版本。',
@@ -98,14 +98,20 @@ class NativeUpdater(QObject):
     def _observe(self, event):
         if event.get('stage') in ('latest', 'error', 'cancelled', 'installed'):
             self.active = False
-        if event.get('stage') in ('error', 'cancelled') and self.recovery:
-            self.recovery.cancel()
+        if event.get('stage') in ('error', 'cancelled'):
+            self.cancelled.set()
+            if self.recovery:
+                self.recovery.cancel()
 
     def _requested(self):
+        if self.shutdown_job is not None or self.cancelled.is_set():
+            return
         self.pending = True
         self.event.emit({'stage': 'waiting', 'text': '录音与文件保存完成后可重启更新。'})
 
     def confirm_install(self):
+        if self.shutdown_job is not None:
+            return
         self.cancelled.clear()
         self.pending = True
         self.request_install.emit()
