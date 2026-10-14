@@ -554,3 +554,16 @@ Windows 安装清理只复用旧 JSON 构建清单和现有摘要函数，不复
 ### 2026-10-14 Windows 分支提交范围
 
 用户随后授权提交并推送现有 `windows` 分支，上文“未提交/推送”描述各轮验证完成时的状态。此次范围包括 Windows 无音频夹具、迁移重试、保存终态、通知/取消入口、更新取消竞态，以及两端打包边界、最终载荷探针和 Windows 升级清理。版本保持 `0.8.0`，完整检查采用上一节 943 项通过的最终代码；提交或推送不代表已合入 `main`、同步到 `mac`、完成 Mac 原生验收或发布安装包。原有私钥部署及正式安装升级缺口继续保留。
+
+### 2026-10-14 安装包与运行目录清理修复（Mac 工作区，两端共享）
+
+基于 `f619550`，在现有 `mac` 工作区修复前一轮独立复现的打包与清理缺陷。两端构建按固定清单和 SHA256 逐文件复制许可证，不再复制整个下载目录；模拟 Windows 实际构建函数确认忽略的本机文件及额外许可证目录文件不入包。NumPy/SciPy 测试目录从新载荷移除，保留运行辅助模块、数据集和许可证。完整包探针等待窗口接受关闭及自有 Qt 检查完成，并保存/检查 stdout/stderr；运行中对象被销毁或绘制错误即使退出码为零也失败。
+
+Python、llama 和课件组件在成功验证后记录新槽位的完整内容摘要，槽位必须独占创建，拒绝采用已存在目录。正常连续准备保留当前与最近回退两份；Python 另保留当前及旧程序备份仍需要的兼容项，发布重连的保留链后才清理更旧槽位。增加的用户文件、改变的依赖、未知旧槽位、映射、在用目录与无法确认的恢复依赖均保留；Windows 查询显式使用 UTF-8，3.11 的 reparse 映射也受保护。没有扫描/清理用户录音、模型、自选目录、共享基础 Python 或下载缓存；来源不明的历史目录不能计作已安全清除。
+
+- 环境：macOS 26.6.2、Apple Silicon arm64，源码 `.venv` Python 3.12.14，包内 Python 3.12.15 / Qt 6.11.2 / Node 22.23.0。未访问音频设备、加载推理模型或修改系统设置。
+- 核心修复后的完整无音频回归在可访问桌面服务的环境执行，**998 passed，207.87 秒**，零原生音频导入尝试；日志 `.work/reports/package-fixes-20261014/full-desktop.log`。最初受限环境 **17 failed / 981 passed**，涉及图形会话、本地端口及原生菜单进程异常退出；相同环境没有重复运行，随后桌面环境检查全部通过，原日志保留。
+- 最终补充 Windows Unicode 查询、缺失回退/异常链接保护后的专项：`scripts/test_no_audio.py tests/test_runtime_cleanup.py tests/test_runtime_maintenance.py tests/test_packaging.py tests/test_architecture.py tests/test_installation.py tests/test_update_recovery.py tests/test_update_distribution.py tests/test_runtime_base.py -q -rs --tb=short`，**154 passed，2.68 秒**，零原生音频导入尝试；日志 `.work/reports/package-fixes-20261014/final-targeted.log`。Ruff 与差异空白检查通过。模拟两端连续准备 5 次、旧程序兼容环境回退、内容/目录映射/进程/元数据异常、清单发布失败、目录名称碰撞和额外录音/模型保留均覆盖；模拟 Windows 不代表 Windows 实机验收。
+- 最终 Mac 验证 DMG 从当前未提交源码构建，`source_modified=true`，仅供本次检查。镜像校验、临时签名完整性、隔离原生启动、窗口、网页渲染、Node/npm、venv、依赖一致性、更新/恢复导出及完整退出通过；无音频访问和进程销毁警告。源码逐文件摘要与最终候选一致，374 个许可证文件没有额外夹带。证据 `.work/packaging/probes/package-268qjhbr/`，构建日志 `.work/reports/package-fixes-20261014/build-macos-sealed.log`。
+- 应用常规文件从 **897,110,657 bytes** 降至 **872,908,058 bytes**；DMG 从 **316,130,299 bytes** 降至 **309,376,885 bytes**。最终 DMG SHA256：`126795dac8366449b65683ca29140b83aef89ca19cc956bfb0174666f8a95ab1`。原验证包留在 `.work/reports/package-fixes-20261014/baseline/`；本轮没有覆盖已发布附件。
+- Windows 构建、许可证复制、测试裁剪、组件与环境清理以及最终载荷退出检查共用这些修复。没有 Windows 实机，不宣称原生安装、卸载、连续升级、断电/磁盘满和系统签名已验收。Mac 也未完成正式签名/公证候选的旧包升级验收。源码修复尚未提交/推送/合入主线；版本仍为 `0.8.0`，不创建标签、Release 或更新订阅。

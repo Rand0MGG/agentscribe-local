@@ -20,10 +20,12 @@ from scripts.packaging_common import (
     QT_MODULES,
     QT_PLUGIN_GROUPS,
     copy_application,
+    copy_notices,
     digest,
     extract,
     obtain,
     python_notices,
+    trim_dependency_tests,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -99,6 +101,7 @@ def build(downloads):
         '--require-hashes', '-r', CONFIG / 'desktop.lock')
     run(executable, '-m', 'pip', 'check')
     frameworks = qt_subset(python)
+    trim_dependency_tests(python / 'Lib/site-packages')
     run('cl', '/nologo', '/O2', '/W4', '/DUNICODE', '/D_UNICODE',
         '/I' + str(python / 'include'), CONFIG / 'launcher.c', '/Fe:' + str(payload / 'AgentScribe.exe'),
         '/Fo:' + str(stage / 'launcher.obj'), '/link', '/SUBSYSTEM:WINDOWS',
@@ -113,7 +116,7 @@ def build(downloads):
     for name in ('requirements-runtime.txt', 'requirements-mlx.txt', 'THIRD_PARTY_NOTICES.md'):
         shutil.copy2(ROOT / name, payload / name)
     shutil.copy2(CONFIG / 'desktop.lock', payload / 'desktop.lock')
-    shutil.copytree(downloads / 'licenses', payload / 'Licenses/Qt-PySide')
+    copy_notices(notices, downloads / 'licenses', payload / 'Licenses/Qt-PySide')
     python_notices(archives['python-notices'], payload / 'Licenses/Python')
     shutil.copy2(payload / 'node/LICENSE', payload / 'Licenses/Node-LICENSE.txt')
     credits = payload / 'Licenses/Qt-PySide/qtwebengine/documentation/qtwebengine-licensing.html'

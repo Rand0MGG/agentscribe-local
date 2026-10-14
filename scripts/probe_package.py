@@ -11,10 +11,27 @@ import runpy
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 FLAGS = '--disable-gpu --disable-audio-input --disable-audio-output --use-fake-device-for-media-stream'
+
+
+def close_window(window, application, *, timeout=15):
+    """Wait for accepted close and owned Qt checks, not just the close request."""
+    from PySide6.QtCore import QProcess
+    window.close()
+    deadline = time.monotonic() + timeout
+    while True:
+        application.processEvents()
+        running = any(job.state() != QProcess.ProcessState.NotRunning
+                      for job in window.findChildren(QProcess))
+        if not window.isVisible() and not window.background_checks and not running:
+            return
+        if time.monotonic() >= deadline:
+            raise RuntimeError('安装包窗口或自有子进程未完成退出。')
+        time.sleep(.01)
 
 
 def probe(app_path, work, *, install_documents=False):
@@ -111,8 +128,7 @@ def probe(app_path, work, *, install_documents=False):
     application.processEvents()
     assert window.grab().save(str(work / 'window.png'))
     assert window.session is None and window.player is None and window.runtime is None
-    window.close()
-    application.processEvents()
+    close_window(window, application)
     # Exercise the real renderer helper, which uses the bundled Python and Qt
     # WebEngine process/resources. All inputs are generated in this probe.
     source = work / 'fixture.html'
@@ -141,7 +157,7 @@ def probe(app_path, work, *, install_documents=False):
                    node=node_version, npm=npm_version, resource_root=str(resources),
                    interpreter=str(python), native_launcher=True, audio_access_attempted=False,
                    window=True, web_render=True, venv=True, pip_check=True, update_selection=True,
-                   document_install=install_documents, office_render=install_documents)
+                   document_install=install_documents, office_render=install_documents, shutdown_complete=True)
     (work / 'result.json').write_text(json.dumps(summary, indent=2, ensure_ascii=False) + '\n')
     print(json.dumps(summary, ensure_ascii=False), flush=True)
 
@@ -170,11 +186,22 @@ def run_probe(app, *, install_documents=False):
     command = [str(executable), '--python', str(Path(__file__).resolve()), str(app), '--inside', str(work)]
     if install_documents:
         command.append('--install-documents')
-    result = subprocess.run(command, cwd=work, env=env, timeout=600 if install_documents else 180)
+    result = subprocess.run(command, cwd=work, env=env, timeout=600 if install_documents else 180,
+                            capture_output=True, text=True, encoding='utf-8', errors='backslashreplace')
+    (work / 'stdout.log').write_text(result.stdout, encoding='utf-8')
+    (work / 'stderr.log').write_text(result.stderr, encoding='utf-8')
     if log.exists():
         raise RuntimeError('出现音频访问尝试：' + log.read_text(encoding='utf-8'))
     if result.returncode:
         raise RuntimeError('完整安装包探针失败，证据：' + str(work))
+    output = result.stdout + result.stderr
+    if any(marker in output for marker in ('QProcess: Destroyed while process',
+                                          'QThread: Destroyed while thread', 'QPainter::',
+                                          'QWidgetEffectSourcePrivate::pixmap:')):
+        raise RuntimeError('安装包探针出现退出或绘制错误，证据：' + str(work))
+    summary = json.loads((work / 'result.json').read_text(encoding='utf-8'))
+    if summary.get('shutdown_complete') is not True:
+        raise RuntimeError('安装包探针缺少完整退出证据：' + str(work))
     return work
 
 

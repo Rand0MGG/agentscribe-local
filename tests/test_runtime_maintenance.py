@@ -6,12 +6,15 @@ from contextlib import nullcontext
 import pytest
 
 from linguaflow import runtime_install as runtime
+from linguaflow.runtime_cleanup import seal_slot
 
 
 def slot(base, name, previous=None):
     directory = base / name
     directory.mkdir(parents=True)
     (directory / 'environment.json').write_text(json.dumps({'slot': name, 'previous': previous}))
+    (directory / 'runtime-fixture').write_bytes(b'owned runtime')
+    seal_slot(directory, 'python-' + base.name)
     return directory
 
 
@@ -31,8 +34,8 @@ def test_cleanup_keeps_active_rollback_live_and_custom(monkeypatch, tmp_path):
     external.mkdir()
     (external / 'weights').write_text('keep')
     monkeypatch.setattr(runtime, 'process_commands', lambda: str(live).casefold())
-    assert runtime.clean_environments('wlk') == 2
-    assert not unused.exists() and not failed.exists()
+    assert runtime.clean_environments('wlk') == 1
+    assert not unused.exists() and failed.exists()
     assert all(path.exists() for path in (active, previous, live, custom, external / 'weights'))
 
 

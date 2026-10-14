@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from .hardware import check_installation
 from .installation import preparation_lock, publish, run_command
+from .runtime_cleanup import clean_component, previous_component, seal_slot
 from .runtime_paths import DOCUMENT_RENDERER_VERSION, cache_root, node_executable, npm_command, runtime_root
 
 
@@ -20,8 +21,10 @@ def main():
         raise SystemExit('课件渲染需要 Node.js 22.19 或更新版本。')
     base = runtime_root() / 'components' / 'document-renderer'
     with preparation_lock(base):
+        previous = previous_component(base / 'active.json')
         slot = uuid4().hex
         destination = base / slot
+        destination.mkdir(parents=True, exist_ok=False)
         environment = {**os.environ, 'PATH': str(node.parent) + os.pathsep + os.environ.get('PATH', '')}
         run_command([*npm, 'install', '--prefix', str(destination), '--cache', str(cache_root() / 'npm'),
             '--no-audit', '--no-fund', '--fetch-timeout=60000', '--fetch-retries=0', '--save-exact',
@@ -30,7 +33,9 @@ def main():
         result = subprocess.check_output([str(node), str(entry), 'capabilities', '--json'],
                                          text=True, timeout=30, **spawn_options())
         capabilities = json.loads(result)
-        publish(base / 'active.json', {'slot': slot})
+        seal_slot(destination, 'document-renderer')
+        publish(base / 'active.json', {'slot': slot, 'previous': previous})
+        clean_component(base, 'document-renderer')
     print('课件渲染组件已安装：LibreOffice Kit', DOCUMENT_RENDERER_VERSION)
     print('支持页面渲染格式：', capabilities.get('imageRendering', capabilities.get('images', {})))
     print('组件及许可证保留在', destination)

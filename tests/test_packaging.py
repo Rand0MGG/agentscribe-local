@@ -182,7 +182,8 @@ def test_shared_probe_isolates_both_platforms_and_rejects_guard_failures(tmp_pat
         assert command[0] == str(app / 'Contents/MacOS/AgentScribe' if mac else app / 'AgentScribe.exe')
         if failure == 'audio':
             Path(env['AGENTSCRIBE_AUDIO_GUARD_LOG']).write_text('blocked fixture import')
-        return SimpleNamespace(returncode=1 if failure == 'process' else 0)
+        (work / 'result.json').write_text('{"shutdown_complete":true}')
+        return SimpleNamespace(returncode=1 if failure == 'process' else 0, stdout='', stderr='')
     monkeypatch.setattr(probe_package.subprocess, 'run', run)
     app = tmp_path / ('AgentScribe.app' if mac else 'AgentScribe')
     if failure:
@@ -268,7 +269,6 @@ def test_actual_windows_builder_excludes_ignored_file_from_clean_source_payload(
     (root / 'linguaflow').mkdir()
     (root / 'linguaflow/__init__.py').write_text('__version__ = "0.8.0"\n')
     (root / '.gitignore').write_text('.env\n.work/\n')
-    (root / 'packaging/macos/licenses.json').write_text('[]')
     for name in ('packaging/recovery.c', 'scripts/build_windows.py', 'scripts/packaging_common.py', 'scripts/build_windows_installer.py',
                  'scripts/probe_package.py', 'scripts/probe_packaged_launcher.py',
                  'packaging/updates.json', 'pyproject.toml', 'requirements-runtime.txt',
@@ -287,6 +287,13 @@ def test_actual_windows_builder_excludes_ignored_file_from_clean_source_payload(
     credit = downloads / 'licenses/qtwebengine/documentation/qtwebengine-licensing.html'
     credit.parent.mkdir(parents=True)
     credit.write_text('<html>fixture license</html>')
+    (root / 'packaging/macos/licenses.json').write_text(json.dumps([
+        {'filename': 'qtwebengine/documentation/qtwebengine-licensing.html',
+         'sha256': builder.digest(credit)}]))
+    subprocess.run(['git', '-C', str(root), 'add', 'packaging/macos/licenses.json'], check=True)
+    subprocess.run(['git', '-C', str(root), '-c', 'user.name=Audit', '-c', 'user.email=audit@example.org',
+                    'commit', '-qm', 'sealed license fixture'], check=True)
+    (downloads / 'licenses/unrelated-local.txt').write_text('synthetic unrelated content')
     with zipfile.ZipFile(downloads / 'node.zip', 'w') as archive:
         archive.writestr('node-v22.23.0-win-x64/LICENSE', 'fixture license')
 
@@ -317,3 +324,88 @@ def test_actual_windows_builder_excludes_ignored_file_from_clean_source_payload(
     assert 'linguaflow/.env' not in manifest['payload_files']
     assert 'linguaflow/.env' not in manifest['source_files']
     assert manifest['source_modified'] is False
+    assert not (payload / 'Licenses/Qt-PySide/unrelated-local.txt').exists()
+
+
+@pytest.mark.parametrize('extra', ['private.txt', '.env', 'unrelated.py'])
+def test_declared_licenses_exclude_unlisted_files(tmp_path, extra):
+    source, target = tmp_path / 'downloads', tmp_path / 'payload'
+    source.mkdir()
+    license = source / 'license.txt'
+    license.write_text('allowed fixture')
+    (source / extra).write_text('not allowed fixture')
+    packaging_common.copy_notices([{'filename': 'license.txt', 'sha256': packaging_common.digest(license)}],
+                                  source, target)
+    assert {p.name for p in target.iterdir()} == {'license.txt'}
+
+
+@pytest.mark.parametrize('change', ['corrupt', 'symlink', 'escape'])
+def test_licenses_reject_corruption_and_mappings(tmp_path, change):
+    source, target = tmp_path / 'downloads', tmp_path / 'payload'
+    source.mkdir()
+    license = source / 'license.txt'
+    license.write_text('allowed fixture')
+    notice = {'filename': 'license.txt', 'sha256': packaging_common.digest(license)}
+    if change == 'corrupt':
+        license.write_text('changed')
+    elif change == 'symlink':
+        license.unlink()
+        outside = tmp_path / 'user-data.txt'
+        outside.write_text('allowed fixture')
+        try:
+            license.symlink_to(outside)
+        except OSError as error:
+            if sys.platform == 'win32' and error.winerror == 1314:
+                pytest.skip('Real file symlink requires Windows symlink privilege')
+            raise
+    else:
+        notice['filename'] = '../license.txt'
+    with pytest.raises(ValueError):
+        packaging_common.copy_notices([notice], source, target)
+    assert not target.exists()
+
+
+@pytest.mark.parametrize('warning', ['QProcess: Destroyed while process is still running.',
+                                    'QThread: Destroyed while thread is still running'])
+def test_package_probe_rejects_success_exit_with_lifecycle_warning(tmp_path, monkeypatch, warning):
+    (tmp_path / 'scripts').mkdir()
+    (tmp_path / 'scripts/test_no_audio.py').write_text("GUARD = ''")
+    monkeypatch.setattr(probe_package, 'ROOT', tmp_path)
+    def run(command, **options):
+        (options['cwd'] / 'result.json').write_text('{"shutdown_complete":true}')
+        return SimpleNamespace(returncode=0, stdout='', stderr=warning)
+    monkeypatch.setattr(probe_package.subprocess, 'run', run)
+    with pytest.raises(RuntimeError, match='退出或绘制错误'):
+        probe_package.run_probe(tmp_path / 'AgentScribe.app')
+
+
+def test_package_window_waits_for_accepted_close_and_owned_processes():
+    from PySide6.QtCore import QProcess
+    state = {'steps': 0}
+    job = SimpleNamespace(state=lambda: QProcess.ProcessState.NotRunning if state['steps'] >= 3
+                          else QProcess.ProcessState.Running)
+    window = SimpleNamespace(close=lambda: None, isVisible=lambda: state['steps'] < 2,
+                             background_checks=set(), findChildren=lambda _: [job])
+    application = SimpleNamespace(processEvents=lambda: state.update(steps=state['steps'] + 1))
+    probe_package.close_window(window, application)
+    assert state['steps'] == 3
+
+
+def test_package_window_timeout_is_failure():
+    window = SimpleNamespace(close=lambda: None, isVisible=lambda: True,
+                             background_checks=set(), findChildren=lambda _: [])
+    with pytest.raises(RuntimeError, match='未完成退出'):
+        probe_package.close_window(window, SimpleNamespace(processEvents=lambda: None), timeout=0)
+
+
+def test_dependency_test_trimming_keeps_helpers_datasets_and_licenses(tmp_path):
+    for name in ('numpy/tests/test_fixture.py', 'scipy/linalg/tests/test_fixture.py',
+                 'scipy/_lib/_testutils.py', 'scipy/datasets/sample.dat', 'numpy/LICENSE.txt',
+                 'unrelated/tests/user.txt'):
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b'fixture')
+    packaging_common.trim_dependency_tests(tmp_path)
+    assert not (tmp_path / 'numpy/tests').exists() and not (tmp_path / 'scipy/linalg/tests').exists()
+    assert all((tmp_path / name).is_file() for name in ('scipy/_lib/_testutils.py', 'scipy/datasets/sample.dat',
+                                                     'numpy/LICENSE.txt', 'unrelated/tests/user.txt'))

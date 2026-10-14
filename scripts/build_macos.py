@@ -21,10 +21,12 @@ from scripts.packaging_common import (
     QT_MODULES,
     QT_PLUGIN_GROUPS,
     copy_application,
+    copy_notices,
     digest,
     extract,
     obtain,
     python_notices,
+    trim_dependency_tests,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -252,6 +254,7 @@ def build(downloads, *, without_updater=False):
         '--require-hashes', '-r', CONFIG / 'desktop.lock', env=environment)
     run(interpreter, '-m', 'pip', 'check', env=environment)
     qt_frameworks = qt_subset(python)
+    trim_dependency_tests(python / 'lib/python3.12/site-packages')
     # Console wrappers installed by pip retain the construction directory in
     # their shebangs. The app invokes modules through Python, so omit them;
     # the complete stdlib, headers, pip/ensurepip and interpreter remain.
@@ -261,7 +264,7 @@ def build(downloads, *, without_updater=False):
     application_files = copy_application(ROOT, resources / 'linguaflow')
     for name in ('requirements-runtime.txt', 'requirements-mlx.txt', 'THIRD_PARTY_NOTICES.md'):
         shutil.copy2(ROOT / name, resources / name)
-    shutil.copytree(downloads / 'licenses', resources / 'Licenses/Qt-PySide')
+    copy_notices(notices, downloads / 'licenses', resources / 'Licenses/Qt-PySide')
     # The standalone archive includes the CPython license in its stdlib.
     shutil.copy2(python / 'lib/python3.12/LICENSE.txt', resources / 'Licenses/Python-LICENSE.txt')
     python_notices(paths['python-notices'], resources / 'Licenses/Python-build')

@@ -13,6 +13,7 @@ from uuid import uuid4
 from .hardware import CUDA_WHEEL, TORCH_VERSION, check_installation
 from .installation import preparation_lock, publish, run_command
 from .runtime_base import prepare_base, python_abi
+from .runtime_cleanup import mapped, process_commands, removable, retained_requirements, seal_slot, slot_name
 from .runtime_paths import (
     cache_root,
     environment_python,
@@ -128,6 +129,7 @@ def install(kind):
                                                      preferred_slot=(previous_metadata or {}).get('base_slot'))
         slot = uuid4().hex
         destination = base / slot
+        destination.mkdir(parents=True, exist_ok=False)
         python = environment_python(destination)
         environment = python_environment()
         temporary = cache_root() / 'pip-tmp'
@@ -158,76 +160,97 @@ def install(kind):
                     'requirements': requirements.read_text(encoding='utf-8'),
                     'python_abi': python_abi(), 'base_slot': base_slot}
         publish(destination / 'environment.json', metadata)
+        seal_slot(destination, 'python-' + kind)
         if (isinstance(previous, str) and len(previous) == 32
                 and all(c in '0123456789abcdef' for c in previous)):
             old_record = base / previous / 'environment.json'
             if old_record.parent.is_dir() and not old_record.exists():
                 publish(old_record, previous_metadata)
         publish(pointer, metadata)
+        clean_environments(kind)
     print('运行环境已就绪：' + str(python) + '\n请先下载 / 检查模型，再开始聆听。', flush=True)
 
 
-def process_commands():
-    """Read process ownership conservatively; unavailable inventory forbids cleanup."""
-    if sys.platform == 'win32':
-        command = ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command',
-                   'Get-CimInstance Win32_Process | Select-Object -ExpandProperty CommandLine']
-    else:
-        command = ['ps', '-axo', 'command=']
-    return subprocess.check_output(command, text=True, timeout=15).casefold()
-
-
 def clean_environments(kind):
-    """Remove only unreferenced managed slots; preserve rollback chain and live processes.
+    """Keep current/recent rollback and retained apps' compatible environments.
 
-    Unknown/corrupt pointer records and failed process inspection fail closed.
-    Legacy venvs, models, recordings and shared base Python never enter this scan.
-    The caller must hold the environment's preparation lock.
+    Only sealed, unchanged slots can be retired. Relink retained history before
+    deletion so package rollback never traverses a removed slot. Caller holds
+    the preparation lock; unknown metadata/process state always fails closed.
     """
     base = runtime_root() / 'python' / kind
-    if any(path.is_symlink() for path in (base, *base.parents)):
+    if mapped(base):
         return 0
-    def slot_name(value):
-        return isinstance(value, str) and len(value) == 32 and all(c in '0123456789abcdef' for c in value)
-    protected = set()
     try:
         pointer = base / 'active.json'
-        if not pointer.is_file():
+        if not pointer.is_file() or mapped(pointer):
             return 0
         value = json.loads(pointer.read_text(encoding='utf-8'))
+        history, seen = [], set()
         while True:
-            if not isinstance(value, dict) or len(protected) >= 256:
+            if not isinstance(value, dict) or len(seen) >= 256:
                 return 0
             slot = value['slot']
-            if not slot_name(slot) or slot in protected:
+            if (not slot_name(slot) or slot in seen or mapped(base / slot)
+                    or not (base / slot).is_dir()):
                 return 0
-            protected.add(slot)
+            history.append(value)
+            seen.add(slot)
             previous = value.get('previous')
             if previous is None:
                 break
             if not slot_name(previous):
                 return 0
             record = base / previous / 'environment.json'
-            # An interrupted old publication may have no record; protect it anyway.
+            if mapped(record):
+                return 0
             if not record.is_file():
-                protected.add(previous)
-                break
+                return 0
             value = json.loads(record.read_text(encoding='utf-8'))
             if not isinstance(value, dict) or value.get('slot') != previous:
                 return 0
         commands = process_commands()
         if not commands.strip():
             return 0
+        requirements = retained_requirements(kind)
+        if requirements is None:
+            return 0
+        protected = {record['slot'] for record in history[:2]}
+        # A saved app can need an older ABI/Torch combination with the same
+        # requirement text. Keep the newest matching slot for each identity.
+        identities = set()
+        for record in history:
+            if record.get('requirements') in requirements:
+                identity = json.dumps({key: record.get(key) for key in
+                                       ('requirements', 'python_abi', 'platform', 'torch_version')}, sort_keys=True)
+                if identity not in identities:
+                    protected.add(record['slot'])
+                    identities.add(identity)
+        candidates = {directory.name for directory in base.iterdir()
+                      if directory.name not in protected and removable(directory, 'python-' + kind, commands)}
+        retained = [record.copy() for record in history if record['slot'] not in candidates]
+        # Publish oldest first. A crash can leave extra files, never a pointer
+        # that depends on a directory already removed by this operation.
+        for index in range(len(retained) - 1, -1, -1):
+            record = retained[index]
+            previous = retained[index + 1]['slot'] if index + 1 < len(retained) else None
+            if record.get('previous') != previous:
+                record['previous'] = previous
+                publish(base / record['slot'] / 'environment.json', record)
+        if retained[0] != history[0]:
+            publish(pointer, retained[0])
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
         print('暂未清理旧环境：无法确认环境引用或进程状态。', flush=True)
         return 0
     removed = 0
-    for directory in base.iterdir():
-        if (not slot_name(directory.name) or directory.name in protected or directory.is_symlink()
-                or not directory.is_dir() or str(directory).casefold() in commands):
+    for name in candidates:
+        directory = base / name
+        try:
+            if removable(directory, 'python-' + kind, process_commands()):
+                shutil.rmtree(directory)
+                removed += 1
+        except (OSError, ValueError, subprocess.SubprocessError):
             continue
-        shutil.rmtree(directory)
-        removed += 1
     return removed
 
 

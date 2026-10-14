@@ -13,6 +13,43 @@ QT_PLUGIN_GROUPS = {'platforms', 'styles', 'imageformats', 'iconengines', 'tls',
                     'networkinformation', 'multimedia'}
 
 
+def copy_notices(items, source, destination):
+    """Copy only declared, hash-verified licenses; never adopt local extra files."""
+    copied = set()
+    for item in items:
+        name = item['filename']
+        relative = Path(name)
+        if (relative.is_absolute() or relative.as_posix() != name or '\\' in name
+                or any(char in name for char in ':*?"<>|\0')
+                or '..' in relative.parts or name.casefold() in copied):
+            raise ValueError('许可证清单包含无效或重复路径。')
+        path = source / relative
+        if any(p.is_symlink() or (hasattr(p, 'is_junction') and p.is_junction())
+               for p in (path, *path.parents) if p.is_relative_to(source)):
+            raise ValueError('许可证包含目录映射：' + name)
+        if not path.is_file() or digest(path) != item['sha256']:
+            raise ValueError('许可证校验失败：' + name)
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, target)
+        if digest(target) != item['sha256']:
+            raise ValueError('许可证在复制时变化：' + name)
+        copied.add(name.casefold())
+
+
+def trim_dependency_tests(site_packages):
+    """Exclude NumPy/SciPy regression suites while retaining runtime/test helpers.
+
+    Only fresh locked build outputs are passed here, never a developer/user
+    environment. Keep _testutils, datasets, licenses and all non-test modules.
+    """
+    for name in ('numpy', 'scipy'):
+        package = site_packages / name
+        for directory in sorted(package.rglob('tests'), key=lambda path: len(path.parts), reverse=True):
+            if directory.is_dir() and not directory.is_symlink():
+                shutil.rmtree(directory)
+
+
 def digest(path):
     with path.open('rb') as handle:
         return hashlib.file_digest(handle, 'sha256').hexdigest()

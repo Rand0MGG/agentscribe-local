@@ -13,6 +13,7 @@ from uuid import uuid4
 from .download_progress import copy_download, hub_progress
 from .hardware import check_installation
 from .installation import preparation_lock, publish, run_command
+from .runtime_cleanup import clean_component, previous_component, seal_slot
 from .runtime_paths import cache_root, llama_server, runtime_root
 
 
@@ -57,8 +58,10 @@ def install(device, model):
     name = 'llama-b11254-' + (target + '-' + device if target == 'windows-x64' else target)
     base = runtime_root() / 'components' / name
     with preparation_lock(base), tempfile.TemporaryDirectory(prefix='llama-install-', dir=base) as work:
+        previous = previous_component(base / 'active.json')
         slot = uuid4().hex
         destination = base / slot
+        destination.mkdir(parents=True, exist_ok=False)
         work = Path(work)
         for index, (name, expected) in enumerate(archives):
             archive = cache_root() / name
@@ -81,7 +84,9 @@ def install(device, model):
         if not binary.is_file():
             raise ValueError('运行组件缺少 llama-server，请检查官方发行包。')
         run_command([str(binary), '--version'], timeout=30)
-        publish(base / 'active.json', {'slot': slot})
+        seal_slot(destination, 'llama')
+        publish(base / 'active.json', {'slot': slot, 'previous': previous})
+        clean_component(base, 'llama')
     if model is not None:
         prepare_weights(model)
     print('llama.cpp 文件已就绪；开始聆听时验证模型架构和所选设备。', flush=True)
