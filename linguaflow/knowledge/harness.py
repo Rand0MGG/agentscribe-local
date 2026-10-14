@@ -23,11 +23,6 @@ def build_agent(service, job, answer=False):
     from langchain_core.tools import tool
     register_harness_profile('deepseek', HarnessProfile(excluded_tools=frozenset(EXCLUDED_TOOLS),
         general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False)))
-    # Tests use a provider-specific fake model; tool exclusion is also enforced by middleware below.
-    provider = service.model._get_ls_params().get('ls_provider')
-    if provider and provider != 'deepseek':
-        register_harness_profile(provider, HarnessProfile(excluded_tools=frozenset(EXCLUDED_TOOLS),
-            general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False)))
     sources = job.sources
     pending_images = {}
     @tool

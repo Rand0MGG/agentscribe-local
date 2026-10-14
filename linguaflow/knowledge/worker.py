@@ -9,7 +9,7 @@ from threading import Thread
 from ..core import Caption
 from ..library import Library
 from .api import DeepSeekService, save_credential
-from .files import FileChecks, checked_path, material_cache, read_json, write_json, write_text
+from .files import FileChecks, checked_path, local_path, material_cache, read_json, write_json, write_text
 from .glossary import compile_context, term_text
 from .harness import run_agent
 from .materials import RENDERED_PARSER, course_for_folder, import_document, locate_course, read_blocks
@@ -47,7 +47,8 @@ class KnowledgeWorker:
         """Re-resolve and verify identity before every write/publication, including external moves."""
         self.library.refresh()
         directory = self.library.directory(self.item['id'])
-        if directory != self.store.path.parent.parent or read_json(directory / 'session.json')['session']['id'] != self.item['id']:
+        if (local_path(directory) != local_path(self.store.path.parent.parent)
+                or read_json(directory / 'session.json')['session']['id'] != self.item['id']):
             raise ValueError('录音位置已变化，请重新打开课程资料。')
         self.manifest = read_manifest(self.library, self.item['id'])
         self.load_course()
@@ -92,7 +93,7 @@ class KnowledgeWorker:
                      'course_options': [{'id': row['id'], 'name': self.library.folder_label(row['id'])}
                                         for row in self.library.index['folders']],
                      'course_folder_id': next((row['id'] for row in self.library.index['folders'] if self.course_path
-                        and self.library.directory(row['id']) == self.course_path.parent.parent), ''),
+                        and self.library.directory(row['id']) == local_path(self.course_path.parent.parent)), ''),
                      'busy': self.task is not None and not self.task.done()}
         digest = fingerprint([self.course, self.material_error, [(row.id, row.version) for row in self.blocks]])
         if digest != self.last_view_course:
@@ -175,7 +176,7 @@ class KnowledgeWorker:
             if self.task is not None and not self.task.done():
                 raise ValueError('请先取消当前课程任务。')
             folder = next(row for row in self.library.index['folders']
-                          if self.library.directory(row['id']) == self.course_path.parent.parent)
+                          if self.library.directory(row['id']) == local_path(self.course_path.parent.parent))
             self.notify({'type': 'status', 'message': '正在本地读取课件，可取消。', 'busy': True})
             self.task = asyncio.create_task(self.import_task(folder['id'], value['path']))
         elif operation == 'terms':

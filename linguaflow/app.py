@@ -423,6 +423,7 @@ class Window(QMainWindow):
         self.autosave.setSingleShot(True)
         self.autosave.timeout.connect(self.queue_session_save)
         root = WallpaperBackdrop()
+        root.shutdown_complete.connect(self.close)
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -2608,7 +2609,9 @@ class Window(QMainWindow):
                 check.kill()
             event.ignore()
             return
-        self.centralWidget().shutdown()
+        if not self.centralWidget().shutdown():
+            event.ignore()
+            return
         self.native_updater.close()
         event.accept()
 

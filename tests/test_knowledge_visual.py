@@ -465,6 +465,10 @@ export async function createConverter() {
  };
 }
 ''', encoding='utf-8')
+    # The renderer may stage outside the library; fixture markers have an
+    # explicit location instead of depending on the helper's working directory.
+    entry.write_text(entry.read_text(encoding='utf-8').replace(
+        'base = dirname(dirname(request.outputDir));', 'base = ' + json.dumps(str(base)) + ';'), encoding='utf-8')
     monkeypatch.setattr(module, 'document_renderer', lambda: (Path(node), entry))
     async def scenario():
         task = asyncio.create_task(module.render_material(library, path, document, 3))

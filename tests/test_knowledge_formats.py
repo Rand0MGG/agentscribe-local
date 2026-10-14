@@ -19,6 +19,29 @@ from linguaflow.process_platform import spawn_options
 from linguaflow.runtime_paths import document_renderer
 
 
+@pytest.mark.parametrize('suffix', ['.png', '.html', '.docx'])
+def test_deep_library_import_keeps_complete_pages_and_originals(samples, tmp_path, suffix):
+    if suffix in OFFICE_SUFFIXES:
+        try:
+            document_renderer()
+        except RuntimeError:
+            pytest.skip('Optional DSH rendering component unavailable')
+    # The library itself is valid; derived hash/snapshot paths exceed MAX_PATH.
+    root = tmp_path / ('保存位置-' + 'x' * max(1, 175-len(str(tmp_path.resolve()))))
+    library = Library(root)
+    folder = library.index['folders'][0]['id']
+    source = next(samples.glob('*'+suffix))
+    document = asyncio.run(import_document(library, folder, source))
+    course_path, course = course_for_folder(library, folder)
+    base = material_cache(library, course_path, document)
+    manifest = page_images(library, base, document['id'], len(read_blocks(library, course_path, course)))
+    assert len(str(base / 'pages/page-0001.png')) > 260
+    assert manifest['images'] and image_bytes(base / 'pages/page-0001.png', manifest['images'][0]['sha256'])
+    original = course_path.parent / 'materials' / document['id'] / ('original'+suffix)
+    assert original.read_bytes() == source.read_bytes()
+    assert not list((course_path.parent / 'materials').glob('.import-*'))
+
+
 def word(path):
     with ZipFile(path, 'w') as archive:
         archive.writestr('[Content_Types].xml', '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'

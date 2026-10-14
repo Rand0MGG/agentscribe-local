@@ -7,7 +7,7 @@ from queue import Empty, Queue
 from threading import Thread
 
 import numpy as np
-from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QWidget
 from scipy.ndimage import gaussian_filter
@@ -97,6 +97,8 @@ def render_wallpaper(path, size, appearance, previous_signature, previous_image)
 
 class WallpaperBackdrop(QWidget):
     """Paint cached material; coalesce changes and reject superseded worker results."""
+    shutdown_complete = Signal()
+
     def __init__(self):
         super().__init__()
         self.setObjectName('appRoot')
@@ -163,7 +165,7 @@ class WallpaperBackdrop(QWidget):
             except Exception as exc:
                 results.put((key, None, exc))
 
-        self._job = Thread(target=run, name='wallpaper-material', daemon=True)
+        self._job = Thread(target=run, name='wallpaper-material')
         self._job.start()
         self.poll.start()
 
@@ -177,6 +179,10 @@ class WallpaperBackdrop(QWidget):
         self._job.join()
         self._job = None
         self.poll.stop()
+        if self._closed:
+            self._image = QImage()
+            self.shutdown_complete.emit()
+            return
         if error:
             logging.getLogger(__name__).warning('Wallpaper material failed: %s', error)
         elif key == self._key() and key == self._requested:
@@ -185,10 +191,18 @@ class WallpaperBackdrop(QWidget):
         self.update()
 
     def shutdown(self):
-        # Worker owns only images and its queue, never the widget or application.
+        """Stop new work; return True only after the current Qt image worker joins.
+
+        Keep Qt alive and polling until completion; never wait on the GUI thread.
+        """
         self._closed = True
-        self.poll.stop()
         self.wallpaper_timer.stop()
+        if self._job is not None:
+            self.poll.start()
+            return False
+        self.poll.stop()
+        self._image = QImage()
+        return True
 
     def paintEvent(self, event):
         key = self._key()

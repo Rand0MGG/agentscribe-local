@@ -2,7 +2,7 @@ import os
 import subprocess
 import sys
 
-from ui_support import assert_ui_process
+from ui_support import assert_ui_process, finish_ui_code
 
 
 def test_theme_model_navigation_and_progress_survive_page_changes(tmp_path):
@@ -99,7 +99,7 @@ timer.stop()
 assert manager.worker is None
 w.close()
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=15,
+    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=15,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'AGENTSCRIBE_LIBRARY': str(tmp_path)})
     assert_ui_process(result)
 

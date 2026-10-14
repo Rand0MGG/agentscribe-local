@@ -11,8 +11,8 @@ from scripts import test_no_audio as runner
 
 @pytest.mark.parametrize('system', ['nt', 'posix'])
 @pytest.mark.parametrize('arguments', [[], ['--basetemp', 'explicit'], ['--basetemp=explicit']])
-def test_temporary_paths_are_host_specific_and_explicit_paths_are_preserved(monkeypatch, tmp_path,
-                                                                          system, arguments):
+def test_default_and_explicit_paths_are_preserved_without_host_shortening(monkeypatch, tmp_path,
+                                                                        system, arguments):
     monkeypatch.setattr(runner, '__file__', str(tmp_path / 'scripts' / 'test_no_audio.py'))
     monkeypatch.setattr(runner, 'os', SimpleNamespace(name=system, environ=dict(os.environ), pathsep=os.pathsep))
     monkeypatch.setattr(runner, 'sys', SimpleNamespace(executable=sys.executable, argv=['runner', *arguments]))
@@ -25,14 +25,7 @@ def test_temporary_paths_are_host_specific_and_explicit_paths_are_preserved(monk
         assert str(guard) == env['PYTHONPATH'].split(os.pathsep)[0]
         owned.append(guard)
         supplied = arguments or ['-q']
-        if system == 'nt' and not arguments:
-            base = Path(command[-1])
-            assert command[3:-2] == supplied and command[-2] == '--basetemp'
-            assert base.is_dir() and base.parent == tmp_path / '.work'
-            (base / 'fixture').write_text('owned regression data')
-            owned.append(base)
-        else:
-            assert command[3:] == supplied
+        assert command[3:] == supplied
         return SimpleNamespace(returncode=7)
 
     monkeypatch.setattr(runner.subprocess, 'run', run)

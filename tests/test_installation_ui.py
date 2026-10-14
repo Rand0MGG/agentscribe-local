@@ -4,7 +4,7 @@ import subprocess
 import sys
 
 import pytest
-from ui_support import assert_ui_process
+from ui_support import assert_ui_process, finish_ui_code
 
 
 @pytest.mark.parametrize('width,height', [(1280, 900), (900, 650)])
@@ -16,6 +16,7 @@ from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication, QPushButton
 from linguaflow.app import STYLE, Window
 from linguaflow.updates import RELEASE_PAGE
+from scripts.probe_package import close_window
 app = QApplication([])
 app.setStyleSheet(STYLE)
 folder = Path(os.environ['FIXTURE_DIRECTORY'])
@@ -51,12 +52,12 @@ app.processEvents()
 w.grab().save(str(folder/'storage.png'))
 assert w.session is None
 assert 'soundcard' not in __import__('sys').modules
-w.close()
+close_window(w, app)
 '''
     environment = {**os.environ, 'FIXTURE_DIRECTORY': str(tmp_path), 'FIXTURE_WIDTH': str(width), 'FIXTURE_HEIGHT': str(height)}
     if os.environ.get('AGENTSCRIBE_NATIVE_UI') == '1':
         environment.pop('QT_QPA_PLATFORM', None)
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=30, env=environment)
+    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=30, env=environment)
     assert_ui_process(result)
 
 

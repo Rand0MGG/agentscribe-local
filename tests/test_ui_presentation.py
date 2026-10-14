@@ -4,7 +4,7 @@ import subprocess
 import sys
 
 import pytest
-from ui_support import assert_ui_process
+from ui_support import assert_ui_process, finish_ui_code
 
 
 def test_mac_shared_toolbar_avoids_duplicate_controls_and_respects_notch(tmp_path):
@@ -120,7 +120,7 @@ label.finish_reveal()
 assert label.text() == 'a👩‍💻'
 card.close()
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=15,
+    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=15,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen'})
     assert_ui_process(result)
 
@@ -220,7 +220,7 @@ assert next(b for b in dialog.findChildren(QPushButton) if b.text() == '创建�
 dialog.validate(library)
 assert dialog.result() == dialog.DialogCode.Accepted and not library.index['folders']
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=30,
+    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=30,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path)})
     assert_ui_process(result)
@@ -268,7 +268,7 @@ with patch.object(ui_backdrop, 'sys', SimpleNamespace(platform='darwin')):
 with patch.object(ui_backdrop, 'sys', SimpleNamespace(platform='linux')):
     assert ui_backdrop.desktop_wallpaper_path() == ''
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=15,
+    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=15,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen'})
     assert_ui_process(result)
 
@@ -347,7 +347,7 @@ w.current_item = None
 w.session_dirty = False
 w.close()
 """
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=20,
+    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=20,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'FIXTURE_PLATFORM': system,
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path)})
@@ -436,7 +436,7 @@ w.current_item = None
 w.session_dirty = False
 w.close()
 """
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=20,
+    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=20,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path)})
     assert_ui_process(result)

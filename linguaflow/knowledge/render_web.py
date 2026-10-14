@@ -17,7 +17,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from ..process_platform import parent_disconnected, window_session_available
-from .files import checked_path
+from .files import checked_path, local_path
 from .rendering import MAX_IMAGE_BYTES, MAX_PIXELS, WEB_RENDER_VERSION
 
 MAX_ASSETS = 64
@@ -97,7 +97,7 @@ def pack_resources(source, markup, destination):
         used += len(data)
         if used > MAX_BUNDLE_BYTES:
             raise ValueError('网页及资源超过 32 MiB 预算，请按章节导入。')
-        relative = resource.relative_to(source.parent).as_posix()
+        relative = local_path(resource).relative_to(local_path(source.parent)).as_posix()
         target = checked_path(destination, destination / relative)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)
@@ -198,14 +198,14 @@ def render_web(source, output, limit, resource_source=None):
         raise ValueError('网页资源使用了保留文件名，请改名后导入。')
     # A standalone private profile and URL interceptor isolate scripts from network and local files.
     entry.write_text(markup, encoding='utf-8')
-    permitted = {entry.resolve(), *(snapshot.joinpath(row['path']).resolve() for row in assets)}
+    permitted = {local_path(entry.resolve()), *(local_path(snapshot.joinpath(row['path']).resolve()) for row in assets)}
     failures = []
     class Interceptor(QWebEngineUrlRequestInterceptor):
         def interceptRequest(self, info):
             url = info.requestUrl()
             if url.scheme() in ('data', 'about', 'blob'):
                 return
-            if url.scheme() == 'file' and Path(url.toLocalFile()).resolve() in permitted:
+            if url.scheme() == 'file' and local_path(Path(url.toLocalFile()).resolve()) in permitted:
                 return
             failures.append(True)
             info.block(True)

@@ -3,7 +3,7 @@ import os
 import subprocess
 import sys
 
-from ui_support import assert_ui_process
+from ui_support import assert_ui_process, finish_ui_code
 
 
 def test_missing_agent_sdk_corrupt_course_and_worker_exit_leave_local_recording_usable(tmp_path):
@@ -66,7 +66,7 @@ assert not any(name.startswith(('linguaflow.knowledge.worker','linguaflow.knowle
 w.close();app.processEvents()
 assert not w.knowledge_client.threads
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=30,
+    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=30,
         env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'AGENTSCRIBE_LIBRARY': str(tmp_path)})
     assert_ui_process(result)
 
@@ -150,7 +150,7 @@ w.close()
     from test_knowledge import pptx
     material = tmp_path / '课堂课件.pptx'
     pptx(material)
-    result = subprocess.run([sys.executable, '-c', 'import sys\n' + code], capture_output=True, text=True, errors='backslashreplace',
+    result = subprocess.run([sys.executable, '-c', finish_ui_code('import sys\n' + code)], capture_output=True, text=True, errors='backslashreplace',
         timeout=35, env={**os.environ, 'QT_QPA_PLATFORM': os.environ.get('AGENTSCRIBE_UI_PLATFORM', 'offscreen'),
                          'AGENTSCRIBE_LIBRARY': str(tmp_path), 'AGENTSCRIBE_TEST_MATERIAL': str(material)})
     assert_ui_process(result)
@@ -200,7 +200,7 @@ for width,height in [(860,680),(640,540)]:
   p.grab().save(str(output/f'course-visual-{width}.png'))
 p.close()
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=20,
+    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=20,
         env={**os.environ, 'QT_QPA_PLATFORM': os.environ.get('AGENTSCRIBE_UI_PLATFORM', 'offscreen'),
              'AGENTSCRIBE_VISUAL_VIEW': str(data)})
     assert_ui_process(result)
@@ -249,7 +249,7 @@ process=w.knowledge_client.process
 p.close();w.close();app.processEvents()
 assert process.poll() is not None
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=40,
+    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=40,
         env={**os.environ, 'QT_QPA_PLATFORM': os.environ.get('AGENTSCRIBE_UI_PLATFORM', 'offscreen'),
              'AGENTSCRIBE_LIBRARY': str(tmp_path), 'AGENTSCRIBE_TEST_IMAGE': str(source)})
     assert_ui_process(result)

@@ -2,25 +2,51 @@
 import hashlib
 import json
 import re
+import sys
 from pathlib import Path
 from uuid import uuid4
 
 
+def local_path(path):
+    """Canonical spelling for ownership/relative-path comparisons, including UNC."""
+    value = str(path)
+    if sys.platform == 'win32':
+        if value.startswith('\\\\?\\UNC\\'):
+            value = '\\\\' + value[8:]
+        elif value.startswith('\\\\?\\'):
+            value = value[4:]
+    return Path(value)
+
+
+def file_path(path):
+    """Windows filesystem spelling; retain ordinary paths on other platforms.
+
+    Derived course snapshots can exceed MAX_PATH even with a normal library root.
+    The namespace changes only API spelling, never the file's storage location.
+    """
+    path = local_path(path).absolute()
+    if sys.platform != 'win32':
+        return path
+    value = str(path)
+    return Path('\\\\?\\UNC\\' + value[2:] if value.startswith('\\\\') else '\\\\?\\' + value)
+
+
 def checked_path(root, path):
-    root, path = Path(root).resolve(), Path(path).absolute()
-    resolved = path.resolve()
+    root, path = local_path(file_path(root).resolve()), local_path(path).absolute()
+    resolved = local_path(file_path(path).resolve())
     if resolved == root or root not in resolved.parents or root not in path.parents or '..' in path.parts:
         raise ValueError('知识数据必须位于当前录音库内。')
     cursor = path.absolute()
     while cursor != root:
-        if cursor.is_symlink() or (hasattr(cursor, 'is_junction') and cursor.is_junction()):
+        entry = file_path(cursor)
+        if entry.is_symlink() or (hasattr(entry, 'is_junction') and entry.is_junction()):
             raise ValueError('不通过符号链接或快捷映射操作知识数据。')
         cursor = cursor.parent
-    return resolved
+    return file_path(resolved)
 
 
 def read_json(path):
-    return json.loads(Path(path).read_text(encoding='utf-8-sig'))
+    return json.loads(file_path(path).read_text(encoding='utf-8-sig'))
 
 
 def material_cache(library, course_path, descriptor):
@@ -41,14 +67,14 @@ class FileChecks:
     identities are checked too, so replacing a directory cannot bypass path checks.
     """
     def __init__(self, root):
-        self.root = Path(root).resolve()
+        self.root = local_path(file_path(root).resolve())
         self.values = {}
         self.parents = {}
 
     @staticmethod
     def signature(path):
         try:
-            stat = path.lstat()
+            stat = file_path(path).lstat()
         except FileNotFoundError:
             return None
         return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_mode
@@ -63,7 +89,7 @@ class FileChecks:
                 raise ValueError('处理期间课件文件发生变化，请重试；旧结果保留。')
             self.values[key] = before, value
         for parent in path.parents:
-            if parent == self.root:
+            if local_path(parent) == self.root:
                 break
             stat = self.signature(parent)
             self.parents[parent] = None if stat is None else (stat[0], stat[1], stat[-1])
@@ -76,7 +102,7 @@ class FileChecks:
         return self.get(path, 'sha256', lambda entry: hashlib.sha256(entry.read_bytes()).hexdigest())
 
     def entries(self, path):
-        return self.get(path, 'readings', lambda entry: tuple(entry.glob('page-*.json')))
+        return self.get(path, 'readings', lambda entry: tuple(local_path(item) for item in entry.glob('page-*.json')))
 
     def unchanged(self):
         for parent, expected in self.parents.items():

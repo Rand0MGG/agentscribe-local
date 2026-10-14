@@ -10,7 +10,7 @@ from pathlib import Path
 from uuid import uuid4
 from zipfile import BadZipFile, ZipFile
 
-from .files import checked_path, material_cache, read_json, write_json
+from .files import checked_path, file_path, material_cache, read_json, write_json
 from .glossary import term_text
 from .rendering import (
     IMPORT_SUFFIXES,
@@ -168,7 +168,7 @@ def extract_material(path, cancel=None):
 def import_material(library, folder_id, path, cancel=None, *, prepared=None, artifacts=None):
     """Publish a native import or a validated rendered snapshot; no cloud calls or Qt imports."""
     course_path, course = course_for_folder(library, folder_id, create=True)
-    source = Path(path)
+    source = file_path(path)
     if not source.is_file() or source.stat().st_size > MAX_FILE_BYTES:
         raise ValueError('课件不存在或超过本次 64 MiB 输入预算。')
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
@@ -203,7 +203,7 @@ def import_material(library, folder_id, path, cancel=None, *, prepared=None, art
     original = checked_path(library.root, base / ('original' + source.suffix.lower()))
     if not original.is_file() or hashlib.sha256(original.read_bytes()).hexdigest() != digest:
         original.parent.mkdir(parents=True, exist_ok=True)
-        temporary = original.with_name('.import-' + uuid4().hex)
+        temporary = checked_path(library.root, original.with_name('.import-' + uuid4().hex))
         try:
             shutil.copyfile(source, temporary)
             if hashlib.sha256(temporary.read_bytes()).hexdigest() != digest:
@@ -252,7 +252,7 @@ def _publish_document(library, course_path, document, artifacts, cancel):
 
 async def import_document(library, folder_id, path):
     """Import all supported formats in the worker's cancellable owned task."""
-    source = Path(path)
+    source = file_path(path)
     if source.suffix.lower() not in IMPORT_SUFFIXES:
         raise ValueError('课件格式不支持，请选择 PDF、Office、网页、文本或图片。')
     if source.suffix.lower() in NATIVE_SUFFIXES:

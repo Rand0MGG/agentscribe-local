@@ -3,7 +3,7 @@ import os
 import subprocess
 import sys
 
-from ui_support import assert_ui_process
+from ui_support import assert_ui_process, finish_ui_code
 
 
 def test_search_navigation_motion_and_menu_stay_in_sync(tmp_path):
@@ -61,7 +61,7 @@ w = Window(discover=False, prefs=prefs)
 assert w.reduce_motion.isChecked() and QApplication.instance().property('reduceMotion')
 w.close()
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=30,
+    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=30,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path)})
     assert_ui_process(result)

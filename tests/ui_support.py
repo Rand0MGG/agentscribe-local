@@ -4,13 +4,30 @@ from subprocess import CompletedProcess
 
 from PySide6.QtWidgets import QApplication
 
+from scripts.probe_package import close_window as close_window
+
+
+def finish_ui_code(code):
+    """Keep Qt alive until every real application window accepts its close."""
+    return code + '''
+from PySide6.QtWidgets import QApplication as _QtApp
+from linguaflow.app import Window as _TestWindow
+from scripts.probe_package import close_window as _close_window
+if _QtApp.instance() is not None:
+    for _widget in _QtApp.instance().topLevelWidgets():
+        if isinstance(_widget, _TestWindow):
+            _close_window(_widget, _QtApp.instance())
+'''
+
 
 def assert_ui_process(result: CompletedProcess[str]):
     """Reject failed children and Qt drawing errors; allow unrelated platform hints."""
     output = result.stdout + result.stderr
     assert result.returncode == 0, f'Qt child exited {result.returncode}:\n{output}'
-    assert not any(marker in output for marker in ('QPainter::', 'QWidgetEffectSourcePrivate::pixmap:')), (
-        'Qt drawing failure:\n' + output)
+    assert not any(marker in output for marker in ('QPainter::', 'QWidgetEffectSourcePrivate::pixmap:',
+                                                  'QProcess: Destroyed while process',
+                                                  'QThread: Destroyed while thread')), (
+        'Qt drawing or cleanup failure:\n' + output)
 
 
 def wait_until(predicate, *, timeout=10):

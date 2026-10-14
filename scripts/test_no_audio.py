@@ -3,7 +3,6 @@ import os
 import subprocess
 import sys
 import tempfile
-from contextlib import ExitStack
 from pathlib import Path
 
 GUARD = '''
@@ -26,8 +25,7 @@ def main():
     root = Path(__file__).resolve().parents[1]
     cache = root / '.work' / 'cache'
     cache.mkdir(parents=True, exist_ok=True)
-    with ExitStack() as stack:
-        directory = stack.enter_context(tempfile.TemporaryDirectory(prefix='no-audio-', dir=cache))
+    with tempfile.TemporaryDirectory(prefix='no-audio-', dir=cache) as directory:
         folder = Path(directory)
         (folder / 'sitecustomize.py').write_text(GUARD, encoding='utf-8')
         log = folder / 'blocked.log'
@@ -37,13 +35,6 @@ def main():
                'PYTHONPATH': os.pathsep.join([str(folder), str(root), os.environ.get('PYTHONPATH', '')])}
         print('Native audio imports blocked; tests use simulated PCM/devices only.', flush=True)
         arguments = sys.argv[1:] or ['-q']
-        # Deep material snapshots can exhaust Windows' legacy path budget
-        # before a test reaches the renderer. Keep ordinary regression fixtures
-        # short and isolated; explicit paths still allow long-path diagnostics.
-        if os.name == 'nt' and not any(arg == '--basetemp' or arg.startswith('--basetemp=')
-                                       for arg in arguments):
-            temporary = stack.enter_context(tempfile.TemporaryDirectory(prefix='t-', dir=root / '.work'))
-            arguments = [*arguments, '--basetemp', temporary]
         result = subprocess.run([sys.executable, '-m', 'pytest', *arguments], cwd=root, env=env)
         if log.exists():
             print('Blocked audio access attempts (suite rejected):\n' + log.read_text(encoding='utf-8'))

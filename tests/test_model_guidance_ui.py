@@ -3,7 +3,7 @@ import subprocess
 import sys
 
 import pytest
-from ui_support import assert_ui_process
+from ui_support import assert_ui_process, finish_ui_code
 
 
 @pytest.mark.skipif(sys.platform != 'darwin', reason='macOS native application menu')
@@ -42,7 +42,7 @@ w.close()
 faulthandler.cancel_dump_traceback_later()
 '''
     try:
-        result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=15,
+        result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=15,
                                 env={**os.environ, 'QT_QPA_PLATFORM': 'cocoa',
                                      'AGENTSCRIBE_LIBRARY': str(tmp_path)})
     except subprocess.TimeoutExpired as exc:
@@ -93,7 +93,7 @@ w.close()
 w.on_startup_update_checked({'kind':'package', 'url':updates.RELEASE_PAGE+'/tag/v0.6.0-beta.3'})
 assert not hasattr(w, 'update_dialog')
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=12,
+    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=12,
                             env={**os.environ, 'QT_QPA_PLATFORM':'offscreen',
                                  'AGENTSCRIBE_LIBRARY':str(tmp_path)})
     assert_ui_process(result)
@@ -163,7 +163,7 @@ assert w.missing_model_assets and w.model_prompt is None
 w.set_recording_state(RecordingState.IDLE)
 w.close()
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=12,
+    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=12,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path), 'FIXTURE_PLATFORM': system})
     assert_ui_process(result)
@@ -207,7 +207,7 @@ assert not w.knowledge_client.closing and w.knowledge_client.process is None
 assert 'soundcard' not in __import__('sys').modules
 w.close()
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=12,
+    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=12,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path)})
     assert_ui_process(result)

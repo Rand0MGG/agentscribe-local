@@ -10,6 +10,8 @@ from ui_support import assert_ui_process
 @pytest.mark.parametrize('message,drawing_error', [
     ('QPainter::begin: A paint device can only be painted by one painter at a time.', True),
     ('QWidgetEffectSourcePrivate::pixmap: Painter not active', True),
+    ('QProcess: Destroyed while process (fixture) is still running.', True),
+    ('QThread: Destroyed while thread is still running', True),
     ('This plugin does not support propagateSizeHints()', False),
 ])
 def test_qt_warnings_reject_drawing_errors_but_allow_platform_hints(message, drawing_error):
@@ -19,7 +21,7 @@ def test_qt_warnings_reject_drawing_errors_but_allow_platform_hints(message, dra
                             env={**os.environ, 'QT_FORCE_STDERR_LOGGING': '1'})
     assert result.returncode == 0 and message in result.stderr
     if drawing_error:
-        with pytest.raises(AssertionError, match='Qt drawing failure'):
+        with pytest.raises(AssertionError, match='Qt .* failure'):
             assert_ui_process(result)
     else:
         assert_ui_process(result)

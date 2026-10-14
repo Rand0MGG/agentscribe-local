@@ -4,7 +4,7 @@ import subprocess
 import sys
 
 import pytest
-from ui_support import assert_ui_process
+from ui_support import assert_ui_process, finish_ui_code
 
 
 @pytest.mark.parametrize('system', ['darwin', 'win32'])
@@ -68,7 +68,7 @@ if sys.platform == 'darwin':
 assert w.session is None and not {'soundcard', 'sounddevice', 'pyaudio', 'PySide6.QtMultimedia'} & sys.modules.keys()
 w.close()
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=30,
+    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=30,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'AGENTSCRIBE_LIBRARY': str(tmp_path),
                                  'FIXTURE_PLATFORM': system})
     assert_ui_process(result)
@@ -114,7 +114,7 @@ for total, expected_max, expected_value in [(100, 1000, 500), (None, 0, None), (
 assert 'soundcard' not in sys.modules and 'PySide6.QtMultimedia' not in sys.modules
 w.close()
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=20,
+    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=20,
                             env={**os.environ, 'QT_QPA_PLATFORM':'offscreen', 'AGENTSCRIBE_LIBRARY':str(tmp_path),
                                  'FIXTURE_PLATFORM':system})
     assert_ui_process(result)
@@ -144,6 +144,6 @@ actual = json.loads(commands[0][commands[0].index('--selection')+1])
 assert actual == expected and actual['translation_model'].endswith('custom.gguf')
 w.close()
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=20,
+    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=20,
                             env={**os.environ, 'QT_QPA_PLATFORM':'offscreen', 'AGENTSCRIBE_LIBRARY':str(tmp_path)})
     assert_ui_process(result)

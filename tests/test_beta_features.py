@@ -14,16 +14,18 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QSettings, Qt, Signal
 from PySide6.QtWidgets import QApplication
 import linguaflow.app as module
+from linguaflow.app import Window as TestWindow
 app=QApplication([])
 path=Path(os.environ['AGENTSCRIBE_LIBRARY'])/'prefs.ini'
 def window():
     return module.Window(discover=False,prefs=QSettings(str(path),QSettings.Format.IniFormat))
-from ui_support import settle_geometry, wait_until as wait
+from ui_support import close_window, settle_geometry, wait_until as wait
 w=window()
 '''
     bootstrap = f'import sys; sys.path.insert(0, {str(Path(__file__).resolve().parent)!r})\n'
     try:
-        result = subprocess.run([sys.executable, '-c', bootstrap + prefix + code], capture_output=True, text=True, errors='backslashreplace', timeout=35,
+        cleanup = '\nfor widget in app.topLevelWidgets():\n    if isinstance(widget, TestWindow):\n        close_window(widget, app)\n'
+        result = subprocess.run([sys.executable, '-c', bootstrap + prefix + code + cleanup], capture_output=True, text=True, errors='backslashreplace', timeout=35,
             env={**os.environ, 'QT_QPA_PLATFORM': os.environ.get('AGENTSCRIBE_UI_PLATFORM', 'offscreen'),
                  'AGENTSCRIBE_LIBRARY': str(tmp_path)})
     except subprocess.TimeoutExpired as exc:

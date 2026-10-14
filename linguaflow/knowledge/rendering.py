@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import shutil
 import struct
+import sys
 import tempfile
 from pathlib import Path
 
@@ -13,7 +14,7 @@ from ..runtime_paths import (
     installation_command,
     python_environment,
 )
-from .files import checked_path, material_cache, read_json, write_json
+from .files import checked_path, file_path, local_path, material_cache, read_json, write_json
 
 RENDER_VERSION = 'libreoffice-kit-' + DOCUMENT_RENDERER_VERSION + '-144dpi-v1'
 WEB_RENDER_VERSION = 'qt-static-pages-v2'
@@ -48,6 +49,27 @@ async def run_renderer(arguments):
 
 async def render_source(source, output, limit=1000, *, resource_source=None):
     """Render Office/PDF with Kit, web/text/images with an isolated Qt helper."""
+    source, output = file_path(source), file_path(output)
+    if sys.platform != 'win32':
+        return await _render_source(source, output, limit, resource_source=resource_source)
+    # Qt/Chromium and Office helpers do not consistently accept extended paths.
+    # Keep only their private work short; publish to the original checked library.
+    with tempfile.TemporaryDirectory(prefix='as-render-') as directory:
+        work = Path(directory)
+        staged = work / ('source' + source.suffix.lower())
+        shutil.copyfile(source, staged)
+        manifest = await _render_source(staged, work / 'pages', limit,
+                                        resource_source=file_path(resource_source or source))
+        for row in manifest.get('images', []):
+            path = checked_path(work / 'pages', work / 'pages' / row['path'])
+            row['path'] = local_path(path).relative_to((work / 'pages').resolve()).as_posix()
+        shutil.copytree(work / 'pages', output)
+        if (work / 'resources').exists():
+            shutil.copytree(work / 'resources', output.parent / 'resources')
+        return manifest
+
+
+async def _render_source(source, output, limit, *, resource_source=None):
     source, output = Path(source), Path(output)
     request = output.parent / 'request.json'
     if source.suffix.lower() in WEB_SUFFIXES + IMAGE_SUFFIXES:
@@ -88,7 +110,7 @@ def normalize_pages(output, manifest, document_id):
             raise ValueError('渲染页面顺序无效。')
         row['sha256'] = hashlib.sha256(old.read_bytes()).hexdigest()
         used += len(image_bytes(old, row['sha256']))
-        new = output / f'page-{page:04d}.png'
+        new = checked_path(output, output / f'page-{page:04d}.png')
         if old != new:
             old.replace(new)
         row.update(page=page, path=new.name)

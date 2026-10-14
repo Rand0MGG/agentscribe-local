@@ -23,6 +23,9 @@ class ScriptedModel(BaseChatModel):
     def _llm_type(self):
         return 'deepseek'
 
+    def _get_ls_params(self, **kwargs):
+        return {**super()._get_ls_params(**kwargs), 'ls_provider': 'deepseek'}
+
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         message = self.responses.pop(0)
         message.usage_metadata = {'input_tokens': 50, 'output_tokens': 30, 'total_tokens': 80}

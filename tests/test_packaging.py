@@ -384,7 +384,7 @@ def test_package_window_waits_for_accepted_close_and_owned_processes():
     state = {'steps': 0}
     job = SimpleNamespace(state=lambda: QProcess.ProcessState.NotRunning if state['steps'] >= 3
                           else QProcess.ProcessState.Running)
-    window = SimpleNamespace(close=lambda: None, isVisible=lambda: state['steps'] < 2,
+    window = SimpleNamespace(close=lambda: True, isVisible=lambda: state['steps'] < 2,
                              background_checks=set(), findChildren=lambda _: [job])
     application = SimpleNamespace(processEvents=lambda: state.update(steps=state['steps'] + 1))
     probe_package.close_window(window, application)

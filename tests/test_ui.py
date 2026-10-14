@@ -2,7 +2,7 @@ import os
 import subprocess
 import sys
 
-from ui_support import assert_ui_process
+from ui_support import assert_ui_process, finish_ui_code
 
 
 def test_main_prepares_runtime_after_show_and_closes_on_quit():
@@ -45,7 +45,7 @@ except SystemExit as exc: assert exc.code==0
 assert calls==['shown','prepared','closed'],calls
 assert (1500, 'check_startup_updates') in timers
 """
-    result=subprocess.run([sys.executable,'-c',code],capture_output=True,text=True, errors='backslashreplace',timeout=10,
+    result=subprocess.run([sys.executable,'-c',finish_ui_code(code)],capture_output=True,text=True, errors='backslashreplace',timeout=10,
                           env={**os.environ,'QT_QPA_PLATFORM':'offscreen'})
     assert_ui_process(result)
 
@@ -96,7 +96,7 @@ w.library.save = original
 assert w.persist_session() and not w.session_dirty
 w.close()
 """
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=20,
+    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=20,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path)})
     assert_ui_process(result)
@@ -157,7 +157,7 @@ app.processEvents()
 assert w.session is None and w.library.load(w.current_item)[1][0].source == 'new source'
 w.close()
 """
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=20,
+    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=20,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path)})
     assert_ui_process(result)
@@ -219,7 +219,7 @@ assert not w.loading_saved and w.captions[1].translation == 'updated'
 assert path.read_bytes() == before
 w.close()
 """
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=20,
+    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=20,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path)})
     assert_ui_process(result)
@@ -292,7 +292,7 @@ assert original_path.exists() and w.library.directory(item['id']) == original_pa
 w.session = None
 w.close()
 """
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=20,
+    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=20,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path)})
     assert_ui_process(result)
@@ -335,7 +335,7 @@ assert w.current_item is None and not w.library.index['sessions']
 assert w.session is None and w.start_button.isEnabled()
 w.close()
 """
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=20,
+    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=20,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path)})
     assert_ui_process(result)
@@ -386,7 +386,7 @@ assert 'cublas64_12.dll' not in w.empty.text() and w.last_error.endswith('cublas
 w.close()
 """
     result = subprocess.run(
-        [sys.executable, "-c", code],
+        [sys.executable, "-c", finish_ui_code(code)],
         env={**os.environ, "QT_QPA_PLATFORM": "offscreen", "AGENTSCRIBE_LIBRARY": str(tmp_path)},
         capture_output=True,
         text=True, errors='backslashreplace',
@@ -427,7 +427,7 @@ assert w.captions[2].translation == '你好'
 w.session = None
 w.close()
 """
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, errors='backslashreplace', timeout=20,
+    result = subprocess.run([sys.executable, "-c", finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=20,
                             env={**os.environ, "QT_QPA_PLATFORM": "offscreen",
                                  "AGENTSCRIBE_LIBRARY": str(tmp_path)})
     assert_ui_process(result)
@@ -571,7 +571,7 @@ assert w.start_button.isEnabled() and w.library_tree.isEnabled()
 assert 'cannot construct session' in w.notifications.notices[w.notifications.current_key].details and w.last_error
 w.close()
 """
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, errors='backslashreplace', timeout=20,
+    result = subprocess.run([sys.executable, "-c", finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=20,
                             env={**os.environ, "QT_QPA_PLATFORM": "offscreen",
                                  "AGENTSCRIBE_LIBRARY": str(tmp_path)})
     assert_ui_process(result)
