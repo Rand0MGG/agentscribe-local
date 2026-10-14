@@ -1,3 +1,5 @@
+> 历史快照：2026-10-15 整理时保留原文；下文“当前”、计划和通过数仅属于原记录时点。现行规范见 [spec](../../specs/README.md)，最近证据入口见 [VALIDATION](../../VALIDATION.md)。
+
 # AgentScribe 0.6.0-beta.2 · Mac 模型引导与版本更新
 
 本版只提供 Apple Silicon / macOS 15 及以上的 DMG，继续作为预览版发布。版本、标签 `v0.6.0-beta.2` 与安装包对应同一个审核后的 main 提交；旧版安装包保留。Windows 无本版安装包，未完成 Windows 实机验收。

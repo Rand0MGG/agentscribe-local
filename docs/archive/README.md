@@ -1,18 +1,61 @@
-# 历史文档归档
+# 历史文档与迁移索引
 
-这里保留选型、旧版本和阶段验证，不再追加当前规范。记录中的行为、门槛、命令和分支安排只适用于当时；有些试验产物已按授权清理，不能假定仍可复现。
+历史记录保留当时的失败、环境、授权、配置与证据路径，停止承担当前规范；不把旧建议自动加入现行待办。私人原始证据通常仅在执行机器 `.work/`，有些旧实验文件已按授权删除，不能假定可重跑。
 
-日常使用看 [使用指南](../WORKSPACE.md)；开发看 [AGENTS](../../AGENTS.md) 与 [架构](../ARCHITECTURE.md)；打包和更新看 [发行流程](../RELEASING.md)。当前文档的完整入口见 [文档索引](../PROJECT_STRUCTURE.md)。
+当前入口：[文档地图](../PROJECT_STRUCTURE.md)、[spec](../specs/README.md)、[验证索引](../VALIDATION.md)、[计划](../ROADMAP.md)。
 
-## 设计与版本
+## 归档分组
 
-- [课程助手设计 v1.6](AgentScribe_软件开发设计文档_v1.6.md)：原始选型、任务拆分与规划。
-- [v0.4.0](releases/RELEASE_v0.4.0.md)、[v0.5.0](releases/RELEASE_v0.5.0.md)：对应源码版本的发布说明，不代表当前安装包或两端验收。
+- `releases/`：各版本源码/安装包说明；未发布源码版本不等于已有安装包。
+- `testing/`：阶段实测、平台适配、旧评分结果与原架构验证节。原始正文保留，只修正移动后的文件引用，并添加历史范围提示。
+- `topics/`：本轮提炼前的分句、翻译、DSP、引擎与发行专题，保存选型/性能实验依据；当前契约分别进入 spec 和操作文档。
+- [课程助手 v1.6](AgentScribe_软件开发设计文档_v1.6.md)：早期设计和候选方案，不再维护逐文件计划。
 
-## 阶段验证
+## 2026-10-15 文档核对与去向
 
-- [课堂验证](testing/CLASSROOM_VALIDATION.md)、[字幕修订](testing/REVISION_PIPELINE.md)、[界面体验](testing/UI_EXPERIENCE.md)。
-- [音频预设对比](testing/AUDIO_PRESET_BENCHMARK.md)、[语义分段基线](testing/SEGMENTATION_BASELINE.md)、[两阶段翻译](testing/TWO_PHASE_TRANSLATION.md)。
-- [HY Metal 文件验证](testing/HY_METAL.md)、[Mac 主线同步记录](testing/MACOS_MAIN_SYNC.md)、[VAD Float32 修复](testing/VAD_DTYPE_FIX.md)。
+核对基线为本地 windows/08fe5d6 加既有修复，非 main 或已发布包。下表覆盖原 39 篇项目 Markdown 和 1 份随包安装文本；技能、依赖锁和许可证原文不计入篇数。规范/操作核对调用入口、配置和相关测试；历史记录只核对范围、来源/引用，不声称重新运行历史 GPU、设备或云端测试。
 
-这些记录保留测试环境、失败与限制，不能把其中的旧测试通过数当作当前版本结果。可持续使用的 AMI、评分和暂停测试协议仍在 [testing](../testing/)；平台文件推理证据仍见 [Mac 文件测试](../MACOS_FILE_TESTS.md)。
+| 原文档 | 现行正文/保留位置 | 处理 |
+| --- | --- | --- |
+| `AGENTS.md` | [正文](../../AGENTS.md) | 重写/压缩，按职责分流；未变部分保留 |
+| `README.md` | [正文](../../README.md) | 重写/压缩，按职责分流；未变部分保留 |
+| `THIRD_PARTY_NOTICES.md` | [正文](../../THIRD_PARTY_NOTICES.md) | 更正退休组件和旧版本表述，完整保留许可正文 |
+| `docs/ARCHITECTURE.md` | [正文](../ARCHITECTURE.md) | 重写/压缩，按职责分流；未变部分保留 |
+| `docs/AUDIO_PROCESSING.md` | [正文](../specs/recording.md) | 提炼当前要求/操作，历史证据归档 |
+| `docs/AgentScribe_软件开发设计文档.md` | [正文](../specs/course-materials.md) | 移除重复跳转，课程约定归入 spec |
+| `docs/CONTEXT_TRANSLATION.md` | [正文](../specs/captions-translation.md) | 提炼当前要求/操作，历史证据归档 |
+| `docs/LLAMA_CPP.md` | [正文](../specs/models-runtime.md) | 提炼当前要求/操作，历史证据归档 |
+| `docs/MACOS_FILE_TESTS.md` | [正文](../VALIDATION.md) | 提炼当前要求/操作，历史证据归档 |
+| `docs/MACOS_SUPPORT.md` | [正文](../VALIDATION.md) | 提炼当前要求/操作，历史证据归档 |
+| `docs/PROJECT_STRUCTURE.md` | [正文](../PROJECT_STRUCTURE.md) | 重写/压缩，按职责分流；未变部分保留 |
+| `docs/RELEASE_v0.6.0-beta.1.md` | [正文](releases/RELEASE_v0.6.0-beta.1.md) | 冻结版本说明归档，发行列表另行只读核对 |
+| `docs/RELEASE_v0.6.0-beta.2.md` | [正文](releases/RELEASE_v0.6.0-beta.2.md) | 冻结版本说明归档，发行列表另行只读核对 |
+| `docs/RELEASE_v0.7.0.md` | [正文](releases/RELEASE_v0.7.0.md) | 冻结版本说明归档，发行列表另行只读核对 |
+| `docs/RELEASE_v0.8.0.md` | [正文](releases/RELEASE_v0.8.0.md) | 冻结版本说明归档，发行列表另行只读核对 |
+| `docs/RELEASING.md` | [正文](../RELEASING.md) | 重写/压缩，按职责分流；未变部分保留 |
+| `docs/SEMANTIC_SEGMENTATION.md` | [正文](../specs/captions-translation.md) | 提炼当前要求/操作，历史证据归档 |
+| `docs/UI_DESIGN.md` | [正文](../UI_DESIGN.md) | 重写/压缩，按职责分流；未变部分保留 |
+| `docs/VALIDATION.md` | [正文](../VALIDATION.md) | 重写/压缩，按职责分流；未变部分保留 |
+| `docs/WORKSPACE.md` | [正文](../WORKSPACE.md) | 重写/压缩，按职责分流；未变部分保留 |
+| `docs/archive/AgentScribe_软件开发设计文档_v1.6.md` | [正文](AgentScribe_软件开发设计文档_v1.6.md) | 保留历史内容，仅修正引用 |
+| `docs/archive/README.md` | [正文](README.md) | 保留历史内容，仅修正引用 |
+| `docs/archive/releases/RELEASE_v0.4.0.md` | [正文](releases/RELEASE_v0.4.0.md) | 保留历史内容，仅修正引用 |
+| `docs/archive/releases/RELEASE_v0.5.0.md` | [正文](releases/RELEASE_v0.5.0.md) | 保留历史内容，仅修正引用 |
+| `docs/archive/testing/AUDIO_PRESET_BENCHMARK.md` | [正文](testing/AUDIO_PRESET_BENCHMARK.md) | 保留历史内容，仅修正引用 |
+| `docs/archive/testing/CLASSROOM_VALIDATION.md` | [正文](testing/CLASSROOM_VALIDATION.md) | 保留历史内容，仅修正引用 |
+| `docs/archive/testing/HY_METAL.md` | [正文](testing/HY_METAL.md) | 保留历史内容，仅修正引用 |
+| `docs/archive/testing/MACOS_MAIN_SYNC.md` | [正文](testing/MACOS_MAIN_SYNC.md) | 保留历史内容，仅修正引用 |
+| `docs/archive/testing/REVISION_PIPELINE.md` | [正文](testing/REVISION_PIPELINE.md) | 保留历史内容，仅修正引用 |
+| `docs/archive/testing/SEGMENTATION_BASELINE.md` | [正文](testing/SEGMENTATION_BASELINE.md) | 保留历史内容，仅修正引用 |
+| `docs/archive/testing/TWO_PHASE_TRANSLATION.md` | [正文](testing/TWO_PHASE_TRANSLATION.md) | 保留历史内容，仅修正引用 |
+| `docs/archive/testing/UI_EXPERIENCE.md` | [正文](testing/UI_EXPERIENCE.md) | 保留历史内容，仅修正引用 |
+| `docs/archive/testing/VAD_DTYPE_FIX.md` | [正文](testing/VAD_DTYPE_FIX.md) | 保留历史内容，仅修正引用 |
+| `docs/testing/AMI_BENCHMARK.md` | [正文](../testing/AMI_BENCHMARK.md) | 重写/压缩，按职责分流；未变部分保留 |
+| `docs/testing/RECORDING_PAUSE.md` | [正文](../specs/recording.md) | 提炼当前要求/操作，历史证据归档 |
+| `docs/testing/SCORING_SYSTEM.md` | [正文](../testing/SCORING_SYSTEM.md) | 重写/压缩，按职责分流；未变部分保留 |
+| `media/README.md` | [正文](../../media/README.md) | 核对用途与来源后保留；不压缩许可/固定协议 |
+| `packaging/macos/THIRD_PARTY.md` | [正文](../../packaging/macos/THIRD_PARTY.md) | 核对用途与来源后保留；不压缩许可/固定协议 |
+| `packaging/macos/安装说明.txt` | [正文](../../packaging/macos/安装说明.txt) | 保留随包操作，更正历史测试与当前包验收的区别 |
+| `tests/fixtures/course_formats/NOTICE.md` | [正文](../../tests/fixtures/course_formats/NOTICE.md) | 核对用途与来源后保留；不压缩许可/固定协议 |
+
+原文 SHA256、逐篇去向、未改业务文件校验和本轮文档验证结果保存在执行机 `.work/docs-restructure-20261015/`；目录不随 Git 同步。

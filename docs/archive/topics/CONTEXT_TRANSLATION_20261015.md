@@ -1,3 +1,5 @@
+> 历史快照：2026-10-15 整理时保留原文；下文“当前”、计划和通过数仅属于原记录时点。现行规范见 [spec](../../specs/README.md)，最近证据入口见 [VALIDATION](../../VALIDATION.md)。
+
 # 上下文翻译
 
 在设置 → 翻译模型中选择 `tencent/Hy-MT2-1.8B`，下载 / 检查模型后开始录音。
@@ -33,13 +35,13 @@ SaT 更新完成前不启动下一项 HY 推理。每段排队期间只保留一
 
 界面标明“初译 · 原文已更新”“初译 · 等待最终译文”或“译文已定稿”。`Caption.translation_phase`、`translation_source`、`asr_final`、`boundary_final` 与 `segmentation_revision` 随录音保存；旧录音缺少新增字段仍可读取并保持已保存的最终状态。未完成的初译在 SRT / 文本导出中带 `[初译]` 标记。
 
-HY-MT2 的 PyTorch 路线使用 Transformers；Apple Silicon 的 GGUF / Metal 路线见 [llama.cpp](LLAMA_CPP.md)。两种适配共用调度，没有升级 ASR 环境。1.8B 官方配置使用 `hunyuan_v1_dense`，标注 Transformers 4.57.6。
+HY-MT2 的 PyTorch 路线使用 Transformers；Apple Silicon 的 GGUF / Metal 路线见 [llama.cpp](LLAMA_CPP_20261015.md)。两种适配共用调度，没有升级 ASR 环境。1.8B 官方配置使用 `hunyuan_v1_dense`，标注 Transformers 4.57.6。
 模型按用户选择在 CPU 或 CUDA 上加载，CUDA 支持时使用 BF16，否则 FP16；CPU 使用 FP32。两个模型共用 GPU 时仍需实际检查峰值显存和积压。
 沿用官方 1.8B 推荐采样参数；PyTorch 单次输出限制 1024 token，输入限制 8192 token；GGUF 的 4096 token 总窗口预留 1024 token 输出。预算处理只缩短背景，不能截断待译源文。
 
 ## 验证
 
-自动测试覆盖提交后原文变化立即请求、元数据与邻句变化不重译、小/大上下文、排队版本覆盖、冻结背景、批次限制、共享推理与按段映射、整批过期拒绝及有效成员重新排队、失败/取消任务释放、输入预算、缓存和旧录音兼容。旧两阶段策略的历史实测见 [两阶段提交验证](archive/testing/TWO_PHASE_TRANSLATION.md)，其中“中间修订不翻译”不是当前行为。
+自动测试覆盖提交后原文变化立即请求、元数据与邻句变化不重译、小/大上下文、排队版本覆盖、冻结背景、批次限制、共享推理与按段映射、整批过期拒绝及有效成员重新排队、失败/取消任务释放、输入预算、缓存和旧录音兼容。旧两阶段策略的历史实测见 [两阶段提交验证](../testing/TWO_PHASE_TRANSLATION.md)，其中“中间修订不翻译”不是当前行为。
 
 2026-10-03 配置统一与增量调度：上下文默认值、偏好范围、界面选项与后台缺省配置共用 `translation_config.py`，已有有效选择不变。实时 worker 改用规划器的 `update_changes()`，维护有序位置及定稿索引，按字幕变化更新，不在每次规划时遍历整段会话。空原文删除、早期历史纠正、重新提交/定稿及位置变化均更新索引，原有冻结背景和批量相邻规则保留。
 

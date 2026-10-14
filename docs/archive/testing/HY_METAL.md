@@ -128,4 +128,4 @@
 
 - 翻译页原生 Cocoa 预览覆盖 1280 × 840 和 900 × 650；Metal 选项可见。模拟 Windows 保留 CPU/CUDA，未在 Windows 实机验收。
 
-共享引擎选择的后续检查见 [llama.cpp 翻译](../../LLAMA_CPP.md)。
+共享引擎选择的后续检查见 [llama.cpp 翻译](../topics/LLAMA_CPP_20261015.md)。

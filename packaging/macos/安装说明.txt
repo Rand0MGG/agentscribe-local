@@ -5,7 +5,7 @@ AgentScribe 0.8.0 · Apple Silicon 安装包
 2. 弹出此磁盘映像，然后从“应用程序”打开 AgentScribe。
 3. 如果正在录音，等录音结束再退出旧版、启动新版；不要同时用两个版本录音。
 
-此包支持 Apple Silicon（M 系列），最低 macOS 15；实际验证机器为 M2 / macOS 26.6.2。
+此包支持 Apple Silicon（M 系列），最低 macOS 15；既往测试使用 M2 / macOS 26.6.2，当前包仍须按构建清单单独验收。
 无需另外安装 Python、Qt、Node.js、Homebrew 或系统 Git，应用运行无需管理员权限。
 拖入系统 Applications 时可能按目录权限要求授权；也可放入 ~/Applications，仅安装给当前用户。
 

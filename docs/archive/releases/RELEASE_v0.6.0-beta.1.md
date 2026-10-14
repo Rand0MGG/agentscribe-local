@@ -1,3 +1,5 @@
+> 历史快照：2026-10-15 整理时保留原文；下文“当前”、计划和通过数仅属于原记录时点。现行规范见 [spec](../../specs/README.md)，最近证据入口见 [VALIDATION](../../VALIDATION.md)。
+
 # AgentScribe 0.6.0-beta.1 · Mac 安装包预览版
 
 新增 Apple Silicon DMG，可拖入 Applications 安装。最低声明 macOS 15，验收环境为 Apple M2 / 8GB / macOS 26.6.2。Windows 尚未构建安装包，也未实机验收本轮改动。本版使用 `v0.6.0-beta.1` 标签，发行记录见 [GitHub Release](https://github.com/Rand0MGG/agentscribe-local/releases/tag/v0.6.0-beta.1)；属于预览版，不代表正式稳定版或真实录音验收。此次 Release 仅提供 Mac 安装包；以后同一源码版本可同时提供两端安装包，也可只发布一个平台。

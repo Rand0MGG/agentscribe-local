@@ -1,6 +1,6 @@
 # Third-party dependencies
 
-LinguaFlow 0.3 consumes the full WhisperLiveKit pipeline as a pinned dependency. The old extracted HypothesisBuffer and custom streaming wrapper have been removed.
+AgentScribe uses the pinned WhisperLiveKit pipeline. Source pins are maintained in requirements-runtime.txt; binary distributions retain their own exact dependency manifests and notices.
 
 - WhisperLiveKit: https://github.com/QuentinFuxa/WhisperLiveKit
   - Commit: 94a2ac6f1b7a4a54b9dd1218039ee09bc78ccb7e
@@ -12,7 +12,7 @@ LinguaFlow 0.3 consumes the full WhisperLiveKit pipeline as a pinned dependency.
 - NLLB weights: https://huggingface.co/facebook/nllb-200-distilled-600M — CC-BY-NC-4.0.
 - Hy-MT2-1.8B weights: https://huggingface.co/tencent/Hy-MT2-1.8B — Apache-2.0. Downloaded separately; source releases do not include weights.
 - Hy-MT2-1.8B-GGUF: https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF — Apache-2.0; the Metal installer downloads the pinned official Q4_K_M weights and upstream license separately.
-- llama.cpp: https://github.com/ggml-org/llama.cpp — MIT; the optional Metal installer downloads the official b11254 macOS arm64 archive separately and verifies its SHA-256.
+- llama.cpp: https://github.com/ggml-org/llama.cpp — MIT; the separate runtime installer downloads pinned b11254 platform archives and verifies SHA-256; source releases do not bundle them.
 - nagisa/DyNet remain installed dependencies; the Windows Unicode-path compatibility layer copies the installed package temporarily without changing its implementation or license files.
 
 No model weights are distributed in this repository. Dependency and model licenses remain separate from application code. Upstream benchmark figures do not constitute LinguaFlow performance measurements.
@@ -21,14 +21,14 @@ No model weights are distributed in this repository. Dependency and model licens
 
 - PyObjC 11.1: https://github.com/ronaldoussoren/pyobjc — MIT. The macOS desktop distribution includes the core bridge and Cocoa/CoreMedia/ScreenCaptureKit/libdispatch bindings; Windows and the inference environments do not install them. The Cocoa wheel retains the upstream full MIT copyright and license in its distribution metadata. ScreenCaptureKit is an operating-system framework; no virtual audio driver is bundled.
 
-## Optional contextual segmentation
+## Contextual segmentation
 
 - wtpsplit 2.2.1 / SaT: https://github.com/segment-any-text/wtpsplit
 - SaT-3l-sm model: https://huggingface.co/segment-any-text/sat-3l-sm ; tokenizer: https://huggingface.co/facebookAI/xlm-roberta-base . Downloads use pinned revisions in `semantic_model.py`; upstream license and model-card terms apply. Only the segmentation ONNX weights and tokenizer are downloaded, not XLM-R language-model weights.
 
-## Optional audio front end
+## Audio processing and historical experiments
 
-- DeepFilterNet: https://github.com/Rikorose/DeepFilterNet — upstream project and model notices are retained in the dependency distribution. The downloaded community export is not an official LinguaFlow-trained model.
+- The DeepFilterNet experiment and its dedicated dependencies/model were removed on 2026-10-05; it is not a current runtime component. Historical provenance: https://github.com/Rikorose/DeepFilterNet . Existing experiment evidence remains archived.
 - ONNX / ONNX Runtime: https://github.com/onnx/onnx and https://github.com/microsoft/onnxruntime — Apache-2.0 / MIT.
 
 ## Optional course material processing
@@ -43,7 +43,7 @@ The `knowledge` extra installs SDK/parser/credential libraries into the desktop 
 
 Upstream distributions retain their license files. The optional group's root versions are pinned in `pyproject.toml`; this is not a complete transitive lockfile. Supplier service terms and API charges are separate from code licenses. Only explicitly allowed course text and page images are sent to DeepSeek; raw audio remains local.
 
-Full-page PDF/Office rendering separately installs `@deepseek-ai/libreoffice-kit@0.1.3` from https://github.com/deepseek-ai/dsh-libreoffice-kit — MPL-2.0, with matching platform engine dependencies. `scripts/install_documents.py` retains upstream license/notice files and the engine distributions' supplied source material under `.runtime/document-renderer`; the binaries and dependencies are not committed or bundled in source releases. PDFium, LibreOffice and other engine dependencies retain their own licenses/notices. Application adapter code imports the installed component without modifying its covered files. Future binary redistribution must preserve the applicable notices and source availability requirements.
+Full-page PDF/Office rendering separately installs `@deepseek-ai/libreoffice-kit@0.1.3` from https://github.com/deepseek-ai/dsh-libreoffice-kit — MPL-2.0, with matching platform engine dependencies. `scripts/install_documents.py` retains upstream license/notice files and the engine distributions' supplied source material under the managed component path selected by `runtime_paths.document_renderer()` (including the legacy `.runtime/document-renderer` layout); the binaries and dependencies are not committed or bundled in source releases. PDFium, LibreOffice and other engine dependencies retain their own licenses/notices. Application adapter code imports the installed component without modifying its covered files. Future binary redistribution must preserve the applicable notices and source availability requirements.
 
 The DSH application at https://github.com/deepseek-ai/deepseek-harness is MIT, but its license does not replace the independent rendering component's MPL-2.0 or engine licenses. This integration does not copy or install the full DSH harness.
 

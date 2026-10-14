@@ -1,8 +1,10 @@
+> 历史快照：2026-10-15 整理时保留原文；下文“当前”、计划和通过数仅属于原记录时点。现行规范见 [spec](../../specs/README.md)，最近证据入口见 [VALIDATION](../../VALIDATION.md)。
+
 # Mac 现成音频推理测试 · 2026-09-28
 
 ## 2026-10-03：启动等待对照
 
-在已有 CPU SaT 优化缓存的相同条件下，串行基线 `ce10135` 与并行 MLX 加载版交替回放同一 CV5 前 90 秒各两轮。使用 Qt offscreen 的实际桌面会话与后台保存，文件按 1 倍速送入，不访问或播放音频设备。四轮确认实际 MLX GPU 识别和 HY 的 33 层 Metal 翻译，原录音不变，全部字幕和译文定稿、零错误。点击开始至文件输入由 7.887 / 7.903 秒降至 6.585 / 6.615 秒；翻译模型就绪仅从 9.375 / 9.568 秒降至 9.195 / 9.140 秒。资源口径、取消检查和限制见 [Mac 适配记录](MACOS_SUPPORT.md)。
+在已有 CPU SaT 优化缓存的相同条件下，串行基线 `ce10135` 与并行 MLX 加载版交替回放同一 CV5 前 90 秒各两轮。使用 Qt offscreen 的实际桌面会话与后台保存，文件按 1 倍速送入，不访问或播放音频设备。四轮确认实际 MLX GPU 识别和 HY 的 33 层 Metal 翻译，原录音不变，全部字幕和译文定稿、零错误。点击开始至文件输入由 7.887 / 7.903 秒降至 6.585 / 6.615 秒；翻译模型就绪仅从 9.375 / 9.568 秒降至 9.195 / 9.140 秒。资源口径、取消检查和限制见 [Mac 适配记录](MACOS_SUPPORT_20261011.md)。
 
 本机 `.work/mac-file-tests/startup-time-20261003/summary.json` 记录四轮摘要，每个 `pipeline-*` 有原始事件、资源、保存结果及代码来源；冻结的两个基线模块位于 `baseline-ce10135/`。`pipeline-serial-1/` 第一次实验未正确隔离子进程代码，标为无效，不包含在摘要中。`cancel-startup/result.json` 记录 GPU 已加载而整条识别链未 ready 时终止本次 worker，子进程约 0.2 秒退出，零音频输入及设备导入尝试。没有重跑完整课堂，也未验收真实录音或 Windows。
 
@@ -213,14 +215,14 @@ NLLB 600M 的官方权重约 2.46GB；下载启动后，因上述资源事件取
 | 无音频回归 | 294 passed，无原生音频导入尝试 |
 | 静态检查 | 本次修改的 Python 文件 Ruff 通过，Git 差异格式检查通过 |
 
-真实回放使用 `scripts/replay_streaming.py run --prepared ... --settings ... --output ...`，暂停测试另传 `--pause-at 25 --pause-seconds 2`。证据保存在 `.work/mac-file-tests/shared-submission-xai-90s/` 与 `.work/mac-file-tests/shared-submission-xai-60s-pause/`，各含完整事件、配置、摘要和资源记录；暂停验证另记录相关识别源文件哈希，已核对与该阶段被测实现一致。后续超时、更新间隔及时间边界修复的 299 项回归与最新代码的 40 秒 GPU 实测，见 [适配复核](MACOS_SUPPORT.md#课堂录音与适配复核2026-09-30)。
+真实回放使用 `scripts/replay_streaming.py run --prepared ... --settings ... --output ...`，暂停测试另传 `--pause-at 25 --pause-seconds 2`。证据保存在 `.work/mac-file-tests/shared-submission-xai-90s/` 与 `.work/mac-file-tests/shared-submission-xai-60s-pause/`，各含完整事件、配置、摘要和资源记录；暂停验证另记录相关识别源文件哈希，已核对与该阶段被测实现一致。后续超时、更新间隔及时间边界修复的 299 项回归与最新代码的 40 秒 GPU 实测，见 [适配复核](MACOS_SUPPORT_20261011.md#课堂录音与适配复核2026-09-30)。
 
 这些验证证明近期原文通过共用修订记录更新、分段减少以及暂停/EOF 正常收尾。课堂片段仍存在术语、公式与否定词错误；没有人工逐词参考，不报告 WER，也不声称整堂课准确率已达标。未重跑全部约 24 分钟录音，中文与 Windows 实机待验证。较长上下文增加内存和处理成本，90 秒回放期间整个系统交换空间增长约 1.44 GiB，不能全部归因于本次识别进程。
 
 
 ## 2026-10-06：共享 ASR / SaT / HY 定稿规则
 
-Windows / PyTorch 与 macOS / MLX Qwen 现共用多轮确认和重叠窗口处理器，窗口容量不再关闭话语。SaT 收尾必须先满足对应 ASR 确认；最终翻译还须匹配当前切分版本。SaT 更新优先于下一项 HY 请求，改字/重切合并待处理版本，删除范围与迟到结果失效。行为见 [语义分段](SEMANTIC_SEGMENTATION.md)。
+Windows / PyTorch 与 macOS / MLX Qwen 现共用多轮确认和重叠窗口处理器，窗口容量不再关闭话语。SaT 收尾必须先满足对应 ASR 确认；最终翻译还须匹配当前切分版本。SaT 更新优先于下一项 HY 请求，改字/重切合并待处理版本，删除范围与迟到结果失效。行为见 [语义分段](../topics/SEMANTIC_SEGMENTATION_20261015.md)。
 
 M2 / 8GB、Python 3.12.14：完整无音频测试 **479 passed**，全仓 Ruff 与差异空白检查通过。模拟覆盖 Windows 的旧快/准确配置及两种模型适配入口；这不能代替 Windows GPU 实测。
 
