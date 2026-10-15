@@ -9,10 +9,12 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QListWidget,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QStackedWidget,
     QStyle,
     QStyledItemDelegate,
@@ -21,10 +23,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .library import default_recording_name
 from .qt_controls import text_label
 from .ui_components import ChoiceBox as QComboBox
-from .ui_components import PageTransition, SurfaceDialog, motion_enabled
+from .ui_components import ElidedLabel, PageTransition, apply_floating_shadow, motion_enabled
 from .ui_theme import theme_colors
 
 PAGE_DESCRIPTIONS = {
@@ -37,6 +38,60 @@ PAGE_DESCRIPTIONS = {
     '运行环境': '准备本地组件、修复运行环境和检查软件更新。',
     '使用指南': '从第一次聆听，到整理和分享你的录音。',
 }
+
+
+class RecordingHint(QLabel):
+    """A quiet setup summary; ordinary pipeline messages still use the same label."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setWordWrap(True)
+        self.details = QWidget(self)
+        self.details.setMaximumWidth(400)
+        self.details.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(24, 16, 24, 16)
+        outer.addWidget(self.details, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout = QVBoxLayout(self.details)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        heading = text_label('准备开始录音')
+        heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        heading.setStyleSheet('QLabel { font-size: 20px; font-weight: 600; }')
+        layout.addWidget(heading)
+        description = text_label('点击下方开始按钮，即可聆听。', 'muted')
+        description.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        description.setStyleSheet('QLabel { font-size: 13px; }')
+        layout.addWidget(description)
+        layout.addSpacing(14)
+        self.values = []
+        for _ in range(3):
+            value = ElidedLabel()
+            value.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            value.setStyleSheet('QLabel { font-size: 13px; }')
+            layout.addWidget(value)
+            self.values.append(value)
+        layout.addSpacing(10)
+        footer = text_label('下方图标调整设置 · 顶部标题修改名称', 'muted')
+        footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        footer.setStyleSheet('QLabel { font-size: 12px; }')
+        layout.addWidget(footer)
+        self.details.hide()
+
+    def set_context(self, source, folder, language):
+        super().setText(f'准备开始录音\n音频来源：{source}\n保存文件夹：{folder}\n语言：{language}')
+        for label, caption, value in zip(self.values, ('音频来源', '语言', '保存到'), (source, language, folder)):
+            label.setText(f'{caption} · {value}')
+            label.setToolTip(label.text())
+        self.details.show()
+
+    def setText(self, text):
+        self.details.hide()
+        super().setText(text)
+
+    def paintEvent(self, event):
+        if self.details.isHidden():
+            super().paintEvent(event)
 
 
 class Switch(QCheckBox):
@@ -87,13 +142,14 @@ class Switch(QCheckBox):
 class LanguagePopup(QDialog):
     """Three views of the existing language controls, with no independent settings."""
     def __init__(self, source, target, translate, parent):
-        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setFixedWidth(320)
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(8, 8, 8, 8)
+        outer.setContentsMargins(16, 12, 16, 20)
         surface = QFrame()
         surface.setObjectName('dialogSurface')
+        apply_floating_shadow(surface)
         outer.addWidget(surface)
         form = QFormLayout(surface)
         form.setContentsMargins(18, 14, 18, 14)
@@ -145,20 +201,20 @@ class LibraryDelegate(QStyledItemDelegate):
         while parent.isValid():
             depth += 1
             parent = parent.parent()
-        x = option.rect.x() + 12 + depth * 14
+        x = option.rect.x() + depth * 14
         kind, _ = index.data(Qt.ItemDataRole.UserRole)
         y = option.rect.center().y()
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.setPen(QColor('#666670' if light else '#aaaab2'))
         if kind == 'folder':
             expanded = bool(option.state & QStyle.StateFlag.State_Open)
-            points = [(x + 2, y - 2), (x + 5, y + 1), (x + 8, y - 2)] if expanded else [
-                (x + 3, y - 4), (x + 6, y - 1), (x + 3, y + 2)]
+            points = [(x + 30, y - 2), (x + 33, y + 1), (x + 36, y - 2)] if expanded else [
+                (x + 31, y - 4), (x + 34, y - 1), (x + 31, y + 2)]
             painter.drawLine(QPointF(*points[0]), QPointF(*points[1]))
             painter.drawLine(QPointF(*points[1]), QPointF(*points[2]))
-            painter.drawRoundedRect(QRectF(x + 15, y - 5, 15, 11), 2, 2)
-            painter.drawLine(QPointF(x + 16, y - 7), QPointF(x + 22, y - 7))
-            text_x = x + 37
+            painter.drawRoundedRect(QRectF(x + 12, y - 5, 15, 11), 2, 2)
+            painter.drawLine(QPointF(x + 13, y - 7), QPointF(x + 19, y - 7))
+            text_x = x + 41
         else:
             painter.drawRoundedRect(QRectF(x + 10, y - 7, 11, 14), 2, 2)
             painter.drawLine(QPointF(x + 13, y - 2), QPointF(x + 18, y - 2))
@@ -216,8 +272,8 @@ class LibraryTree(QTreeWidget):
             while parent is not None:
                 depth += 1
                 parent = parent.parent()
-            arrow_x = rect.x() + 12 + depth * 14
-            if kind == 'folder' and arrow_x - 4 <= event.position().x() <= arrow_x + 12:
+            arrow_x = rect.x() + depth * 14
+            if kind == 'folder' and arrow_x <= event.position().x() <= arrow_x + 39:
                 row.setExpanded(not row.isExpanded())
                 event.accept()
                 return
@@ -229,56 +285,6 @@ class LibraryTree(QTreeWidget):
                 self.newRequested.emit(identifier)
                 return
         super().mousePressEvent(event)
-
-
-class RecordingDialog(SurfaceDialog):
-    def __init__(self, library, folder_id, parent):
-        super().__init__('新建录音', '为这次聆听留一个位置。创建后，你可以再开始录音。', parent)
-        layout = self.body
-        layout.addWidget(text_label('本地保存 · 原文与译文自动记录', 'stepBadge'))
-        layout.addSpacing(6)
-        layout.addWidget(text_label("录音名称", 'settingsLabel'))
-        self.name = QLineEdit(default_recording_name())
-        self.name.setMaxLength(64)
-        self.name.selectAll()
-        self.name.setPlaceholderText('例如：第 02 讲 · 梯度与优化')
-        layout.addWidget(self.name)
-        layout.addWidget(text_label("保存到文件夹", 'settingsLabel'))
-        self.folder = QComboBox()
-        for item in library.index["folders"]:
-            self.folder.addItem(library.folder_label(item["id"]), item["id"])
-        if not self.folder.count():
-            self.folder.addItem('我的录音 · 创建录音时建立', None)
-        self.folder.setCurrentIndex(max(0, self.folder.findData(folder_id)))
-        layout.addWidget(self.folder)
-        self.error = text_label("同名录音会自动添加序号，已有文件不会被覆盖。", "muted")
-        layout.addWidget(self.error)
-        buttons = self.actions
-        buttons.addStretch()
-        cancel = QPushButton("取消")
-        cancel.clicked.connect(self.reject)
-        buttons.addWidget(cancel)
-        create = QPushButton("创建录音")
-        create.setObjectName("primary")
-        create.clicked.connect(lambda: self.validate(library))
-        create.setDefault(True)
-        create.setEnabled(bool(self.name.text().strip()) and self.folder.count() > 0)
-        self.name.textChanged.connect(lambda value: create.setEnabled(bool(value.strip()) and self.folder.count() > 0))
-        buttons.addWidget(create)
-        self.name.setFocus()
-
-    def validate(self, library):
-        try:
-            library.validate_name(self.name.text())
-            if self.folder.currentData() is None and library.index['folders']:
-                raise ValueError("请先创建文件夹。")
-        except ValueError as exc:
-            self.error.setText(str(exc))
-            self.name.setProperty('invalid', True)
-            self.name.style().polish(self.name)
-            self.name.setFocus()
-            return
-        self.accept()
 
 
 class SettingsWorkspace(QWidget):

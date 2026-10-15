@@ -16,7 +16,6 @@ def main():
     from linguaflow.deleted_dialog import DeletedDialog
     from linguaflow.recording_state import RecordingState
     from linguaflow.ui_components import ActionMenu, Disclosure, NameDialog
-    from linguaflow.workspace_widgets import RecordingDialog
     from scripts.test_no_audio import GUARD
 
     output = ROOT / '.work' / 'ui-experience'
@@ -69,9 +68,9 @@ def main():
     capture('models-wide', lambda: (window.resize(1600, 900), window.open_settings('识别模型')))
     capture('models-local', lambda: window.model_manager.findChild(Disclosure).toggle.setChecked(True))
     steps.append(lambda: (window.leave_settings(), advance()))
+    capture('new-recording', window.new_button.click)
     dialogs = []
-    for name, make in [('new-recording', lambda: RecordingDialog(window.library, window.folder_id, window)),
-                       ('deleted', lambda: DeletedDialog(window.library, window))]:
+    for name, make in [('deleted', lambda: DeletedDialog(window.library, window))]:
         def setup(make=make):
             window.resize(1280, 840)
             dialog = make()

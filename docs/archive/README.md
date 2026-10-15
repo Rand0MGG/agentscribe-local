@@ -4,6 +4,8 @@
 
 当前入口：[文档地图](../PROJECT_STRUCTURE.md)、[spec](../specs/README.md)、[验证索引](../VALIDATION.md)、[计划](../ROADMAP.md)。
 
+近期阶段记录：[Mac UI 验证（2026-10-15—16）](testing/MAC_UI_20261016.md)。
+
 ## 归档分组
 
 - `releases/`：各版本源码/安装包说明；未发布源码版本不等于已有安装包。

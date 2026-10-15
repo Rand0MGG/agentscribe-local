@@ -13,7 +13,6 @@ from PySide6.QtCore import QSettings, QTimer
 from PySide6.QtWidgets import QApplication, QPushButton
 from linguaflow.app import STYLE, Window
 from linguaflow.ui_components import ActionMenu, Disclosure, NameDialog
-from linguaflow.workspace_widgets import RecordingDialog
 app = QApplication([])
 app.setStyleSheet(STYLE)
 prefs = QSettings(os.environ['AGENTSCRIBE_LIBRARY'] + '/prefs.ini', QSettings.Format.IniFormat)
@@ -48,11 +47,9 @@ assert w.scroll.following
 assert not w.scroll.latest_button.isVisible()
 assert w.pages.currentIndex() == 0
 assert w.session is None
-dialog = RecordingDialog(w.library, w.folder_id, w)
-dialog.name.setText('')
-assert not next(b for b in dialog.findChildren(QPushButton) if b.text() == '创建录音').isEnabled()
-dialog.name.setText('   ')
-assert not next(b for b in dialog.findChildren(QPushButton) if b.text() == '创建录音').isEnabled()
+w.new_button.click()
+assert w.current_item is None and not w.library.index['sessions']
+assert '保存文件夹' in w.empty.text()
 QTimer.singleShot(0, lambda: QApplication.activeModalWidget().reject())
 name, accepted = NameDialog.getText(w, '新建文件夹', '文件夹名称')
 assert not accepted and name == ''
@@ -74,7 +71,7 @@ from PySide6.QtTest import QTest
 w.show()
 app.processEvents()
 w.translate.setChecked(False)
-assert '仅原文' in w.quick_language.text()
+assert '仅原文' in w.quick_language.toolTip() and '仅原文' in w.empty.text()
 assert not w.language_popup.isVisible()
 w.quick_language.click()
 wait(w.language_popup.isVisible)

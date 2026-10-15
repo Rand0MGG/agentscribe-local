@@ -26,19 +26,17 @@ if sys.platform == 'darwin' and hasattr(Qt.WindowType, 'ExpandedClientAreaHint')
     assert w.title_bar.height() == 59 and w.pages.y() == 59, (w.title_bar.geometry(), w.pages.geometry())
     w.update_titlebar_inset(QMargins(0, 28, 0, 0))
     app.processEvents()
-    assert w.title_bar.height() == 44 and w.pages.y() == 44, (w.title_bar.geometry(), w.pages.geometry())
+    assert w.title_bar.height() == 36 and w.pages.y() == 36, (w.title_bar.geometry(), w.pages.geometry())
 w.close()
 ''', tmp_path)
 
 
-def test_hover_darkens_existing_colour_and_application_shortcuts_are_removed(tmp_path):
+def test_hover_darkens_existing_colour_without_effects(tmp_path):
     from test_beta_features import run_ui
     run_ui(r'''
 from PySide6.QtCore import QPoint
-from PySide6.QtGui import QShortcut
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QWidget, QPushButton
-assert not w.findChildren(QShortcut)
 probe = QWidget()
 probe.resize(240,100)
 probe.setObjectName('hoverProbe')
@@ -47,17 +45,45 @@ button = QPushButton('', probe)
 button.setObjectName('quiet')
 button.setGeometry(20,20,160,50)
 probe.show()
-app.processEvents()
+assert QTest.qWaitForWindowExposed(probe)
+probe.raise_()
+probe.activateWindow()
+assert QTest.qWaitForWindowActive(probe)
+QTest.qWait(50)
 QTest.mouseMove(probe, QPoint(225,85))
-app.processEvents()
-before = probe.grab().toImage().pixelColor(35,35)
+QTest.qWait(30)
+def sampled_colour():
+    picture = probe.grab()
+    scale = picture.devicePixelRatioF()
+    return picture.toImage().pixelColor(round(35*scale),round(35*scale))
+before = sampled_colour()
 QTest.mouseMove(button, QPoint(15,15))
-app.processEvents()
-after = probe.grab().toImage().pixelColor(35,35)
-assert all(0 < a < b for a,b in zip(after.getRgb()[:3],before.getRgb()[:3]))
+QTest.qWait(30)
+after = sampled_colour()
+assert all(0 < a < b for a,b in zip(after.getRgb()[:3],before.getRgb()[:3])), (before.getRgb(),after.getRgb(),button.underMouse())
 assert after.red()-after.green() > 40 and after.blue()-after.green() > 25, (before.getRgb(),after.getRgb())
 assert button.graphicsEffect() is None
 probe.close()
+w.close()
+''', tmp_path)
+
+
+def test_no_application_shortcuts_and_find_menu_remains_available(tmp_path):
+    from test_beta_features import run_ui
+    run_ui(r'''
+from PySide6.QtGui import QAction, QKeySequence, QShortcut
+from PySide6.QtTest import QTest
+assert not w.findChildren(QShortcut)
+assert all(not action.shortcuts() for action in w.findChildren(QAction))
+module.Window.start_background_check = lambda *args, **kwargs: None
+w.show(); settle_geometry(w)
+notices = []
+w.notifications.post = lambda *args, **kwargs: notices.append(args)
+QTest.keySequence(w, QKeySequence(QKeySequence.StandardKey.Find))
+app.processEvents()
+assert not notices
+w.find_action.trigger()
+assert len(notices) == 1 and '请先打开包含字幕的录音' in notices[0][1]
 w.close()
 ''', tmp_path)
 
@@ -136,7 +162,6 @@ from linguaflow.app import CaptionCard, Window
 from linguaflow.core import Caption
 from linguaflow.recording_save import SaveSnapshot
 from linguaflow.recording_state import RecordingState
-from linguaflow.workspace_widgets import RecordingDialog
 app = QApplication([])
 Window.check_model_assets = lambda self: None
 w = Window(discover=False, prefs=QSettings(os.environ['AGENTSCRIBE_LIBRARY']+'/prefs.ini', QSettings.Format.IniFormat))
@@ -205,20 +230,13 @@ row = w.library_rows[w.folder_id]
 row.setExpanded(True)
 app.processEvents()
 rect = w.library_tree.visualItemRect(row)
-QTest.mouseClick(w.library_tree.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(rect.x()+17, rect.center().y()))
+QTest.mouseClick(w.library_tree.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(rect.x()+5, rect.center().y()))
 assert not row.isExpanded()
-QTest.mouseClick(w.library_tree.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(rect.x()+17, rect.center().y()))
+QTest.mouseClick(w.library_tree.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(rect.x()+5, rect.center().y()))
 assert row.isExpanded()
 w.session_dirty = False
 w.current_item = None
 w.close()
-# The empty-library creation form is still usable and cancellation writes nothing.
-from types import SimpleNamespace
-library = SimpleNamespace(index={'folders': []}, validate_name=lambda name: None)
-dialog = RecordingDialog(library, None, None)
-assert next(b for b in dialog.findChildren(QPushButton) if b.text() == '创建录音').isEnabled()
-dialog.validate(library)
-assert dialog.result() == dialog.DialogCode.Accepted and not library.index['folders']
 '''
     result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=30,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',

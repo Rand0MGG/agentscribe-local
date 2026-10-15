@@ -11,7 +11,7 @@ def expand_window_content(window):
         return False
     window.setWindowFlag(Qt.WindowType.ExpandedClientAreaHint, True)
     window.setWindowFlag(Qt.WindowType.NoTitleBarBackgroundHint, True)
-    # The shared 44 px toolbar already reserves room for title controls. Qt's
+    # The shared 36 px toolbar already reserves room for title controls. Qt's
     # automatic safe-area inset would leave an empty strip above the backdrop.
     window.setAttribute(Qt.WidgetAttribute.WA_ContentsMarginsRespectsSafeArea, False)
     return True

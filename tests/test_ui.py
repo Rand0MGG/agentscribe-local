@@ -298,7 +298,7 @@ w.close()
     assert_ui_process(result)
 
 
-def test_start_validation_and_cancelled_naming_do_not_launch(tmp_path):
+def test_start_validation_and_new_workspace_do_not_launch(tmp_path):
     code = """
 import os
 from PySide6.QtCore import QSettings
@@ -327,10 +327,7 @@ w.model_manager.backend.setCurrentIndex(w.model_manager.backend.findData('qwen3-
 w.source.setCurrentIndex(0)
 w.start(models_checked=True)
 assert messages.pop() == '请选择原文语言'
-w.model_manager.backend.setCurrentIndex(0)
-from linguaflow.workspace_widgets import RecordingDialog
-RecordingDialog.exec = lambda self: 0
-w.start(models_checked=True)
+w.new_button.click()
 assert w.current_item is None and not w.library.index['sessions']
 assert w.session is None and w.start_button.isEnabled()
 w.close()
@@ -447,6 +444,7 @@ class FakeSession(QObject):
     ready = Signal()
     paused = Signal(bool)
     caption = Signal(object)
+    source_preview = Signal(object)
     level = Signal(float)
     source_changed = Signal(int)
     failure = Signal(str)

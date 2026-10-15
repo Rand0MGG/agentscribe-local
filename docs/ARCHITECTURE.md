@@ -27,8 +27,10 @@ Qt 线程负责装配、呈现和发起操作，只有它更新 UI。耗时任�
 | --- | --- |
 | 轻量数据、设置 | `core.py`、`preferences.py`、`model_options.py`、`translation_config.py`；集中格式、默认值、迁移和选择，无 Qt/模型依赖 |
 | 桌面装配 | `app.py`、`management.py`、`workspace_widgets.py`、`settings_binding.py`；显式快照/信号连接，不把窗口传入业务 |
-| 呈现与系统窗口 | `ui_theme.py`、`ui_components.py`、`ui_backdrop.py`、`caption_view.py`、`subtitles_overlay.py`；系统调用收敛 `window_platform.py` / 按需 `ui_macos.py` |
+| 呈现与系统窗口 | `ui_theme.py`、`ui_components.py`、`ui_backdrop.py`、`caption_view.py`、`playback_controls.py`、`ui_tooltips.py`、`subtitles_overlay.py`；回放音量控件只发出数值，由窗口绑定应用音频输出；系统调用收敛 `window_platform.py` / 按需 `ui_macos.py` |
+| 原文即时预览 | `source_preview.py` 从完整 ASR 快照投影未分句的可修订尾部；WLK worker 在 SaT 之前发布，Qwen 修订通道可在 SaT 工作期间独立更新。预览版本与已映射前文分开校验，桌面/悬浮窗立即显示；不进入翻译规划或改变 mapper 定稿状态 |
 | 录音与传输 | `recording_state.py`、`wlk_session.py`、`capture_control.py`、`journal.py`；会话、采集代次、PCM 次序、停止边界 |
+| 回放增益 | `playback_stream.py` 将原始 WAV 作为可随机定位的只读流提供给媒体播放器，按读取块处理 PCM 增益并限制峰值，不生成文件副本；窗口拥有输入流并在切换/关闭时释放 |
 | 系统音频 | `audio.py`、按需 `audio_macos.py`；Windows WASAPI，Mac CoreAudio 输入 / ScreenCaptureKit 电脑声音，只回传 PCM，复用公共保存/字幕流程 |
 | 推理启动与识别 | `wlk_worker.py`、`inference_startup.py`、`backends.py`；统一装配/资源登记。`qwen_accurate.py`、`asr_stability.py`、`qwen_revisions.py` 负责共享原文确认与修订；`mlx_asr.py` / worker 仅负责独立模型协议 |
 | 分句与翻译 | `semantic_model.py`、`semantic_cache.py`、`wlk_captions.py`；`translation_context.py` 规划，`translation_queue.py` 排队，`translation_service.py` 消费/发布，`translation_models.py` / `llama_translation.py` 适配模型 |
@@ -44,6 +46,7 @@ Qt 线程负责装配、呈现和发起操作，只有它更新 UI。耗时任�
 - 正常停止关闭新采集入口，允许已接受音频及同一会话有效字幕/翻译在收尾期限内完成；取消、超时或换代失效后的结果不得发布。收尾与取消不是同一状态，重复停止不重置期限。
 - Session 拥有采集和推理进程；准备监督进程、课程进程和翻译服务分别由创建者回收。加载工厂登记可取消资源，迟到对象也关闭。进程确认退出、读写线程结束后才关闭管道。
 - `Window.closeEvent` 等待保存及自有任务；壁纸任务用非阻塞轮询等待线程 join，拒绝迟到图像并重新请求关闭，Qt 不提前退出。
+- `CaptionText` 缓存当前内容/字体/尺寸对应的文字命中区域，交互状态变化才重绘字幕卡片；悬浮窗跳过未变化内容的样式与文本更新。全局提示管理器在应用退出或气泡销毁时停止计时并注销事件过滤，禁止向已销毁的窗口发送显示/隐藏操作。
 - 课程桌面层只传消息。实时模块仅使用轻量 schemas/glossary，不依赖 SDK、worker 或 harness；云端失败不能阻断录音/字幕保存。库移动/删除前回收课程后台是文件一致性要求。
 
 ## 运行环境与当前策略
@@ -64,6 +67,8 @@ Qt 线程负责装配、呈现和发起操作，只有它更新 UI。耗时任�
 | 课程原件、页面快照与解读 | 课程 `.agentscribe/`；独立版本发布，兼容旧布局 |
 | 关联/许可、来源与笔记 | 录音 `knowledge/manifest.json`、`knowledge/state.sqlite`；数据库不取代录音主文件，个人编辑不可被 AI 覆盖 |
 | 用户/资源/模型/解释器路径 | `runtime_paths.py`；安装包只读，用户目录独立，保留旧库和模型缓存 |
+
+录制中改名等待已有保存完成，将 `pending_name` 原子写入 `session.json`；后续保存保留该显示名称，采集目录和锁路径不变。成功收尾并释放锁后同步目录名，冲突保留原目录与名称。库操作按目标范围检查，不因整理其他录音而中断当前会话或课程后台。
 
 `session.json` 与衍生字幕文件分别原子替换，不是整个录音目录的一次事务；WAV 在采集中流式写入。写入线程结束不等于全部所需文件保存成功，保存资格仍以带错误与版本信息的回执判断。
 

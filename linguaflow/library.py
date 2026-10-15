@@ -107,7 +107,8 @@ class Library:
                         if parent is None:
                             warnings.append(f"请把 {child.name} 放入一个文件夹。")
                             continue
-                        item.update(name=child.name, folder=parent)
+                        item.update(name=self.validate_name(item['pending_name']) if 'pending_name' in item else child.name,
+                                    folder=parent)
                         target = sessions
                     else:
                         marker = child / self.folder_file
@@ -194,7 +195,8 @@ class Library:
         directory = self.directory(item["id"])
         data = self._read(directory / "session.json")
         data["captions"] = [asdict(c) for c in sorted(captions, key=lambda c: (c.start, c.id))]
-        data["session"].update(state=state or data["session"]["state"], name=directory.name)
+        data["session"].update(state=state or data["session"]["state"],
+                               name=data['session'].get('pending_name', directory.name))
         self._write(directory / "session.json", data)
         final = [Caption(**c) for c in data["captions"] if c["final"] and c["source"]]
         for filename, text in [("定稿.srt", export_srt(final)),
@@ -209,11 +211,25 @@ class Library:
         data = self._read(self.directory(item["id"]) / "session.json")
         return read_recording_document(data)
 
-    def rename(self, item, name):
+    def rename(self, item, name, *, defer_directory=False):
         source = self.directory(item["id"])
         destination = self._destination(source.parent, name, source=source)
+        if defer_directory:
+            # Keep the capture writer and its lock at their original paths.
+            data = self._read(source / 'session.json')
+            data['session'].update(name=destination.name, pending_name=destination.name)
+            self._write(source / 'session.json', data)
+            item.update(name=destination.name, pending_name=destination.name)
+            self.refresh()
+            return
         if source != destination:
             source.rename(destination)
+        if 'pending_name' in item:
+            data = self._read(destination / 'session.json')
+            data['session'].pop('pending_name', None)
+            data['session']['name'] = destination.name
+            self._write(destination / 'session.json', data)
+            item.pop('pending_name', None)
         item["name"] = destination.name
         self.refresh()
 

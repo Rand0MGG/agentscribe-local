@@ -8,12 +8,12 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QSlider,
     QVBoxLayout,
     QWidget,
 )
 
 from .caption_view import CaptionText
+from .qt_controls import ClickSlider as QSlider
 from .qt_controls import text_label
 from .ui_theme import theme_colors
 from .window_platform import configure_overlay, visible_window_geometry
@@ -84,8 +84,10 @@ class Overlay(QWidget):
         super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint |
                          Qt.WindowType.WindowStaysOnTopHint)
         self.prefs = prefs
+        self._caption_key = None
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setWindowTitle('AgentScribe · 悬浮字幕')
         self.setMinimumSize(380, 160)
         self.resize(780, 220)
@@ -135,11 +137,12 @@ class Overlay(QWidget):
         close = QPushButton('×')
         close.setObjectName('quiet')
         close.setFixedSize(32, 32)
+        close.setStyleSheet('QPushButton { min-width: 32px; max-width: 32px; min-height: 32px; max-height: 32px; border: none; padding: 0; }')
         close.setAccessibleName('关闭悬浮字幕')
         close.clicked.connect(self.hide)
         top.addWidget(close)
         layout.addWidget(self.header)
-        scroll = QScrollArea()
+        scroll = self.scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         content = QWidget()
@@ -167,10 +170,6 @@ class Overlay(QWidget):
         self.hide_controls.setSingleShot(True)
         self.hide_controls.setInterval(400)
         self.hide_controls.timeout.connect(lambda: self.set_controls_visible(False))
-        for control in (self.header, self.resize_handle):
-            policy = control.sizePolicy()
-            policy.setRetainSizeWhenHidden(True)
-            control.setSizePolicy(policy)
         self.set_controls_visible(False)
 
     def set_font_size(self, size):
@@ -218,13 +217,24 @@ class Overlay(QWidget):
 
     def update_caption(self, caption, translating=True, *, animate=True):
         animate = animate and self.isVisible()
-        self.source.set_caption_text(caption.source, animate=animate)
-        self.source.setObjectName('captionFinal' if caption.final else 'captionDraft')
-        self.source.style().unpolish(self.source)
-        self.source.style().polish(self.source)
         stale = caption.translation_source and caption.translation_source != caption.source
         prefix = '译文更新失败 · ' if stale and caption.error else ('正在更新译文 · ' if stale else
                   ('初译 · ' if caption.translation_phase == 'initial' else ''))
-        self.target.set_caption_text(prefix + caption.translation if translating and caption.translation else '',
-                                     animate=animate)
+        target = prefix + caption.translation if translating and caption.translation else ''
+        key = (caption.source, caption.translation, caption.final, caption.translation_source,
+               caption.translation_phase, caption.error, translating)
+        if (key == self._caption_key and self.source.text() == caption.source and self.target.text() == target
+                and self.target.isHidden() == (not bool(target))):
+            if not animate:
+                self.source.finish_reveal()
+                self.target.finish_reveal()
+            return
+        self._caption_key = key
+        self.source.set_caption_text(caption.source, animate=animate)
+        name = 'captionFinal' if caption.final else 'captionDraft'
+        if self.source.objectName() != name:
+            self.source.setObjectName(name)
+            self.source.style().unpolish(self.source)
+            self.source.style().polish(self.source)
+        self.target.set_caption_text(target, animate=animate)
         self.target.setVisible(bool(self.target.text()))

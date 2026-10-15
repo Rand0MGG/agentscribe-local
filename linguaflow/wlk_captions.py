@@ -88,6 +88,41 @@ class BoundaryPolicy:
         return boundaries
 
 
+def source_snapshot(snapshot, language="auto", *, done=False):
+    """Read the complete ASR hypothesis without semantic work or confirmation."""
+    text, spans = "", []
+    for line in snapshot.get("lines", []):
+        if not (line.get("text") or "").strip():
+            continue
+        tokens = line.get("tokens") or [line]
+        text += separator(text, tokens[0].get("text", ""))
+        for token in tokens:
+            value = token.get("text", "")
+            if not value:
+                continue
+            start = len(text)
+            text += value
+            spans.append((start, len(text), seconds(token.get("start")), seconds(token.get("end")),
+                          line.get("detected_language") or language))
+    stable_end = len(text)
+    tail = snapshot.get("buffer_transcription", "").strip()
+    if tail and not done:
+        text += separator(text, tail)
+        tail_start = len(text)
+        text += tail
+        if snapshot.get("draft_span"):
+            draft = snapshot["draft_span"]
+            spans.append((tail_start, len(text), seconds(draft.get("start")),
+                          seconds(draft.get("end")), language))
+    if "revision_text" in snapshot:
+        text = snapshot["revision_text"]
+        stable_end = snapshot["stable_end"]
+        spans = snapshot["revision_spans"]
+    if not text.strip():
+        text = ""
+    return text, spans, stable_end
+
+
 class CaptionMapper:
     def __init__(self, language="auto", *, predictor, lookahead=3., clock=time.monotonic):
         self.language = language
@@ -103,36 +138,7 @@ class CaptionMapper:
         self.boundary_observed = {}
 
     def update(self, snapshot, done=False):
-        text, spans = "", []
-        for line in snapshot.get("lines", []):
-            if not (line.get("text") or "").strip():
-                continue
-            tokens = line.get("tokens") or [line]
-            text += separator(text, tokens[0].get("text", ""))
-            for token in tokens:
-                value = token.get("text", "")
-                if not value:
-                    continue
-                start = len(text)
-                text += value
-                spans.append((start, len(text), seconds(token.get("start")), seconds(token.get("end")),
-                              line.get("detected_language") or self.language))
-        stable_end = len(text)
-        tail = snapshot.get("buffer_transcription", "").strip()
-        if tail and not done:
-            text += separator(text, tail)
-            tail_start = len(text)
-            text += tail
-            if snapshot.get("draft_span"):
-                draft = snapshot["draft_span"]
-                spans.append((tail_start, len(text), seconds(draft.get("start")),
-                              seconds(draft.get("end")), self.language))
-        if "revision_text" in snapshot:
-            text = snapshot["revision_text"]
-            stable_end = snapshot["stable_end"]
-            spans = snapshot["revision_spans"]
-        if not text.strip():
-            text = ""
+        text, spans, stable_end = source_snapshot(snapshot, self.language, done=done)
         closed_ends = list(snapshot.get('closed_ends', []))
         if 'closed_audio_time' in snapshot:
             # Token timestamps locate one completed utterance endpoint; they

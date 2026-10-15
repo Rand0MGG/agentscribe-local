@@ -116,7 +116,7 @@ assets.resolve_assets = lambda settings: checks.append(settings.translation_engi
 w.show_warning = lambda title, message: warnings.append(message)
 # Stop after preflight, before a recording or inference process is created.
 def new_recording(**kwargs):
-    assert kwargs == {'check_models': False}  # The preflight has already checked files.
+    assert kwargs['check_models'] is False and kwargs['name']  # Preflight checked files; use the suggested title.
     return next_steps.append('new recording') or False
 w.new_recording = new_recording
 w.start(models_checked=True)

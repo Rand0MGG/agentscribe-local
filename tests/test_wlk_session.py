@@ -83,6 +83,26 @@ def test_captured_pcm_is_drained_before_process_stops(monkeypatch, tmp_path):
         assert recording.getsampwidth() == 2
 
 
+def test_source_previews_are_forwarded_independently_of_semantic_captions(monkeypatch, tmp_path):
+    program = '''
+import sys,json
+json.loads(sys.stdin.readline())
+print(json.dumps({'type':'ready'}),flush=True)
+print(json.dumps({'type':'source_preview','data':{'sequence':1,'keep_ids':[],
+    'source':'立即显示','start':0,'end':1,'language':'zh'}}),flush=True)
+print(json.dumps({'type':'source_preview_done','sequence':1}),flush=True)
+for line in sys.stdin:
+    if json.loads(line)['type']=='stop': break
+print(json.dumps({'type':'done'}),flush=True)
+'''
+    previews = []
+    captions, failures = execute(monkeypatch, tmp_path, program, lambda *args: None,
+        setup=lambda session: session.source_preview.connect(previews.append))
+    assert not captions and not failures
+    assert previews[0]['source'] == '立即显示'
+    assert previews[1] == dict(sequence=1, done=True)
+
+
 def test_stop_before_ready_does_not_open_audio(monkeypatch, tmp_path):
     opened = []
     captions, failures = execute(monkeypatch, tmp_path, PROGRAM,

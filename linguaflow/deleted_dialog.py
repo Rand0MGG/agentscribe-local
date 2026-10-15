@@ -25,21 +25,28 @@ class DeletedDialog(SurfaceDialog):
         self.restore.setObjectName('primary')
         self.purge = QPushButton("永久删除…")
         self.purge.setObjectName("danger")
+        self.purge_all = QPushButton("全部删除…")
+        self.purge_all.setObjectName('danger')
         self.actions.addWidget(self.purge)
+        self.actions.addWidget(self.purge_all)
         self.actions.addStretch()
         self.actions.addWidget(self.restore)
         self.restore.clicked.connect(self.recover)
         self.purge.clicked.connect(self.purge_selected)
+        self.purge_all.clicked.connect(self.purge_everything)
         self.populate()
 
     def populate(self):
         self.entries.clear()
+        for button in (self.restore, self.purge, self.purge_all):
+            button.setEnabled(False)
         try:
             for item in self.library.deleted():
                 self.entries.addItem(item["name"] + "   ·   " + item["deleted"][:10])
                 self.entries.item(self.entries.count()-1).setData(Qt.ItemDataRole.UserRole, item["token"])
             self.restore.setEnabled(self.entries.count() > 0)
             self.purge.setEnabled(self.entries.count() > 0)
+            self.purge_all.setEnabled(self.entries.count() > 0)
             self.entries.setCurrentRow(0)
             self.empty.setVisible(self.entries.count() == 0)
             self.entries.setVisible(self.entries.count() > 0)
@@ -69,4 +76,31 @@ class DeletedDialog(SurfaceDialog):
                 self.populate()
             except (OSError, ValueError) as exc:
                 self.warn("删除失败", str(exc))
+
+    def purge_everything(self):
+        # Freeze the displayed items before confirmation; newly deleted files are excluded.
+        items = [(self.entries.item(i).data(Qt.ItemDataRole.UserRole), self.entries.item(i).text())
+                 for i in range(self.entries.count())]
+        if not items:
+            return
+        answer = QMessageBox.warning(self, '全部永久删除？',
+            f'最近删除中显示的 {len(items)} 项及其中的录音、字幕和文件将从磁盘永久删除，无法恢复。',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        failures = []
+        for token, name in items:
+            try:
+                self.library.purge_deleted(token)
+            except (OSError, ValueError) as exc:
+                failures.append(f'{name}：{exc}')
+        self.populate()
+        if len(failures) < len(items):
+            self.changed.emit()
+        if failures:
+            detail = '\n'.join(failures[:5])
+            if len(failures) > 5:
+                detail += f'\n另有 {len(failures)-5} 项未删除。'
+            self.warn('部分项目未删除', f'{len(failures)} 项未能删除，仍保留在最近删除中。\n{detail}')
 

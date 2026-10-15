@@ -24,6 +24,7 @@ class Session(QThread):
     stop_timeout = 180.
     status = Signal(str)
     caption = Signal(object)
+    source_preview = Signal(object)
     model_result = Signal(object)
     level = Signal(float)
     source_changed = Signal(int)
@@ -265,6 +266,10 @@ class Session(QThread):
                     self.stage.emit("音频", "连续采集")
                 elif kind == "caption":
                     self.caption.emit(Caption(**event["data"]))
+                elif kind == 'source_preview':
+                    self.source_preview.emit(event['data'])
+                elif kind == 'source_preview_done':
+                    self.source_preview.emit(dict(sequence=event['sequence'], done=True))
                 elif kind == "model_result" and self.diagnostic:
                     self.model_result.emit(event["data"])
                 elif kind == "metrics":

@@ -181,6 +181,8 @@ app.sendEvent(overlay, QEnterEvent(QPointF(10,10), QPointF(10,10), QPointF(10,10
 assert not overlay.header.isHidden() and not overlay.resize_handle.isHidden()
 settle_geometry(overlay, overlay.source)
 geometry, source_rect = overlay.geometry(), overlay.source.geometry()
+reading_height = overlay.scroll.height()
+source_top = overlay.source.mapTo(overlay, overlay.source.rect().topLeft()).y()
 overlay.background_opacity.setValue(0)
 app.processEvents()
 assert overlay.windowOpacity() == 1
@@ -193,6 +195,8 @@ wait(lambda: overlay.header.isHidden() and overlay.resize_handle.isHidden())
 assert overlay.header.isHidden() and overlay.resize_handle.isHidden()
 settle_geometry(overlay, overlay.source)
 assert overlay.geometry() == geometry and overlay.source.geometry() == source_rect
+assert overlay.scroll.height() > reading_height
+assert overlay.source.mapTo(overlay, overlay.source.rect().topLeft()).y() < source_top
 assert overlay.source.isVisibleTo(overlay)
 overlay.hide()
 restored = Overlay(w.prefs)

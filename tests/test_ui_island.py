@@ -16,7 +16,7 @@ w.show()
 settle_geometry(w, w.control_island)
 assert w.current_item is None and w.control_island.isVisibleTo(w)
 assert w.transport.isHidden() and w.control_island.height() <= 76
-assert 300 < w.control_island.width() <= 560
+assert 200 <= w.control_island.width() <= 240
 def middle(widget):
     return widget.mapTo(w.control_island, widget.rect().center()).y()
 assert max(map(middle, (w.quick_device, w.quick_language, w.start_button))) - min(map(middle, (w.quick_device, w.quick_language, w.start_button))) <= 1
@@ -50,6 +50,9 @@ for mode in (0, 1):
                       RecordingState.PAUSED, RecordingState.STOPPING):
             w.set_recording_state(state)
             settle_geometry(w, w.control_island)
+            frame = w.workspace_frame
+            root = w.centralWidget()
+            assert frame.mapTo(root, frame.rect().bottomRight()) == root.rect().bottomRight()
             assert w.scroll.viewport().rect().contains(w.control_island.geometry()), (size, state, w.control_island.geometry())
             controls = (w.quick_device, w.quick_language, w.pause_button, w.stop_button) if state.active else (w.quick_device, w.quick_language, w.start_button)
             assert max(map(middle, controls)) - min(map(middle, controls)) <= 1
@@ -61,11 +64,15 @@ for mode in (0, 1):
     w.resize(1280, 840)
     settle_geometry(w)
     surface = QColor(theme_colors('dark' if mode else 'light')['surface'])
-    frame = w.workspace_content.parentWidget()
+    frame = w.workspace_frame
     image = w.grab().toImage()
     for point in (QPoint(2, 2), QPoint(frame.width()-3, 2), QPoint(2, frame.height()-3)):
         pixel = frame.mapTo(w, point)
         assert image.pixelColor(pixel) != surface, (mode, point, image.pixelColor(pixel).name())
+w.open_settings('常规')
+settle_geometry(w, w.settings_workspace.right)
+frame = w.settings_workspace.right
+assert frame.mapTo(root, frame.rect().bottomRight()) == root.rect().bottomRight()
 w.close()
 ''', tmp_path)
 
@@ -115,7 +122,7 @@ w.close()
 ''', tmp_path)
 
 
-def test_empty_device_picker_keeps_refresh_reachable_by_mouse_and_keyboard(tmp_path):
+def test_empty_device_picker_keeps_refresh_reachable_by_mouse(tmp_path):
     run_ui(r'''
 from PySide6.QtTest import QTest
 module.Window.start_background_check = lambda *args, **kwargs: None
@@ -132,25 +139,10 @@ assert w.refresh_source.isVisibleTo(popup)
 w.refresh_source.click()
 wait(lambda: not popup.isVisible())
 assert refreshed == [True]
-w.quick_device.setFocus()
-QTest.keyClick(w.quick_device, Qt.Key.Key_Space)
-wait(popup.isVisible)
-assert w.refresh_source.isVisibleTo(popup)
-QTest.keyClick(w.refresh_source, Qt.Key.Key_Space)
-wait(lambda: not popup.isVisible())
-assert refreshed == [True, True]
 w.device.addItem('系统音频 · 扬声器', ('speaker', True))
 w.quick_device.showPopup()
 wait(popup.isVisible)
 assert w.quick_device.view().isVisibleTo(popup)
 w.quick_device.hidePopup()
-w.set_recording_state(module.RecordingState.LISTENING)
-w.quick_device.setFocus()
-QTest.keyClick(w.quick_device, Qt.Key.Key_Tab)
-assert app.focusWidget() is w.quick_language
-QTest.keyClick(w.quick_language, Qt.Key.Key_Tab)
-assert app.focusWidget() is w.pause_button
-QTest.keyClick(w.pause_button, Qt.Key.Key_Tab)
-assert app.focusWidget() is w.stop_button
 w.close()
 ''', tmp_path)

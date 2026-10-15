@@ -17,7 +17,8 @@ for width,height in ((1280,840),(900,650),(640,480)):
     assert w.meter.geometry().right()>=w.live_transport.width()-2
     assert w.meter.width()>=64
     lengths.append(w.meter.width())
-assert lengths[0]>lengths[-1]
+assert all(length>=64 for length in lengths)
+assert w.control_island.width()<=320 and w.control_island.height()<=90
 w.set_recording_state(RecordingState.PAUSED)
 assert w.volume_caption.text()=='已暂停' and w.meter.value()==0
 w.set_recording_state(RecordingState.IDLE)
@@ -144,7 +145,7 @@ for width, height in ((640,480), (900,650), (700,960)):
                 assert scroll.viewport().rect().intersects(rect), (category,child.text(),rect)
     w.leave_settings()
     app.processEvents()
-    assert w.quick_language.width() > 80
+    assert w.quick_language.width() == w.quick_language.height() == 40, (w.quick_language.size(),w.quick_language.minimumSize(),w.quick_language.maximumSize())
     assert w.control_island.geometry().right() < w.scroll.viewport().width()
     assert w.control_island.geometry().bottom() < w.scroll.viewport().height()
     for control in (w.quick_device, w.quick_language, w.start_button):

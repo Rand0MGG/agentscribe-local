@@ -227,3 +227,27 @@ def test_initial_translation_roundtrip_and_exports_are_explicit(tmp_path):
     assert loaded.translation_source == 'old source' and loaded.translation_phase == 'initial'
     for name in ('定稿.txt', '定稿.srt'):
         assert '[初译] initial translation' in (library.directory(item['id']) / name).read_text(encoding='utf-8-sig')
+
+
+def test_deferred_title_survives_save_reload_and_conflict_without_moving_audio(tmp_path):
+    library = Library(tmp_path)
+    item = library.create('inbox', {}, name='原始路径')
+    original = library.directory(item['id'])
+    audio = original / '录音.wav'
+    audio.write_bytes(b'keep audio')
+    library.rename(item, '新名称', defer_directory=True)
+    library.save(item, [Caption(1, 0, 1, 'keep caption', 'en')], 'recording')
+    reopened = Library(tmp_path)
+    restored = next(i for i in reopened.index['sessions'] if i['id'] == item['id'])
+    assert restored['name'] == '新名称'
+    assert reopened.directory(item['id']) == original
+    collision = library.create('inbox', {}, name='新名称')
+    with pytest.raises(FileExistsError):
+        reopened.rename(restored, restored['pending_name'])
+    assert audio.read_bytes() == b'keep audio'
+    assert reopened.load(restored)[1][0].source == 'keep caption'
+    library.trash(collision)
+    reopened.rename(restored, restored['pending_name'])
+    assert reopened.directory(item['id']).name == '新名称'
+    assert (reopened.directory(item['id']) / '录音.wav').read_bytes() == b'keep audio'
+    assert 'pending_name' not in reopened.load(restored)[0]['session']

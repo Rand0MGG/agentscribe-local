@@ -157,12 +157,27 @@ async def _run_session(settings, emit, read_message, config, engine, online, sem
         from .runtime_compat import finalize_whisper_once
         finalize_whisper_once(processor.transcription)
     revisions = None
+    from .source_preview import SourcePreview
+    preview = SourcePreview(config.lan)
     revision_changed = asyncio.Event()
     event_loop = asyncio.get_running_loop()
+    preview_open = True
+    def show_preview(snapshot):
+        sequence, data = preview.begin(snapshot)
+        if data is not None:
+            emit({'type': 'source_preview', 'data': data})
+        return sequence
+    def show_revision():
+        if not preview_open:
+            return
+        snapshot = {}
+        revisions.augment_snapshot(snapshot, config.lan)
+        show_preview(snapshot)
+        revision_changed.set()
     def revision_event(event):
         if os.environ.get("LINGUAFLOW_TRACE_REVISIONS") == "1":
             emit(event)
-        event_loop.call_soon_threadsafe(revision_changed.set)
+        event_loop.call_soon_threadsafe(show_revision)
     if qwen:
         from .qwen_revisions import install_revision_bridge
         revisions = install_revision_bridge(processor.transcription,
@@ -203,9 +218,14 @@ async def _run_session(settings, emit, read_message, config, engine, online, sem
                     revisions.augment_snapshot(snapshot, config.lan)
                 elif closed_audio_time >= 0:
                     snapshot['closed_audio_time'] = max(snapshot.get('closed_audio_time', -1), closed_audio_time)
+                sequence = show_preview(snapshot)
                 captions = await asyncio.to_thread(mapper.update, snapshot, done=done)
+                rebased = preview.complete(mapper, sequence)
+                if rebased is not None:
+                    emit({'type': 'source_preview', 'data': rebased})
                 for caption in captions:
                     emit({"type": "caption", "data": asdict(caption)})
+                emit({'type': 'source_preview_done', 'sequence': sequence})
                 if settings.get('translate'):
                     for caption in captions:
                         if not caption.source:
@@ -325,6 +345,7 @@ async def _run_session(settings, emit, read_message, config, engine, online, sem
             emit({"type": "status", "text": f"本次 PyTorch 显存分配峰值 {torch.cuda.max_memory_allocated() / 1024**3:.2f} GiB（不含驱动等额外占用）"})
         emit({"type": "done"})
     finally:
+        preview_open = False
         lifecycle_task.cancel()
         await asyncio.gather(lifecycle_task, return_exceptions=True)
         if revision_task:

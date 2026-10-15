@@ -21,7 +21,6 @@ from PySide6.QtGui import (
     QAction,
     QColor,
     QIcon,
-    QKeySequence,
     QPainter,
     QPainterPath,
     QPen,
@@ -40,7 +39,6 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSizePolicy,
-    QSlider,
     QSplitter,
     QStackedWidget,
     QTreeWidgetItem,
@@ -51,11 +49,12 @@ from PySide6.QtWidgets import (
 from . import __version__
 from .audio import list_devices
 from .caption_view import CaptionScrollArea, CaptionText
-from .core import LANGUAGES
+from .core import LANGUAGES, Caption
 from .deleted_dialog import DeletedDialog
 from .knowledge.client import KnowledgeClient
 from .knowledge.panel import KnowledgePanel
 from .knowledge.session import read_manifest, session_context
+from .library import default_recording_name
 from .library_access import (
     acquire_library_migration_lock,
     acquire_recording_lock,
@@ -70,7 +69,9 @@ from .native_updates import NativeUpdater
 from .notifications import FeedbackLabel, NotificationCenter
 from .onboarding import FirstRunDialog
 from .playback import PlaybackIndex
+from .playback_controls import PlaybackVolume
 from .preferences import PREFERENCES, read_audio_device, read_preferences, write_preferences
+from .qt_controls import ClickSlider as QSlider
 from .qt_controls import data_index
 from .qt_controls import text_label as label
 from .recording_save import RecordingSaver
@@ -85,10 +86,13 @@ from .ui_components import (
     FloatingIsland,
     IslandButton,
     NameDialog,
+    NavigationButton,
+    RecordingTitle,
     SurfaceDialog,
 )
 from .ui_components import ChoiceBox as QComboBox
 from .ui_theme import STYLE, WORKSPACE_RADIUS, appearance_style, theme_colors
+from .ui_tooltips import install_tooltips
 from .window_platform import (
     configure_main_window,
     enable_native_resize,
@@ -97,7 +101,7 @@ from .window_platform import (
     start_edge_resize,
 )
 from .wlk_session import Session
-from .workspace_widgets import LanguagePopup, LibraryTree, RecordingDialog, SettingsWorkspace, Switch
+from .workspace_widgets import LanguagePopup, LibraryTree, RecordingHint, SettingsWorkspace, Switch
 
 
 def panel(title, subtitle=None):
@@ -144,14 +148,11 @@ class GlassTitleBar(QFrame):
         super().__init__(window)
         self.host = window
         self.setObjectName("glassTopBar")
-        self.setFixedHeight(44)
+        self.setFixedHeight(36)
         bar = QHBoxLayout(self)
         # macOS owns the traffic lights on the left; Windows owns our buttons on the right.
         bar.setContentsMargins(96 if window.integrated_titlebar else 13, 0, 0, 0)
         bar.setSpacing(8)
-        title = label("AgentScribe" if window.integrated_titlebar else "AgentScribe · 本地同声字幕")
-        title.setWordWrap(False)
-        bar.addWidget(title)
         bar.addStretch()
         minimize = WindowButton(window, 'minimize')
         minimize.setToolTip("最小化")
@@ -219,7 +220,8 @@ class WorkspaceFrame(QFrame):
 
 
 def line_icon(kind, color="#bdbdbf"):
-    pixmap = QPixmap(20, 20)
+    pixmap = QPixmap(80, 80)
+    pixmap.setDevicePixelRatio(4)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -252,6 +254,13 @@ def line_icon(kind, color="#bdbdbf"):
         painter.drawArc(4, 4, 12, 12, 40*16, 280*16)
         painter.drawLine(15, 3, 15, 7)
         painter.drawLine(11, 7, 15, 7)
+    elif kind == 'download':
+        painter.drawLine(10, 3, 10, 13)
+        painter.drawLine(6, 9, 10, 13)
+        painter.drawLine(10, 13, 14, 9)
+        painter.drawLine(3, 15, 3, 17)
+        painter.drawLine(3, 17, 17, 17)
+        painter.drawLine(17, 17, 17, 15)
     elif kind == 'check':
         painter.drawLine(4, 10, 8, 14)
         painter.drawLine(8, 14, 16, 6)
@@ -290,6 +299,18 @@ def line_icon(kind, color="#bdbdbf"):
         painter.drawEllipse(3, 3, 14, 14)
         painter.drawEllipse(7, 3, 6, 14)
         painter.drawLine(3, 10, 17, 10)
+    elif kind == 'volume':
+        path = QPainterPath()
+        path.moveTo(3, 8)
+        path.lineTo(6, 8)
+        path.lineTo(10, 4)
+        path.lineTo(10, 16)
+        path.lineTo(6, 12)
+        path.lineTo(3, 12)
+        path.closeSubpath()
+        painter.drawPath(path)
+        painter.drawArc(10, 6, 6, 8, -65*16, 130*16)
+        painter.drawArc(9, 3, 10, 14, -65*16, 130*16)
     else:
         painter.drawRoundedRect(5, 3, 10, 14, 2, 2)
         painter.drawLine(8, 7, 12, 7)
@@ -302,12 +323,15 @@ class CaptionCard(QFrame):
     def __init__(self, caption, translating, *, animate=False):
         super().__init__()
         self.setObjectName("captionRow")
+        self.interaction = ''
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 14, 4, 18)
         layout.setSpacing(9)
         self.meta = label("", "timestamp")
         self.source = CaptionText()
         self.target = CaptionText()
+        self.source.interactionChanged.connect(self.set_interaction)
+        self.target.interactionChanged.connect(self.set_interaction)
         self.source.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.target.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.target.setObjectName("captionTranslation")
@@ -321,15 +345,25 @@ class CaptionCard(QFrame):
 
     def paintEvent(self, event):
         super().paintEvent(event)
-        if self.property('playing'):
+        if self.property('playing') or self.interaction:
             colors = theme_colors(QApplication.instance().property('appearance'))
             painter = QPainter(self)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(colors['playback']))
-            painter.drawRoundedRect(self.rect().adjusted(0, 2, 0, -2), 9, 9)
-            painter.setPen(QPen(QColor(colors['accent']), 2))
-            painter.drawLine(0, 15, 0, self.height()-15)
+            if self.property('playing'):
+                painter.setBrush(QColor(colors['playback']))
+                painter.drawRoundedRect(self.rect().adjusted(0, 2, 0, -2), 9, 9)
+            if self.interaction:
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(colors['selected' if self.interaction in ('pressed', 'pending') else 'hover']))
+                painter.drawRoundedRect(self.rect().adjusted(0, 2, 0, -2), 9, 9)
+
+    def set_interaction(self, state):
+        states = (self.source._interaction, self.target._interaction)
+        state = next((value for value in ('pressed', 'pending', 'hover') if value in states), '')
+        if self.interaction != state:
+            self.interaction = state
+            self.update()
 
     def update_caption(self, caption, *, animate=True):
         self.source.set_caption_text(caption.source, animate=animate)
@@ -383,6 +417,9 @@ class Window(QMainWindow):
         self.pipeline_state = {"音频": "未开始", "识别": "未加载", "翻译": "未加载"}
         self.captions = {}
         self.cards = {}
+        self.source_preview = None
+        self.source_preview_card = None
+        self.source_preview_sequence = 0
         self.closing = False
         self.asset_check = None
         self.missing_model_assets = None
@@ -438,7 +475,7 @@ class Window(QMainWindow):
         split = QSplitter()
         split.setHandleWidth(1)
         self.pages = QStackedWidget()
-        self.pages.setContentsMargins(0, 0, 8, 8)
+        self.pages.setContentsMargins(0, 0, 0, 0)
         self.pages.addWidget(split)
         layout.addWidget(self.pages, 1)
         self.notifications = NotificationCenter(root, show_details=self.show_diagnostic_details)
@@ -458,20 +495,25 @@ class Window(QMainWindow):
         sidebar.setMinimumWidth(180)
         sidebar.setMaximumWidth(420)
         sidebar_layout = QVBoxLayout(sidebar)
-        sidebar_layout.setContentsMargins(14, 20, 14, 14)
+        sidebar_layout.setContentsMargins(14, 0, 14, 14)
         sidebar_layout.setSpacing(10)
         sidebar_header = QHBoxLayout()
-        sidebar_header.addWidget(label("AgentScribe", "brand"))
+        self.brand = label("AgentScribe", "brand")
+        self.brand.setFixedHeight(40)
+        self.brand.setWordWrap(False)
+        self.brand.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        sidebar_header.addWidget(self.brand)
         sidebar_header.addStretch()
 
         sidebar_layout.addLayout(sidebar_header)
-        sidebar_layout.addSpacing(20)
-        self.new_button = QPushButton("  新录音")
+        sidebar_layout.addSpacing(6)
+        self.new_button = NavigationButton("新录音")
+        self.new_button.setStyleSheet("QPushButton { min-height: 38px; max-height: 38px; border: none; padding: 0; font-size: 15px; }")
         self.new_button.setIcon(line_icon("new"))
         self.new_button.setObjectName("navigation")
         self.new_button.clicked.connect(self.new_recording)
         sidebar_layout.addWidget(self.new_button)
-        sidebar_layout.addSpacing(22)
+        sidebar_layout.addSpacing(10)
         folders_heading = QHBoxLayout()
         folders_heading.addWidget(label("文件夹", "section"))
         folders_heading.addStretch()
@@ -479,6 +521,7 @@ class Window(QMainWindow):
         self.folder_button.setToolTip("新建文件夹")
         self.folder_button.setObjectName("quiet")
         self.folder_button.setFixedSize(28, 28)
+        self.folder_button.setStyleSheet('QPushButton { min-width: 28px; max-width: 28px; min-height: 28px; max-height: 28px; border: none; padding: 0; }')
         self.folder_button.clicked.connect(self.create_folder)
         folders_heading.addWidget(self.folder_button)
         sidebar_layout.addLayout(folders_heading)
@@ -494,16 +537,16 @@ class Window(QMainWindow):
         self.library_tree.newRequested.connect(lambda folder: self.new_recording(folder_id=folder))
         self.library_tree.menuRequested.connect(self.show_library_menu)
         sidebar_layout.addWidget(self.library_tree, 1)
-        settings_button = self.settings_button = QPushButton("  设置")
+        settings_button = self.settings_button = NavigationButton("设置")
         settings_button.setObjectName("navigation")
         settings_button.setIcon(line_icon("settings"))
         settings_button.clicked.connect(self.open_settings)
-        deleted_button = self.deleted_button = QPushButton("  最近删除")
+        deleted_button = self.deleted_button = NavigationButton("最近删除")
         deleted_button.setObjectName("navigation")
         deleted_button.setIcon(line_icon('trash'))
         deleted_button.clicked.connect(self.show_deleted)
         sidebar_layout.addWidget(deleted_button)
-        self.ui_update_button = QPushButton("↓  检查更新")
+        self.ui_update_button = NavigationButton("检查更新")
         self.ui_update_button.setObjectName("navigation")
         self.ui_update_button.clicked.connect(self.check_software_updates)
         sidebar_layout.addWidget(self.ui_update_button)
@@ -579,51 +622,50 @@ class Window(QMainWindow):
         self.legacy_settings_panel.setParent(self)
         self.legacy_settings_panel.hide()
         split.addWidget(sidebar)
-        right = WorkspaceFrame()
+        right = self.workspace_frame = WorkspaceFrame()
         right.setObjectName("workspace")
         right.setMinimumWidth(300)
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(1, 1, 1, WORKSPACE_RADIUS)
         right_layout.setSpacing(0)
-        workspace_header = QFrame()
+        workspace_header = self.workspace_header = QFrame()
         workspace_header.setObjectName("workspaceHeader")
         toolbar = QHBoxLayout(workspace_header)
-        toolbar.setContentsMargins(20, 5, 18, 5)
-        self.workspace_title = label("新录音")
-        self.workspace_title.setStyleSheet("font-size: 14px; font-weight: 600;")
+        workspace_header.setFixedHeight(40)
+        toolbar.setContentsMargins(20, 2, 18, 2)
+        self.workspace_title = RecordingTitle("新录音")
+        self.workspace_title.editRequested.connect(self.rename_current)
+        self.workspace_title.submitted.connect(self.commit_recording_title)
+        self.workspace_title.setStyleSheet("font-size: 16px; font-weight: 400;")
         self.workspace_title.setMinimumWidth(0)
-        self.workspace_title.setWordWrap(False)
         self.workspace_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(self.workspace_title, 1)
-        self.close_recording_button = QPushButton('×')
-        self.close_recording_button.setObjectName('quiet')
-        self.close_recording_button.setFixedWidth(28)
-        self.close_recording_button.setToolTip('关闭当前录音（文件仍保留）')
-        self.close_recording_button.setAccessibleName('关闭当前录音')
-        self.close_recording_button.clicked.connect(self.close_recording)
-        self.close_recording_button.hide()
-        toolbar.addWidget(self.close_recording_button)
+        self.recording_actions = QWidget()
+        header_actions = self.header_actions = QHBoxLayout(self.recording_actions)
+        header_actions.setContentsMargins(0, 0, 0, 0)
+        header_actions.setSpacing(6)
+        toolbar.addWidget(self.recording_actions)
         self.knowledge_button = QPushButton("课程资料与笔记 · Beta")
         self.knowledge_button.setObjectName("quiet")
         self.knowledge_button.hide()
         self.knowledge_button.clicked.connect(self.open_knowledge)
-        toolbar.addWidget(self.knowledge_button)
+        header_actions.addWidget(self.knowledge_button)
         overlay_button = QPushButton("悬浮字幕")
         overlay_button.setObjectName("quiet")
         overlay_button.clicked.connect(self.toggle_overlay)
-        toolbar.addWidget(overlay_button)
+        header_actions.addWidget(overlay_button)
         self.export_button = QPushButton("导出定稿")
         self.export_button.setObjectName("quiet")
         self.export_button.clicked.connect(self.export)
         self.export_button.setEnabled(False)
-        toolbar.addWidget(self.export_button)
+        header_actions.addWidget(self.export_button)
         more = QPushButton("···")
         more.setObjectName("quiet")
         more.setToolTip("更多操作")
         menu = ActionMenu(more)
+        self.knowledge_action = menu.addAction('课程资料与笔记 · Beta', self.open_knowledge)
+        self.knowledge_action.setVisible(False)
         self.find_action = menu.addAction('查找字幕…', self.find_captions)
-        self.find_action.setShortcut(QKeySequence.StandardKey.Find)
-        self.addAction(self.find_action)
         menu.addAction("复制最新字幕", self.copy_latest)
         menu.addSeparator()
         menu.addAction("重命名录音", self.rename_current)
@@ -633,7 +675,10 @@ class Window(QMainWindow):
         diagnostics_button = menu.addAction("诊断记录")
         diagnostics_button.setCheckable(True)
         more.setMenu(menu)
-        toolbar.addWidget(more)
+        header_actions.addWidget(more)
+        for button in self.recording_actions.findChildren(QPushButton):
+            button.setFixedHeight(32)
+            button.setStyleSheet('QPushButton { min-height: 32px; max-height: 32px; border: none; padding: 0 8px; font-size: 15px; }')
         right_layout.addWidget(workspace_header)
         content = QWidget()
         content.setObjectName("workspaceContent")
@@ -651,14 +696,12 @@ class Window(QMainWindow):
         self.feed_layout = QVBoxLayout(self.feed)
         self.feed_layout.setContentsMargins(12, 24, 12, 16)
         self.feed_layout.setSpacing(4)
-        self.empty = label(
-            "选择声音和语言，开始聆听。",
-            "muted",
-        )
+        self.empty = RecordingHint(self.scroll.viewport())
+        self.empty.setObjectName("recordingHint")
+        self.empty.setText("准备好时，点击下方开始聆听。")
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty.setMinimumHeight(160)
-        self.empty.setStyleSheet("font-size: 16px; color: #89898f;")
-        self.feed_layout.addWidget(self.empty)
+        self.empty.setMinimumHeight(220)
+        self.empty.setStyleSheet("QLabel#recordingHint { font-size: 16px; }")
         self.feed_layout.addStretch()
         self.scroll.setWidget(self.feed)
         content_layout.addWidget(self.scroll, 1)
@@ -687,9 +730,9 @@ class Window(QMainWindow):
         self.volume_caption.setStyleSheet('font-size: 11px;')
         self.pending_source_revision = None
         footer = self.control_island = FloatingIsland(self.scroll.viewport())
-        footer_layout = QVBoxLayout(footer)
-        footer_layout.setContentsMargins(16, 12, 16, 12)
-        footer_layout.setSpacing(8)
+        footer_layout = QVBoxLayout(footer.content)
+        footer_layout.setContentsMargins(12, 8, 12, 8)
+        footer_layout.setSpacing(6)
         self.input_controls = QWidget()
         input_row = self.input_row = QGridLayout(self.input_controls)
         input_row.setContentsMargins(0, 0, 0, 0)
@@ -704,7 +747,7 @@ class Window(QMainWindow):
         self.device.currentIndexChanged.connect(self.quick_device.setCurrentIndex)
         self.quick_device.currentTextChanged.connect(self.quick_device.setToolTip)
         input_row.addWidget(self.quick_device, 0, 0)
-        input_row.setColumnStretch(0, 1)
+        input_row.setColumnStretch(0, 0)
         self.refresh_source = self.quick_device.refresh_button
         self.refresh_source.setIcon(line_icon('refresh'))
         self.refresh_source.setAccessibleName('刷新音频来源')
@@ -724,13 +767,16 @@ class Window(QMainWindow):
         self.transport = QStackedWidget()
         self.transport.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.live_transport = QWidget()
+        self.control_island.reveal_row = self.live_transport
         live_row = self.live_row = QGridLayout(self.live_transport)
         live_row.setContentsMargins(0, 0, 0, 0)
-        live_row.setHorizontalSpacing(12)
-        live_row.setVerticalSpacing(4)
+        live_row.setHorizontalSpacing(8)
+        live_row.setVerticalSpacing(0)
         self.state_caption = label('', 'recordingState')
+        self.state_caption.setStyleSheet('QLabel { font-size: 11px; font-weight: 600; }')
         self.state_caption.setWordWrap(False)
         self.capture_time = label('00:00:00', 'timestamp')
+        self.capture_time.setStyleSheet('QLabel { font-size: 11px; }')
         self.capture_time.setWordWrap(False)
         live_row.addWidget(self.state_caption, 0, 0)
         live_row.addWidget(self.capture_time, 0, 1)
@@ -766,9 +812,13 @@ class Window(QMainWindow):
         self.playback = QFrame()
         playback_layout = QHBoxLayout(self.playback)
         playback_layout.setContentsMargins(0, 0, 0, 0)
+        playback_layout.setSpacing(12)
         self.play_button = QPushButton()
         self.play_button.setIcon(line_icon('play'))
-        self.play_button.setFixedSize(32, 32)
+        self.play_button.setFixedSize(40, 40)
+        self.play_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.play_button.setAttribute(Qt.WidgetAttribute.WA_MacShowFocusRect, False)
+        self.play_button.setStyleSheet('QPushButton { min-width: 40px; max-width: 40px; min-height: 40px; max-height: 40px; border: none; padding: 0; }')
         self.play_button.setAccessibleName('播放录音')
         self.play_button.setToolTip('播放录音')
         self.play_button.setObjectName("quiet")
@@ -776,40 +826,50 @@ class Window(QMainWindow):
         playback_layout.addWidget(self.play_button)
         self.seek = QSlider(Qt.Orientation.Horizontal)
         self.seek.setAccessibleName('录音播放进度')
-        self.seek.setMinimumWidth(70)
+        self.seek.setObjectName('playbackSeek')
+        self.seek.setMinimumWidth(80)
+        self.seek.setFixedHeight(24)
         playback_layout.addWidget(self.seek, 1)
         self.play_time = label("00:00 / 00:00", "timestamp")
         self.play_time.setWordWrap(False)
         self.playback_duration_ms = 0
         self.seek.sliderMoved.connect(self.seek_playback)
+        self.play_time.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         playback_layout.addWidget(self.play_time)
         self.playback.hide()
         self.playback.setProperty('available', False)
         self.player = None
+        self.playback_stream = None
         self.transport.addWidget(self.playback)
-        self.quick_language = IslandButton('输入与语言')
+        self.playback_volume = PlaybackVolume(self.scroll.viewport())
+        self.playback_volume.valueChanged.connect(self.set_playback_volume)
+        self.playback_volume.extentChanged.connect(lambda: self.control_island.placement.start(0))
+        self.control_island.companion = self.playback_volume
+        self.quick_language = IslandButton('输入与语言', icon_only=True)
         self.quick_language.setObjectName('quiet')
         self.quick_language.setToolTip('更改原文和目标语言')
         self.language_popup = LanguagePopup(self.source, self.target, self.translate, self)
         self.language_popup.finished.connect(self.save)
         self.quick_language.clicked.connect(lambda: self.language_popup.show_at(
             self.quick_language, next_session=self.recording_state.active))
-        self.quick_language.setMinimumWidth(0)
         input_row.addWidget(self.quick_language, 0, 1)
-        input_row.addWidget(self.transport_actions, 0, 2)
-        for previous, following in ((self.quick_device, self.quick_language),
-                                    (self.quick_language, self.start_button),
-                                    (self.start_button, self.pause_button), (self.pause_button, self.stop_button)):
-            QWidget.setTabOrder(previous, following)
-        footer_layout.addWidget(self.input_controls)
+        self.quick_folder = IslandButton('保存文件夹', icon_only=True)
+        self.quick_folder.setObjectName('quiet')
+        self.quick_folder.clicked.connect(self.choose_recording_folder)
+        input_row.addWidget(self.quick_folder, 0, 2)
+        input_row.addWidget(self.transport_actions, 0, 3)
+        footer_layout.addWidget(self.input_controls, 0, Qt.AlignmentFlag.AlignHCenter)
         self.control_island.compactChanged.connect(self.arrange_input_controls)
+        self.reduce_motion.toggled.connect(lambda: self.control_island.placement.start(0))
         footer_layout.addWidget(self.pipeline)
         self.pipeline.setStyleSheet('font-size: 11px;')
         self.control_island.heightChanged.connect(self.update_caption_insets)
         self.control_island.heightChanged.connect(self.scroll.set_overlay_height)
         self.control_island.placement.start(0)
         self.update_transport()
-        right_layout.addWidget(content, 1)
+        self.recording_pages = QStackedWidget()
+        self.recording_pages.addWidget(content)
+        right_layout.addWidget(self.recording_pages, 1)
         split.addWidget(right)
         split.setSizes([250, 1030])
         self.refresh_library()
@@ -1065,11 +1125,15 @@ class Window(QMainWindow):
             palette.setColor(role, QColor(color))
         app.setPalette(palette)
         app.setStyleSheet(appearance_style(STYLE, mode))
+        install_tooltips(app).hide()
         for button, kind in ((self.new_button, 'new'), (self.settings_button, 'settings'),
                              (self.deleted_button, 'trash'),
+                             (self.ui_update_button, 'download'),
                              (self.quick_language, 'language'),
+                             (self.quick_folder, 'folder'),
                              (self.refresh_source, 'check' if self.refresh_feedback.isActive() else 'refresh')):
             button.setIcon(line_icon(kind, theme_colors(mode)['muted']))
+        self.quick_device.setProperty('fallbackIcon', line_icon('system', theme_colors(mode)['muted']))
         for index in range(self.device.count()):
             data = self.device.itemData(index)
             if data:
@@ -1241,7 +1305,7 @@ class Window(QMainWindow):
             return
         self.on_update_checked(result)
         self.model_manager.version_label.setText(f'当前版本：{__version__} · 可用新版：{result["version"]}')
-        self.ui_update_button.setText('↓  有新版本')
+        self.ui_update_button.setText('有新版本')
         self.ui_update_button.show()
 
     def refresh_model_assets_after_preparation(self, active):
@@ -1331,6 +1395,19 @@ class Window(QMainWindow):
         dialog.setWindowModality(Qt.WindowModality.NonModal)
         dialog.show()
 
+    def update_recording_header(self):
+        if not hasattr(self, 'knowledge_action') or not hasattr(self, 'beta_features'):
+            return
+        buttons = self.recording_actions.findChildren(QPushButton)
+        margins = self.workspace_header.layout().contentsMargins()
+        required = (120 + margins.left() + margins.right() + self.workspace_header.layout().spacing()
+                    + sum(button.sizeHint().width() for button in buttons)
+                    + self.header_actions.spacing()*(len(buttons)-1))
+        wide = self.workspace_header.width() >= required
+        enabled = self.beta_features.isChecked()
+        self.knowledge_button.setVisible(enabled and wide)
+        self.knowledge_action.setVisible(enabled and not wide)
+
     def open_settings(self, category="常规"):
         category = category if isinstance(category, str) else "常规"
         if category in ('识别模型', '翻译模型'):
@@ -1352,8 +1429,9 @@ class Window(QMainWindow):
 
     def update_quick_settings(self):
         language = self.source.currentText()
-        self.quick_language.setText(language + (' → ' + self.target.currentText()
+        self.quick_language.setToolTip(language + (' → ' + self.target.currentText()
                                     if self.translate.isChecked() else ' · 仅原文'))
+        self.update_recording_hint()
 
     def open_recording_library(self, explicit_root):
         def choose_directory(root, error):
@@ -1376,7 +1454,6 @@ class Window(QMainWindow):
             raise SystemExit(0) from None
 
     def refresh_library(self):
-        self.close_recording_button.setVisible(self.current_item is not None)
         expanded = {identifier: row.isExpanded() for identifier, row in getattr(self, "library_rows", {}).items()}
         self.library_tree.clear()
         self.library_rows = {}
@@ -1466,7 +1543,7 @@ class Window(QMainWindow):
             self.notifications.clear('save')
             self.status.setToolTip('')
             if not self.recording_state.active and not self.last_error:
-                self.status.setText('已保存')
+                self.status.set_state_text('已保存')
             self.update_activity()
 
     def persist_session(self, state=None):
@@ -1489,6 +1566,7 @@ class Window(QMainWindow):
         if self.player:
             self.player.stop()
             self.player.setSource(QUrl())
+        self.close_playback_stream()
         self.playback.setProperty('available', False)
         self.playback_duration_ms = 0
         self.seek.setRange(0, 0)
@@ -1496,21 +1574,59 @@ class Window(QMainWindow):
         self.playback_position(0)
         self.update_transport()
 
+    def update_recording_hint(self):
+        if not hasattr(self, 'quick_folder'):
+            return
+        folder = self.library.folder_label(self.folder_id) if self.folder_id else '我的录音'
+        self.quick_folder.setToolTip('保存到：' + folder)
+        if self.recording_state.active or (self.current_item and self.current_item['state'] != 'draft'):
+            return
+        source = self.device.currentText() or '尚未选择音频来源，点击下方音频图标选择'
+        self.quick_device.setToolTip(source)
+        language = self.source.currentText() + (' → ' + self.target.currentText()
+                    if self.translate.isChecked() else ' · 仅原文')
+        self.empty.set_context(source, folder, language)
+
+    def choose_recording_folder(self):
+        if self.recording_state.active:
+            return
+        menu = ActionMenu(self.quick_folder)
+        for folder in self.library.index['folders']:
+            action = menu.addAction(self.library.folder_label(folder['id']))
+            action.setCheckable(True)
+            action.setChecked(folder['id'] == self.folder_id)
+            action.triggered.connect(lambda checked=False, identifier=folder['id']: self.select_recording_folder(identifier))
+        menu.exec(self.quick_folder.mapToGlobal(QPoint(0, -menu.sizeHint().height())))
+        menu.deleteLater()
+
+    def select_recording_folder(self, folder_id):
+        if not self.can_edit_library():
+            return
+        if self.current_item:
+            self.move_recording(self.current_item, folder_id)
+        else:
+            self.folder_id = folder_id
+            self.refresh_library()
+        self.update_recording_hint()
+
     def reset_recording_view(self):
+        self.recording_pages.setCurrentIndex(0)
+        self.recording_actions.show()
+        self.notifications.clear('status')
         self.model_action = None
         self.close_knowledge()
         self.release_playback()
         self.autosave.stop()
         self.current_item = None
-        self.close_recording_button.hide()
         self.session_dirty = False
         self.save_error = ''
         self.save_target_state = None
         self.status.setToolTip('')
         self.update_activity()
         self.clear_captions()
-        self.workspace_title.setText("新录音")
-        self.empty.setText("选择声音和语言，开始聆听。")
+        self.pending_recording_name = default_recording_name()
+        self.workspace_title.setText(self.pending_recording_name)
+        self.empty.setText("准备好时，点击下方开始聆听。")
         self.export_button.setEnabled(False)
 
     def new_recording(self, checked=False, *, folder_id=None, name=None, check_models=True):
@@ -1520,10 +1636,15 @@ class Window(QMainWindow):
         folders = self.library.index['folders']
         folder_id = folder_id or self.folder_id or (folders[0]['id'] if folders else None)
         if name is None:
-            dialog = RecordingDialog(self.library, folder_id, self)
-            if not dialog.exec():
-                return False
-            name, folder_id = dialog.name.text(), dialog.folder.currentData()
+            self.reset_recording_view()
+            self.folder_id = folder_id
+            self.update_recording_hint()
+            self.refresh_library()
+            self.pages.setCurrentIndex(0)
+            notice = self.notifications.notices.get('session')
+            if notice is not None and notice.kind == 'success':
+                self.notifications.clear('session')
+            return True
         try:
             if not self.library.index['folders']:
                 folder_id = self.library.folder('我的录音')['id']
@@ -1534,8 +1655,8 @@ class Window(QMainWindow):
         self.reset_recording_view()
         self.folder_id, self.current_item = folder_id, item
         self.workspace_title.setText(item["name"])
-        self.empty.setText("准备好时，开始聆听。\n\n录音与定稿会自动保存在这个文件夹。")
-        self.status.setText("待开始 · " + self.library.folder_label(folder_id))
+        self.update_recording_hint()
+        self.status.set_state_text("待开始 · " + self.library.folder_label(folder_id))
         self.refresh_library()
         self.pages.setCurrentIndex(0)
         if check_models:
@@ -1544,6 +1665,8 @@ class Window(QMainWindow):
 
     def open_library_item(self, row, column):
         if not self.can_edit_library():
+            if self.current_item and self.current_item['id'] in self.library_rows:
+                self.library_tree.setCurrentItem(self.library_rows[self.current_item['id']])
             return
         self.model_action = None
         kind, identifier = row.data(0, Qt.ItemDataRole.UserRole)
@@ -1551,7 +1674,7 @@ class Window(QMainWindow):
             self.reset_recording_view()
             self.folder_id = identifier
             self.workspace_title.setText(row.text(0))
-            self.status.setText("点击文件夹旁的 ＋ 新建录音")
+            self.status.set_state_text("点击左侧「新录音」或文件夹旁的 ＋ 创建录音")
             return
         item = next((i for i in self.library.index["sessions"] if i["id"] == identifier), None)
         if item is None:
@@ -1565,7 +1688,6 @@ class Window(QMainWindow):
         self.loading_saved = True
         self.clear_captions()
         self.current_item = item
-        self.close_recording_button.show()
         self.folder_id = item["folder"]
         self.caption_translation = data["settings"].get("translate", True)
         for caption in captions:
@@ -1574,11 +1696,18 @@ class Window(QMainWindow):
         self.session_dirty = False
         self.workspace_title.setText(item["name"])
         states = {"complete": "已保存在本机", "draft": "待开始 · 点击开始聆听"}
-        self.status.setText(states.get(item["state"], "未完整结束 · 已保留录音与草稿"))
-        self.empty.setText("准备好时，开始聆听。" if item["state"] == "draft" else "这段录音还没有字幕")
+        self.notifications.clear('status')
+        if item['state'] in states:
+            self.status.set_state_text(states[item['state']])
+        else:
+            self.status.setText('未完整结束 · 已保留录音与草稿')
+        self.recording_pages.setCurrentIndex(0)
+        self.recording_actions.show()
+        self.empty.setText("无内容")
         self.export_button.setEnabled(any(c.final and c.source for c in captions))
         self.attach_knowledge()
         self.prepare_playback()
+        self.update_recording_hint()
 
     def open_knowledge(self):
         if not self.beta_features.isChecked():
@@ -1615,13 +1744,14 @@ class Window(QMainWindow):
 
     def on_knowledge_closing(self, closing):
         for control in (self.library_tree, self.new_button, self.folder_button):
-            control.setEnabled(not closing and not self.recording_state.active)
+            control.setEnabled(not closing and not self.update_fenced and not self.library_migration.busy
+                               and (control is self.library_tree or not self.recording_state.active))
         if closing:
             self.status.setText('课程后台正在释放文件，完成后继续当前操作。')
 
     def apply_beta_features(self, enabled, *, persist=True):
         """Gate all course-agent entry points and stop its owned process when opting out."""
-        self.knowledge_button.setVisible(enabled)
+        self.update_recording_header()
         self.model_manager.set_beta_enabled(enabled)
         if not enabled:
             self.close_knowledge()
@@ -1642,19 +1772,49 @@ class Window(QMainWindow):
         self.status.setText(f"笔记引用：录音约 {seconds:.1f} 秒")
 
     def rename_current(self):
-        if self.current_item:
-            self.rename_item(self.current_item)
+        if self.can_edit_library(self.current_item, rename_current=True):
+            self.workspace_title.begin_edit()
+
+    def commit_recording_title(self, name):
+        if self.workspace_title.currentIndex() != 1:
+            return
+        # End editing before a library refresh can move focus and emit editingFinished again.
+        self.workspace_title.setText(self.workspace_title.text())
+        if not self.can_edit_library(self.current_item, rename_current=True):
+            self.workspace_title.setText(self.workspace_title.text())
+            return
+        try:
+            self.library.validate_name(name)
+            if self.current_item:
+                active = self.session is not None or self.recording_state.active
+                if not active:
+                    self.release_playback()
+                self.library.rename(self.current_item, name, defer_directory=active)
+                self.refresh_library()
+                if not active:
+                    self.prepare_playback()
+            else:
+                self.pending_recording_name = name.strip()
+                self.workspace_title.setText(self.pending_recording_name)
+        except (OSError, ValueError) as exc:
+            self.workspace_title.setText(self.workspace_title.text())
+            self.show_warning('重命名失败', str(exc))
 
     def rename_item(self, item):
+        if self.recording_state.active and self.current_item and item['id'] == self.current_item['id']:
+            self.rename_current()
+            return
         if not self.can_edit_library(item):
             return
         name, ok = NameDialog.getText(self, "重命名", "名称", text=item["name"])
         if ok:
-            self.release_playback()
+            if not self.recording_state.active:
+                self.release_playback()
             try:
                 self.library.rename(item, name)
                 self.refresh_library()
-                self.prepare_playback()
+                if not self.recording_state.active:
+                    self.prepare_playback()
             except (OSError, ValueError) as exc:
                 self.show_warning("重命名失败", str(exc))
 
@@ -1664,40 +1824,43 @@ class Window(QMainWindow):
             self.show_library_menu(row, self.library_tree.viewport().mapToGlobal(point))
 
     def show_library_menu(self, row, position):
-        if self.session:
-            return
         kind, identifier = row.data(0, Qt.ItemDataRole.UserRole)
         collection = self.library.index["folders" if kind == "folder" else "sessions"]
         item = next((i for i in collection if i["id"] == identifier), None)
         if item is None:
             return
         menu = ActionMenu(self)
+        active = self.session is not None or self.recording_state.active
+        protected = active and self.item_contains_current(item)
         if kind == "folder":
-            menu.addAction("在此文件夹中新建录音…", lambda: self.new_recording(folder_id=identifier))
-            menu.addAction("新建子文件夹…", lambda: self.create_folder(parent_id=identifier))
+            menu.addAction("在此文件夹中新建录音…", lambda: self.new_recording(folder_id=identifier)).setEnabled(not active)
+            menu.addAction("新建子文件夹…", lambda: self.create_folder(parent_id=identifier)).setEnabled(not active)
             menu.addSeparator()
-        menu.addAction("重命名…", lambda: self.rename_item(item))
+        menu.addAction("重命名…", lambda: self.rename_item(item)).setEnabled(not protected or kind == 'session')
         menu.addAction("在资源管理器中打开", lambda: self.open_path(self.library.directory(identifier)))
         move = ActionMenu(menu)
         move.setTitle('移动到文件夹')
         menu.addMenu(move)
+        move.setEnabled(not protected)
         for folder in self.library.index["folders"]:
             if folder["id"] != identifier:
                 move.addAction(self.library.folder_label(folder["id"]), lambda f=folder: self.move_recording(item, f["id"]))
         menu.addSeparator()
-        menu.addAction("移到最近删除…", lambda: self.delete_item(item))
+        menu.addAction("移到最近删除…", lambda: self.delete_item(item)).setEnabled(not protected)
         menu.exec(position)
 
     def move_recording(self, item, folder_id):
         if not self.can_edit_library(item):
             return
-        self.release_playback()
+        if not self.recording_state.active:
+            self.release_playback()
         try:
             self.library.move(item, folder_id)
             if self.current_item and self.current_item["id"] == item["id"]:
                 self.folder_id = folder_id
             self.refresh_library()
-            self.prepare_playback()
+            if not self.recording_state.active:
+                self.prepare_playback()
         except (OSError, ValueError) as exc:
             self.show_warning("移动失败", str(exc))
 
@@ -1714,7 +1877,8 @@ class Window(QMainWindow):
                                       QMessageBox.StandardButton.Cancel)
         if answer != QMessageBox.StandardButton.Yes:
             return
-        self.release_playback()
+        if not self.recording_state.active:
+            self.release_playback()
         try:
             self.library.trash(item)
             if self.current_item and self.current_item["id"] not in self.library.paths:
@@ -1735,7 +1899,14 @@ class Window(QMainWindow):
         dialog.exec()
         dialog.deleteLater()
 
-    def can_edit_library(self, item=None):
+    def item_contains_current(self, item):
+        if not self.current_item:
+            return False
+        path = self.library.directory(item['id'])
+        current = self.library.directory(self.current_item['id'])
+        return path == current or path in current.parents
+
+    def can_edit_library(self, item=None, *, rename_current=False):
         if self.update_fenced:
             return False
         if self.library_migration.busy:
@@ -1749,6 +1920,17 @@ class Window(QMainWindow):
         if self.knowledge_client.closing:
             self.status.setText('课程后台正在释放文件，请稍后操作；界面仍可使用。')
             return False
+        if self.session is not None or self.recording_state.active:
+            if item is None:
+                return False
+            try:
+                if self.item_contains_current(item):
+                    return bool(rename_current and item['id'] == self.current_item['id']
+                                and self.recording_lock is not None and self.persist_session())
+            except (OSError, ValueError) as exc:
+                self.show_warning('暂时无法操作', str(exc))
+                return False
+            return self.file_operation_ready(item)
         if self.session is not None or not self.persist_session():
             return False
         if not self.close_knowledge():
@@ -1819,7 +2001,7 @@ class Window(QMainWindow):
         self.notifications.post('migration', '正在迁移录音', kind='progress',
                                 action=self.library_migration.cancel, action_text='取消')
         self.library_migration.start(self.library, path)
-        for widget in (self.library_tree, self.new_button, self.folder_button, self.start_button, self.close_recording_button):
+        for widget in (self.library_tree, self.new_button, self.folder_button, self.start_button):
             widget.setEnabled(False)
 
     def release_migration_locks(self):
@@ -1856,7 +2038,7 @@ class Window(QMainWindow):
     def on_library_migrated(self, retained, *, success=True):
         self.release_migration_locks()
         self.migration_source = None
-        for widget in (self.library_tree, self.new_button, self.folder_button, self.start_button, self.close_recording_button):
+        for widget in (self.library_tree, self.new_button, self.folder_button, self.start_button):
             widget.setEnabled(True)
         if success:
             self.notifications.post('migration', '录音已迁移；部分旧文件因变化仍保留。' if retained else '录音已迁移到新位置。',
@@ -1868,6 +2050,8 @@ class Window(QMainWindow):
     def prepare_playback(self):
         if self.player:
             self.player.stop()
+            self.player.setSource(QUrl())
+        self.close_playback_stream()
         path = self.library.directory(self.current_item["id"]) / "录音.wav" if self.current_item else None
         available = bool(path and path.exists() and path.stat().st_size > 44)
         self.playback.setProperty('available', available)
@@ -1885,22 +2069,53 @@ class Window(QMainWindow):
                 self.player.playbackStateChanged.connect(lambda *_: self.update_playback_button())
                 self.player.errorOccurred.connect(lambda *_: self.show_warning(
                     '录音无法播放', self.player.errorString()))
-            self.player.setSource(QUrl.fromLocalFile(str(path)))
+            from .playback_stream import PlaybackStream
+            try:
+                self.playback_stream = PlaybackStream(path, self.player)
+            except (OSError, ValueError) as exc:
+                self.release_playback()
+                self.show_warning('录音无法播放', str(exc))
+                return
+            self.playback_volume.slider.setMaximum(300 if self.playback_stream.supports_gain else 100)
+            if not self.playback_stream.supports_gain:
+                self.notifications.post('playback', '该录音格式可正常回放，但暂不支持超过 100% 的放大。', kind='attention')
+            self.player.setSourceDevice(self.playback_stream, QUrl.fromLocalFile(str(path)))
+            self.set_playback_volume(self.playback_volume.slider.value())
+
+    def close_playback_stream(self):
+        if self.playback_stream is not None:
+            self.playback_stream.close()
+            self.playback_stream.deleteLater()
+            self.playback_stream = None
 
     def update_transport(self):
         active = self.recording_state.active
         replay = not active and bool(self.playback.property('available'))
+        self.control_island.playback_mode = replay
+        self.control_island.setProperty("recording", active)
+        margins = (16, 12, 16, 6) if active else (12, 8, 12, 8)
+        self.control_island.content.layout().setContentsMargins(*margins)
+        self.control_island.content.layout().setSpacing(8 if active else 6)
+        self.playback_volume.setVisible(replay)
         self.transport.setCurrentWidget(self.playback if replay else self.live_transport)
         self.transport.setVisible(active or replay)
         self.input_controls.setVisible(not replay)
         self.start_button.setVisible(not active and not replay)
         self.quick_device.setVisible(not replay)
         self.quick_language.setVisible(not replay)
+        self.quick_folder.setVisible(not active and not replay)
+        for card in self.cards.values():
+            for text in (card.source, card.target):
+                text.set_playback_clickable(replay)
         self.update_volume_caption()
+        current = self.playback if replay else self.live_transport
+        current.layout().activate()
+        self.transport.setFixedHeight(current.sizeHint().height())
         self.control_island.placement.start(0)
 
     def update_transport_icons(self):
         colors = theme_colors(QApplication.instance().property('appearance'))
+        self.playback_volume.button.setIcon(line_icon('volume', colors['text']))
         for button, kind in ((self.start_button, 'play'), (self.stop_button, 'stop')):
             button.setIcon(line_icon(kind, colors['primary_text']))
         paused = self.recording_state is RecordingState.PAUSED
@@ -1930,6 +2145,7 @@ class Window(QMainWindow):
             self.pending_source_revision = self.session.switch_source(*source)
             self.meter.setValue(0)
         self.update_volume_caption()
+        self.update_recording_hint()
 
     def on_source_changed(self, revision):
         if self.sender() is not None and self.sender() is not self.session:
@@ -1948,16 +2164,16 @@ class Window(QMainWindow):
             self.meter.setValue(0)
 
     def arrange_input_controls(self, compact):
-        for widget in (self.quick_device, self.quick_language, self.transport_actions):
+        for widget in (self.quick_device, self.quick_language, self.quick_folder, self.transport_actions):
             self.input_row.removeWidget(widget)
-        self.input_row.addWidget(self.quick_device, 0, 0)
-        self.input_row.addWidget(self.quick_language, 1 if compact else 0, 0 if compact else 1)
-        self.input_row.addWidget(self.transport_actions, 0, 1 if compact else 2, 2 if compact else 1, 1)
-        self.input_row.setColumnStretch(1, 0 if compact else 1)
+        for column, widget in enumerate((self.quick_device, self.quick_language, self.quick_folder, self.transport_actions)):
+            self.input_row.addWidget(widget, 0, column)
+        self.input_row.setColumnStretch(0, 0)
+        self.input_row.setColumnStretch(1, 0)
         self.live_row.removeWidget(self.volume_caption)
         self.live_row.removeWidget(self.meter)
-        self.live_row.addWidget(self.volume_caption, 1 if compact else 0, 0 if compact else 2)
-        self.live_row.addWidget(self.meter, 1 if compact else 0, 1 if compact else 3, 1, 3 if compact else 1)
+        self.live_row.addWidget(self.volume_caption, 0, 2)
+        self.live_row.addWidget(self.meter, 0, 3)
 
     @staticmethod
     def playback_clock(milliseconds):
@@ -1970,6 +2186,17 @@ class Window(QMainWindow):
         self.seek.setRange(0, self.playback_duration_ms)
         self.playback_position(self.seek.value())
 
+    def set_playback_volume(self, value):
+        output = getattr(self, 'audio_output', None)
+        if output is not None:
+            output.setVolume(min(1., value / 100))
+        if self.playback_stream is not None:
+            gain = max(1., value/100)
+            previous = self.playback_stream.gain
+            self.playback_stream.set_gain(gain)
+            if gain != previous and self.player is not None:
+                self.player.setPosition(self.player.position())
+
     def update_playback_button(self):
         playing = self.player is not None and self.player.playbackState().name == 'PlayingState'
         title = '暂停播放' if playing else '播放录音'
@@ -1979,8 +2206,9 @@ class Window(QMainWindow):
         self.play_button.setToolTip(title)
 
     def playback_position(self, position):
-        if not self.seek.isSliderDown():
-            self.seek.setValue(position)
+        if self.seek.isSliderDown():
+            return
+        self.seek.setValue(position)
         self.play_time.setText(self.playback_clock(position) + ' / ' + self.playback_clock(self.playback_duration_ms))
         self.highlight_playback(position)
 
@@ -1998,7 +2226,17 @@ class Window(QMainWindow):
     def seek_playback(self, position):
         if self.player:
             self.player.setPosition(position)
+        self.play_time.setText(self.playback_clock(position) + ' / ' + self.playback_clock(self.playback_duration_ms))
         self.highlight_playback(position, seek=True)
+
+    def play_caption(self, identifier, card):
+        if (self.cards.get(identifier) is not card or self.recording_state.active
+                or not self.playback.property('available') or self.player is None):
+            return
+        caption = self.captions.get(identifier)
+        if caption is not None:
+            self.seek_playback(round(caption.start*1000))
+            self.player.play()
 
     def toggle_playback(self):
         if self.player:
@@ -2115,6 +2353,7 @@ class Window(QMainWindow):
                 self.quick_device.setCurrentIndex(self.device.currentIndex())
             self.save()
             self.update_volume_caption()
+            self.update_recording_hint()
             self.quick_device.setToolTip(self.device.currentText() or '音频来源不可用，请连接设备后刷新。')
             if previous and self.device.currentIndex() < 0:
                 self.show_warning('音频来源不可用', '上次的音频设备不可用，请重新选择系统音频或外部输入。')
@@ -2161,7 +2400,7 @@ class Window(QMainWindow):
             self.show_warning(*reason)
             return
         if not self.current_item or self.current_item["state"] != "draft":
-            if not self.new_recording(check_models=False):
+            if not self.new_recording(name=getattr(self, "pending_recording_name", default_recording_name()), check_models=False):
                 return
         self.clear_captions()
         self.last_error = ""
@@ -2231,7 +2470,9 @@ class Window(QMainWindow):
             self.knowledge_panel.set_recording(state.active)
         self.model_manager.set_session_active(state.active)
         for control in (self.library_tree, self.new_button, self.folder_button):
-            control.setEnabled(not state.active and not self.update_fenced and not self.library_migration.busy)
+            control.setEnabled((control is self.library_tree or not state.active)
+                               and not self.update_fenced and not self.library_migration.busy
+                               and not self.knowledge_client.closing)
         source_enabled = state in (RecordingState.IDLE, RecordingState.LISTENING, RecordingState.PAUSED)
         for control in (self.device, self.quick_device, self.refresh_source):
             control.setEnabled(source_enabled)
@@ -2249,9 +2490,10 @@ class Window(QMainWindow):
         self.update_transport()
         self.export_button.setEnabled(not state.active and any(c.final and c.source for c in self.captions.values()))
         self.update_pipeline_visibility()
-        reason = '正在聆听，请先停止录音再切换或整理文件。' if state.active else ''
+        reason = '正在聆听，请先停止录音再切换。' if state.active else ''
         for control in (self.library_tree, self.new_button, self.folder_button):
             control.setToolTip(reason)
+        self.library_tree.setToolTip('右键可管理其他录音；当前录音可改名，停止后可切换。' if state.active else '')
         if not state.active:
             self.folder_button.setToolTip('新建文件夹')
         self.quick_device.setToolTip(self.device.currentText() + '\n系统音频：电脑播放的声音；外部输入：麦克风或虚拟输入。\n录音时可切换，暂停时切换将在继续后生效。')
@@ -2264,6 +2506,7 @@ class Window(QMainWindow):
         self.session.ready.connect(self.on_ready)
         self.session.paused.connect(self.on_paused)
         self.session.caption.connect(self.on_caption)
+        self.session.source_preview.connect(self.on_source_preview)
         self.session.level.connect(self.on_level)
         self.session.source_changed.connect(self.on_source_changed)
         self.session.failure.connect(self.on_failure)
@@ -2347,6 +2590,12 @@ class Window(QMainWindow):
         self.empty.setText("正在聆听…")
 
     def clear_captions(self):
+        self.clear_source_preview()
+        if self.source_preview_card is not None:
+            self.feed_layout.removeWidget(self.source_preview_card)
+            self.source_preview_card.deleteLater()
+            self.source_preview_card = None
+        self.source_preview_sequence = 0
         self.save_generation += 1
         self.caption_version = 0
         self.playback_index = PlaybackIndex()
@@ -2423,6 +2672,7 @@ class Window(QMainWindow):
     def _finish_session(self, finished_session):
         if self.session is not finished_session:
             return
+        self.retain_source_preview()
         if self.caption_translation:
             for caption in list(self.captions.values()):
                 if caption.final and (not caption.translation or caption.translation_phase == 'initial') and not caption.error:
@@ -2443,8 +2693,16 @@ class Window(QMainWindow):
         finished_session.deleteLater()
         self.set_recording_state(RecordingState.IDLE)
         self.release_recording_lock()
+        if saved and self.current_item and 'pending_name' in self.current_item:
+            try:
+                if self.file_operation_ready(self.current_item):
+                    self.library.rename(self.current_item, self.current_item['pending_name'])
+            except (OSError, ValueError) as exc:
+                self.show_warning('名称已保存，文件夹名暂未同步', str(exc))
         self.refresh_library()
         self.prepare_playback()
+        if not self.captions:
+            self.empty.setText('无内容')
         self.meter.setValue(0)
         for key in list(self.notifications.notices):
             if key.startswith('pipeline-'):
@@ -2462,6 +2720,77 @@ class Window(QMainWindow):
             self.close()
         elif self.runtime is not None:
             self.runtime.prepare()
+
+    def on_source_preview(self, event):
+        sender = self.sender()
+        if (not self.recording_state.active or self.session is None
+                or (sender is not None and sender is not self.session)):
+            return
+        sequence = event['sequence']
+        if event.get('done'):
+            if self.source_preview is not None and sequence == self.source_preview_sequence:
+                self.clear_source_preview()
+            return
+        if sequence <= self.source_preview_sequence:
+            return
+        self.source_preview_sequence = sequence
+        self.source_preview = event
+        self.scroll.prepare_update()
+        caption = Caption(0, event['start'], event['end'], event['source'], event['language'], final=False)
+        if self.source_preview_card is None:
+            self.source_preview_card = CaptionCard(caption, False, animate=False)
+            self.feed_layout.insertWidget(self.feed_layout.count()-1, self.source_preview_card)
+        else:
+            self.source_preview_card.update_caption(caption, animate=False)
+        self.source_preview_card.setVisible(bool(caption.source))
+        self.apply_source_preview()
+        self.empty.setVisible(not caption.source and not event['keep_ids'])
+        self.sync_overlay(animate=False)
+        self.scroll.content_changed()
+
+    def apply_source_preview(self):
+        if self.source_preview is not None:
+            keep = set(self.source_preview['keep_ids'])
+            for identifier, card in self.cards.items():
+                card.setVisible(identifier in keep)
+            self.empty.setVisible(not self.source_preview['source'] and not any(i in keep for i in self.captions))
+            # New semantic cards can be inserted while a newer preview is shown.
+            if (self.source_preview_card is not None
+                    and self.feed_layout.indexOf(self.source_preview_card) != self.feed_layout.count()-2):
+                self.feed_layout.removeWidget(self.source_preview_card)
+                self.feed_layout.insertWidget(self.feed_layout.count()-1, self.source_preview_card)
+
+    def clear_source_preview(self):
+        self.source_preview = None
+        if self.source_preview_card is not None:
+            self.source_preview_card.hide()
+        for card in self.cards.values():
+            card.source.finish_reveal()
+            card.target.finish_reveal()
+            card.show()
+        self.empty.setVisible(not self.captions)
+        self.sync_overlay(animate=False)
+        self.scroll.content_changed()
+
+    def retain_source_preview(self):
+        """Keep the newest recognized words if semantic processing did not finish."""
+        event = self.source_preview
+        if event is None:
+            return
+        keep = set(event['keep_ids'])
+        replaced = [caption for identifier, caption in self.captions.items() if identifier not in keep]
+        identifier = min((caption.id for caption in replaced), default=max(self.captions, default=0)+1)
+        revision = max((caption.revision for caption in replaced), default=0)+1
+        self.clear_source_preview()
+        for caption in replaced:
+            self.on_caption(replace(caption, source='', revision=caption.revision+1))
+        if event['source']:
+            self.on_caption(Caption(identifier, event['start'], event['end'], event['source'], event['language'],
+                translation='\n'.join(c.translation for c in replaced if c.translation),
+                translation_source=' '.join(c.source for c in replaced), translation_phase='initial',
+                final=False, revision=revision, error='分句未完成，已保留最新原文草稿及已有译文。'))
+        if not self.last_error:
+            self.on_failure('原文分句未完成，最新识别结果已作为草稿保留，请对照录音。')
 
     def on_caption(self, caption):
         previous = self.captions.get(caption.id)
@@ -2483,12 +2812,8 @@ class Window(QMainWindow):
             self.empty.setVisible(not self.captions)
             if self.current_item and not self.loading_saved:
                 self.autosave.start(800)
-            if self.captions:
-                self.overlay.update_caption(self.captions[max(self.captions)],
-                    self.caption_translation if self.recording_state.active else self.translate.isChecked())
-            else:
-                self.overlay.source.setText("等待语音…")
-                self.overlay.target.setText("")
+            self.apply_source_preview()
+            self.sync_overlay(animate=not self.loading_saved)
             self.scroll.content_changed()
             return
         self.empty.hide()
@@ -2502,6 +2827,9 @@ class Window(QMainWindow):
             self.cards[caption.id].update_caption(caption, animate=not self.loading_saved)
         elif caption.id >= max(self.captions) - 199:
             card = CaptionCard(caption, self.caption_translation, animate=not self.loading_saved)
+            for text in (card.source, card.target):
+                text.set_playback_clickable(self.scroll.playback_mode and not self.recording_state.active)
+                text.activated.connect(lambda identifier=caption.id, widget=card: self.play_caption(identifier, widget))
             self.cards[caption.id] = card
             self.feed_layout.insertWidget(self.feed_layout.count() - 1, card)
             # Bound Qt widget count while retaining the complete export in memory.
@@ -2510,15 +2838,37 @@ class Window(QMainWindow):
                 old.hide()
                 self.feed_layout.removeWidget(old)
                 old.deleteLater()
-        if caption.id == max(self.captions):
-            self.overlay.update_caption(caption, self.caption_translation, animate=not self.loading_saved)
+        self.apply_source_preview()
+        self.sync_overlay(animate=not self.loading_saved)
         self.export_button.setEnabled(any(c.final and c.source for c in self.captions.values()))
         if self.current_item and not self.loading_saved and not self.autosave.isActive():
             self.autosave.start(1500)
         self.scroll.content_changed()
 
     def toggle_overlay(self):
-        self.overlay.setVisible(not self.overlay.isVisible())
+        if self.overlay.isVisible():
+            self.overlay.hide()
+        else:
+            self.sync_overlay(animate=False)
+            self.overlay.show()
+            self.overlay.raise_()
+
+    def sync_overlay(self, *, animate=True):
+        captions = self.captions
+        if self.source_preview is not None:
+            captions = {key: value for key, value in captions.items() if key in self.source_preview['keep_ids']}
+        if self.source_preview is not None and self.source_preview['source']:
+            event = self.source_preview
+            self.overlay.update_caption(Caption(0, event['start'], event['end'], event['source'],
+                event['language'], final=False), False, animate=False)
+        elif captions:
+            caption = max(captions.values(), key=lambda item: (item.start, item.id))
+            self.overlay.update_caption(caption, self.caption_translation if self.recording_state.active
+                                        else self.translate.isChecked(), animate=animate)
+        else:
+            self.overlay.source.setText('正在聆听，等待识别结果…' if self.recording_state.active else '等待语音…')
+            self.overlay.target.setText('')
+            self.overlay.target.hide()
 
     def copy_latest(self):
         if not self.captions:
@@ -2558,8 +2908,22 @@ class Window(QMainWindow):
         width = self.scroll.viewport().width()
         margin = max(20, (width-900)//2) + 12
         self.feed_layout.setContentsMargins(margin, 24, margin, self.control_island.height()+46)
+        self.place_recording_hint()
+
+    def place_recording_hint(self):
+        viewport = self.scroll.viewport()
+        center = viewport.mapFrom(self.workspace_frame, self.workspace_frame.rect().center())
+        width = min(448, max(1, viewport.width()-32))
+        height = max(220, self.empty.minimumSizeHint().height())
+        self.empty.setGeometry(max(0, center.x()-width//2), max(0, center.y()-height//2), width, height)
+        self.empty.raise_()
+        self.control_island.raise_()
+        if self.playback_volume.isVisible():
+            self.playback_volume.raise_()
 
     def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.Resize and watched is getattr(self, 'workspace_header', None):
+            self.update_recording_header()
         if (event.type() == QEvent.Type.Resize and hasattr(self, "workspace_content")
                 and watched is self.workspace_content):
             self.update_caption_insets()
@@ -2604,7 +2968,7 @@ class Window(QMainWindow):
             self._backdrop_applied = enable_system_backdrop(int(self.winId()))
 
     def update_titlebar_inset(self, margins):
-        self.title_bar.setFixedHeight(max(44, margins.top()))
+        self.title_bar.setFixedHeight(max(36, margins.top()))
 
     def closeEvent(self, event):
         if self.native_updater.shutdown_job is not None:
@@ -2639,6 +3003,8 @@ class Window(QMainWindow):
             return
         if self.player:
             self.player.stop()
+            self.player.setSource(QUrl())
+        self.close_playback_stream()
         self.save()
         self.overlay.close()
         if self.runtime is not None:

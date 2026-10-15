@@ -42,12 +42,16 @@ def test_worker_publishes_translation_before_recognition_becomes_idle(monkeypatc
         class Mapper:
             def __init__(self, *args, **kwargs):
                 self.previous = {}
+                self.last_text = ''
+                self.ranges = {}
 
             def update(self, snapshot, done=False):
                 if not source_ready.is_set() or self.previous:
                     return []
                 row = Caption(1, 0, 1, 'Submitted source.', 'en', ready=True)
                 self.previous[row.id] = row
+                self.last_text = row.source
+                self.ranges[row.id] = (0, len(row.source))
                 return [row]
 
         monkeypatch.setattr(sys.modules['whisperlivekit'], 'AudioProcessor', Processor)

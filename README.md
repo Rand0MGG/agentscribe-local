@@ -24,6 +24,6 @@
 | Apple Silicon Mac | 已发布 `v0.6.0-beta.2` DMG，最低 macOS 15；未完成 Developer ID/公证，不支持 Intel/Rosetta。按发行说明安装。 |
 | Windows x64 | 当前没有已发布的独立安装包，使用 [源码指南](docs/WORKSPACE.md#windows-源码安装)；整套推理环境要求兼容 NVIDIA GPU/驱动。 |
 
-准备模型 → 新建并命名录音 → 选择声音与语言 → 开始聆听 → 停止保存，再回听或导出。源码中的新功能不自动出现在旧安装包中；已知实现缺口见 [计划](docs/ROADMAP.md#实现缺口)，真实设备、长会话及各平台证据见 [验证索引](docs/VALIDATION.md)。现有短样本不构成全面准确率或同类产品比较。
+准备模型 → 新录音 → 开始聆听；来源、语言、文件夹和名称按需修改。停止保存后可回听或导出。源码中的新功能不自动出现在旧安装包中；已知实现缺口见 [计划](docs/ROADMAP.md#实现缺口)，真实设备、长会话及各平台证据见 [验证索引](docs/VALIDATION.md)。现有短样本不构成全面准确率或同类产品比较。
 
 [全部发行](https://github.com/Rand0MGG/agentscribe-local/releases) · [反馈问题](https://github.com/Rand0MGG/agentscribe-local/issues) · [文档地图](docs/PROJECT_STRUCTURE.md) · [开发约定](AGENTS.md) · [第三方说明](THIRD_PARTY_NOTICES.md)

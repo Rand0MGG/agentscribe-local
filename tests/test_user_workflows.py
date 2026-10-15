@@ -250,6 +250,7 @@ assert w.cards[15].property('playing') and not w.cards[1].property('playing')
 wheel=QWheelEvent(QPointF(100,100),QPointF(100,100),QPoint(),QPoint(0,120),
     Qt.MouseButton.NoButton,Qt.KeyboardModifier.NoModifier,Qt.ScrollPhase.NoScrollPhase,False)
 app.sendEvent(w.scroll.viewport(),wheel); app.processEvents()
+w.scroll.verticalScrollBar().setValue(0)
 position=w.scroll.verticalScrollBar().value()
 assert not w.scroll.following
 w.playback_position(182000); app.processEvents()

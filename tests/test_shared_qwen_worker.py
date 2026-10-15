@@ -230,6 +230,8 @@ def test_source_lock_waiters_do_not_starve_live_translation(monkeypatch):
     class Mapper:
         def __init__(self, *args, **kwargs):
             self.previous = {1: Caption(1, 0, 1, 'Source words.', 'en', ready=True)}
+            self.last_text = 'Source words.'
+            self.ranges = {1: (0, len(self.last_text))}
             self.calls = 0
 
         def update(self, snapshot, done=False):
