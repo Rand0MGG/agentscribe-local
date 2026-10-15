@@ -85,7 +85,7 @@ jobs:
           if ($LASTEXITCODE) { throw 'Windows recovery primitives failed' }
           python scripts/build_windows.py --fetch
           if ($LASTEXITCODE) { throw 'Windows dependencies failed' }
-          python -c "import sys;sys.path.insert(0,'scripts');from pathlib import Path;from build_windows import build;from build_windows_installer import build as seal;payload=build(Path('.work/packaging/windows-downloads'));seal(payload,Path('C:/Program Files (x86)/Inno Setup 6/ISCC.exe'),Path('.work/packaging/windows-downloads'),fetch=True)"
+          python -c "import subprocess,sys;from pathlib import Path;from scripts.build_windows import build;from scripts.build_windows_installer import build as seal,prepare_compiler;downloads=Path('.work/packaging/windows-downloads');compiler=prepare_compiler(downloads);subprocess.run([sys.executable,'scripts/test_no_audio.py','tests/test_windows_installer_paths.py','-q'],check=True);payload=build(downloads);seal(payload,compiler,downloads,fetch=True)"
           if ($LASTEXITCODE) { throw 'Windows package failed' }
       - name: Sign sealed update bytes
         env:

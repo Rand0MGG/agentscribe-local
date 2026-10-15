@@ -1,4 +1,7 @@
 ; The AppId and per-user installation directory remain stable across updates.
+#if VER < EncodeVer(7, 0, 0)
+  #error Inno Setup 7 is required to preserve complete long-path license files.
+#endif
 #ifndef Payload
   #error Payload is required
 #endif

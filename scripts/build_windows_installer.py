@@ -2,7 +2,7 @@
 
 The desktop payload must already contain a portable Python and its locked
 native dependencies. This assembler does not copy a developer venv or fetch
-unpinned wheels. Run on Windows x64 with Inno Setup 6 on PATH.
+unpinned wheels. Run on Windows x64 with Inno Setup 7 on PATH.
 """
 
 import argparse
@@ -20,10 +20,25 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from linguaflow import __version__
 from linguaflow.update_config import update_identity
+from scripts.packaging_common import obtain
 from scripts.probe_package import run_probe
 from scripts.probe_packaged_launcher import probe
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def prepare_compiler(downloads):
+    """Prepare the pinned long-path-aware compiler in portable project-local mode."""
+    item = json.loads((ROOT / 'packaging/windows/inno.json').read_text(encoding='utf-8'))
+    installer = obtain(item, downloads, download=True)
+    destination = ROOT / '.work/packaging' / ('inno-' + item['version'])
+    subprocess.run([str(installer.resolve()), '/PORTABLE=1', '/CURRENTUSER', '/VERYSILENT',
+                    '/SUPPRESSMSGBOXES', '/NORESTART', '/DIR=' + str(destination)],
+                   check=True, timeout=180)
+    compiler = destination / 'ISCC.exe'
+    if not compiler.is_file():
+        raise RuntimeError('Inno Setup portable compiler was not prepared: ' + str(compiler))
+    return compiler
 
 
 def digest(path):

@@ -28,7 +28,7 @@
 
 1. 在目标系统构建；检查源码干净、版本/标签/main 完整 SHA 一致，审查所有待发行差异。不能把运行器名称当作架构证明。
 2. `prepare-release.yml` 选择已审核 main SHA、已有不可变标签和目标平台，调用同一生产脚本，不在 CI 临时改版本。普通平台推送只运行开发检查。
-3. Mac 用 `scripts/build_macos.py --fetch` 后再运行同脚本。Windows 在 x64 MSVC 开发命令行运行 `scripts/build_windows.py --fetch`、同脚本构建载荷，再用 `scripts/build_windows_installer.py --payload <载荷目录> --fetch` 封装 Inno 安装器。
+3. Mac 用 `scripts/build_macos.py --fetch` 后再运行同脚本。Windows 在 x64 MSVC 开发命令行运行 `scripts/build_windows.py --fetch`、同脚本构建载荷，再用 `scripts/build_windows_installer.py --payload <载荷目录> --iscc <Inno 7 编译器> --fetch` 封装安装器。CI 通过 `prepare_compiler()` 按 `packaging/windows/inno.json` 的 URL/SHA256 准备固定的便携 Inno 7，仅写入 `.work/packaging/`，不注册文件关联；随后运行真实长许可证路径编译回归。Inno 6 无法完整编译长路径许可文件，不能靠省略许可或缩短测试路径通过。
 
 两端锁定完整便携 Python、实际桌面依赖、Node、Qt/原生组件与许可，不复制开发 venv。应用清单只取 Git 跟踪且声明支持的文件类型；新资源类型须更新共享复制入口。源码归档固定提交，不依赖安装机系统 Git。
 

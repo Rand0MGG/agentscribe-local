@@ -77,7 +77,7 @@ jobs:
           if ($LASTEXITCODE) { throw 'Recovery primitives failed' }
           python scripts/build_windows.py --fetch
           if ($LASTEXITCODE) { throw 'Windows dependency preparation failed' }
-          python -c "from pathlib import Path; from scripts.build_windows import build; from scripts.build_windows_installer import build as seal; payload=build(Path('.work/packaging/windows-downloads')); seal(payload, Path('C:/Program Files (x86)/Inno Setup 6/ISCC.exe'), Path('.work/packaging/windows-downloads'), fetch=True)"
+          python -c "import subprocess,sys; from pathlib import Path; from scripts.build_windows import build; from scripts.build_windows_installer import build as seal, prepare_compiler; downloads=Path('.work/packaging/windows-downloads'); compiler=prepare_compiler(downloads); subprocess.run([sys.executable,'scripts/test_no_audio.py','tests/test_windows_installer_paths.py','-q'],check=True); payload=build(downloads); seal(payload, compiler, downloads, fetch=True)"
           if ($LASTEXITCODE) { throw 'Windows installer build failed' }
       - name: Upload candidate installer and checksums
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
