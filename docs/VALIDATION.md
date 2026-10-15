@@ -6,13 +6,16 @@
 
 | 证据 | 已证明 | 范围与限制 |
 | --- | --- | --- |
+| 2026-10-15 主界面与小岛 | Windows 完整无音频 988 passed / 25 skipped；补充空来源刷新、键盘顺序与文字尺寸后，Python 3.11/3.12/3.13 定向各 51 passed / 1 skipped，3.12 另补键盘断言 1 passed；零音频导入尝试，Ruff 通过 | `046f30f` 上本地 UI 修改；PySide6 分别 6.12.0/6.11.2/6.12.0。原生 Windows 150% 示例图覆盖浅深主题、空状态、录音/回放、长名称和窄窗口；不是 Mac Cocoa、真实录音或模型验收 |
 | 2026-10-14 Windows 退出/深路径修复 | Python 3.11.15、3.12.8、3.13.9 的完整无音频各 984 passed / 25 skipped，零音频导入尝试；深 PNG/HTML/DOCX、绘制中关闭及资源日志检查 | Windows 11/x64；PySide6 分别 6.12.0、6.11.2、6.12.0。25 跳过涉及 Mac 专属、符号链接权限和未配置的原生编译器；非 Mac/设备/GPU/安装升级验收 |
 | 2026-10-14 打包修复 | 完整无音频 943/23，Inno 以文本假载荷原生编译，模拟两端封存探针/清理边界 | 不执行假安装器，不证明真实 Windows 载荷可安装；后来被上一行源码回归补充 |
 | Mac GPU 文件链路 | MLX 识别、SaT CPU、HY Q4_K_M/Metal 真实输出与保存审计；包含 101 秒合成英文及短课堂片段 | 历史 M2/8GB/macOS 26.6.2/Python 3.12.14，具体配置以记录为准；不是中文、完整长课堂、真实采集或当前源码重新验收 |
 | Mac 系统声音与 UI | 历史短系统采集、暂停/继续、切源和 WAV 保存，以及原生界面检查 | 采集探针使用模拟推理，不能推出 GPU 联动或安装态权限通过 |
 | Mac 隔离更新/恢复 | 隔离应用的实际 Sparkle 下载、安装、重启及故障旧版恢复 | 非正式系统签名包，不替代 Windows 原生或生产旧包升级 |
 
-第一行命令为各解释器执行 `scripts/test_no_audio.py -v -rs --tb=short`；本地日志 `.work/reports/runtime-integrity-fixes-20261014/final311.log`、`final312.log`、`final313.log`，结构化摘要为同目录 `validated-results.json`。文档整理时重新核对了日志，不是重新运行模型或全量测试。该轮源码基线是 `08fe5d6` 加本地修复，代码随后提交为 `f84b388`；推送/合并不增加平台验收或发行证据。
+小岛修改日志位于 `.work/reports/ui-implementation-20261015/`：`full-final312.log`、`final-target311.log`、`final-target312.log`、`final-target313.log` 和 `empty-picker-final312.log`。完整回归后只补了设备为空时的恢复入口、键盘顺序和语言按钮尺寸，并完成上述定向检查；完整回归的跳过原因保留在日志。原生图位于 `.work/browser/ui-final-20261015/`，使用隔离库、示例字幕/设备/音量，不采集或播放。
+
+2026-10-14 退出/深路径修复的命令为各解释器执行 `scripts/test_no_audio.py -v -rs --tb=short`；本地日志 `.work/reports/runtime-integrity-fixes-20261014/final311.log`、`final312.log`、`final313.log`，结构化摘要为同目录 `validated-results.json`。文档整理时重新核对了日志，不是重新运行模型或全量测试。该轮源码基线是 `08fe5d6` 加本地修复，代码随后提交为 `f84b388`；推送/合并不增加平台验收或发行证据。
 
 ## 详细证据
 

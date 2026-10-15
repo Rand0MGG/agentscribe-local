@@ -117,6 +117,7 @@ def main():
             w.resize(1280, 840)
             w.quick_device.setCurrentIndex(1)
             w.set_recording_state(RecordingState.LISTENING)
+            w.capture_time.setText('00:12:34')  # Display fixture, not measured capture.
             w.meter.set_rms(.025)
             capture('recording')
             for width,height in ((900,650),(640,480)):
@@ -139,6 +140,14 @@ def main():
             w.quick_device.showPopup()
             capture('audio-sources', w.quick_device.view().window())
             w.quick_device.hidePopup()
+            index = w.device.currentIndex()
+            device_name = w.device.itemText(index)
+            w.device.setItemText(index, '外部输入 · 麦克风（Realtek High Definition Audio，USB-C 扩展坞连接设备）')
+            capture('workspace-long-device')
+            w.quick_device.showPopup()
+            capture('audio-sources-long', w.quick_device.view().window())
+            w.quick_device.hidePopup()
+            w.device.setItemText(index, device_name)
             for category, name in (('常规', 'settings'), ('字幕与延迟', 'settings-captions'),
                                    ('运行环境', 'settings-runtime')):
                 w.open_settings(category)
@@ -203,6 +212,7 @@ def main():
             w.current_item = None
             w.session_dirty = False
             w.reset_recording_view()
+            w.refresh_library()
             w.meter.set_rms(0)
             capture('workspace-empty')
             missing = []

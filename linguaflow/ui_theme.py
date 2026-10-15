@@ -13,12 +13,12 @@ THEMES = {
                   draft='#707078', translation='#515158', border='#e7e5e7',
                   control='#f5f5f6', hover='#16141419', selected='#26141419', disabled='#8b8b93',
                   primary='#29292d', primary_text='#ffffff', focus='#74747e', error='#a62d27',
-                  accent='#487867', warning='#a16b25', playback='#f0f5f2'),
+                  accent='#666670', warning='#a16b25', playback='#f3f3f5'),
     'dark': dict(surface='#191919', glass='#272629', text='#ededf0', muted='#aaaab2',
                  draft='#aaaab2', translation='#c4c4cb', border='#353538',
                  control='#2b2b2e', hover='#24000000', selected='#40000000', disabled='#8d8d96',
                  primary='#ededf0', primary_text='#242428', focus='#b1b1bb', error='#efa4a4',
-                 accent='#91bfac', warning='#d7ac6a', playback='#222d27'),
+                 accent='#aaaab2', warning='#d7ac6a', playback='#252528'),
 }
 
 
@@ -77,10 +77,14 @@ QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus,
 QPushButton:focus {{ border-color: {c['focus']}; }}
 QLineEdit[invalid="true"] {{ border-color: {c['error']}; }}
 QFrame#controlIsland {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: {WORKSPACE_RADIUS}px; }}
-QFrame#controlIsland QComboBox {{ padding: 6px 28px 6px 10px; border-radius: 8px; }}
-QFrame#controlIsland QPushButton {{ padding: 5px 9px; min-height: 18px; }}
-QFrame#controlIsland QPushButton#primary {{ padding: 7px 12px; }}
-QFrame#controlIsland QPushButton#quiet {{ padding: 4px 6px; }}
+QFrame#controlIsland QComboBox[islandChoice="true"],
+QFrame#controlIsland QPushButton[islandChoice="true"] {{ padding: 0; min-height: 0; background: transparent; border: none; }}
+QFrame#controlIsland QPushButton {{ padding: 0; min-height: 0; }}
+QFrame#controlIsland QPushButton#primary {{ padding: 0; }}
+QFrame#controlIsland QPushButton#primary[transportControl="true"],
+QFrame#controlIsland QPushButton#secondary[transportControl="true"] {{ background: transparent; border: none;
+    border-radius: 20px; padding: 0; min-width: 40px; max-width: 40px; min-height: 40px; max-height: 40px; }}
+QLabel#recordingState {{ color: {c['text']}; font-weight: 600; }}
 QFrame#controlIsland QProgressBar {{ background: {c['control']}; border: none; border-radius: 2px; }}
 QFrame#downloadCard {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: 16px; }}
 QFrame#downloadCard QLabel#preparationStatus {{ background: transparent; border: none; padding: 0;

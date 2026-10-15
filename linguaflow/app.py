@@ -83,6 +83,7 @@ from .ui_components import (
     ActionMenu,
     AudioLevelMeter,
     FloatingIsland,
+    IslandButton,
     NameDialog,
     SurfaceDialog,
 )
@@ -195,7 +196,7 @@ class GlassTitleBar(QFrame):
 
 
 class WorkspaceFrame(QFrame):
-    """One continuous antialiased edge around the top-left content corner."""
+    """Fill and outline share one contour, including the lower content corners."""
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -206,19 +207,15 @@ class WorkspaceFrame(QFrame):
         path.quadTo(self.width() - .5, .5, self.width() - radius, .5)
         path.lineTo(radius, 0.5)
         path.quadTo(0.5, 0.5, 0.5, radius)
-        path.lineTo(0.5, self.height())
-        path.lineTo(self.width(), self.height())
+        path.lineTo(0.5, self.height()-radius)
+        path.quadTo(.5, self.height()-.5, radius, self.height()-.5)
+        path.lineTo(self.width()-10, self.height()-.5)
+        path.quadTo(self.width()-.5, self.height()-.5, self.width()-.5, self.height()-10)
         path.closeSubpath()
         colors = theme_colors(QApplication.instance().property('appearance'))
         painter.fillPath(path, QColor(colors['surface']))
-        edge = QPainterPath()
-        edge.moveTo(self.width() - .5, radius)
-        edge.quadTo(self.width() - .5, .5, self.width() - radius, .5)
-        edge.lineTo(radius, 0.5)
-        edge.quadTo(0.5, 0.5, 0.5, radius)
-        edge.lineTo(0.5, self.height())
         painter.setPen(QPen(QColor(colors['border']), 1))
-        painter.drawPath(edge)
+        painter.drawPath(path)
 
 
 def line_icon(kind, color="#bdbdbf"):
@@ -286,6 +283,13 @@ def line_icon(kind, color="#bdbdbf"):
     elif kind == 'pause':
         painter.drawLine(7, 4, 7, 16)
         painter.drawLine(13, 4, 13, 16)
+    elif kind == 'stop':
+        painter.setBrush(QColor(color))
+        painter.drawRoundedRect(5, 5, 10, 10, 1, 1)
+    elif kind == 'language':
+        painter.drawEllipse(3, 3, 14, 14)
+        painter.drawEllipse(7, 3, 6, 14)
+        painter.drawLine(3, 10, 17, 10)
     else:
         painter.drawRoundedRect(5, 3, 10, 14, 2, 2)
         painter.drawLine(8, 7, 12, 7)
@@ -434,6 +438,7 @@ class Window(QMainWindow):
         split = QSplitter()
         split.setHandleWidth(1)
         self.pages = QStackedWidget()
+        self.pages.setContentsMargins(0, 0, 8, 8)
         self.pages.addWidget(split)
         layout.addWidget(self.pages, 1)
         self.notifications = NotificationCenter(root, show_details=self.show_diagnostic_details)
@@ -510,6 +515,9 @@ class Window(QMainWindow):
         form_outer.setContentsMargins(0, 8, 4, 0)
         form_outer.addWidget(label("聆听设置", "section"))
         form = QFormLayout()
+        # Attach before adding controls that later move to SettingsWorkspace.
+        # Older PySide versions otherwise retain wrappers for deleted layout items.
+        form_outer.addLayout(form)
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
         form.setSpacing(10)
         self.device = QComboBox()
@@ -532,7 +540,6 @@ class Window(QMainWindow):
             self.target.addItem(name, nllb)
         form.addRow("原文语言", self.source)
         form.addRow("翻译为", self.target)
-        form_outer.addLayout(form)
         self.model_manager = ModelManager(self, compute_device=lambda: self.compute.currentData(),
                                          start_check=self.start_background_check)
         self.asr = QComboBox()
@@ -574,8 +581,9 @@ class Window(QMainWindow):
         split.addWidget(sidebar)
         right = WorkspaceFrame()
         right.setObjectName("workspace")
+        right.setMinimumWidth(300)
         right_layout = QVBoxLayout(right)
-        right_layout.setContentsMargins(1, 1, 0, 0)
+        right_layout.setContentsMargins(1, 1, 1, WORKSPACE_RADIUS)
         right_layout.setSpacing(0)
         workspace_header = QFrame()
         workspace_header.setObjectName("workspaceHeader")
@@ -644,7 +652,7 @@ class Window(QMainWindow):
         self.feed_layout.setContentsMargins(12, 24, 12, 16)
         self.feed_layout.setSpacing(4)
         self.empty = label(
-            "点击「新录音」开始。",
+            "选择声音和语言，开始聆听。",
             "muted",
         )
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -680,16 +688,16 @@ class Window(QMainWindow):
         self.pending_source_revision = None
         footer = self.control_island = FloatingIsland(self.scroll.viewport())
         footer_layout = QVBoxLayout(footer)
-        footer_layout.setContentsMargins(14, 12, 14, 12)
+        footer_layout.setContentsMargins(16, 12, 16, 12)
         footer_layout.setSpacing(8)
-        input_row = self.input_row = QGridLayout()
-        self.quick_device = QComboBox()
+        self.input_controls = QWidget()
+        input_row = self.input_row = QGridLayout(self.input_controls)
+        input_row.setContentsMargins(0, 0, 0, 0)
+        input_row.setHorizontalSpacing(8)
+        input_row.setVerticalSpacing(0)
+        self.quick_device = QComboBox(island=True)
         self.quick_device.setAccessibleName('音频来源')
         self.quick_device.setPlaceholderText('选择系统音频或外部输入')
-        self.quick_device.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.quick_device.setMinimumContentsLength(12)
-        self.quick_device.setMinimumWidth(0)
-        self.quick_device.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.quick_device.setModel(self.device.model())
         self.quick_device.setCurrentIndex(self.device.currentIndex())
         self.quick_device.currentIndexChanged.connect(self.device.setCurrentIndex)
@@ -697,56 +705,64 @@ class Window(QMainWindow):
         self.quick_device.currentTextChanged.connect(self.quick_device.setToolTip)
         input_row.addWidget(self.quick_device, 0, 0)
         input_row.setColumnStretch(0, 1)
-        self.refresh_source = QPushButton()
+        self.refresh_source = self.quick_device.refresh_button
         self.refresh_source.setIcon(line_icon('refresh'))
-        self.refresh_source.setFixedSize(30, 30)
         self.refresh_source.setAccessibleName('刷新音频来源')
         self.refresh_source.setObjectName('quiet')
         self.refresh_source.setToolTip('刷新音频设备列表')
-        self.refresh_source.clicked.connect(self.refresh_devices)
+        self.refresh_source.clicked.connect(lambda: (self.quick_device.hidePopup(), self.refresh_devices()))
         self.refresh_feedback = QTimer(self)
         self.refresh_feedback.setSingleShot(True)
         self.refresh_feedback.setInterval(1500)
         self.refresh_feedback.timeout.connect(self.reset_refresh_feedback)
-        input_row.addWidget(self.refresh_source, 0, 2)
-        footer_layout.addLayout(input_row)
-        bottom = QHBoxLayout()
-        footer_layout.addLayout(bottom)
         self.status = FeedbackLabel(self.notifications)
         self.status.setObjectName('status')
         self.status.setStyleSheet('font-size: 11px;')
         self.status.setMaximumHeight(36)
         self.status.hide()
         # Legacy callers use status; its presentation is exclusively global.
-        transport_column = QVBoxLayout()
-        transport_column.setSpacing(2)
         self.transport = QStackedWidget()
         self.transport.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.live_transport = QWidget()
-        live_row = QHBoxLayout(self.live_transport)
+        live_row = self.live_row = QGridLayout(self.live_transport)
         live_row.setContentsMargins(0, 0, 0, 0)
-        live_row.addWidget(self.volume_caption)
-        live_row.addWidget(self.meter, 1)
+        live_row.setHorizontalSpacing(12)
+        live_row.setVerticalSpacing(4)
+        self.state_caption = label('', 'recordingState')
+        self.state_caption.setWordWrap(False)
+        self.capture_time = label('00:00:00', 'timestamp')
+        self.capture_time.setWordWrap(False)
+        live_row.addWidget(self.state_caption, 0, 0)
+        live_row.addWidget(self.capture_time, 0, 1)
+        live_row.addWidget(self.volume_caption, 0, 2)
+        live_row.addWidget(self.meter, 0, 3)
+        live_row.setColumnStretch(3, 1)
         self.transport.addWidget(self.live_transport)
-        transport_column.addWidget(self.transport)
-        bottom.addLayout(transport_column, 1)
-        self.start_button = QPushButton("开始聆听")
-        self.start_button.setFixedWidth(98)
+        footer_layout.addWidget(self.transport)
+        self.transport_actions = QWidget()
+        actions = QHBoxLayout(self.transport_actions)
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(8)
+        self.start_button = IslandButton("开始聆听", icon_only=True)
         self.start_button.setObjectName("primary")
+        self.start_button.setToolTip('开始聆听')
         self.start_button.clicked.connect(self.start)
-        self.stop_button = QPushButton("结束")
+        self.stop_button = IslandButton("结束", icon_only=True)
+        self.stop_button.setObjectName('primary')
+        self.stop_button.setAccessibleName('结束聆听并保存')
         self.stop_button.setToolTip('结束聆听并保存录音与字幕')
         self.stop_button.setEnabled(False)
         self.stop_button.hide()
         self.stop_button.clicked.connect(self.stop)
-        self.pause_button = QPushButton("暂停")
+        self.pause_button = IslandButton("暂停", icon_only=True)
+        self.pause_button.setObjectName('secondary')
         self.pause_button.setToolTip("暂停收音；已有字幕继续处理，继续后接着录")
         self.pause_button.setEnabled(False)
         self.pause_button.hide()
         self.pause_button.clicked.connect(self.toggle_pause)
-        bottom.addWidget(self.start_button)
-        bottom.addWidget(self.pause_button)
-        bottom.addWidget(self.stop_button)
+        actions.addWidget(self.start_button)
+        actions.addWidget(self.pause_button)
+        actions.addWidget(self.stop_button)
         self.playback = QFrame()
         playback_layout = QHBoxLayout(self.playback)
         playback_layout.setContentsMargins(0, 0, 0, 0)
@@ -771,7 +787,7 @@ class Window(QMainWindow):
         self.playback.setProperty('available', False)
         self.player = None
         self.transport.addWidget(self.playback)
-        self.quick_language = QPushButton('输入与语言')
+        self.quick_language = IslandButton('输入与语言')
         self.quick_language.setObjectName('quiet')
         self.quick_language.setToolTip('更改原文和目标语言')
         self.language_popup = LanguagePopup(self.source, self.target, self.translate, self)
@@ -779,8 +795,13 @@ class Window(QMainWindow):
         self.quick_language.clicked.connect(lambda: self.language_popup.show_at(
             self.quick_language, next_session=self.recording_state.active))
         self.quick_language.setMinimumWidth(0)
-        self.quick_language.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         input_row.addWidget(self.quick_language, 0, 1)
+        input_row.addWidget(self.transport_actions, 0, 2)
+        for previous, following in ((self.quick_device, self.quick_language),
+                                    (self.quick_language, self.start_button),
+                                    (self.start_button, self.pause_button), (self.pause_button, self.stop_button)):
+            QWidget.setTabOrder(previous, following)
+        footer_layout.addWidget(self.input_controls)
         self.control_island.compactChanged.connect(self.arrange_input_controls)
         footer_layout.addWidget(self.pipeline)
         self.pipeline.setStyleSheet('font-size: 11px;')
@@ -1046,7 +1067,7 @@ class Window(QMainWindow):
         app.setStyleSheet(appearance_style(STYLE, mode))
         for button, kind in ((self.new_button, 'new'), (self.settings_button, 'settings'),
                              (self.deleted_button, 'trash'),
-                             (self.quick_language, 'chevron'),
+                             (self.quick_language, 'language'),
                              (self.refresh_source, 'check' if self.refresh_feedback.isActive() else 'refresh')):
             button.setIcon(line_icon(kind, theme_colors(mode)['muted']))
         for index in range(self.device.count()):
@@ -1057,6 +1078,7 @@ class Window(QMainWindow):
             widget.update()
         self.prefs.setValue('appearance', mode)
         self.update_playback_button()
+        self.update_transport_icons()
         self.centralWidget().update()
         for frame in self.findChildren(WorkspaceFrame):
             frame.update()
@@ -1488,7 +1510,7 @@ class Window(QMainWindow):
         self.update_activity()
         self.clear_captions()
         self.workspace_title.setText("新录音")
-        self.empty.setText("点击「新录音」开始。")
+        self.empty.setText("选择声音和语言，开始聆听。")
         self.export_button.setEnabled(False)
 
     def new_recording(self, checked=False, *, folder_id=None, name=None, check_models=True):
@@ -1869,12 +1891,22 @@ class Window(QMainWindow):
         active = self.recording_state.active
         replay = not active and bool(self.playback.property('available'))
         self.transport.setCurrentWidget(self.playback if replay else self.live_transport)
-        self.transport.setVisible(True)
+        self.transport.setVisible(active or replay)
+        self.input_controls.setVisible(not replay)
         self.start_button.setVisible(not active and not replay)
         self.quick_device.setVisible(not replay)
         self.quick_language.setVisible(not replay)
-        self.refresh_source.setVisible(not replay)
         self.update_volume_caption()
+        self.control_island.placement.start(0)
+
+    def update_transport_icons(self):
+        colors = theme_colors(QApplication.instance().property('appearance'))
+        for button, kind in ((self.start_button, 'play'), (self.stop_button, 'stop')):
+            button.setIcon(line_icon(kind, colors['primary_text']))
+        paused = self.recording_state is RecordingState.PAUSED
+        self.pause_button.setIcon(line_icon('play' if paused else 'pause', colors['text']))
+        self.pause_button.setAccessibleName('继续录音' if paused else '暂停录音')
+        self.pause_button.setToolTip('继续录音' if paused else '暂停收音；已有字幕继续处理')
 
     def update_volume_caption(self):
         source = self.quick_device.currentData()
@@ -1916,10 +1948,16 @@ class Window(QMainWindow):
             self.meter.setValue(0)
 
     def arrange_input_controls(self, compact):
-        self.input_row.addWidget(self.quick_device, 0, 0, 1, 3 if compact else 1)
-        self.input_row.addWidget(self.quick_language, 1 if compact else 0, 0 if compact else 1,
-                                 1, 2 if compact else 1)
-        self.input_row.addWidget(self.refresh_source, 1 if compact else 0, 2)
+        for widget in (self.quick_device, self.quick_language, self.transport_actions):
+            self.input_row.removeWidget(widget)
+        self.input_row.addWidget(self.quick_device, 0, 0)
+        self.input_row.addWidget(self.quick_language, 1 if compact else 0, 0 if compact else 1)
+        self.input_row.addWidget(self.transport_actions, 0, 1 if compact else 2, 2 if compact else 1, 1)
+        self.input_row.setColumnStretch(1, 0 if compact else 1)
+        self.live_row.removeWidget(self.volume_caption)
+        self.live_row.removeWidget(self.meter)
+        self.live_row.addWidget(self.volume_caption, 1 if compact else 0, 0 if compact else 2)
+        self.live_row.addWidget(self.meter, 1 if compact else 0, 1 if compact else 3, 1, 3 if compact else 1)
 
     @staticmethod
     def playback_clock(milliseconds):
@@ -2068,7 +2106,7 @@ class Window(QMainWindow):
                 self.device.clear()
                 for device in devices:
                     category = '系统音频' if device.loopback else '外部输入'
-                    # Keep category visible even when a long device name is elided.
+                    # Preserve the category in full labels; the island also paints its icon.
                     name = device.name.split(' · ', 1)[-1]
                     color = theme_colors(QApplication.instance().property('appearance'))['text']
                     self.device.addItem(line_icon('system' if device.loopback else 'input', color),
@@ -2184,6 +2222,9 @@ class Window(QMainWindow):
 
     def set_recording_state(self, state):
         self.recording_state = state
+        self.state_caption.setText(state.value)
+        if state is RecordingState.STARTING:
+            self.capture_time.setText('00:00:00')
         if state is not RecordingState.LISTENING:
             self.meter.setValue(0)
         if self.knowledge_panel:
@@ -2203,6 +2244,7 @@ class Window(QMainWindow):
         self.pause_button.setVisible(state.active)
         self.pause_button.setEnabled(state.can_pause and not self.last_error)
         self.pause_button.setText("继续录音" if state is RecordingState.PAUSED else "暂停")
+        self.update_transport_icons()
         self.start_button.setVisible(not state.active)
         self.update_transport()
         self.export_button.setEnabled(not state.active and any(c.final and c.source for c in self.captions.values()))
@@ -2271,6 +2313,9 @@ class Window(QMainWindow):
         self.update_activity()
 
     def update_activity(self):
+        if self.session is not None:
+            seconds = max(0, int(getattr(self.session, 'recorded_seconds', 0)))
+            self.capture_time.setText(f'{seconds//3600:02}:{seconds//60%60:02}:{seconds%60:02}')
         if self.native_updater.pending and not self.update_fenced:
             self.try_install_update()
         if self.pending_library_path and not self.recording_state.active and not self.session_dirty:

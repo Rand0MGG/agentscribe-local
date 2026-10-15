@@ -12,6 +12,7 @@ from ui_support import assert_ui_process
     ('QWidgetEffectSourcePrivate::pixmap: Painter not active', True),
     ('QProcess: Destroyed while process (fixture) is still running.', True),
     ('QThread: Destroyed while thread is still running', True),
+    ('Error calling Python override of QComboBox::paintEvent(): fixture', True),
     ('This plugin does not support propagateSizeHints()', False),
 ])
 def test_qt_warnings_reject_drawing_errors_but_allow_platform_hints(message, drawing_error):

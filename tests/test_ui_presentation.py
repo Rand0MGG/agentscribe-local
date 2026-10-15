@@ -429,8 +429,9 @@ for _ in range(6):
         w.grab()
         app.sendEvent(button, QEvent(QEvent.Type.Leave))
     QTest.qWait(20)
+w.leave_settings()
 w.release_playback()
-assert not w.transport.isHidden()
+assert w.transport.isHidden() and w.start_button.isVisibleTo(w)
 assert 'PySide6.QtMultimedia' not in __import__('sys').modules
 w.current_item = None
 w.session_dirty = False

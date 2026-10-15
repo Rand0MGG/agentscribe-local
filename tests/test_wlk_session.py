@@ -68,11 +68,13 @@ print(json.dumps({'type':'done'}), flush=True)
 
 
 def test_captured_pcm_is_drained_before_process_stops(monkeypatch, tmp_path):
+    sessions = []
     def capture(settings, stop, block):
         for _ in range(13):
             block(np.ones(1600, dtype=np.float32) * .01)
-    captions, failures = execute(monkeypatch, tmp_path, PROGRAM, capture)
+    captions, failures = execute(monkeypatch, tmp_path, PROGRAM, capture, setup=sessions.append)
     assert not failures
+    assert sessions[0].recorded_seconds == pytest.approx(1.3)
     assert captions[0].source == str(13 * 1600 * 2)
     import wave
     with wave.open(str(tmp_path / "recording.wav")) as recording:

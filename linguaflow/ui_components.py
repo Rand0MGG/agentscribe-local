@@ -7,6 +7,7 @@ from PySide6.QtCore import (
     QPoint,
     QPointF,
     QPropertyAnimation,
+    QRect,
     QRectF,
     QSize,
     Qt,
@@ -34,6 +35,7 @@ from PySide6.QtWidgets import (
     QStyle,
     QStyledItemDelegate,
     QStyleOptionSpinBox,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -98,7 +100,7 @@ class AudioLevelMeter(QProgressBar):
         painter.drawRoundedRect(rail, 2, 2)
         if self.display_level > 0:
             rail.setWidth(max(4., rail.width()*self.display_level/100))
-            painter.setBrush(QColor(colors['warning'] if self.value() > 96 else colors['accent']))
+            painter.setBrush(QColor(colors['warning'] if self.value() > 96 else colors['focus']))
             painter.drawRoundedRect(rail, 2, 2)
 
 
@@ -118,6 +120,11 @@ class ChoiceDelegate(QStyledItemDelegate):
         self.choice = choice
 
     def sizeHint(self, option, index):
+        if self.choice.property('wrapChoices'):
+            width = max(80, self.choice.view().viewport().width() - 84)
+            height = option.fontMetrics.boundingRect(QRect(0, 0, width, 10000),
+                int(Qt.TextFlag.TextWordWrap), str(index.data())).height()
+            return QSize(width + 84, max(34, height + 16))
         return QSize(option.fontMetrics.horizontalAdvance(str(index.data()))+52,
                      max(34, option.fontMetrics.height()+16))
 
@@ -139,8 +146,11 @@ class ChoiceDelegate(QStyledItemDelegate):
         if icon is not None and not icon.isNull():
             icon.paint(painter, text_rect.x(), rect.center().y()-8, 16, 16)
             text_rect.adjust(24, 0, 0, 0)
-        text = option.fontMetrics.elidedText(str(index.data()), Qt.TextElideMode.ElideMiddle, text_rect.width())
-        painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter, text)
+        if self.choice.property('wrapChoices'):
+            painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextWordWrap, str(index.data()))
+        else:
+            text = option.fontMetrics.elidedText(str(index.data()), Qt.TextElideMode.ElideMiddle, text_rect.width())
+            painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter, text)
         if index.row() == self.choice.currentIndex():
             painter.setPen(QPen(QColor(c['text']), 1.6))
             x, y = rect.x()+15, rect.center().y()
@@ -151,8 +161,9 @@ class ChoiceDelegate(QStyledItemDelegate):
 
 class ChoiceBox(QComboBox):
     """Shared keyboard-native choices with bounded popups and painted symbols."""
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, island=False):
         super().__init__(parent)
+        self.island = island
         view = QListView()
         view.setItemDelegate(ChoiceDelegate(self))
         view.setMouseTracking(True)
@@ -163,13 +174,60 @@ class ChoiceBox(QComboBox):
         self.setMaxVisibleItems(8)
         self.currentTextChanged.connect(self.setToolTip)
         view.entered.connect(lambda index: view.viewport().setToolTip(str(index.data() or '')))
+        if island:
+            self.setProperty('islandChoice', True)
+            self.setProperty('wrapChoices', True)
+            self.setFixedHeight(40)
+            self.setMinimumWidth(90)
+            self.setMaximumWidth(180)
+            self.setMinimumContentsLength(12)
+            self.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+            view.setUniformItemSizes(False)
+            view.setWordWrap(True)
+            self.currentTextChanged.connect(self.setAccessibleDescription)
+            self.refresh_button = QPushButton('刷新音频来源', self)
+            self.refresh_button.setObjectName('quiet')
+            self.refresh_button.setFixedHeight(36)
+            self.refresh_button.hide()
+
+    def focusInEvent(self, event):
+        super().focusInEvent(event)
+        if (self.island and event.reason() in (Qt.FocusReason.TabFocusReason, Qt.FocusReason.BacktabFocusReason,
+                                              Qt.FocusReason.ShortcutFocusReason) and self.currentText()):
+            QToolTip.showText(self.mapToGlobal(QPoint(0, self.height())), self.currentText(), self)
+
+    def focusOutEvent(self, event):
+        if self.island:
+            QToolTip.hideText()
+        super().focusOutEvent(event)
+
+    def mousePressEvent(self, event):
+        if self.island and not self.count() and event.button() == Qt.MouseButton.LeftButton:
+            self.showPopup()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def keyPressEvent(self, event):
+        if self.island and not self.count() and event.key() in (
+                Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Down):
+            self.showPopup()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def showPopup(self):
-        if not self.count():
+        if not self.count() and not self.island:
             return
         c = theme_colors(QApplication.instance().property('appearance'))
         view = self.view()
         popup = view.window()
+        if self.island:
+            if self.refresh_button.parentWidget() is not popup:
+                popup.layout().addWidget(self.refresh_button)
+            self.refresh_button.show()
+            view.setVisible(bool(self.count()))
         popup.setObjectName('choicePopup')
         popup.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
         popup.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -177,12 +235,19 @@ class ChoiceBox(QComboBox):
                            f' border-radius: 12px; padding: 6px; }} '
                            'QListView { background: transparent; border: none; padding: 0; outline: none; }')
         bounds = self.screen().availableGeometry()
-        width = min(max(self.width(), min(520, max(self.fontMetrics().horizontalAdvance(self.itemText(i))
-                     for i in range(self.count()))+60)), bounds.width()-24)
+        longest = max((self.fontMetrics().horizontalAdvance(self.itemText(i)) for i in range(self.count())), default=0)
+        width = min(max(self.width(), min(520, longest+60)), bounds.width()-24)
         view.setFixedWidth(max(1, width-14))
-        super().showPopup()
+        if self.count():
+            super().showPopup()
+        else:
+            popup.show()
+            self.refresh_button.setFocus(Qt.FocusReason.PopupFocusReason)
         point = self.mapToGlobal(QPoint(0, self.height()+5))
         height = min(popup.height(), 8*max(34, self.fontMetrics().height()+16)+14, bounds.height()-24)
+        if self.island:
+            rows = sum(view.sizeHintForRow(i) for i in range(min(self.count(), 8)))
+            height = min(rows+self.refresh_button.height()+20, bounds.height()-24)
         x = min(max(bounds.left()+12, point.x()), bounds.right()-width-11)
         y = point.y() if point.y()+height <= bounds.bottom()-12 else self.mapToGlobal(QPoint(0, 0)).y()-height-5
         y = min(max(bounds.top()+12, y), bounds.bottom()-height-11)
@@ -190,6 +255,13 @@ class ChoiceBox(QComboBox):
         view.scrollTo(view.currentIndex())
 
     def paintEvent(self, event):
+        if self.island:
+            text = self.currentText() or self.placeholderText()
+            category, separator, name = text.partition(' · ')
+            if separator and category in ('系统音频', '外部输入'):
+                text = name
+            paint_island_choice(self, text, self.itemIcon(self.currentIndex()))
+            return
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -198,6 +270,77 @@ class ChoiceBox(QComboBox):
         x, y = self.width() - 17, self.height() / 2
         painter.drawLine(QPointF(x - 3, y - 1.5), QPointF(x, y + 1.5))
         painter.drawLine(QPointF(x, y + 1.5), QPointF(x + 3, y - 1.5))
+
+
+def paint_island_choice(widget, text, icon):
+    """One visual centre for the device choice and the language menu button."""
+    painter = QPainter(widget)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    colors = theme_colors(QApplication.instance().property('appearance'))
+    painter.setPen(QPen(QColor(colors['focus']), 1) if widget.hasFocus() else Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(colors['hover']) if widget.underMouse() and widget.isEnabled()
+                     else Qt.BrushStyle.NoBrush)
+    painter.drawRoundedRect(QRectF(widget.rect()).adjusted(.5, .5, -.5, -.5), 8, 8)
+    left = 10
+    if not icon.isNull():
+        icon.paint(painter, left, (widget.height()-18)//2, 18, 18)
+        left += 26
+    text_rect = widget.rect().adjusted(left, 0, -28, 0)
+    painter.setPen(QColor(colors['text'] if widget.isEnabled() else colors['disabled']))
+    painter.setFont(widget.font())
+    painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter,
+        widget.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, text_rect.width()))
+    painter.setPen(QPen(QColor(colors['muted'] if widget.isEnabled() else colors['disabled']), 1.4))
+    x, y = widget.width()-15, widget.height()/2
+    painter.drawLine(QPointF(x-3, y-1.5), QPointF(x, y+1.5))
+    painter.drawLine(QPointF(x, y+1.5), QPointF(x+3, y-1.5))
+
+
+class IslandButton(QPushButton):
+    """Keep native button actions, labels and accessibility with compact paint."""
+    def __init__(self, text, *, icon_only=False, parent=None):
+        super().__init__(text, parent)
+        self.icon_only = icon_only
+        self.setFixedHeight(40)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self.setAccessibleName(text)
+        self.setIconSize(QSize(18, 18))
+        if icon_only:
+            self.setProperty('transportControl', True)
+            self.setFixedSize(40, 40)
+        else:
+            self.setProperty('islandChoice', True)
+            self.setMinimumWidth(100)
+            self.setMaximumWidth(210)
+
+    def sizeHint(self):
+        return QSize(40 if self.icon_only else min(210, self.fontMetrics().horizontalAdvance(self.text())+64), 40)
+
+    def minimumSizeHint(self):
+        return QSize(40 if self.icon_only else 100, 40)
+
+    def paintEvent(self, event):
+        if self.icon_only:
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            colors = theme_colors(QApplication.instance().property('appearance'))
+            primary = self.objectName() == 'primary' and self.isEnabled()
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(colors['primary'] if primary else colors['control']))
+            circle = QRectF(self.rect()).adjusted(.5, .5, -.5, -.5)
+            painter.drawEllipse(circle)
+            if self.isEnabled() and (self.underMouse() or self.isDown()):
+                painter.setBrush(QColor(colors['selected' if self.isDown() else 'hover']))
+                painter.drawEllipse(circle)
+            if self.hasFocus():
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.setPen(QPen(QColor(colors['focus']), 1))
+                painter.drawEllipse(circle.adjusted(1, 1, -1, -1))
+            self.icon().paint(painter, (self.width()-18)//2, (self.height()-18)//2, 18, 18,
+                              Qt.AlignmentFlag.AlignCenter,
+                              self.icon().Mode.Normal if self.isEnabled() else self.icon().Mode.Disabled)
+        else:
+            paint_island_choice(self, self.text(), self.icon())
 
 
 class SpinSymbols:
@@ -239,7 +382,7 @@ class FloatingIsland(QFrame):
     def __init__(self, viewport):
         super().__init__(viewport)
         self.setObjectName('controlIsland')
-        self.compact = None
+        self.compact = False  # The constructor already installs the wide layout.
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
         self.placement = QTimer(self)
         self.placement.setSingleShot(True)
@@ -264,11 +407,13 @@ class FloatingIsland(QFrame):
     def place(self):
         viewport = self.parentWidget()
         old_height = self.height()
-        self.setFixedWidth(min(680, max(1, viewport.width()-48)))
-        compact = self.width() < 500
+        available = max(1, viewport.width()-32)
+        compact = available < 360
         if compact != self.compact:
             self.compact = compact
             self.compactChanged.emit(compact)
+        self.layout().activate()
+        self.setFixedWidth(min(available, self.layout().sizeHint().width()))
         self.layout().activate()
         height = self.sizeHint().height()
         self.setGeometry((viewport.width()-self.width())//2, max(12, viewport.height()-height-18), self.width(), height)

@@ -25,6 +25,7 @@ def assert_ui_process(result: CompletedProcess[str]):
     output = result.stdout + result.stderr
     assert result.returncode == 0, f'Qt child exited {result.returncode}:\n{output}'
     assert not any(marker in output for marker in ('QPainter::', 'QWidgetEffectSourcePrivate::pixmap:',
+                                                  'Error calling Python override',
                                                   'QProcess: Destroyed while process',
                                                   'QThread: Destroyed while thread')), (
         'Qt drawing or cleanup failure:\n' + output)

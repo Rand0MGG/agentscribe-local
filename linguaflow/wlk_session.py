@@ -47,6 +47,7 @@ class Session(QThread):
         self.stop_started = None
         self.last_error = ""
         self.recording_path = recording_path
+        self.recorded_seconds = 0.
         self.capture_control = CaptureControl()
         self.capture_settings = settings
         self.source_revision = 0
@@ -162,6 +163,7 @@ class Session(QThread):
                     if recording is not None:
                         recording.writeframes((np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes())
                     journal.append(samples)
+                    self.recorded_seconds = journal.written / (self.settings.input_sample_rate * 4)
                     self.level.emit(float(np.sqrt(np.mean(samples * samples))))
                     silent_samples = silent_samples + len(samples) if not np.any(samples) else 0
                     if silent_samples >= self.settings.input_sample_rate * 3 and not warned:

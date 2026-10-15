@@ -147,7 +147,9 @@ for width, height in ((640,480), (900,650), (700,960)):
     assert w.quick_language.width() > 80
     assert w.control_island.geometry().right() < w.scroll.viewport().width()
     assert w.control_island.geometry().bottom() < w.scroll.viewport().height()
-    assert w.control_island.compact == (w.control_island.width() < 500)
+    for control in (w.quick_device, w.quick_language, w.start_button):
+        rect = control.rect().translated(control.mapTo(w.control_island, control.rect().topLeft()))
+        assert w.control_island.rect().contains(rect), (control.accessibleName(), rect)
 assert isinstance(w.overlay.font_size, QSlider)
 assert isinstance(w.overlay.background_opacity, QSlider)
 assert not any('拖动移动' in label.text() for label in w.overlay.findChildren(QLabel))
