@@ -1,4 +1,4 @@
-AgentScribe 0.8.0 · Apple Silicon 安装包
+AgentScribe 0.9.0 · Apple Silicon 安装包
 
 安装
 1. 将 AgentScribe.app 拖到右侧的 Applications（应用程序）。
@@ -44,7 +44,7 @@ Mac 系统菜单栏的 AgentScribe 菜单提供关于、版本与更新、检查
 许可与验证范围
 第三方许可和来源位于 AgentScribe.app/Contents/Resources/Licenses/。
 构建版本、依赖和源码哈希位于 Contents/Resources/build-manifest.json。
-版本号为 0.8.0；已发布产物、签名和验收状态以发行记录及构建清单为准。
+版本号为 0.9.0；已发布产物、签名和验收状态以发行记录及构建清单为准。
 发行记录见 https://github.com/Rand0MGG/agentscribe-local/releases。
 应用源码尚未指定开源许可证；第三方组件保持各自许可证。
 源码已验证短电脑声音捕获、暂停/继续、来源切换和 WAV 保存，推理在该探针中为模拟实现。
