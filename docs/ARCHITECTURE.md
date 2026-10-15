@@ -72,6 +72,6 @@ Qt 线程负责装配、呈现和发起操作，只有它更新 UI。耗时任�
 
 `session.json` 与衍生字幕文件分别原子替换，不是整个录音目录的一次事务；WAV 在采集中流式写入。写入线程结束不等于全部所需文件保存成功，保存资格仍以带错误与版本信息的回执判断。
 
-Windows 课件 IO 以扩展长度路径访问，普通路径用于身份比较；Qt/Office 使用临时副本渲染后校验发布，Mac 沿用原渲染路径。VAD Float32 与 Windows nagisa/DyNet 中文路径兼容集中在 `runtime_compat.py`，保留真实算法；不以假分词或异常吞没绕过。
+Windows 课件 IO 以扩展长度路径访问，普通路径用于身份比较；Qt/Office 使用临时副本渲染，临时目录先展开系统可能返回的 8.3 短名称，再按原有归属校验发布，Mac 沿用原渲染路径。VAD Float32 与 Windows nagisa/DyNet 中文路径兼容集中在 `runtime_compat.py`，保留真实算法；不以假分词或异常吞没绕过。
 
 固定依赖/组件版本由 `pyproject.toml`、`requirements-*.txt`、平台锁与 `packaging/updates.json` 维护。`tests/test_architecture.py` 检查显式导入循环、核心隔离和依赖方向，不能覆盖所有动态导入或真实模型行为。

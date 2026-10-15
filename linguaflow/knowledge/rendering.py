@@ -55,7 +55,8 @@ async def render_source(source, output, limit=1000, *, resource_source=None):
     # Qt/Chromium and Office helpers do not consistently accept extended paths.
     # Keep only their private work short; publish to the original checked library.
     with tempfile.TemporaryDirectory(prefix='as-render-') as directory:
-        work = Path(directory)
+        # GetTempPath may use an 8.3 alias; ownership checks use resolved paths.
+        work = Path(directory).resolve()
         staged = work / ('source' + source.suffix.lower())
         shutil.copyfile(source, staged)
         manifest = await _render_source(staged, work / 'pages', limit,

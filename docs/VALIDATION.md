@@ -8,6 +8,7 @@
 
 | 证据 | 已证明 | 范围与限制 |
 | --- | --- | --- |
+| 2026-10-16 Windows 临时渲染短名称 | 真实 8.3 临时路径回归修前失败、修后通过；课件格式/视觉/UI 定向 60 passed，Ruff/差异检查通过 | Windows 11/x64、Python 3.12.8；CI `c2a5419` 的 Windows SDK/渲染失败源于 `RUNNER~1` 与展开用户名比较不一致。仅在 Windows 临时渲染入口展开路径，归属校验与 Mac 分支未改；证据 `.work/reports/v090-temp-path-before.xml`、`v090-temp-path-after.xml`。0.9.0 最终构建结果以对应 Actions/安装包清单为准 |
 | 2026-10-16 空库默认文件夹与弹层统一 | Windows 完整无音频 1031 passed / 1 failed / 25 skipped；新增 5 项全过，Ruff/差异检查通过。原生定向 20 passed / 1 悬停失败，该悬停用例单独复跑通过；12 张明暗弹层截图检查 | `92b8ed2` 加本地修改；Windows 11/x64、Python 3.12.8、PySide6 6.11.2。全量唯一失败与改前一致：offscreen 回放条宽 385，断言 ≥400；原生悬停批次鼠标进入事件未到达，根因未确认。日志 `.work/reports/default-folders-popups-*.xml`，截图 `.work/browser/popup-after/`。Cocoa 外围玻璃反馈待 Mac 实机复核，未提交/推送/发布 |
 | 2026-10-16 提交前回归 | 1052 个用例已覆盖：完整运行 1034 passed，18 项因图形会话/本机端口受限失败后补验全过；Ruff 与文档引用检查通过 | Mac arm64 / Python 3.12.14；两次运行均保留，证据 `.work/reports/github-submit-20261016/`。未构建或发布安装包 |
 | 2026-10-15—16 Mac 界面与即时原文 | 阶段完整无音频回归最高 1045 passed，后续界面、预览、状态专项通过；原生截图覆盖明暗主题及窄窗口 | `e82b957` 加本地修改；后续更改未重跑全量。阶段明细见 [归档](archive/testing/MAC_UI_20261016.md)，日志/截图在其中列出的 `.work/reports/` |
