@@ -23,6 +23,14 @@
 
 原始 `.work/` 证据通常只在执行机器，不随 Git 同步；链接记录存在不保证另一台机器保有原始音频或日志。数据集或机器转写的参考可信度由 [评分协议](testing/SCORING_SYSTEM.md) 分别声明，不把 WER、词差异、句界或人工可读性混为一个指标。
 
+上述回归和历史实测只覆盖各自断言与输入，不能证明全部 spec 已实现。文档与源码核对发现的保存锁、翻译截断、课程来源、模型检查及原生更新等实现差距，统一在 [ROADMAP](ROADMAP.md#实现缺口) 跟踪。
+
+## 文档核对
+
+2026-10-15 在 Windows、源码 `f37e351` 上完成文档修订与交叉审查：精简 AGENTS 并核对细则承接，区分 spec 目标、当前策略、实现缺口和待验证范围。61 份 Markdown 的 320 个本地引用（含 41 个标题锚点）、5 段 PowerShell 示例语法与 `git diff --check` 通过；示例未执行。历史正文、许可、业务代码、依赖与版本均未修改，没有重新运行应用、模型、音频、云端或生产升级验收。
+
+本地检查摘要在 `.work/reports/docs-improvement-20261015/validation.json`，示例语法结果在同目录 `powershell-examples.json`；与其他 `.work/` 证据一样不随 Git 同步。检查只证明可见文件、标题引用、修改范围与示例语法，不证明示例已在相应设备执行。
+
 ## 已发布产物
 
-2026-10-15 通过 GitHub CLI 只读核对 Release 列表及全部附件：beta.2/beta.1 提供 Mac arm64 DMG、构建清单和 SHA256，v0.5.0/v0.4.0 仅提供源码 ZIP 和摘要；无已发布 Windows 安装包或 0.8.0 Release。源码版本不代表安装包来源，具体产物/签名/哈希以 [发行页](https://github.com/Rand0MGG/agentscribe-local/releases) 为准。
+2026-10-15 只读核对 GitHub Release 列表及全部附件，本次经 GitHub 接口复核结果一致：beta.2/beta.1 提供 Mac arm64 DMG、构建清单和 SHA256，v0.5.0/v0.4.0 仅提供源码 ZIP 和摘要；无已发布 Windows 安装包或 0.8.0 Release。源码版本不代表安装包来源，具体产物/签名/哈希以 [发行页](https://github.com/Rand0MGG/agentscribe-local/releases) 为准。

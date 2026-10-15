@@ -12,7 +12,7 @@ Check these together while exercising the actual screen:
 - **Colour:** semantic roles stay consistent. Verify text contrast (normally 4.5:1; large text 3:1), focus visibility and readable disabled/error states. Colour alone must not communicate meaning.
 - **Surfaces and assets:** coherent borders, radii and depth; correct image aspect ratio/crop; sharp assets at displayed size. No broken images, accidental seams or duplicate device/status chrome.
 - **Controls:** labels describe actions; focus order and keyboard operation work; touch targets are usable. Standard controls remain recognisable. Loading and disabled states explain what is happening, and errors offer recovery.
-- **Layout:** test the requested width, a narrow/mobile width and the principal desktop/native device class. Long names, empty lists, large text, keyboard insets and overflowing menus must not break the task.
+- **Layout:** test the reported failing size and representative sizes supported by the actual product. For desktop Qt, include relevant window sizes and display scaling; add mobile or touch checks only when supported. Long names, empty lists, large text and overflowing menus must not break the task; check keyboard insets where applicable.
 - **Motion:** explain continuity, state or feedback. Keep content visible without animation, honour reduced motion, avoid blocking interaction behind entrance sequences, and test interruption/reversal.
 - **Content:** real product language and credible data. Label fixtures as illustrative. Do not invent customers, testimonials, capabilities or performance results.
 

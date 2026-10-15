@@ -8,6 +8,10 @@
 
 分支和授权按 [AGENTS](../AGENTS.md#分支与交付)。共享改动小批次集成并同步另一端；提交/合并不自动发行，平台可独立发布，未验收平台不附包。
 
+两端从已审核共同基线开发。接口、数据或核心算法不兼容时，先明确契约与集成顺序；远程无冲突不能证明另一台机器没有未提交工作。每批合并前审查整个差异，避免夹带未审核内容；获授权合入 `main` 后及时同步另一端。
+
+文本冲突逐处处理，语义冲突回归组合行为；不以整文件 ours/theirs 或重复业务实现代替集成。保留 `windows` / `mac` 平台分支，后续开工先检查它与 `main` 的差异。
+
 统一版本序列：兼容修复用补丁、新功能/平台支持用次版本，预览加 `-beta.N`。版本准备同步 `pyproject.toml`、`linguaflow/__init__.py` 和包内说明；检查现有标签避免冲突。每版用不可变 `vX.Y.Z` 标签固定同一来源；同版本两端若发布，必须对应同一源码。已发布标签/附件不移动、不覆盖；改内容发新版本。
 
 产物按平台命名 `AgentScribe-X.Y.Z-macos-arm64.dmg` / `AgentScribe-X.Y.Z-windows-x64.exe`，记录来源提交、平台、架构、最低系统、依赖/构建摘要、字节数和 SHA256。源代码、脚本和锁进 Git，二进制与清单进 Release。
@@ -35,7 +39,7 @@
 
 在目标机器用真实旧包→同一候选包检查下载/取消/断网/篡改、录音安装门禁、保存失败、自有进程退出、程序替换失败、启动失败恢复、用户数据/模型/运行环境保留和重启。新包能单独启动、替身编译或隔离更新演练均不足以替代。
 
-用户验收后发布原来检查的那批文件，不重新构建。版本排序覆盖 beta→beta、beta→稳定、稳定不收 beta；源码发布不能冒充安装包可用。
+用户验收后发布原来检查的那批文件，不重新构建。版本与渠道验收必须覆盖 beta→beta、beta→稳定、稳定不收 beta。当前 beta 客户端固定读取 `beta.xml`，稳定版发布只推进 `stable.xml`，beta→稳定传播尚未闭环；须先完成实现与真实旧包验收，不能仅凭版本排序测试勾选通过。源码发布不能冒充安装包可用。
 
 发布后显式执行 `publish-updates.yml`，填写固定 tag/target，只有该平台真实升级通过才勾选 accepted；首次空站点才用 initialize。不能依赖 `GITHUB_TOKEN` 创建 Release 自动触发另一工作流。直接网页发布也需执行同一订阅逻辑。
 
@@ -49,6 +53,6 @@
 
 ## 当前状态
 
-2026-10-15 只读核对 GitHub Release：最新已发布包仍为 Mac `v0.6.0-beta.2`，无应用内安装器；源码版本为 `0.8.0`，不能代表新版安装包已发布。两端原生构建/升级、密钥部署、系统签名和 Pages 的后续工作只在 [ROADMAP](ROADMAP.md) 跟踪；历史演练和各平台证据见 [VALIDATION](VALIDATION.md)。
+2026-10-15 只读核对 GitHub Release：最新已发布包仍为 Mac `v0.6.0-beta.2`，无应用内安装器；源码版本为 `0.8.0`，不能代表新版安装包已发布。当前原生后台检查仍会发送检查/结果通知，取消后的回调也缺少请求代次过滤；静默检查和取消验收尚未完成。它们与 beta→稳定传播、两端原生构建/升级、密钥部署、系统签名和 Pages 的工作统一在 [ROADMAP](ROADMAP.md) 跟踪；历史演练和各平台证据见 [VALIDATION](VALIDATION.md)。
 
 依据：[GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages)、[Actions 触发限制](https://docs.github.com/en/actions/how-tos/trigger-workflows)、[Sparkle](https://sparkle-project.org/documentation/)、[WinSparkle](https://winsparkle.org/guides/getting-started/)、[Inno Setup](https://jrsoftware.org/ishelp.php)。

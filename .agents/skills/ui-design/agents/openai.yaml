@@ -1,4 +1,4 @@
 interface:
   display_name: "Uizze UI Design"
   short_description: "Product-specific UI, craft checks and Overdrive"
-  default_prompt: "Use $ui-design to build this UI from a clear design direction, relevant references, and visual verification."
+  default_prompt: "Use $ui-design to complete the requested UI work within the project's stack and visual system, inspect relevant local context, use external references only for a concrete design question, and verify the affected states with available tools."

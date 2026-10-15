@@ -6,7 +6,7 @@ Adapted from Impeccable's Overdrive, pinned and credited in NOTICE and MODIFICAT
 
 Make an existing experience unusually good in a way its users will notice. Context decides what that means. A cinematic reveal may suit a portfolio; a settings screen benefits more from clear, immediate state transitions and reliable feedback. Fix hierarchy, readability and usability before adding technical ambition.
 
-Before implementing, propose two or three concrete directions. Each option must describe the visible result, why it fits this product, platform/browser support, performance cost, and implementation complexity. Ask for the user's choice. If the user already chose a specific effect and scope, honour that instead of reopening the decision. An unanswered choice is not approval: continue ordinary in-scope polish or stop at the proposal.
+Use a direction the user already supplied or explicitly delegated you to choose. Otherwise, ask about unresolved choices only when they would materially change the product's identity, scope, or implementation cost; offer two or three concrete options with their visible result and tradeoffs. Make ordinary implementation choices within the authorized direction. An unanswered required choice is not approval: continue independent in-scope work while it remains pending.
 
 Keep the chosen enhancement focused. One well-executed interaction is usually stronger than several competing effects. Do not replace an established identity or expand product functionality under the label of polish.
 
@@ -32,7 +32,7 @@ This changes how existing functionality feels, not what the product promises. Re
 
 ## Implement a resilient enhancement
 
-The baseline must remain usable without the effect, with reduced motion, on touch devices, and when assets or optional capabilities fail. Preserve semantics, focus, keyboard access and content order.
+The baseline must remain usable without the effect, with reduced motion, with the product's supported input modes, and when assets or optional capabilities fail. Preserve semantics, focus, keyboard access and content order.
 
 Use feature detection where required. Lazy-initialise heavy resources, pause off-screen or background rendering, and clean up observers, animation loops, listeners and GPU resources when the view unmounts. Avoid layout thrashing and unbounded particle/DOM growth. Do not add a dependency or external service without authority.
 
@@ -43,7 +43,7 @@ Target smooth motion on representative devices; measure frame pacing and respons
 Use browser automation or the native simulator/device when available. Inspect the result in motion, not only its source or a single still frame:
 
 1. Capture the baseline and enhanced state, then exercise entry, exit, rapid repeated input and interrupted transitions.
-2. Check desktop/mobile or the relevant native device classes, keyboard/touch use, reduced motion and the fallback path.
+2. Check the product's supported window sizes or device classes and input modes, reduced motion and the fallback path.
 3. Inspect the approved direction: timing, easing, continuity, asset sharpness and typography should form one coherent result.
 4. Batch the material fixes and repeat the affected checks. Do not call an unpreviewed effect polished.
 

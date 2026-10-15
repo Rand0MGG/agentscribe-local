@@ -27,6 +27,8 @@
 
 ## 命令
 
+仅在已有文件推理授权、数据和可用运行环境时执行。当前一键入口仍直接要求项目根目录已有 `.venv` 与 `.venv-wlk`，尚未通过 `runtime_paths.py` 选择受管理的 WLK 环境；仅有新管理环境的工作区须先修正入口，不能为满足路径而复制环境或改写活动指针。默认配置使用 Windows/CUDA，不能直接当作 Mac GPU 验收命令。
+
 ```powershell
 Set-Location 'E:\codex_project\翻译'
 .\.venv\Scripts\python.exe .\scripts\benchmark_ami.py

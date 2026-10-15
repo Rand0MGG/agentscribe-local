@@ -1,6 +1,6 @@
 ---
 name: ui-design
-description: Design, build, or improve web and mobile interfaces using real product examples from UIZZE’s 800,000+ web and iOS screens. Use for UI design, UX design, frontend or web design, mobile app UI, responsive layouts, design systems, redesigns, visual polish, interface critique, and requests like “make this UI better.”
+description: Design, implement, refine, or critique web, mobile, and desktop interfaces. Use for requested UI/UX work, layouts, design systems, visual polish, and interface audits. Follow the existing product and platform; Uizze references are optional when they answer a concrete design question.
 license: Apache-2.0
 metadata:
   uizze-version: uizze-design-v13
@@ -11,7 +11,7 @@ metadata:
 
 ## Work from the product
 
-Read the brief, existing UI, components, tokens, assets, and any PRODUCT.md or DESIGN.md before designing. The user's request and project constraints outrank this skill. Preserve an established visual system for extensions and polish; replace it only for an approved redesign. A new project does not require those files.
+Inspect the requested surface and its relevant components, tokens, assets, and existing product/design documentation. Read what the task needs and reuse context already inspected unless it may have changed. In AgentScribe, follow [UI_DESIGN.md](../../../docs/UI_DESIGN.md) and the existing PySide6/Qt implementation. The user's request and project constraints outrank this skill. Preserve an established visual system for extensions and polish; replace it only for an authorized redesign. Missing PRODUCT.md or DESIGN.md does not block work.
 
 Identify the audience, primary task, important states, and intended result. Ask only about missing choices that would materially change the work. A precise request is enough to proceed; do not turn a small fix into a discovery workshop.
 
@@ -39,8 +39,8 @@ Distinguish an exact reference, a related example, no match, and a service error
 
 ## Finish
 
-Build the requested scope and exercise its important states. Render and inspect the real result at representative desktop/mobile sizes or native device classes, including the user's reported failing size. Compare it with the chosen direction or supplied reference, not just with the absence of runtime errors.
+Build the requested scope and exercise its important states. Render and inspect the real result at representative sizes and input modes supported by the actual product, including the user's reported failing size. For desktop Qt, check the relevant window sizes and display scaling; mobile or touch checks apply only when supported. Compare it with the chosen direction or supplied reference, not just with the absence of runtime errors.
 
-Fix material problems in a batch, then render and inspect again. Stop once the requested result is verified; do not keep inventing work. If a bounded pass cannot resolve an issue, report it instead of claiming a pass. When rendering is unavailable, distinguish code checks from visual verification.
+Fix material problems in a batch, then render and inspect again. Stop once the requested result is verified; do not keep inventing work. Continue with another viable approach within the authorized scope when a check fails. If the remaining work requires a missing decision, permission, or unavailable capability, explain the limitation and request only the input needed to proceed; do not claim a pass. When rendering is unavailable, distinguish code checks from visual verification.
 
 Keep the handoff concise: what changed, what was actually tested, and any remaining limitation. A skill does not authorize publishing, purchases, new dependencies, account changes, or destructive actions.

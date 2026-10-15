@@ -23,13 +23,16 @@
 在项目根目录、已有可用环境和文件推理授权下使用新输出目录：
 
 ```powershell
-.venv-wlk/Scripts/python.exe scripts/evaluate_streaming.py audit --corpus media/MacWhinney --output .work/macwhinney/references-new
-.venv-wlk/Scripts/python.exe scripts/replay_streaming.py prepare --input media/MacWhinney/feb14.mp4 --output .work/macwhinney/feb14-new.f32
+$wlkPython = & .venv/Scripts/python.exe -c "from linguaflow.runtime_paths import runtime_python; print(runtime_python())"
+& $wlkPython scripts/evaluate_streaming.py audit --corpus media/MacWhinney --output .work/macwhinney/references-new
+& $wlkPython scripts/replay_streaming.py prepare --input media/MacWhinney/feb14.mp4 --output .work/macwhinney/feb14-new.f32
 .venv/Scripts/python.exe scripts/replay_streaming.py run --prepared .work/macwhinney/feb14-new.f32.json --output .work/macwhinney/feb14-live-new
-.venv-wlk/Scripts/python.exe scripts/evaluate_streaming.py score --reference .work/macwhinney/references-new/feb14.reference.json --run .work/macwhinney/feb14-live-new --output .work/macwhinney/feb14-score-new
+.venv/Scripts/python.exe scripts/evaluate_streaming.py score --reference .work/macwhinney/references-new/feb14.reference.json --run .work/macwhinney/feb14-live-new --output .work/macwhinney/feb14-score-new
 ```
 
-脚本参数以各入口 `--help` 为准，macOS 使用对应 `.venv*/bin/python`。示例媒体需先按协议解决时间轴间隙，不能跳过检查；缺本地数据不下载或伪造验收。审计生成的 `*.review.html` 可在本地回听校对，刷新前导出 JSON 保存进度，再用有效人工参考复算，无需重跑模型。
+`runtime_python()` 只定位已准备的 WLK 解释器，兼容旧 `.venv-wlk`，不安装或修改环境。审计和音频准备需要其 PyAV；复算分数只需标准库，可用桌面解释器。脚本参数以各入口 `--help` 为准。macOS 桌面入口改用 `.venv/bin/python`，同样通过 `runtime_paths.py` 定位 WLK；识别模型/设备在冻结配置中另行选择，不能把此示例当作已验收的 Mac 配置。
+
+示例媒体需先按协议解决时间轴间隙，不能跳过检查；缺本地数据不下载或伪造验收。审计生成的 `*.review.html` 可在本地回听校对，刷新前导出 JSON 保存进度，再用有效人工参考复算，无需重跑模型。回听仍须符合 [测试授权边界](../TESTING.md#默认安全入口)。
 
 保存输入/代码/依赖/设置、全部事件、采样与交付统计、`score.json`、可读报告、差异 CSV 和最终字幕。准确性调参后用独立课程验收；任何单一录音不能代表所有语言或课堂。私人媒体和完整文字不随软件发布。
 
