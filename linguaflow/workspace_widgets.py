@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 
 from .qt_controls import text_label
 from .ui_components import ChoiceBox as QComboBox
-from .ui_components import ElidedLabel, PageTransition, apply_floating_shadow, motion_enabled
+from .ui_components import ElidedLabel, PageTransition, PopupSurface, motion_enabled
 from .ui_theme import theme_colors
 
 PAGE_DESCRIPTIONS = {
@@ -142,17 +142,12 @@ class Switch(QCheckBox):
 class LanguagePopup(QDialog):
     """Three views of the existing language controls, with no independent settings."""
     def __init__(self, source, target, translate, parent):
-        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        super().__init__(parent, Qt.WindowType.Popup)
+        self._soft_surface = PopupSurface(self)
+        self.installEventFilter(self._soft_surface)
         self.setFixedWidth(320)
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(16, 12, 16, 20)
-        surface = QFrame()
-        surface.setObjectName('dialogSurface')
-        apply_floating_shadow(surface)
-        outer.addWidget(surface)
-        form = QFormLayout(surface)
-        form.setContentsMargins(18, 14, 18, 14)
+        form = QFormLayout(self)
+        form.setContentsMargins(34, 26, 34, 34)
         form.setSpacing(10)
         self.source_choice, self.target_choice = QComboBox(), QComboBox()
         for view, control in ((self.source_choice, source), (self.target_choice, target)):

@@ -34,9 +34,14 @@ class Library:
         self.refresh()
         if (self.root / "library.json").is_file():
             self.import_legacy(self.root)
-        if not self.index["folders"]:
-            identifier = None if any(d["id"] == "inbox" for d in self.deleted()) else "inbox"
-            self.folder("我的录音", identifier=identifier)
+        self.ensure_default_folder()
+
+    def ensure_default_folder(self):
+        """Reuse a live folder, or create one without reusing a deleted folder's ID."""
+        if self.index['folders']:
+            return self.index['folders'][0]
+        identifier = None if any(d['id'] == 'inbox' for d in self.deleted()) else 'inbox'
+        return self.folder('我的录音', identifier=identifier)
 
     @staticmethod
     def _read(path):

@@ -43,7 +43,7 @@ from PySide6.QtWidgets import (
 )
 
 from .qt_controls import text_label
-from .ui_theme import CONTROL_RADIUS, theme_colors
+from .ui_theme import theme_colors
 
 
 def apply_floating_shadow(widget):
@@ -71,6 +71,10 @@ def paint_floating_surface(painter, rect, radius=12):
 
 
 class PopupSurface(QObject):
+    def __init__(self, popup):
+        super().__init__(popup)
+        configure_popup_surface(popup)
+
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Type.Paint:
             painter = QPainter(watched)
@@ -78,6 +82,16 @@ class PopupSurface(QObject):
             painter.end()
             return True
         return False
+
+
+def configure_popup_surface(popup):
+    """Let the shared island painter own the surface, without a second styled panel."""
+    popup.setWindowFlags(popup.windowFlags() | Qt.WindowType.FramelessWindowHint
+                         | Qt.WindowType.NoDropShadowWindowHint)
+    popup.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+    popup.setAutoFillBackground(False)
+    popup.setProperty('floatingPopup', True)
+    popup.setStyleSheet('QWidget[floatingPopup="true"] { background: transparent; border: none; padding: 0; }')
 
 
 class NavigationButton(QPushButton):
@@ -300,16 +314,16 @@ class ChoiceBox(QComboBox):
     def __init__(self, parent=None, *, island=False):
         super().__init__(parent)
         self.island = island
-        self.choice_popup = QFrame(self, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint
-                                   | Qt.WindowType.NoDropShadowWindowHint)
+        self.choice_popup = QFrame(self, Qt.WindowType.Popup)
         self.choice_popup.setObjectName('choicePopup')
-        self.choice_popup.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.choice_popup._soft_surface = PopupSurface(self.choice_popup)
         self.choice_popup.installEventFilter(self.choice_popup._soft_surface)
         layout = QVBoxLayout(self.choice_popup)
         layout.setContentsMargins(16, 12, 16, 20)
         layout.setSpacing(6)
         view = self._choice_view = QListView(self.choice_popup)
+        view.setFrameShape(QFrame.Shape.NoFrame)
+        view.setStyleSheet('QListView { background: transparent; border: none; padding: 0; outline: none; }')
         layout.addWidget(view)
         view.setItemDelegate(ChoiceDelegate(self))
         view.clicked.connect(self.choose_index)
@@ -385,8 +399,6 @@ class ChoiceBox(QComboBox):
                 popup.layout().addWidget(self.refresh_button)
             self.refresh_button.show()
         view.setVisible(bool(self.count()))
-        popup.setStyleSheet('QFrame#choicePopup { background: transparent; border: none; padding: 0; } '
-                           'QListView { background: transparent; border: none; padding: 0; outline: none; }')
         bounds = self.screen().availableGeometry()
         longest = max((self.fontMetrics().horizontalAdvance(self.itemText(i)) for i in range(self.count())), default=0)
         width = min(max(self.width(), min(520, longest+116)), bounds.width()-24)
@@ -779,14 +791,14 @@ class ActionMenu(QMenu):
     """Rounded menus with the same surface, spacing and focus treatment as dialogs."""
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        configure_popup_surface(self)
+        self.setStyleSheet(self.styleSheet() + ' QMenu#actionMenu { padding: 16px; }')
         self.setMinimumWidth(220)
         self.setToolTipsVisible(True)
         self.setObjectName('actionMenu')
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        paint_floating_surface(painter, self.rect().adjusted(12, 8, -12, -16), CONTROL_RADIUS)
+        paint_floating_surface(painter, self.rect().adjusted(12, 8, -12, -16))
         painter.end()
         super().paintEvent(event)

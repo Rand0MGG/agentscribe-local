@@ -1590,6 +1590,16 @@ class Window(QMainWindow):
     def choose_recording_folder(self):
         if self.recording_state.active:
             return
+        try:
+            self.library.refresh()
+            fallback = self.library.ensure_default_folder()
+            if self.folder_id not in {folder['id'] for folder in self.library.index['folders']}:
+                self.folder_id = fallback['id']
+            self.refresh_library()
+            self.update_recording_hint()
+        except (OSError, ValueError) as exc:
+            self.show_warning('无法准备录音文件夹', str(exc))
+            return
         menu = ActionMenu(self.quick_folder)
         for folder in self.library.index['folders']:
             action = menu.addAction(self.library.folder_label(folder['id']))
@@ -1632,9 +1642,17 @@ class Window(QMainWindow):
     def new_recording(self, checked=False, *, folder_id=None, name=None, check_models=True):
         if not self.can_edit_library():
             return False
-        self.library.refresh()
-        folders = self.library.index['folders']
-        folder_id = folder_id or self.folder_id or (folders[0]['id'] if folders else None)
+        try:
+            self.library.refresh()
+            fallback = self.library.ensure_default_folder()
+            folder_id = folder_id or self.folder_id
+            if folder_id not in {folder['id'] for folder in self.library.index['folders']}:
+                folder_id = fallback['id']
+            if name is not None:
+                item = self.library.create(folder_id, {}, name=name)
+        except (OSError, ValueError) as exc:
+            self.show_warning("无法创建录音", str(exc))
+            return False
         if name is None:
             self.reset_recording_view()
             self.folder_id = folder_id
@@ -1645,13 +1663,6 @@ class Window(QMainWindow):
             if notice is not None and notice.kind == 'success':
                 self.notifications.clear('session')
             return True
-        try:
-            if not self.library.index['folders']:
-                folder_id = self.library.folder('我的录音')['id']
-            item = self.library.create(folder_id, {}, name=name)
-        except (OSError, ValueError) as exc:
-            self.show_warning("无法创建录音", str(exc))
-            return False
         self.reset_recording_view()
         self.folder_id, self.current_item = folder_id, item
         self.workspace_title.setText(item["name"])

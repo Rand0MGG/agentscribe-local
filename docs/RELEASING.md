@@ -18,6 +18,14 @@
 
 ## 准备构建
 
+### 开发候选安装包
+
+仅需试用当前源码时，可使用 `build-installers.yml`：在获准提交和推送现有 `windows` / `mac` 分支后，提交消息包含 `[build installers]` 会触发两端候选构建；工作流进入默认分支后也可手动运行。两端固定同一提交，在 Windows x64 / Apple Silicon runner 复用下述生产脚本，完成无音频回归及包探针后，将安装包、校验和与构建清单保存为 Actions artifacts。
+
+候选包保留当前版本，Windows 无 Authenticode，Mac 仅 ad-hoc 签名、未经公证；不能据此认定正式安装/升级验收完成。此流程不创建标签、Release 或更新订阅，不使用发行私钥；正式发行仍遵循本页原有门槛。当前本地未提交源码须先按授权固定提交，不能伪造干净状态或绕过封装器的来源校验。
+
+### 正式发行构建
+
 1. 在目标系统构建；检查源码干净、版本/标签/main 完整 SHA 一致，审查所有待发行差异。不能把运行器名称当作架构证明。
 2. `prepare-release.yml` 选择已审核 main SHA、已有不可变标签和目标平台，调用同一生产脚本，不在 CI 临时改版本。普通平台推送只运行开发检查。
 3. Mac 用 `scripts/build_macos.py --fetch` 后再运行同脚本。Windows 在 x64 MSVC 开发命令行运行 `scripts/build_windows.py --fetch`、同脚本构建载荷，再用 `scripts/build_windows_installer.py --payload <载荷目录> --fetch` 封装 Inno 安装器。
