@@ -8,6 +8,7 @@ import argparse
 import base64
 import hashlib
 import json
+import mmap
 import os
 import subprocess
 import sys
@@ -50,10 +51,11 @@ def sign_from_keychain(artifact, manifest_path, account, downloads):
     from scripts.packaging_common import extract, obtain
     config = json.loads((ROOT / 'packaging/updates.json').read_text())
     manifest = json.loads(manifest_path.read_text())
-    payload = artifact.read_bytes()
+    with artifact.open('rb') as source:
+        sealed_digest = hashlib.file_digest(source, 'sha256').hexdigest()
     if (manifest.get('target') != 'macos-arm64' or manifest.get('source_modified') is not False
-            or manifest.get('dmg_sha256') != hashlib.sha256(payload).hexdigest()
-            or manifest.get('dmg_bytes') != len(payload)):
+            or manifest.get('dmg_sha256') != sealed_digest
+            or manifest.get('dmg_bytes') != artifact.stat().st_size):
         raise ValueError('只签署与已封存构建清单一致的 Mac 安装包。')
     item = config['targets']['macos-arm64']
     archive = obtain(item, downloads)
@@ -64,8 +66,11 @@ def sign_from_keychain(artifact, manifest_path, account, downloads):
         if public != item['public_key']:
             raise ValueError('钥匙串签名账户与现有安装包公钥不匹配。')
         signature = subprocess.check_output([str(tools / 'bin/sign_update'), '--account', account, '-p', str(artifact.resolve())], text=True).strip()
-    Ed25519PublicKey.from_public_bytes(base64.b64decode(public, validate=True)).verify(
-        base64.b64decode(signature, validate=True), payload)
+    with artifact.open('rb') as source, mmap.mmap(source.fileno(), 0, access=mmap.ACCESS_READ) as payload:
+        Ed25519PublicKey.from_public_bytes(base64.b64decode(public, validate=True)).verify(
+            base64.b64decode(signature, validate=True), payload)
+        if hashlib.sha256(payload).hexdigest() != sealed_digest:
+            raise ValueError('签名期间安装包发生变化，未写入签名文件。')
     artifact.with_suffix(artifact.suffix + '.ed25519').write_text(signature + '\n')
 
 
