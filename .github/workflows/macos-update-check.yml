@@ -19,6 +19,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: macos-update-acceptance
@@ -62,16 +63,31 @@ jobs:
           releases=json.loads(subprocess.check_output(['gh','api','repos/'+repo+'/releases?per_page=100'],text=True))
           work=Path('.work/update-downloads');work.mkdir(parents=True)
           for selected in ('v0.9.0',tag):
-              release,=[r for r in releases if r['tag_name']==selected]
-              if os.environ['UPDATE_LIVE']=='true':assert not release['draft']
               stem='AgentScribe-'+selected[1:]+'-macos-arm64'
-              suffixes=('.dmg','.build.json') if selected=='v0.9.0' else ('.dmg','.build.json','.dmg.ed25519')
-              for suffix in suffixes:
-                  name=stem+suffix
-                  asset,=[a for a in release['assets'] if a['name']==name and a['state']=='uploaded']
-                  subprocess.run(['gh','release','download',selected,'--repo',repo,'--pattern',name,'--dir',str(work)],check=True)
-                  data=(work/name).read_bytes()
-                  assert len(data)==asset['size'] and 'sha256:'+hashlib.sha256(data).hexdigest()==asset['digest']
+              if selected==tag and os.environ['UPDATE_LIVE']!='true':
+                  # Read the sealed build artifact rather than granting draft-release write access.
+                  # This fixture is fixed to the accepted 0.9.2 build and its PUBLIC signature.
+                  assert tag=='v0.9.2'
+                  cache=work/'build-artifact'
+                  subprocess.run(['gh','run','download','38882483285','--repo',repo,'--name','macos-preview-38882483285','--dir',str(cache)],check=True)
+                  expected={'.dmg':'1dcb9c7b33bfd2b76452c022c30b8b9363aa68e11cbd35a51fe87bd7598ca3e3',
+                            '.build.json':'400fb7206a4c61d227e7fb472a9c84249ca25054f874de1c6aa0e91116851c2d'}
+                  for suffix,digest in expected.items():
+                      source,=cache.rglob(stem+suffix)
+                      data=source.read_bytes()
+                      assert hashlib.sha256(data).hexdigest()==digest
+                      (work/(stem+suffix)).write_bytes(data)
+                  (work/(stem+'.dmg.ed25519')).write_text('uG8VIeY5eSG8G21OeIm3hl7BqjON6d7CoflDYeHPj4uYLoQlmLW7EcAMin8fK4Gjd/hFGUlCyYoTxKTWm4NLCw==\n')
+              else:
+                  release,=[r for r in releases if r['tag_name']==selected]
+                  assert not release['draft']
+                  suffixes=('.dmg','.build.json') if selected=='v0.9.0' else ('.dmg','.build.json','.dmg.ed25519')
+                  for suffix in suffixes:
+                      name=stem+suffix
+                      asset,=[a for a in release['assets'] if a['name']==name and a['state']=='uploaded']
+                      subprocess.run(['gh','release','download',selected,'--repo',repo,'--pattern',name,'--dir',str(work)],check=True)
+                      data=(work/name).read_bytes()
+                      assert len(data)==asset['size'] and 'sha256:'+hashlib.sha256(data).hexdigest()==asset['digest']
               manifest=json.loads((work/(stem+'.build.json')).read_text())
               assert manifest['source_modified'] is False
               assert manifest['dmg_sha256']==hashlib.sha256((work/(stem+'.dmg')).read_bytes()).hexdigest()
