@@ -10,12 +10,14 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 
 def sign(artifact, manifest_path, target, encoded_key):
@@ -76,7 +78,6 @@ def main():
     parser.add_argument('--downloads', type=Path, default=ROOT / '.work/packaging/downloads')
     args = parser.parse_args()
     if args.keychain_account:
-        import sys
         if sys.platform != 'darwin' or args.target != 'macos-arm64':
             parser.error('钥匙串签名只用于 Mac 安装包。')
         sign_from_keychain(args.artifact, args.manifest, args.keychain_account, args.downloads)
