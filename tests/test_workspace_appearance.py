@@ -64,7 +64,7 @@ def action():
     assert release.wait(3)
     return '完成'
 manager.prepare(action)
-assert manager.download_card.isVisible() and manager.cancel_button.isVisible()
+assert not manager.download_card.isVisible()
 assert w.notifications.notices[w.notifications.current_key].kind == 'progress'
 ticks=[]
 def advance():
@@ -77,12 +77,14 @@ deadline=time.monotonic()+2
 while len(ticks)<3 and time.monotonic()<deadline:
     app.processEvents()
     time.sleep(.005)
+w.open_settings('模型管理')
 dialog = workspace.open_model_settings('asr')
 assert not dialog.download.isEnabled()
 dialog.reject()
 app.processEvents()
-assert manager.progress_bar.value()>=300 and w.notifications.notices[w.notifications.current_key].progress>=30
-assert w.notifications.isVisibleTo(w)
+assert manager.progress_bar.value()>=300 and w.notifications.notices['preparation'].progress>=30
+assert w.notifications.current_key!='preparation'
+assert manager.download_card.isVisible() and manager.cancel_button.isVisible()
 width,height=manager.progress_bar.size().toTuple()
 while len(ticks)<6 and time.monotonic()<deadline:
     app.processEvents()
@@ -90,7 +92,7 @@ while len(ticks)<6 and time.monotonic()<deadline:
 assert manager.progress_bar.value()>=600
 assert manager.progress_bar.size().toTuple()==(width,height)
 assert not hasattr(w, 'preparation_summary')
-assert manager.download_card.parentWidget() is workspace.right
+assert manager.download_card.parentWidget() is workspace.pages.widget(workspace.mapping['模型管理']).widget()
 release.set()
 while manager.worker is not None and time.monotonic()<deadline:
     app.processEvents()

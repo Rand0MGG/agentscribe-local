@@ -6,6 +6,7 @@ def test_new_workspace_recreates_default_folder_after_last_folder_is_deleted(tmp
     run_ui(r'''
 from linguaflow.ui_components import ActionMenu
 from PySide6.QtCore import QTimer
+w.show();settle_geometry(w)
 original=w.library.index['folders'][0]
 token=w.library.trash(original)
 w.folder_id=original['id']
@@ -54,6 +55,7 @@ def test_empty_folder_picker_creates_and_selects_default_without_a_recording(tmp
     run_ui(r'''
 from PySide6.QtCore import QTimer
 from linguaflow.ui_components import ActionMenu
+w.show();settle_geometry(w)
 w.library.trash(w.library.index['folders'][0])
 w.folder_id=None
 choices=[]

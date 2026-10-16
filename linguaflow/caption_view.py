@@ -265,10 +265,9 @@ class LatestButton(QPushButton):
 
 
 class CaptionEdgeFade(QWidget):
-    """Keep caption edges clear of the toolbar and floating controls."""
-    def __init__(self, viewport, *, bottom=False):
+    """Fade captions only where they meet the top toolbar."""
+    def __init__(self, viewport):
         super().__init__(viewport)
-        self.bottom = bottom
         self.depth = 22
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
@@ -281,21 +280,15 @@ class CaptionEdgeFade(QWidget):
 
     def place(self):
         viewport = self.parentWidget()
-        self.setGeometry(0, max(0, viewport.height()-self.depth) if self.bottom else 0,
-                         viewport.width(), self.depth)
+        self.setGeometry(0, 0, viewport.width(), self.depth)
 
     def paintEvent(self, event):
         color = QColor(theme_colors(QApplication.instance().property('appearance'))['surface'])
         gradient = QLinearGradient(0, 0, 0, self.height())
         transparent = QColor(color)
         transparent.setAlpha(0)
-        if self.bottom:
-            gradient.setColorAt(0, transparent)
-            gradient.setColorAt(min(1., 18/max(1, self.height())), color)
-            gradient.setColorAt(1, color)
-        else:
-            gradient.setColorAt(0, color)
-            gradient.setColorAt(1, transparent)
+        gradient.setColorAt(0, color)
+        gradient.setColorAt(1, transparent)
         painter = QPainter(self)
         painter.fillRect(self.rect(), gradient)
 
@@ -324,8 +317,6 @@ class CaptionScrollArea(QScrollArea):
         self.latest_button.hide()
         self.top_fade = CaptionEdgeFade(self.viewport())
         self.top_fade.hide()
-        self.bottom_fade = CaptionEdgeFade(self.viewport(), bottom=True)
-        self.bottom_fade.hide()
         self.animation = QTimer(self)
         self.animation.setTimerType(Qt.TimerType.PreciseTimer)
         self.animation.setInterval(16)
@@ -374,10 +365,6 @@ class CaptionScrollArea(QScrollArea):
 
     def set_overlay_height(self, height):
         self._overlay_height = height + 18
-        self.bottom_fade.depth = self._overlay_height+18
-        self.bottom_fade.place()
-        self.bottom_fade.show()
-        self.bottom_fade.raise_()
         self._update_button()
 
     def _interrupt(self, *args):

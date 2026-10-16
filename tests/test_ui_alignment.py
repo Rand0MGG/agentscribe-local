@@ -91,9 +91,9 @@ island.resize_motion.resume()
 assert idle.width()<island.width()<320
 assert idle.height()<island.height()<=90
 assert w.scroll.viewport().rect().contains(island.geometry())
-fade=w.scroll.bottom_fade
-assert fade.isVisible() and fade.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-assert fade.depth==island.height()+36
+assert not hasattr(w.scroll,'bottom_fade')
+assert w.scroll._overlay_height==island.height()+18
+assert w.scroll.top_fade.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 # Reverse during expansion, then start again. There is one motion and one target.
 w.set_recording_state(RecordingState.IDLE);island.place()
 assert island.resize_motion.state()==island.resize_motion.State.Running

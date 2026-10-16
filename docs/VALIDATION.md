@@ -8,6 +8,7 @@
 
 | 证据 | 已证明 | 范围与限制 |
 | --- | --- | --- |
+| 2026-10-16 Mac 首次下载与界面边界 | 完整无音频 1060 passed / 2 Windows 专项跳过；原生相关 36 项经修复/补验覆盖通过，63 张预览与明暗弹层像素检查通过，Ruff/差异与本地文档链接检查通过 | `b7a6248` 加本地修改；下载用模拟准备线程，验证引导跳转、通知关闭不取消/重弹、顶部渐隐、菜单阴影及目录失效恢复。失败与补验日志保留于 `.work/reports/startup-polish-20261016/`；零音频访问，未验真实下载、Windows 原生或正式安装升级，未构建/推送/发布 |
 | 2026-10-16 Windows 长许可证路径封装 | Inno 6.7.1 对 300 字符许可证源路径可复现失败，扩展路径前缀同样不支持；固定便携 Inno 7.1.0 用真实安装脚本编译通过，封装/更新回归 57 passed / 1 符号链接权限跳过 | 编译夹具未执行；完整 Windows 6fc4308 载荷已通过包探针，旧编译器随后失败。构建入口改用官方 SHA256 固定的便携 Inno 7；日志 `.work/reports/inno-long-source-probe/`、`v090-inno7-tests.xml`。最终完整安装包以新 Actions 运行及清单为准 |
 | 2026-10-16 Windows 临时渲染短名称 | 真实 8.3 临时路径回归修前失败、修后通过；课件格式/视觉/UI 定向 60 passed，Ruff/差异检查通过 | Windows 11/x64、Python 3.12.8；CI `c2a5419` 的 Windows SDK/渲染失败源于 `RUNNER~1` 与展开用户名比较不一致。仅在 Windows 临时渲染入口展开路径，归属校验与 Mac 分支未改；证据 `.work/reports/v090-temp-path-before.xml`、`v090-temp-path-after.xml`。0.9.0 最终构建结果以对应 Actions/安装包清单为准 |
 | 2026-10-16 空库默认文件夹与弹层统一 | Windows 完整无音频 1031 passed / 1 failed / 25 skipped；新增 5 项全过，Ruff/差异检查通过。原生定向 20 passed / 1 悬停失败，该悬停用例单独复跑通过；12 张明暗弹层截图检查 | `92b8ed2` 加本地修改；Windows 11/x64、Python 3.12.8、PySide6 6.11.2。全量唯一失败与改前一致：offscreen 回放条宽 385，断言 ≥400；原生悬停批次鼠标进入事件未到达，根因未确认。日志 `.work/reports/default-folders-popups-*.xml`，截图 `.work/browser/popup-after/`。Cocoa 外围玻璃反馈待 Mac 实机复核，未提交/推送/发布 |

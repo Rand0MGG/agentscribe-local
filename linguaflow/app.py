@@ -698,7 +698,7 @@ class Window(QMainWindow):
         self.feed_layout.setSpacing(4)
         self.empty = RecordingHint(self.scroll.viewport())
         self.empty.setObjectName("recordingHint")
-        self.empty.setText("准备好时，点击下方开始聆听。")
+        self.empty.setText("")
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty.setMinimumHeight(220)
         self.empty.setStyleSheet("QLabel#recordingHint { font-size: 16px; }")
@@ -915,6 +915,8 @@ class Window(QMainWindow):
         self.settings_workspace.model_browser.changed.connect(self.check_model_assets)
         self.model_manager.selection_changed.connect(lambda *_: self.asset_check_timer.start(100))
         self.pages.addWidget(self.settings_workspace)
+        self.pages.currentChanged.connect(self.update_preparation_feedback)
+        self.settings_workspace.pages.currentChanged.connect(self.update_preparation_feedback)
         for pref in PREFERENCES:
             control = self.settings_binding.controls[pref.key]
             signal = (control.toggled if pref.kind == 'bool' else
@@ -1016,10 +1018,15 @@ class Window(QMainWindow):
         self.first_run.show()
 
     def prepare_first_run_models(self):
+        self.first_run.close()
+        self.open_settings('模型管理')
         self.use_recommended_profile(enable_translation=False)
         self.prepare_recommended_models(only=None if self.translate.isChecked() else 'asr')
-        self.first_run.close()
-        self.notifications.post('onboarding', '模型正在后台准备，完成后可开始聆听。')
+
+    def update_preparation_feedback(self, *_):
+        models_visible = (self.pages.currentIndex() == 1 and
+                          self.settings_workspace.pages.currentIndex() == self.settings_workspace.mapping['模型管理'])
+        self.notifications.set_suppressed('preparation', models_visible and self.model_manager.preparing)
 
     def on_preparation_message(self, text):
         self.model_manager.download_card.setVisible(self.model_manager.preparing)
@@ -1041,6 +1048,9 @@ class Window(QMainWindow):
                                 action=self.model_manager.cancel_preparation, action_text='取消')
 
     def on_preparation_changed(self, active):
+        if active:
+            self.notifications.clear('preparation')
+        self.update_preparation_feedback()
         self.model_manager.download_card.setVisible(active)
         if not active:
             text = self.model_manager.status.text()
@@ -1636,7 +1646,10 @@ class Window(QMainWindow):
         self.clear_captions()
         self.pending_recording_name = default_recording_name()
         self.workspace_title.setText(self.pending_recording_name)
-        self.empty.setText("准备好时，点击下方开始聆听。")
+        if self.folder_id not in self.library.paths:
+            folders = self.library.index['folders']
+            self.folder_id = folders[0]['id'] if folders else None
+        self.update_recording_hint()
         self.export_button.setEnabled(False)
 
     def new_recording(self, checked=False, *, folder_id=None, name=None, check_models=True):
@@ -1684,8 +1697,8 @@ class Window(QMainWindow):
         if kind == "folder":
             self.reset_recording_view()
             self.folder_id = identifier
-            self.workspace_title.setText(row.text(0))
-            self.status.set_state_text("点击左侧「新录音」或文件夹旁的 ＋ 创建录音")
+            self.update_recording_hint()
+            self.refresh_library()
             return
         item = next((i for i in self.library.index["sessions"] if i["id"] == identifier), None)
         if item is None:

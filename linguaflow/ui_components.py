@@ -58,10 +58,12 @@ def apply_floating_shadow(widget):
 def paint_floating_surface(painter, rect, radius=12):
     """A bounded soft shadow inside transparent popup margins; no OS shadow."""
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-    for spread in range(12, 0, -1):
-        alpha = round(15 * math.exp(-.5 * (spread/5.)**2))
-        painter.setPen(QPen(QColor(0, 0, 0, alpha), 2))
+    painter.setPen(Qt.PenStyle.NoPen)
+    for spread in range(12, -1, -1):
+        # Filled layers connect the offset shadow to the surface. Outlined
+        # rings leave a transparent gap beneath its lower edge.
+        alpha = round(4 * math.exp(-.5 * (spread/5.)**2))
+        painter.setBrush(QColor(0, 0, 0, alpha))
         shadow = QRectF(rect).adjusted(-spread, -spread, spread, spread).translated(0, 4)
         painter.drawRoundedRect(shadow, radius+spread, radius+spread)
     colors = theme_colors(QApplication.instance().property('appearance'))

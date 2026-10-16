@@ -26,6 +26,10 @@ def check(name,popup,theme):
     surface=QColor(theme_colors(theme)['surface'])
     if pixel(14,popup.height()//2)!=surface:
         failures.append((name,theme,'surface',pixel(14,popup.height()//2).getRgb(),surface.getRgb()))
+    # The lower shadow must start at the surface edge, with no clear slit.
+    alphas=[pixel(popup.width()//2,popup.height()-offset).alpha() for offset in (15,13,10,5)]
+    assert all(alpha>0 for alpha in alphas[:3]),(name,theme,alphas)
+    assert all(a>=b for a,b in zip(alphas,alphas[1:])),(name,theme,alphas)
 for mode,theme in ((0,'light'),(1,'dark')):
     w.appearance.setCurrentIndex(mode)
     for name,choice in (('island',w.quick_device),('settings',w.appearance),('model',w.model_manager.backend)):

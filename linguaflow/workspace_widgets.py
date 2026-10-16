@@ -408,6 +408,7 @@ class SettingsWorkspace(QWidget):
         model_settings.addWidget(self.download_model)
         model_settings.addStretch()
         body.addLayout(model_settings)
+        body.addWidget(manager.download_card)
         body.addWidget(self.model_browser, 1)
         prepare = QPushButton('检查 / 补齐当前模型')
         prepare.clicked.connect(self.prepare_models_requested.emit)
@@ -438,7 +439,6 @@ class SettingsWorkspace(QWidget):
         self.model_back.clicked.connect(lambda: self.select(self.categories.index('模型管理')))
         self.model_back.hide()
         manager.embed_model_settings(self.model_back)
-        outer.addWidget(manager.download_card)
         index = self.pages.addWidget(manager)
         self.manager_page = index
         for category in ["字幕与延迟", "运行环境"]:

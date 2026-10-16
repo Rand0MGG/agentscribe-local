@@ -58,6 +58,7 @@ class NotificationCenter(QFrame):
         if parent:
             parent.installEventFilter(self)
         self.notices = {}
+        self.suppressed = set()
         self.current_key = None
         self.show_details = show_details
         outer = QHBoxLayout(self)
@@ -113,10 +114,11 @@ class NotificationCenter(QFrame):
             # Periodic state refreshes must not perpetually extend a success.
             previous.action = action
             return
-        # Progress may arrive many times per second; only a new task/stage gets
-        # a new display interval. Rounding percentages also stabilises geometry.
+        # Stage and percentage changes preserve dismissal for the entire task.
+        # Preparation remains visible until dismissed or completed.
         expires = (previous.expires if previous and previous.kind == kind == 'progress'
-                   and previous.text == text else time.monotonic() + (8 if kind == 'error' else 5))
+                   else float('inf') if key == 'preparation' and kind == 'progress'
+                   else time.monotonic() + (8 if kind == 'error' else 5))
         self.notices.pop(key, None)
         self.notices[key] = Notice(text, kind, action, action_text, progress, details,
                                   expires)
@@ -126,11 +128,19 @@ class NotificationCenter(QFrame):
         self.notices.pop(key, None)
         self._refresh()
 
+    def set_suppressed(self, key, suppressed):
+        if suppressed:
+            self.suppressed.add(key)
+        else:
+            self.suppressed.discard(key)
+        self._refresh()
+
     def _refresh(self):
         now = time.monotonic()
         self.notices = {key: value for key, value in self.notices.items()
                         if value.kind not in ('info', 'success') or value.expires > now}
-        visible = [key for key in reversed(self.notices) if self.notices[key].expires > now]
+        visible = [key for key in reversed(self.notices)
+                   if key not in self.suppressed and self.notices[key].expires > now]
         # Reverse insertion order gives equal-priority notices the latest task,
         # including across info/success/attention kinds.
         if visible:
