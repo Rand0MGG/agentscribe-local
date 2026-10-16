@@ -63,6 +63,6 @@
 
 ## 当前状态
 
-2026-10-15 只读核对 GitHub Release：最新已发布包仍为 Mac `v0.6.0-beta.2`，无应用内安装器；源码版本为 `0.8.0`，不能代表新版安装包已发布。当前原生后台检查仍会发送检查/结果通知，取消后的回调也缺少请求代次过滤；静默检查和取消验收尚未完成。它们与 beta→稳定传播、两端原生构建/升级、密钥部署、系统签名和 Pages 的工作统一在 [ROADMAP](ROADMAP.md) 跟踪；历史演练和各平台证据见 [VALIDATION](VALIDATION.md)。
+2026-10-16 已发布 `v0.9.1` Mac 预览版，标签固定 `2ce4be5`，附件为已验证的 DMG、SHA256 和构建清单。因本机大文件上传停滞，由 `macos-preview.yml` 从同一标签构建并上传，公开前核对最终附件摘要。该包仍为 ad-hoc、未公证；本次未推进更新订阅或声明真实旧包升级通过。正式签名、密钥部署、渠道传播与其余缺口见 [ROADMAP](ROADMAP.md)，实测证据见 [VALIDATION](VALIDATION.md)。
 
 依据：[GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages)、[Actions 触发限制](https://docs.github.com/en/actions/how-tos/trigger-workflows)、[Sparkle](https://sparkle-project.org/documentation/)、[WinSparkle](https://winsparkle.org/guides/getting-started/)、[Inno Setup](https://jrsoftware.org/ishelp.php)。

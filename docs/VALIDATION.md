@@ -8,6 +8,7 @@
 
 | 证据 | 已证明 | 范围与限制 |
 | --- | --- | --- |
+| 2026-10-16 v0.9.1 Mac DMG | 固定来源 `2ce4be5`；GitHub Mac 回归 1033 passed / 23 可选组件或平台跳过，Ruff、最终 DMG 校验及只读挂载包探针通过；上传后三个附件摘要核对一致 | [运行 38872564024](https://github.com/Rand0MGG/agentscribe-local/actions/runs/38872564024)，预览版已发布。312126171 字节，SHA256 以发行清单为准；ad-hoc、未公证，未验真实录音/旧包升级，未推进自动更新。保留本地完整回归及上传故障记录 `.work/reports/startup-polish-20261016/` |
 | 2026-10-16 Mac 首次下载与界面边界 | 完整无音频 1060 passed / 2 Windows 专项跳过；原生相关 36 项经修复/补验覆盖通过，63 张预览与明暗弹层像素检查通过，Ruff/差异与本地文档链接检查通过 | `b7a6248` 加本地修改；下载用模拟准备线程，验证引导跳转、通知关闭不取消/重弹、顶部渐隐、菜单阴影及目录失效恢复。失败与补验日志保留于 `.work/reports/startup-polish-20261016/`；零音频访问，未验真实下载、Windows 原生或正式安装升级，未构建/推送/发布 |
 | 2026-10-16 Windows 长许可证路径封装 | Inno 6.7.1 对 300 字符许可证源路径可复现失败，扩展路径前缀同样不支持；固定便携 Inno 7.1.0 用真实安装脚本编译通过，封装/更新回归 57 passed / 1 符号链接权限跳过 | 编译夹具未执行；完整 Windows 6fc4308 载荷已通过包探针，旧编译器随后失败。构建入口改用官方 SHA256 固定的便携 Inno 7；日志 `.work/reports/inno-long-source-probe/`、`v090-inno7-tests.xml`。最终完整安装包以新 Actions 运行及清单为准 |
 | 2026-10-16 Windows 临时渲染短名称 | 真实 8.3 临时路径回归修前失败、修后通过；课件格式/视觉/UI 定向 60 passed，Ruff/差异检查通过 | Windows 11/x64、Python 3.12.8；CI `c2a5419` 的 Windows SDK/渲染失败源于 `RUNNER~1` 与展开用户名比较不一致。仅在 Windows 临时渲染入口展开路径，归属校验与 Mac 分支未改；证据 `.work/reports/v090-temp-path-before.xml`、`v090-temp-path-after.xml`。0.9.0 最终构建结果以对应 Actions/安装包清单为准 |
@@ -46,4 +47,4 @@
 
 ## 已发布产物
 
-2026-10-15 只读核对 GitHub Release 列表及全部附件，本次经 GitHub 接口复核结果一致：beta.2/beta.1 提供 Mac arm64 DMG、构建清单和 SHA256，v0.5.0/v0.4.0 仅提供源码 ZIP 和摘要；无已发布 Windows 安装包或 0.8.0 Release。源码版本不代表安装包来源，具体产物/签名/哈希以 [发行页](https://github.com/Rand0MGG/agentscribe-local/releases) 为准。
+2026-10-16 已核对 [v0.9.1 预览版](https://github.com/Rand0MGG/agentscribe-local/releases/tag/v0.9.1)：提供 Mac arm64 DMG、构建清单和 SHA256，三个附件均已上传并核对摘要；临时签名、未公证，本次未提供 Windows 包或推进自动更新。其他历史版本及具体产物以 [发行页](https://github.com/Rand0MGG/agentscribe-local/releases) 为准。
