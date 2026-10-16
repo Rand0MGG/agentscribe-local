@@ -24,4 +24,4 @@
 
 用正式候选旧包→新包验证：正常下载、取消、断网、篡改拒绝、录音中等待、保存失败、退出清理、安装失败、新版启动失败、环境兼容、数据/模型保留及重启。两端、渠道与架构分别验收，包括 beta→稳定、无更新时静默与取消后的迟到事件；完整包单独启动或隔离 Sparkle 演练不能替代生产升级。
 
-发布步骤见 [RELEASING](../RELEASING.md)，源码/平台证据见 [VALIDATION](../VALIDATION.md)，渠道衔接、原生检查通知/迟到保护的实现缺口见 [ROADMAP](../ROADMAP.md#实现缺口)，生产部署与平台验收状态见 [计划](../ROADMAP.md)。
+发布步骤见 [RELEASING](../RELEASING.md)，源码/平台证据见 [VALIDATION](../VALIDATION.md)，渠道衔接、原生检查通知/迟到保护的实现与验证边界见 [ROADMAP](../ROADMAP.md#实现缺口)，生产部署与平台验收状态见 [计划](../ROADMAP.md)。
