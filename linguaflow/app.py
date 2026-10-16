@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import time
+from bisect import bisect_left
 from dataclasses import asdict, replace
 from pathlib import Path
 
@@ -413,10 +414,12 @@ class Window(QMainWindow):
         self.last_error = ""
         self.recording_state = RecordingState.IDLE
         self.save_error = ''
+        self.recovery_snapshot = None
         self.phase_started = time.monotonic()
         self.pipeline_state = {"音频": "未开始", "识别": "未加载", "翻译": "未加载"}
         self.captions = {}
         self.cards = {}
+        self.caption_page_start = None
         self.source_preview = None
         self.source_preview_card = None
         self.source_preview_sequence = 0
@@ -690,12 +693,21 @@ class Window(QMainWindow):
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(10)
         self.scroll = CaptionScrollArea()
+        self.scroll.returnRequested.connect(self.return_to_caption_target)
         self.scroll.viewport().installEventFilter(self)
         self.feed = QWidget()
         self.feed.setObjectName("feed")
         self.feed_layout = QVBoxLayout(self.feed)
         self.feed_layout.setContentsMargins(12, 24, 12, 16)
         self.feed_layout.setSpacing(4)
+        self.older_captions = QPushButton('查看更早的字幕')
+        self.newer_captions = QPushButton('查看较新的字幕')
+        self.older_captions.clicked.connect(lambda: self.change_caption_page(-1))
+        self.newer_captions.clicked.connect(lambda: self.change_caption_page(1))
+        for button in (self.older_captions, self.newer_captions):
+            button.setObjectName('quiet')
+            button.hide()
+            self.feed_layout.addWidget(button)
         self.empty = RecordingHint(self.scroll.viewport())
         self.empty.setObjectName("recordingHint")
         self.empty.setText("")
@@ -711,6 +723,14 @@ class Window(QMainWindow):
         self.beta_features = Switch('体验 Beta 功能')
         menu.addSeparator()
         menu.addAction('移到最近删除…', self.delete_current)
+        menu.addSeparator()
+        self.retry_save_action = menu.addAction('重试保存录音', self.retry_save)
+        self.backup_action = menu.addAction('备份全部文字（含草稿）…', self.backup_recording_text)
+        self.finish_recovery_action = menu.addAction('使用文字备份关闭录音…',
+                                                    lambda: self.finish_text_recovery(self.recovery_snapshot))
+        self.retry_save_action.setEnabled(False)
+        self.backup_action.setEnabled(False)
+        self.finish_recovery_action.setEnabled(False)
         self.diagnostics = QPlainTextEdit()
         self.diagnostics.setReadOnly(True)
         self.diagnostics.setMaximumBlockCount(500)
@@ -955,7 +975,8 @@ class Window(QMainWindow):
         if not hasattr(self, 'notifications'):
             QMessageBox.warning(self, title, message)
             return
-        self.notifications.post('operation', title + '，请重试。', kind='error', details=str(message))
+        reason = ' '.join(str(message).split())
+        self.notifications.post('operation', title + '：' + reason, kind='error', details=str(message))
         self.diagnostics_append(str(message))
 
     def find_captions(self):
@@ -969,11 +990,13 @@ class Window(QMainWindow):
         self.search_dialog.open()
 
     def locate_caption(self, identifier, caption_id):
-        if not self.current_item or self.current_item['id'] != identifier or caption_id not in self.cards:
+        if not self.current_item or self.current_item['id'] != identifier or caption_id not in self.captions:
             self.notifications.post('operation', '录音内容已变化，请重新查找。', kind='attention')
             return
         self.pages.setCurrentIndex(0)
         caption = self.captions[caption_id]
+        self.scroll.browse_history()
+        self.ensure_caption_card(caption_id)
         if self.player:
             self.player.setPosition(round(caption.start * 1000))
         self.scroll.reveal_card(self.cards[caption_id])
@@ -1592,7 +1615,7 @@ class Window(QMainWindow):
 
     def release_recording_lock(self):
         if (self.recording_lock and self.session is None and not self.recording_state.active
-                and not self.recording_saver.busy):
+                and not self.recording_saver.busy and not self.session_dirty and not self.save_error):
             self.recording_lock.unlock()
             self.recording_lock = None
 
@@ -1665,6 +1688,7 @@ class Window(QMainWindow):
         self.session_dirty = False
         self.save_error = ''
         self.save_target_state = None
+        self.recovery_snapshot = None
         self.status.setToolTip('')
         self.update_activity()
         self.clear_captions()
@@ -1738,8 +1762,11 @@ class Window(QMainWindow):
         self.current_item = item
         self.folder_id = item["folder"]
         self.caption_translation = data["settings"].get("translate", True)
-        for caption in captions:
-            self.on_caption(caption)
+        self.captions = {caption.id: caption for caption in captions if caption.source}
+        self.render_caption_page()
+        self.empty.setVisible(not self.captions)
+        self.backup_action.setEnabled(bool(self.captions))
+        self.sync_overlay(animate=False)
         self.loading_saved = False
         self.session_dirty = False
         self.workspace_title.setText(item["name"])
@@ -2262,6 +2289,8 @@ class Window(QMainWindow):
 
     def highlight_playback(self, position, *, seek=False):
         identifier = self.playback_index.at(position / 1000) if self.scroll.playback_mode else None
+        if identifier is not None and (seek or self.scroll.following):
+            self.ensure_caption_card(identifier)
         if identifier != self.playback_caption_id:
             for value in (self.playback_caption_id, identifier):
                 card = self.cards.get(value)
@@ -2270,6 +2299,7 @@ class Window(QMainWindow):
                     card.update()
             self.playback_caption_id = identifier
         self.scroll.follow_playback(self.cards.get(identifier), seek=seek)
+        self.update_caption_page_controls()
 
     def seek_playback(self, position):
         if self.player:
@@ -2503,9 +2533,8 @@ class Window(QMainWindow):
                 self._finish_session(self.session)
             else:
                 self.persist_session('incomplete')
-                self.recording_lock.unlock()
-                self.recording_lock = None
                 self.set_recording_state(RecordingState.IDLE)
+                self.release_recording_lock()
 
     def set_recording_state(self, state):
         self.recording_state = state
@@ -2604,6 +2633,9 @@ class Window(QMainWindow):
         self.update_activity()
 
     def update_activity(self):
+        self.retry_save_action.setEnabled(bool(self.save_error) and not self.recording_saver.busy)
+        self.backup_action.setEnabled(bool(self.captions or self.source_preview))
+        self.finish_recovery_action.setEnabled(self.recovery_ready(self.recovery_snapshot))
         if self.session is not None:
             seconds = max(0, int(getattr(self.session, 'recorded_seconds', 0)))
             self.capture_time.setText(f'{seconds//3600:02}:{seconds//60%60:02}:{seconds%60:02}')
@@ -2619,7 +2651,10 @@ class Window(QMainWindow):
         if self.save_error:
             self.status.set_state_text('自动保存失败 · 字幕仍保留，请检查保存位置')
             self.status.setToolTip(self.save_error)
-            self.notifications.post('save', '录音保存失败，字幕仍保留。', kind='error', details=self.save_error,
+            text = ('文字备份已保存；原录音仍未保存。可重试，或从更多操作使用备份关闭。'
+                    if self.finish_recovery_action.isEnabled() else
+                    '录音保存失败，字幕仍保留。请检查磁盘空间及目录权限，也可从更多操作备份文字。')
+            self.notifications.post('save', text, kind='error', details=self.save_error,
                                     action=self.retry_save, action_text='重试保存')
         elif self.recording_state.active and not self.last_error:
             elapsed = int(time.monotonic() - self.phase_started)
@@ -2655,6 +2690,8 @@ class Window(QMainWindow):
             card.deleteLater()
         self.cards.clear()
         self.captions.clear()
+        self.caption_page_start = None
+        self.update_caption_page_controls()
         self.empty.show()
         self.overlay.source.setText("等待语音…")
         self.overlay.target.setText("")
@@ -2755,9 +2792,10 @@ class Window(QMainWindow):
         for key in list(self.notifications.notices):
             if key.startswith('pipeline-'):
                 self.notifications.clear(key)
-        self.status.setText('识别未完成，已有录音和字幕会保留。' if self.last_error else ("已取消 · 录音尚未开始" if state == "draft" and saved else
+        self.status.setText('保存失败，请从更多操作重试保存或备份全部文字。' if not saved else
+                           '识别未完成，已有录音和字幕会保留。' if self.last_error else ("已取消 · 录音尚未开始" if state == "draft" and saved else
                             "录音已保存 · 部分翻译未完成" if saved and translation_incomplete else
-                            "已保存录音与定稿" if saved else "保存失败，请导出字幕备份"))
+                            "已保存录音与定稿"))
         self.on_stage("会话", "失败，详见诊断" if self.last_error else "已结束")
         if not self.last_error and saved:
             self.notifications.post('session', '录音已保存，部分翻译未完成。' if translation_incomplete else
@@ -2783,11 +2821,12 @@ class Window(QMainWindow):
             return
         self.source_preview_sequence = sequence
         self.source_preview = event
+        self.backup_action.setEnabled(True)
         self.scroll.prepare_update()
         caption = Caption(0, event['start'], event['end'], event['source'], event['language'], final=False)
         if self.source_preview_card is None:
             self.source_preview_card = CaptionCard(caption, False, animate=False)
-            self.feed_layout.insertWidget(self.feed_layout.count()-1, self.source_preview_card)
+            self.feed_layout.insertWidget(self.feed_layout.indexOf(self.newer_captions), self.source_preview_card)
         else:
             self.source_preview_card.update_caption(caption, animate=False)
         self.source_preview_card.setVisible(bool(caption.source))
@@ -2804,9 +2843,9 @@ class Window(QMainWindow):
             self.empty.setVisible(not self.source_preview['source'] and not any(i in keep for i in self.captions))
             # New semantic cards can be inserted while a newer preview is shown.
             if (self.source_preview_card is not None
-                    and self.feed_layout.indexOf(self.source_preview_card) != self.feed_layout.count()-2):
+                    and self.feed_layout.indexOf(self.source_preview_card) != self.feed_layout.indexOf(self.newer_captions)-1):
                 self.feed_layout.removeWidget(self.source_preview_card)
-                self.feed_layout.insertWidget(self.feed_layout.count()-1, self.source_preview_card)
+                self.feed_layout.insertWidget(self.feed_layout.indexOf(self.newer_captions), self.source_preview_card)
 
     def clear_source_preview(self):
         self.source_preview = None
@@ -2855,9 +2894,13 @@ class Window(QMainWindow):
             self.captions.pop(caption.id, None)
             card = self.cards.pop(caption.id, None)
             if card:
+                self.scroll.discard_card(card)
                 self.feed_layout.removeWidget(card)
                 card.deleteLater()
+            self.render_caption_page()
             self.empty.setVisible(not self.captions)
+            self.backup_action.setEnabled(bool(self.captions or self.source_preview))
+            self.export_button.setEnabled(any(c.final and c.source for c in self.captions.values()))
             if self.current_item and not self.loading_saved:
                 self.autosave.start(800)
             self.apply_source_preview()
@@ -2873,25 +2916,84 @@ class Window(QMainWindow):
         self.captions[caption.id] = caption
         if caption.id in self.cards:
             self.cards[caption.id].update_caption(caption, animate=not self.loading_saved)
-        elif caption.id >= max(self.captions) - 199:
-            card = CaptionCard(caption, self.caption_translation, animate=not self.loading_saved)
-            for text in (card.source, card.target):
-                text.set_playback_clickable(self.scroll.playback_mode and not self.recording_state.active)
-                text.activated.connect(lambda identifier=caption.id, widget=card: self.play_caption(identifier, widget))
-            self.cards[caption.id] = card
-            self.feed_layout.insertWidget(self.feed_layout.count() - 1, card)
-            # Bound Qt widget count while retaining the complete export in memory.
-            if len(self.cards) > 200:
-                old = self.cards.pop(min(self.cards))
-                old.hide()
-                self.feed_layout.removeWidget(old)
-                old.deleteLater()
+        self.render_caption_page()
         self.apply_source_preview()
         self.sync_overlay(animate=not self.loading_saved)
         self.export_button.setEnabled(any(c.final and c.source for c in self.captions.values()))
+        self.backup_action.setEnabled(bool(self.captions or self.source_preview))
         if self.current_item and not self.loading_saved and not self.autosave.isActive():
             self.autosave.start(1500)
         self.scroll.content_changed()
+
+    def render_caption_page(self):
+        """Keep a bounded, navigable window over the complete transcript."""
+        identifiers = sorted(self.captions)
+        if (self.caption_page_start is None and len(self.cards) >= 200
+                and not self.scroll.following and not self.loading_saved):
+            self.caption_page_start = min(self.cards)
+        start = (max(0, len(identifiers)-200) if self.caption_page_start is None
+                 else min(bisect_left(identifiers, self.caption_page_start), max(0, len(identifiers)-200)))
+        visible = identifiers[start:start+200]
+        if self.caption_page_start is not None and visible:
+            self.caption_page_start = visible[0]
+        for identifier in self.cards.keys() - set(visible):
+            old = self.cards.pop(identifier)
+            # The scroll area must never retain a deleted card across pages.
+            self.scroll.discard_card(old)
+            old.hide()
+            self.feed_layout.removeWidget(old)
+            old.deleteLater()
+        for offset, identifier in enumerate(visible):
+            if identifier not in self.cards:
+                card = CaptionCard(self.captions[identifier], self.caption_translation,
+                                   animate=not self.loading_saved and self.caption_page_start is None)
+                for text in (card.source, card.target):
+                    text.set_playback_clickable(self.scroll.playback_mode and not self.recording_state.active)
+                    text.activated.connect(lambda identifier=identifier, widget=card: self.play_caption(identifier, widget))
+                card.setProperty('playing', self.playback_caption_id == identifier)
+                self.cards[identifier] = card
+                self.feed_layout.insertWidget(offset+1, card)
+                card.show()
+        self.update_caption_page_controls()
+        self.feed_layout.activate()
+
+    def update_caption_page_controls(self):
+        identifiers = sorted(self.captions)
+        first, last = min(self.cards, default=0), max(self.cards, default=0)
+        self.older_captions.setVisible(bool(identifiers and first > identifiers[0]))
+        self.newer_captions.setVisible(bool(identifiers and last < identifiers[-1]))
+        target = self.playback_caption_id if self.scroll.playback_mode else (identifiers[-1] if identifiers else None)
+        self.scroll.set_outside_target(-1 if target is not None and target < first else
+                                       1 if target is not None and target > last else 0)
+
+    def ensure_caption_card(self, identifier):
+        if identifier in self.captions and identifier not in self.cards:
+            identifiers = sorted(self.captions)
+            self.caption_page_start = identifiers[max(0, bisect_left(identifiers, identifier)-80)]
+            self.render_caption_page()
+
+    def change_caption_page(self, direction):
+        identifiers = sorted(self.captions)
+        if not identifiers:
+            return
+        start = bisect_left(identifiers, min(self.cards, default=identifiers[0]))
+        start = min(max(0, start+direction*180), max(0, len(identifiers)-200))
+        self.scroll.browse_history()
+        self.caption_page_start = identifiers[start]
+        self.render_caption_page()
+        self.apply_source_preview()
+        self.scroll.reveal_card(self.cards[identifiers[start]])
+
+    def return_to_caption_target(self):
+        if self.scroll.playback_mode:
+            if self.playback_caption_id is not None:
+                self.ensure_caption_card(self.playback_caption_id)
+                self.scroll.follow_playback(self.cards.get(self.playback_caption_id), seek=True)
+        else:
+            self.caption_page_start = None
+            self.scroll.resume_latest()
+            self.render_caption_page()
+            self.apply_source_preview()
 
     def toggle_overlay(self):
         if self.overlay.isVisible():
@@ -2946,9 +3048,79 @@ class Window(QMainWindow):
                                      dict(path=str(target), format=kind, state='exported'), captions)
             self.status.setText('正在导出录音定稿…')
 
+    def backup_recording_text(self):
+        from .recording_export import write_recovery
+        if not self.current_item or not (self.captions or self.source_preview):
+            return
+        identity = (self.save_generation, self.current_item['id'])
+        path, _ = QFileDialog.getSaveFileName(self, '备份全部文字（含草稿）',
+                                             '录音文字恢复备份.txt', '文字恢复备份 (*.txt)')
+        if not path:
+            return
+        if not self.current_item or identity != (self.save_generation, self.current_item['id']):
+            self.show_warning('录音内容已变化', '请重新选择要备份的录音。')
+            return
+        target = Path(path)
+        if target.suffix.lower() != '.txt':
+            target = Path(path + '.txt')
+            if target.exists() and QMessageBox.question(self, '覆盖恢复备份？', str(target),
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                    QMessageBox.StandardButton.Cancel) != QMessageBox.StandardButton.Yes:
+                return
+        captions = list(self.captions.values())
+        if self.source_preview and self.source_preview['source']:
+            event = self.source_preview
+            captions.append(Caption(max(self.captions, default=0)+1, event['start'], event['end'],
+                                    event['source'], event['language'], final=False,
+                                    error='实时原文预览，尚未完成分句。'))
+        item = dict(path=str(target), format='recovery', state='recovery', name=self.current_item['name'],
+                    recording_id=self.current_item['id'])
+        self.export_saver.submit(write_recovery, (self.save_generation, str(target)),
+                                 self.caption_version, item, captions)
+
+    def recovery_ready(self, snapshot):
+        return bool(snapshot and self.current_item and self.session_dirty and self.save_error
+            and not self.recording_state.active and self.session is None and not self.recording_saver.busy
+            and snapshot.token[0] == self.save_generation
+            and snapshot.item.get('recording_id') == self.current_item['id']
+            and snapshot.revision == self.caption_version)
+
+    def finish_text_recovery(self, snapshot):
+        if snapshot is None or not self.session_dirty or not self.save_error:
+            return
+        if not self.recovery_ready(snapshot):
+            self.show_warning('录音内容已变化', '请先停止录音并重新备份全部文字，再关闭此录音。')
+            return
+        if not Path(snapshot.item['path']).is_file():
+            self.show_warning('恢复备份不可用', '请重新备份全部文字，再关闭此录音。')
+            return
+        if QMessageBox.question(self, '使用文字备份并关闭此录音？',
+                '文字已备份到：' + snapshot.item['path'] + '\n\n原录音仍未成功保存。备份不含音频；'
+                '原目录及已有音频会保留。关闭后，请使用备份核对草稿和译文。',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel) != QMessageBox.StandardButton.Yes:
+            return
+        if not self.recovery_ready(snapshot):
+            self.show_warning('录音内容已变化', '请重新备份全部文字，再关闭此录音。')
+            return
+        self.autosave.stop()
+        self.session_dirty = False
+        self.save_error = ''
+        self.notifications.clear('save')
+        self.notifications.clear('recovery')
+        self.release_recording_lock()
+        self.reset_recording_view()
+        self.refresh_library()
+
     def on_exported(self, snapshot, state, error):
         if error:
             self.show_warning("导出失败", error)
+        elif snapshot.item.get('format') == 'recovery':
+            self.recovery_snapshot = snapshot
+            self.update_activity()
+            self.notifications.post('recovery', '全部文字恢复备份已保存；原录音的保存状态未改变。', kind='success',
+                                    action=(lambda: self.finish_text_recovery(snapshot)) if self.save_error else None,
+                                    action_text='使用备份关闭录音')
         else:
             self.status.setText(f"已导出录音定稿：{snapshot.item['path']}")
 

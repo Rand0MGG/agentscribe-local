@@ -48,3 +48,23 @@ def test_extension_matches_content_and_missing_suffix_uses_selected_format():
     assert export_target('字幕', FORMATS['md'][0]) == (Path('字幕.md'), 'md')
     assert export_target('字幕.TXT', FORMATS['md'][0]) == (Path('字幕.TXT'), 'txt')
     assert export_target('字幕.other', FORMATS['txt'][0]) == (Path('字幕.other.txt'), 'txt')
+
+
+def test_recovery_includes_drafts_stale_translations_and_atomic_failure(tmp_path, monkeypatch):
+    from linguaflow.recording_export import write_recovery
+    target = tmp_path / '全部文字.txt'
+    source = captions()
+    source[1].translation = '旧译文'
+    source[1].translation_source = 'previous draft'
+    write_recovery({'path': str(target), 'name': '中文课堂'}, source)
+    text = target.read_text(encoding='utf-8-sig')
+    assert all(c.source in text for c in source)
+    assert '草稿原文' in text and '旧译文' in text and '过期译文' in text and '不包含音频' in text
+    before = target.read_bytes()
+    def fail(*args):
+        raise OSError('disk full')
+    monkeypatch.setattr('linguaflow.recording_export.os.replace', fail)
+    with pytest.raises(OSError, match='disk full'):
+        write_recovery({'path': str(target)}, [])
+    assert target.read_bytes() == before
+    assert list(tmp_path.iterdir()) == [target]

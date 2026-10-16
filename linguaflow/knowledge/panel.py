@@ -54,6 +54,8 @@ class KnowledgePanel(QDialog):
         self.view = {}
         self.active = self.busy = self.rendering = self.terms_dirty = False
         self.terms_fingerprint = ''
+        self.terms_course_id = None
+        self.term_drafts = {}
         self.operation = ''
         self.answer_active = False
         self.answer_sources = {}
@@ -186,6 +188,8 @@ class KnowledgePanel(QDialog):
         self.answer_sources = {}
         self.notes_fingerprint = ''
         self.terms_fingerprint = ''
+        self.terms_course_id = None
+        self.term_drafts.clear()
         self.terms_dirty = False
         self.terms.setRowCount(0)
         self.pages.clear()
@@ -198,6 +202,11 @@ class KnowledgePanel(QDialog):
         kind = value['type']
         if kind == 'view':
             self.render(value)
+        elif kind == 'terms_saved':
+            if (value['course_id'] == self.terms_course_id
+                    and value['terms_version'] == fingerprint(self.term_rows())):
+                self.terms_dirty = False
+                self.term_drafts.pop(self.terms_course_id, None)
         elif kind == 'usage':
             self.usage.setText(f"本次任务 {value['requests']} 次请求 · "
                               f"{'保守预留' if value['uncertain'] else '已返回用量'} {value['tokens_or_reserved']} tokens")
@@ -230,6 +239,17 @@ class KnowledgePanel(QDialog):
             old_options = self.view.get('course_options')
             self.view = value
             course = value.get('course') or {}
+            course_id = course.get('id')
+            if course_id != self.terms_course_id:
+                if self.terms_course_id and self.terms_dirty:
+                    self.term_drafts[self.terms_course_id] = self.term_rows()
+                self.terms_course_id = course_id
+                self.terms.setRowCount(0)
+                draft = self.term_drafts.get(course_id)
+                for term in draft if draft is not None else course.get('terms', []):
+                    self.append_term(term)
+                self.terms_dirty = draft is not None
+                self.terms_fingerprint = fingerprint(course.get('terms', []))
             if old_options != value.get('course_options'):
                 selected_course = self.courses.currentData()
                 self.courses.clear()
@@ -342,15 +362,18 @@ class KnowledgePanel(QDialog):
             self.terms.removeRow(row)
         self.terms_dirty = True
 
-    def save_terms(self):
+    def term_rows(self):
         rows = []
         for row in range(self.terms.rowCount()):
             old = self.terms.item(row, 0).data(Qt.ItemDataRole.UserRole)
             rows.append({**old, 'canonical': self.terms.item(row, 1).text(),
                          'aliases': [value.strip() for value in self.terms.item(row, 2).text().split(';') if value.strip()],
                          'approved': self.terms.item(row, 0).checkState() == Qt.CheckState.Checked})
-        self.terms_dirty = False
-        self.client.send('terms', terms=rows)
+        return rows
+
+    def save_terms(self):
+        if self.terms_course_id:
+            self.client.send('terms', course_id=self.terms_course_id, terms=self.term_rows())
 
     def show_page(self, *_):
         block = next((row for row in self.view.get('blocks', []) if row['id'] == self.pages.currentData()), None)

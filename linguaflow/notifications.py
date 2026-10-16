@@ -113,7 +113,8 @@ class NotificationCenter(QFrame):
         # Preparation remains visible until dismissed or completed.
         expires = (previous.expires if previous and previous.kind == kind == 'progress'
                    else float('inf') if (key in ('preparation', 'update') and kind == 'progress')
-                   or (key == 'update' and (kind == 'error' or kind == 'attention' and action is not None))
+                   or (key in ('save', 'update') and kind == 'error')
+                   or (key == 'update' and kind == 'attention' and action is not None)
                    else time.monotonic() + (8 if kind == 'error' else 5))
         self.notices.pop(key, None)
         self.notices[key] = Notice(text, kind, action, action_text, progress, details,

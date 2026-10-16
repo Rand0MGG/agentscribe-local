@@ -295,6 +295,7 @@ class CaptionEdgeFade(QWidget):
 
 class CaptionScrollArea(QScrollArea):
     followingChanged = Signal(bool)
+    returnRequested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -308,6 +309,7 @@ class CaptionScrollArea(QScrollArea):
         self._last_tick = 0.
         self._overlay_height = 0
         self.playback_mode = False
+        self.outside_direction = 0
         self.playback_card = None
         self._playback_target = None
         self._playback_offset = None
@@ -349,7 +351,7 @@ class CaptionScrollArea(QScrollArea):
     def _update_button(self):
         viewport = self.viewport()
         self.latest_button.move((viewport.width()-40)//2, max(0, viewport.height()-56-self._overlay_height))
-        visible = not self.following and not self._at_bottom()
+        visible = not self.following and (not self._at_bottom() or bool(self.outside_direction))
         if self.playback_mode:
             card = self.playback_card
             top = self.verticalScrollBar().value()
@@ -359,6 +361,11 @@ class CaptionScrollArea(QScrollArea):
             self.latest_button.setToolTip('返回播放位置（上方）' if self.latest_button.direction < 0 else '返回播放位置（下方）')
         else:
             self.latest_button.direction = 1
+        if self.outside_direction:
+            visible = True
+            self.latest_button.direction = self.outside_direction
+            if self.playback_mode:
+                self.latest_button.setToolTip('返回播放位置（上方）' if self.outside_direction < 0 else '返回播放位置（下方）')
         self.latest_button.setVisible(visible)
         self.latest_button.update()
         self.latest_button.raise_()
@@ -366,6 +373,22 @@ class CaptionScrollArea(QScrollArea):
     def set_overlay_height(self, height):
         self._overlay_height = height + 18
         self._update_button()
+
+    def set_outside_target(self, direction):
+        self.outside_direction = direction
+        self._update_button()
+
+    def discard_card(self, card):
+        self._anchor = None
+        if card in (self.playback_card, self._last_playback_card):
+            self.playback_card = self._last_playback_card = None
+            self._playback_target = self._playback_offset = None
+
+    def browse_history(self):
+        self._interrupt()
+
+    def resume_latest(self):
+        self._set_following(True)
 
     def _interrupt(self, *args):
         self.animation.stop()
@@ -380,14 +403,14 @@ class CaptionScrollArea(QScrollArea):
         # A queued input check must not cancel following already restored by a
         # valueChanged signal, if new content arrived in the meantime.
         if not self.playback_mode and self._anchor is None and not self.following and not self.animation.isActive() and not self.verticalScrollBar().isSliderDown():
-            self._set_following(self._at_bottom())
+            self._set_following(self._at_bottom() and not self.outside_direction)
 
     def _position_changed(self, value):
         if not self._moving:
             self._playback_offset = None
             self._anchor = None
             self.animation.stop()
-            self._set_following(False if self.playback_mode else self._at_bottom())
+            self._set_following(False if self.playback_mode else self._at_bottom() and not self.outside_direction)
 
     def eventFilter(self, watched, event):
         kind = event.type()
@@ -425,11 +448,6 @@ class CaptionScrollArea(QScrollArea):
         self.layout_timer.start(0)
 
     def _settle_layout(self):
-        if self.playback_mode:
-            self._update_button()
-            if self.following and self.playback_card is not None:
-                self._follow_playback()
-            return
         if self._anchor is not None:
             card, offset = self._anchor
             # Keep the reading anchor through subsequent layout passes. Qt can
@@ -441,6 +459,11 @@ class CaptionScrollArea(QScrollArea):
                     self._anchor = None
             except RuntimeError:  # A pruned card's Qt object has already been deleted.
                 self._anchor = None
+        if self.playback_mode:
+            self._update_button()
+            if self.following and self.playback_card is not None:
+                self._follow_playback()
+            return
         self._update_button()
         if not self.following:
             self._sync_position()
@@ -481,6 +504,7 @@ class CaptionScrollArea(QScrollArea):
         self._move(self._position)
 
     def jump_to_latest(self, checked=False):
+        self.returnRequested.emit()
         self._anchor = None
         self._set_following(True)
         self.content_changed()
@@ -490,7 +514,9 @@ class CaptionScrollArea(QScrollArea):
         self.animation.stop()
         self._set_following(False)
         self._move(max(0, card.y()-24))
-        self._anchor = (card, card.y()-self.verticalScrollBar().value())
+        # A newly loaded page may still have the previous page's scroll range.
+        # Keep the intended offset so the next layout pass can finish locating it.
+        self._anchor = (card, min(24, card.y()))
 
     def set_playback(self, enabled):
         self.animation.stop()

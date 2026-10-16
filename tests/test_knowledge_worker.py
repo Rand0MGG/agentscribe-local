@@ -273,3 +273,22 @@ def test_post_class_organize_batches_all_long_notes_with_one_shared_budget(monke
         else:
             assert all(row['status'] == 'valid' for row in notes)
     asyncio.run(scenario())
+
+
+def test_late_terms_save_cannot_write_into_another_course(tmp_path):
+    from linguaflow.knowledge.materials import course_for_folder
+    library = Library(tmp_path / 'library')
+    item = library.create('inbox', {}, '录音')
+    folder_b = library.folder('Course B')['id']
+    path_b, course_b = course_for_folder(library, folder_b, create=True)
+    async def scenario():
+        worker = KnowledgeWorker(lambda value: None)
+        await worker.command({'operation': 'open', 'root': str(library.root), 'identifier': item['id'],
+                              'folder_id': item['folder'], 'epoch': 'test'})
+        course_a = worker.course['id']
+        await worker.command({'operation': 'associate', 'folder_id': folder_b})
+        with pytest.raises(ValueError, match='课程关联已变化'):
+            await worker.command({'operation': 'terms', 'course_id': course_a,
+                                  'terms': [{'canonical': 'wrong course', 'approved': True}]})
+        assert worker.course['id'] == course_b['id'] and read_json(path_b)['terms'] == []
+    asyncio.run(scenario())

@@ -180,6 +180,8 @@ class KnowledgeWorker:
             self.notify({'type': 'status', 'message': '正在本地读取课件，可取消。', 'busy': True})
             self.task = asyncio.create_task(self.import_task(folder['id'], value['path']))
         elif operation == 'terms':
+            if value.get('course_id', self.course['id']) != self.course['id']:
+                raise ValueError('课程关联已变化，未保存旧课程术语。请重新选择课程后保存。')
             terms = [Term(term_text(row['canonical']), tuple(term_text(alias) for alias in row.get('aliases', [])),
                           tuple(row.get('evidence_ids', [])), bool(row['approved']), row.get('origin', 'manual'))
                      for row in value['terms']]
@@ -190,6 +192,8 @@ class KnowledgeWorker:
             self.manifest['asr_context'] = compile_context(terms, ((row['id'], row['version'])
                 for row in self.course['documents'])).to_dict()
             write_manifest(self.library, self.manifest)
+            self.notify({'type': 'terms_saved', 'course_id': self.course['id'],
+                         'terms_version': fingerprint(value['terms'])})
             self.view()
         elif operation == 'permission':
             self.cancel()
