@@ -42,7 +42,7 @@
 - Windows 在装入更新组件后、封装前探针；Mac 最终 DMG 封存后只读挂载运行探针并保证失败也卸载。探针失败不封存，成功不等于已完成安装升级/录音验收。
 - Mac 正式候选需 Developer ID/公证，Windows 需 Authenticode；当前脚本未自动完成它们。`--without-updater` 只供开发/过渡包，不进入订阅。
 - 既有 0.9.x 试用包固定使用 `stable.xml`；兼容订阅的名称不代表系统签名/公证已完成。试用更新仍须原公钥签名、真实旧包升级与恢复验收，并在发行说明保留临时签名状态；不降低正式系统签名门槛。
-- 系统签名完成后重新核对构建清单摘要/字节数，再以 `scripts/sign_update_artifact.py --artifact <文件> --manifest <清单> --target <平台>` 签署最终字节，得到同名 `.ed25519`。封存后不可更改；变更须重新封存、签名和验收。
+- 系统签名完成后重新核对构建清单摘要/字节数，再以 `scripts/sign_update_artifact.py --artifact <文件> --manifest <清单> --target <平台>` 签署最终字节，得到同名 `.ed25519`。Mac 本机可加 `--keychain-account <既有账户>`，由固定版本的 Sparkle 工具直接使用钥匙串签名，私钥不导出；只上传公开签名。封存后不可更改；变更须重新封存、签名和验收。
 - `packaging/updates.json` 保存固定公钥/身份。私钥不进源码、日志或清单，分别部署至受保护 `release-build` 环境的 `MACOS_UPDATE_PRIVATE_KEY` / `WINDOWS_UPDATE_PRIVATE_KEY`；不得跨平台借用或重建公钥来绕过缺钥。签名器核对公钥并只接受规定 seed 格式。
 - Mac 也可在本机以 `sign_update_artifact.py --keychain-account <既有账户>` 签署封存文件；从锁定摘要的 Sparkle 工具读取既有钥匙串身份，核对公钥并复验公开签名，不导出私钥。只上传同名 `.ed25519`，安装包字节保持不变。
 - Release 草稿同时包含安装包、SHA256、`.build.json` 和 `.ed25519`。`prepare-release.yml` 拒绝覆盖已发布 Release 或同名附件；草稿上传另受 `release-draft` 环境保护。
