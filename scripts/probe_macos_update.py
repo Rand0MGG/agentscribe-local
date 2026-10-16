@@ -295,6 +295,9 @@ def main():
     if any('AgentScribe.app/Contents/MacOS/AgentScribe' in line for line in
            subprocess.check_output(['ps', '-axo', 'command='], text=True).splitlines()):
         parser.error('An AgentScribe process already exists; do not touch an unrelated application')
+    data_root = Path.home() / 'Library/Application Support/AgentScribe'
+    if data_root.exists() and any(data_root.iterdir()):
+        parser.error('Existing AgentScribe user data found; require a fresh disposable runner')
     args.work = args.work.resolve()
     args.work.mkdir(parents=True, exist_ok=False)
     manifest = json.loads(args.manifest.read_text())
