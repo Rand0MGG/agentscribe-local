@@ -124,6 +124,23 @@ def test_full_site_snapshot_preserves_other_platform_and_rejects_downgrade(tmp_p
         module.merge_snapshot(tmp_path / "missing", tmp_path / "empty", mac)
 
 
+@pytest.mark.parametrize('beta_version,first', [('0.9.1-beta.1', '0.9.2'), ('0.10.0-beta.1', '0.10.0-beta.1')])
+def test_beta_clients_also_receive_stable_without_leaking_beta_to_stable(tmp_path, beta_version, first):
+    module, stable, *_ = signed_fixture(tmp_path / 'stable', 'macos-arm64', '0.9.2')
+    _, beta, *_ = signed_fixture(tmp_path / 'beta', 'macos-arm64', beta_version)
+    previous = tmp_path / 'previous'
+    (previous / 'updates').mkdir(parents=True)
+    (previous / 'updates/index.json').write_text('{}')
+    module.merge_snapshot(previous, tmp_path / 'one', beta)
+    module.merge_snapshot(tmp_path / 'one', tmp_path / 'two', stable)
+    def versions(name):
+        rss = ET.fromstring((tmp_path / 'two/updates/macos-arm64' / name).read_bytes())
+        return [e.get(f'{{{module.SPARKLE}}}shortVersionString') for e in rss.findall('channel/item/enclosure')]
+    assert versions('stable.xml') == ['0.9.2']
+    assert versions('beta.xml')[0] == first
+    assert set(versions('beta.xml')) == {'0.9.2', beta_version}
+
+
 def test_snapshot_rejects_unsafe_paths(tmp_path):
     import io
     import zipfile

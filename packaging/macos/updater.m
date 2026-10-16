@@ -14,12 +14,15 @@ typedef void (*ASNotification)(const char *);
 @property(nonatomic) BOOL allowInstall;
 @property(nonatomic) uint64_t expected;
 @property(nonatomic) uint64_t received;
+@property(nonatomic) uint64_t requestID;
+@property(nonatomic) BOOL terminalReported;
+@property(nonatomic) BOOL cancelled;
 @end
 
 @implementation ASUpdateDriver
 - (void)send:(NSString *)stage text:(NSString *)text extra:(NSDictionary *)extra {
     if (!self.notification) return;
-    NSMutableDictionary *event = [@{@"stage": stage, @"text": text} mutableCopy];
+    NSMutableDictionary *event = [@{@"stage": stage, @"text": text, @"request": @(self.requestID)} mutableCopy];
     if (extra) [event addEntriesFromDictionary:extra];
     NSData *data = [NSJSONSerialization dataWithJSONObject:event options:0 error:NULL];
     self.notification([[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding].UTF8String);
@@ -29,11 +32,13 @@ typedef void (*ASNotification)(const char *);
     reply([[SUUpdatePermissionResponse alloc] initWithAutomaticUpdateChecks:NO sendSystemProfile:NO]);
 }
 - (void)showUserInitiatedUpdateCheckWithCancellation:(void (^)(void))cancellation {
+    if (self.cancelled) { cancellation(); return; }
     self.cancel = cancellation;
     [self send:@"checking" text:@"正在检查更新" extra:nil];
 }
 - (void)showUpdateFoundWithAppcastItem:(SUAppcastItem *)item state:(SPUUserUpdateState *)state
                                reply:(void (^)(SPUUserUpdateChoice))reply {
+    if (self.cancelled) { reply(SPUUserUpdateChoiceDismiss); return; }
     self.choice = reply;
     self.readyToInstall = state.stage == SPUUserUpdateStageInstalling;
     [self send:item.isInformationOnlyUpdate ? @"informational" : self.readyToInstall ? @"ready" : @"available"
@@ -43,6 +48,7 @@ typedef void (*ASNotification)(const char *);
 - (void)showUpdateReleaseNotesWithDownloadData:(SPUDownloadData *)data {}
 - (void)showUpdateReleaseNotesFailedToDownloadWithError:(NSError *)error {}
 - (void)showUpdateNotFoundWithError:(NSError *)error acknowledgement:(void (^)(void))acknowledgement {
+    self.terminalReported = YES;
     // A newer release requiring another OS must not be labelled "latest".
     NSNumber *reason = error.userInfo[SPUNoUpdateFoundReasonKey];
     BOOL latest = reason && (reason.integerValue == SPUNoUpdateFoundReasonOnLatestVersion ||
@@ -53,11 +59,13 @@ typedef void (*ASNotification)(const char *);
     acknowledgement();
 }
 - (void)showUpdaterError:(NSError *)error acknowledgement:(void (^)(void))acknowledgement {
+    self.terminalReported = YES;
     [self send:@"error" text:@"更新失败，当前版本与用户数据保留。"
          extra:@{@"details": error.localizedDescription ?: @""}];
     acknowledgement();
 }
 - (void)showDownloadInitiatedWithCancellation:(void (^)(void))cancellation {
+    if (self.cancelled) { cancellation(); return; }
     self.cancel = cancellation;
     self.expected = 0;
     self.received = 0;
@@ -77,6 +85,7 @@ typedef void (*ASNotification)(const char *);
     [self send:@"verifying" text:@"正在校验并准备更新" extra:@{@"progress": @(progress*100)}];
 }
 - (void)showReadyToInstallAndRelaunch:(void (^)(SPUUserUpdateChoice))reply {
+    if (self.cancelled) { reply(SPUUserUpdateChoiceSkip); return; }
     self.choice = reply;
     self.readyToInstall = YES;
     [self send:@"ready" text:@"更新已准备好，可重启安装。" extra:nil];
@@ -104,6 +113,20 @@ typedef void (*ASNotification)(const char *);
 }
 - (BOOL)updater:(SPUUpdater *)updater shouldDownloadReleaseNotesForUpdate:(SUAppcastItem *)item { return NO; }
 - (NSArray *)allowedSystemProfileKeysForUpdater:(SPUUpdater *)updater { return @[]; }
+- (void)updater:(SPUUpdater *)updater didFinishUpdateCycleForUpdateCheck:(SPUUpdateCheck)updateCheck error:(NSError *)error {
+    // Background failures do not call SPUUserDriver's error UI. Always finish
+    // the shared request; Qt decides whether this request should notify users.
+    if (error && !self.terminalReported) {
+        if ([error.domain isEqualToString:SUSparkleErrorDomain] && error.code == SUNoUpdateError) {
+            [self showUpdateNotFoundWithError:error acknowledgement:^{}];
+        } else {
+            [self showUpdaterError:error acknowledgement:^{}];
+        }
+    }
+    self.cancel = nil;
+    self.choice = nil;
+    [self send:@"cycle-finished" text:@"" extra:nil];
+}
 @end
 
 static ASUpdateDriver *driver;
@@ -126,14 +149,20 @@ int ASUpdaterStart(ASNotification notification) {
     return success ? 1 : 0;
 }
 
-void ASUpdaterCheck(int manual) {
-    if (!driver.updater.sessionInProgress) driver.allowInstall = NO;
+int ASUpdaterCheck(int manual, uint64_t requestID) {
+    if (driver.updater.sessionInProgress) return 0;
+    driver.allowInstall = NO;
+    driver.requestID = requestID;
+    driver.terminalReported = NO;
+    driver.cancelled = NO;
     if (manual) [driver.updater checkForUpdates];
     else [driver.updater checkForUpdatesInBackground];
+    return 1;
 }
 
 void ASUpdaterChoose(int action) {
     if (!action) {
+        driver.cancelled = YES;
         if (driver.cancel) driver.cancel();
         else if (driver.choice) driver.choice(driver.readyToInstall ? SPUUserUpdateChoiceSkip : SPUUserUpdateChoiceDismiss);
         driver.cancel = nil;

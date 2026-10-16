@@ -40,6 +40,8 @@ Qt 线程负责装配、呈现和发起操作，只有它更新 UI。耗时任�
 | 课程任务与存储 | `knowledge/client.py` / `worker.py` 消息与后台；`files.py` 路径/原子 IO，`storage.py` 来源/笔记短事务，`retrieval.py` 检索，`api.py` / `harness.py` 许可、预算及 SDK |
 | 更新与恢复 | `updates.py` 源码检查；`native_updates.py` 原生桥接；`update_config.py` 身份；`update_recovery.py` 独立恢复。`packaging/recovery.c` 只保留进程身份、退出和原子移动差异 |
 
+原生更新事件先排入 Qt 线程，按请求代次过滤；后台检查终态回收状态但不显示无更新/失败提示，用户主动查看时沿用同一请求并显示结果。Mac 通过 Sparkle 的周期结束委托补齐后台失败回调，取消后的迟到选择自动拒绝。
+
 ## 状态与资源归属
 
 - 模型和推理配置使用启动时 Settings 快照；采集来源单独按递增代次更新，不改变录音文件和采样时钟。Caption 的原文/切分版本与译文来源分开，队列发布不得反向覆盖当前原文；保存回执绑定录音、视图、版本和终态。准备、渲染和更新的有效性应按各自任务归属判断，不套用字幕字段；未落实的检查见 ROADMAP。

@@ -24,7 +24,7 @@ from . import __version__
 from .model_options import asr_backends, asr_devices, qwen_models, translation_devices
 from .preparation_task import Preparation
 from .qt_controls import text_label
-from .runtime_paths import installation_command
+from .runtime_paths import installation_command, packaged
 from .translation_config import CONTEXT_COUNTS
 from .ui_components import ChoiceBox as QComboBox
 from .ui_components import DoubleSpinBox as QDoubleSpinBox
@@ -144,6 +144,7 @@ class ModelManager(QDialog):
         self.update_checked.connect(lambda result: self.show_update(result, respect_cancel=False))
         environment_form.addRow(text_label('版本与更新', 'settingsSection'))
         self.version_label = QLabel(f'当前版本：{__version__}')
+        self.version_label.setWordWrap(True)
         environment_form.addRow(self.version_label)
         environment_form.addRow(update)
         environment_form.addRow(self.update_link)
@@ -151,7 +152,9 @@ class ModelManager(QDialog):
         self.update_status.setWordWrap(True)
         self.update_status.setObjectName('settingsHint')
         environment_form.addRow(self.update_status)
-        self.hint(environment_form, '启动后后台检查 GitHub 发布版本，也可在此手动检查。源码版查看源码更新；未发布的安装包不会显示为可安装更新。目前需从发行页下载安装。')
+        self.update_hint = self.hint(environment_form,
+            '检查适用于此平台的新版本，在应用内确认下载；录音结束并保存后，再确认重启安装。' if packaged() else
+            '当前为源码运行，请到发行页查看对应源码；更新前保留本地修改。')
         self.add_page(environment, "运行环境")
         self.download_card = QFrame()
         self.download_card.setObjectName('downloadCard')

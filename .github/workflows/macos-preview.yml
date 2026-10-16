@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing immutable version tag for a draft prerelease
+        description: Existing immutable version tag for an installer draft
         required: true
         type: string
 
@@ -51,7 +51,7 @@ jobs:
           assert not subprocess.check_output(['git', 'status', '--porcelain'], text=True).strip()
           releases = json.loads(subprocess.check_output(['gh', 'api', 'repos/'+os.environ['GITHUB_REPOSITORY']+'/releases?per_page=100'], text=True))
           release, = [r for r in releases if r['tag_name'] == tag]
-          assert release['draft'] and release['prerelease'], 'Only existing draft previews may be prepared'
+          assert release['draft'], 'Only an existing unpublished draft may be prepared'
           assert release['target_commitish'] == subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
           PY
       - name: Install tools and verify source
@@ -62,6 +62,7 @@ jobs:
       - name: Build and probe final DMG
         run: |
           python scripts/build_macos.py --fetch
+          AGENTSCRIBE_REQUIRE_NATIVE_UPDATE_TEST=1 python scripts/test_no_audio.py tests/test_sparkle_cycle.py -q
           python scripts/build_macos.py
       - name: Upload verified Mac files to draft only
         env:
@@ -79,7 +80,7 @@ jobs:
           assert manifest['dmg_sha256'] == hashlib.sha256(files[0].read_bytes()).hexdigest()
           releases = json.loads(subprocess.check_output(['gh', 'api', 'repos/'+repo+'/releases?per_page=100'], text=True))
           release, = [r for r in releases if r['tag_name'] == tag]
-          assert release['draft'] and release['prerelease']
+          assert release['draft']
           # A failed local transfer may leave metadata in this unpublished draft.
           # Only this platform's exact filenames may be replaced before sealing.
           for asset in release['assets']:

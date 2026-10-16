@@ -117,7 +117,8 @@ class NotificationCenter(QFrame):
         # Stage and percentage changes preserve dismissal for the entire task.
         # Preparation remains visible until dismissed or completed.
         expires = (previous.expires if previous and previous.kind == kind == 'progress'
-                   else float('inf') if key == 'preparation' and kind == 'progress'
+                   else float('inf') if (key in ('preparation', 'update') and kind == 'progress')
+                   or (key == 'update' and kind == 'error')
                    else time.monotonic() + (8 if kind == 'error' else 5))
         self.notices.pop(key, None)
         self.notices[key] = Notice(text, kind, action, action_text, progress, details,

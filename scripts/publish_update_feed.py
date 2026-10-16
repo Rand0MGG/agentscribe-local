@@ -128,6 +128,15 @@ def merge_snapshot(previous, output, entry):
     destination = output / "updates" / entry["target"] / (entry["channel"] + ".xml")
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(render(entry))
+    # Existing beta clients keep their immutable beta.xml URL. Offer the stable
+    # release there too, while retaining any newer beta in the same platform.
+    candidates = [index[key] for channel in ('stable', 'beta')
+                  if (key := entry['target'] + '/' + channel) in index]
+    candidates.sort(key=lambda value: version_key(value['version']), reverse=True)
+    beta = ET.fromstring(render(candidates[0]))
+    for candidate in candidates[1:]:
+        beta.find('channel').append(ET.fromstring(render(candidate)).find('channel/item'))
+    (destination.parent / 'beta.xml').write_bytes(ET.tostring(beta, encoding='utf-8', xml_declaration=True))
     (output / "updates/index.json").write_text(
         json.dumps(index, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )

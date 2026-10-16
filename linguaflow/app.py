@@ -1158,12 +1158,18 @@ class Window(QMainWindow):
             frame.update()
 
     def check_software_updates(self):
-        if self.asset_check_closed or self.update_check_busy:
+        if self.asset_check_closed:
+            return
+        self.notifications.clear('update')
+        if self.update_check_busy:
+            self.notifications.post('update', '正在检查更新', kind='progress')
             return
         if self.native_updater.installed:
             self.native_updater.check()
             return
         self.notifications.post('update', '正在检查更新', kind='progress')
+        self.ui_update_button.setText('正在检查…')
+        self.model_manager.version_label.setText(f'当前版本：{__version__} · 正在检查更新')
         self.update_check_busy = True
         self.start_background_check('linguaflow.updates', self.on_update_checked)
 
@@ -1174,6 +1180,8 @@ class Window(QMainWindow):
         if not isinstance(result, dict):
             result = {'kind': 'error', 'message': '暂时无法检查更新，请重试。'}
         kind = result.get('kind', 'error')
+        self.ui_update_button.setText('有新版本' if kind in ('source', 'package') else '检查更新')
+        self.model_manager.version_label.setText(f'当前版本：{__version__} · ' + result.get('message', '检查失败，请重试。'))
         self.model_manager.show_update(result, respect_cancel=False)
         self.notifications.post('update', result.get('message', '暂时无法检查更新，请重试。'),
                                 kind='error' if kind == 'error' else 'attention' if kind in ('source', 'package') else 'success',
@@ -1185,6 +1193,12 @@ class Window(QMainWindow):
         if self.asset_check_closed:
             return
         stage = event.get('stage')
+        if event.get('text'):
+            self.model_manager.version_label.setText(f'当前版本：{__version__} · ' + event['text'])
+        self.ui_update_button.setText({'checking': '正在检查…', 'available': '有新版本',
+                                      'downloading': '正在下载更新', 'verifying': '正在校验更新',
+                                      'ready': '更新待安装', 'waiting': '更新待安装',
+                                      'installing': '正在安装更新', 'busy': '更新进行中'}.get(stage, '检查更新'))
         if stage == 'quit':
             self.closing = True
             self.close()
@@ -1205,7 +1219,7 @@ class Window(QMainWindow):
                 self.restore_after_update()
         kinds = {'checking': 'progress', 'downloading': 'progress', 'verifying': 'progress',
                  'installing': 'progress', 'available': 'attention', 'ready': 'attention',
-                 'error': 'error', 'native': 'attention', 'informational': 'attention'}
+                 'error': 'error', 'native': 'attention', 'informational': 'attention', 'busy': 'attention'}
         action = self.show_update_notes if stage == 'available' else self.native_updater.confirm_install if stage == 'ready' else \
                  self.native_updater.cancel if stage in ('checking', 'downloading') else \
                  self.check_software_updates if stage == 'error' else None

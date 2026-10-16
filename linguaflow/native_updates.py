@@ -40,6 +40,7 @@ class NativeUpdater(QObject):
     request_install = Signal()
     shutdown_complete = Signal(str)
     _shutdown_finished = Signal(str)
+    _adapter_event = Signal(dict)
 
     def __init__(self, parent=None, *, installed=None):
         super().__init__(parent)
@@ -51,9 +52,13 @@ class NativeUpdater(QObject):
         self.error = ''
         self.shutdown_job = None
         self.active = False
+        self.generation = 0
+        self.manual = False
+        self.last_event = None
         self.recovery = None
         self.cancelled = Event()
-        self.relay = UpdateEventRelay(self.event.emit)
+        self.relay = UpdateEventRelay(self._adapter_event.emit)
+        self._adapter_event.connect(self._receive, Qt.ConnectionType.QueuedConnection)
         self.event.connect(self._observe)
         self.request_install.connect(self._requested, Qt.ConnectionType.QueuedConnection)
         self._shutdown_finished.connect(self._shutdown_done, Qt.ConnectionType.QueuedConnection)
@@ -83,17 +88,49 @@ class NativeUpdater(QObject):
 
     def check(self, *, manual=True):
         if self.active or self.pending or self.installing or self.shutdown_job is not None:
+            if manual:
+                self.manual = True
+                if self.installing or self.shutdown_job is not None:
+                    self.event.emit({'stage': 'busy', 'text': '正在准备或安装更新，请等待保存与重启。'})
+                elif self.pending:
+                    self.event.emit({'stage': 'busy', 'text': '更新正在等待录音结束与文件保存。'})
+                else:
+                    self.event.emit(self.last_event or {'stage': 'checking', 'text': '正在检查更新'})
             return False
+        self.generation += 1
+        self.manual = manual
         if not self.initialize():
-            self.event.emit({'stage': 'error', 'text': '此安装包尚未配置应用内更新，请安装含更新器的过渡版本。',
-                             'details': self.error})
+            if manual:
+                self.event.emit({'stage': 'error', 'text': '无法启动更新组件，请重新安装完整安装包。',
+                                 'details': self.error})
             return False
         self.active = True
         self.cancelled.clear()
         self.ready.clear()
-        self.event.emit({'stage': 'checking', 'text': '正在检查更新'})
-        self.adapter.check(manual)
+        self.last_event = {'stage': 'checking', 'text': '正在检查更新'}
+        if manual:
+            self.event.emit(self.last_event)
+        self.adapter.request_id = self.generation
+        if self.adapter.check(manual) is False:
+            self.active = False
+            if manual:
+                self.event.emit({'stage': 'busy', 'text': '上次更新检查正在结束，请稍后重试。'})
+            return False
         return True
+
+    def _receive(self, event):
+        if event.get('request', self.generation) != self.generation:
+            return
+        if event.get('stage') == 'cycle-finished':
+            self.active = False
+            return
+        if self.cancelled.is_set():
+            return
+        self.last_event = event
+        if not self.manual and event.get('stage') in ('checking', 'latest', 'error'):
+            self._observe(event)
+            return
+        self.event.emit(event)
 
     def _observe(self, event):
         if event.get('stage') in ('latest', 'error', 'cancelled', 'installed'):
@@ -177,13 +214,15 @@ class SparkleAdapter:
         self.callback = callback_type(lambda data: notify(json.loads(data.decode('utf-8'))))
         self.library.ASUpdaterStart.argtypes = [callback_type]
         self.library.ASUpdaterStart.restype = ctypes.c_int
-        self.library.ASUpdaterCheck.argtypes = [ctypes.c_int]
+        self.request_id = 0
+        self.library.ASUpdaterCheck.argtypes = [ctypes.c_int, ctypes.c_uint64]
+        self.library.ASUpdaterCheck.restype = ctypes.c_int
         self.library.ASUpdaterChoose.argtypes = [ctypes.c_int]
         if not self.library.ASUpdaterStart(self.callback):
             raise ValueError('原生 Mac 更新器启动失败。')
 
     def check(self, manual):
-        self.library.ASUpdaterCheck(int(manual))
+        return bool(self.library.ASUpdaterCheck(int(manual), self.request_id))
 
     def download(self):
         self.library.ASUpdaterChoose(1)
@@ -200,6 +239,9 @@ class SparkleAdapter:
 
 class WinSparkleAdapter:
     def __init__(self, root, config, notify, ready, request_install):
+        self.request_id = 0
+        def report(event):
+            notify({**event, 'request': self.request_id})
         dll = Path(root) / 'WinSparkle.dll'
         # WinSparkle exports cdecl, even on 32-bit; CDLL is intentional.
         self.library = ctypes.CDLL(str(dll))
@@ -225,14 +267,14 @@ class WinSparkleAdapter:
                 ('did_not_find_update', 'latest', f'当前已是最新版本（{__version__}）。'),
                 ('did_find_update', 'native', '发现新版本，可在更新窗口中下载。'),
                 ('update_cancelled', 'cancelled', '更新已取消，当前版本保留。')):
-            self._callback(name, ctypes.CFUNCTYPE(None), lambda stage=stage, text=text: notify({'stage': stage, 'text': text}))
+            self._callback(name, ctypes.CFUNCTYPE(None), lambda stage=stage, text=text: report({'stage': stage, 'text': text}))
         def can_shutdown():
             if ready.is_set():
                 return 1
             request_install()
             return 0
         self._callback('can_shutdown', ctypes.CFUNCTYPE(ctypes.c_int), can_shutdown)
-        self._callback('shutdown_request', ctypes.CFUNCTYPE(None), lambda: notify({'stage': 'quit'}))
+        self._callback('shutdown_request', ctypes.CFUNCTYPE(None), lambda: report({'stage': 'quit'}))
         self.library.win_sparkle_init()
 
     def _callback(self, name, prototype, callback):
