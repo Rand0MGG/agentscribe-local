@@ -1,0 +1,98 @@
+name: Build and upload Mac preview
+
+on:
+  push:
+    branches: [mac]
+    paths: [.github/workflows/macos-preview.yml]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing immutable version tag for a draft prerelease
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-preview-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[upload mac preview]')
+    runs-on: macos-15
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Select and verify fixed preview source and draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIEW_TAG: ${{ inputs.tag }}
+        run: |
+          python - <<'PY'
+          import json, os, re, subprocess
+          from pathlib import Path
+          tag = os.environ['PREVIEW_TAG'] or 'v'+re.search(r'__version__ = "([^"]+)"', Path('linguaflow/__init__.py').read_text())[1]
+          assert re.fullmatch(r'v\d+\.\d+\.\d+(?:-beta\.\d+)?', tag)
+          subprocess.run(['git', 'checkout', '--detach', tag], check=True)
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write('PREVIEW_TAG='+tag+'\n')
+          version = re.search(r'__version__ = "([^"]+)"', Path('linguaflow/__init__.py').read_text())[1]
+          assert tag == 'v' + version
+          assert not subprocess.check_output(['git', 'status', '--porcelain'], text=True).strip()
+          releases = json.loads(subprocess.check_output(['gh', 'api', 'repos/'+os.environ['GITHUB_REPOSITORY']+'/releases?per_page=100'], text=True))
+          release, = [r for r in releases if r['tag_name'] == tag]
+          assert release['draft'] and release['prerelease'], 'Only existing draft previews may be prepared'
+          assert release['target_commitish'] == subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          PY
+      - name: Install tools and verify source
+        run: |
+          python -m pip install -e ".[dev]" 'zstandard==0.25.0'
+          python scripts/test_no_audio.py -q -rs --tb=short --junitxml=.work/reports/preview-tests.xml
+          python -m ruff check linguaflow scripts tests
+      - name: Build and probe final DMG
+        run: |
+          python scripts/build_macos.py --fetch
+          python scripts/build_macos.py
+      - name: Upload verified Mac files to draft only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, subprocess
+          from pathlib import Path
+          tag, repo = os.environ['PREVIEW_TAG'], os.environ['GITHUB_REPOSITORY']
+          prefix = 'AgentScribe-'+tag[1:]+'-macos-arm64'
+          files = [Path('.work/packaging/dist')/(prefix+suffix) for suffix in ('.dmg', '.dmg.sha256', '.build.json')]
+          manifest = json.loads(files[2].read_text())
+          assert manifest['source_commit'] == subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          assert not manifest['source_modified'] and not manifest['models_included']
+          assert manifest['dmg_sha256'] == hashlib.sha256(files[0].read_bytes()).hexdigest()
+          releases = json.loads(subprocess.check_output(['gh', 'api', 'repos/'+repo+'/releases?per_page=100'], text=True))
+          release, = [r for r in releases if r['tag_name'] == tag]
+          assert release['draft'] and release['prerelease']
+          # A failed local transfer may leave metadata in this unpublished draft.
+          # Only this platform's exact filenames may be replaced before sealing.
+          for asset in release['assets']:
+              if asset['name'] in {p.name for p in files}:
+                  subprocess.run(['gh', 'api', '--method', 'DELETE', 'repos/'+repo+'/releases/assets/'+str(asset['id'])], check=True)
+          subprocess.run(['gh', 'release', 'upload', tag, '--repo', repo, *map(str, files)], check=True)
+          PY
+      - name: Preserve files and test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-preview-${{ github.run_id }}
+          path: |
+            .work/packaging/dist/*
+            .work/reports/preview-tests.xml
+          if-no-files-found: ignore
