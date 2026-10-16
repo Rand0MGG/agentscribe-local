@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 
 from . import __version__
 from .model_options import asr_backends, asr_devices, qwen_models, translation_devices
-from .preparation_task import Preparation
+from .preparation_task import Preparation, preparation_error_message
 from .qt_controls import text_label
 from .runtime_paths import installation_command, packaged
 from .translation_config import CONTEXT_COUNTS
@@ -47,6 +47,7 @@ class ModelManager(QDialog):
         self.setWindowTitle("模型管理 · 准备一次，随后直接聆听")
         self.resize(660, 640)
         self.worker = None
+        self.preparation_result = None
         self.close_requested = False
         self.session_active = False
         self.inventory_busy = False
@@ -514,8 +515,9 @@ class ModelManager(QDialog):
         self.download_stats.setText('正在检查…')
         self.status.show()
         self.status.setText(message)
+        self.preparation_result = None
         self.worker = Preparation(action, self, affects_runtime=affects_runtime, beta_only=beta_only)
-        self.worker.result.connect(self.preparation_status)
+        self.worker.result.connect(self.on_preparation_result)
         # Raw download logs stay in the worker tail, never resize the UI.
         self.worker.download.connect(self.show_download)
         self.worker.finished.connect(self.prepared)
@@ -523,10 +525,14 @@ class ModelManager(QDialog):
         self.preparation_changed.emit(True)
         self.preparation_message.emit(message)
 
+    def on_preparation_result(self, text):
+        self.preparation_status(text)
+        self.preparation_result = self.status.text()
+
     def preparation_status(self, text):
-        if text.startswith("未完成：") and ("Traceback" in text or "File " in text):
+        if text.startswith("未完成："):
             self.diagnostic.emit(text)
-            text = "准备未完成，请稍后重试；详细原因可在诊断记录中查看。"
+            text = preparation_error_message(text)
         self.status.setText(text)
         self.status.setToolTip(text)
         self.download_card.show()
@@ -580,6 +586,9 @@ class ModelManager(QDialog):
         self.download_title.setText('准备结果')
         self.download_file.clear()
         self.download_stats.clear()
+        if self.preparation_result is not None:
+            self.status.setText(self.preparation_result)
+            self.status.setToolTip(self.preparation_result)
         self.status.setVisible(bool(self.status.text()))
         self.preparation_changed.emit(False)
         from .runtime_paths import runtime_python

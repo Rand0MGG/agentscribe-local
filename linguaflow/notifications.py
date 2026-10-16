@@ -42,9 +42,9 @@ class NotificationCenter(QFrame):
     """Quiet, non-modal notices with retained task state and a short display time.
 
     Percentage updates do not extend the popup lifetime or reopen it. Errors
-    retain their retry/details until cleared, without permanently covering UI.
+    retain retry actions until cleared, without permanently covering UI.
     """
-    def __init__(self, parent=None, *, show_details=None):
+    def __init__(self, parent=None):
         super().__init__(parent, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
         self.setObjectName('feedbackPopup')
         # A rounded frameless window needs an alpha surface as well as QSS;
@@ -60,7 +60,6 @@ class NotificationCenter(QFrame):
         self.notices = {}
         self.suppressed = set()
         self.current_key = None
-        self.show_details = show_details
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         self.surface = QFrame()
@@ -86,10 +85,6 @@ class NotificationCenter(QFrame):
         self.action_button.setObjectName('quiet')
         self.action_button.clicked.connect(self._act)
         layout.addWidget(self.action_button)
-        self.details_button = QPushButton('详情')
-        self.details_button.setObjectName('quiet')
-        self.details_button.clicked.connect(self._details)
-        layout.addWidget(self.details_button)
         self.dismiss = QPushButton('×')
         self.dismiss.setObjectName('quiet')
         self.dismiss.setFixedWidth(28)
@@ -118,7 +113,7 @@ class NotificationCenter(QFrame):
         # Preparation remains visible until dismissed or completed.
         expires = (previous.expires if previous and previous.kind == kind == 'progress'
                    else float('inf') if (key in ('preparation', 'update') and kind == 'progress')
-                   or (key == 'update' and kind == 'error')
+                   or (key == 'update' and (kind == 'error' or kind == 'attention' and action is not None))
                    else time.monotonic() + (8 if kind == 'error' else 5))
         self.notices.pop(key, None)
         self.notices[key] = Notice(text, kind, action, action_text, progress, details,
@@ -159,7 +154,6 @@ class NotificationCenter(QFrame):
             self.message.style().polish(self.message)
             self.action_button.setText(notice.action_text)
             self.action_button.setVisible(notice.action is not None)
-            self.details_button.setVisible(bool(notice.details and self.show_details))
             self.progress.setVisible(notice.kind == 'progress')
             self.dismiss.setVisible(True)
             if notice.progress is None:
@@ -170,7 +164,7 @@ class NotificationCenter(QFrame):
         else:
             self.current_key = None
             self.message.clear()
-            for widget in (self.progress, self.action_button, self.details_button, self.dismiss):
+            for widget in (self.progress, self.action_button, self.dismiss):
                 widget.hide()
         if visible:
             self.place()
@@ -199,8 +193,7 @@ class NotificationCenter(QFrame):
             return
         origin = area.mapToGlobal(area.rect().topLeft())
         self.ensurePolished()
-        controls = [widget for widget in (self.progress, self.action_button, self.details_button,
-                                         self.dismiss) if not widget.isHidden()]
+        controls = [widget for widget in (self.progress, self.action_button, self.dismiss) if not widget.isHidden()]
         reserved = 20 + sum(widget.width() if widget.minimumWidth() == widget.maximumWidth()
                             else widget.sizeHint().width() for widget in controls) + 8*len(controls)
         metrics = self.message.fontMetrics()
@@ -229,11 +222,6 @@ class NotificationCenter(QFrame):
         notice = self.notices.get(self.current_key)
         if notice and notice.action:
             notice.action()
-
-    def _details(self):
-        notice = self.notices.get(self.current_key)
-        if notice and self.show_details:
-            self.show_details(notice.details)
 
     def _dismiss(self):
         notice = self.notices.get(self.current_key)

@@ -212,7 +212,7 @@ class KnowledgePanel(QDialog):
         elif value.get('message'):
             if self.feedback:
                 self.status.set_state_text(value['message'])
-                self.feedback.post('knowledge', '课程任务未完成，请查看详情。' if kind == 'error' else
+                self.feedback.post('knowledge', '课程任务未完成，请重试。' if kind == 'error' else
                                    '正在处理课程资料与笔记' if value.get('busy') else value['message'],
                                    kind='error' if kind == 'error' else 'progress' if value.get('busy') else 'success',
                                    details=value['message'] if kind == 'error' else '')

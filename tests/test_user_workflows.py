@@ -483,3 +483,26 @@ assert w.prefs.value('library_directory')==str(destination)
 assert not w.migration_locks and w.start_button.isEnabled()
 w.close()
 ''',tmp_path)
+
+
+def test_error_notifications_keep_page_and_layout_without_details_entry(tmp_path):
+    run_ui('''
+from PySide6.QtWidgets import QPushButton
+w.show();w.open_settings('模型管理');settle_geometry(w)
+page=w.pages.currentWidget();geometry=w.pages.geometry()
+center=w.notifications
+retried=[]
+center.post('update','下载失败，请重试。',kind='error',details='fixture network error',
+            action=lambda:retried.append(True),action_text='重试')
+settle_geometry(w)
+buttons=[b for b in center.findChildren(QPushButton) if not b.isHidden()]
+assert [b.text() for b in buttons]==['重试','×']
+center.action_button.click();assert retried==[True]
+assert w.pages.currentWidget() is page and w.pages.geometry()==geometry
+assert w.diagnostics.isHidden()
+center.dismiss.click();app.processEvents()
+assert center.isHidden() or center.message.text()!='下载失败，请重试。'
+assert w.pages.currentWidget() is page
+assert w.pages.geometry()==geometry and w.diagnostics.isHidden()
+w.close()
+''',tmp_path)

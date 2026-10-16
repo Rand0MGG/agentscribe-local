@@ -1,5 +1,6 @@
 """Owned preparation task: subprocess supervision, progress and cancellation."""
 import json
+import re
 import subprocess
 from collections import deque
 from threading import Event, Thread
@@ -9,6 +10,28 @@ from PySide6.QtCore import QThread, Signal
 from .download_progress import PREFIX
 from .process_platform import spawn_options, stop_tree
 from .runtime_paths import installation_command, python_environment, resource_root
+
+
+def preparation_error_message(text):
+    """Keep a bounded step/reason in the UI; the caller retains the raw diagnostic."""
+    lines = [line.strip() for line in text.removeprefix('未完成：').splitlines() if line.strip()]
+    stage = lines[0] if len(lines) > 1 else '准备模型与组件'
+    reason = lines[-1] if lines else '准备任务未正常结束'
+    for line in reversed(lines):
+        if re.match(r'[\w.]+(?:Error|Exception):', line):
+            reason = line
+            break
+    lowered = reason.lower()
+    if any(word in lowered for word in ('connectionerror', 'connecterror', 'readtimeout', 'connecttimeout',
+                                       'nameresolutionerror', 'cannot connect', 'connection refused')):
+        reason = '网络连接失败或超时，请检查网络后重试。'
+    elif 'no space left' in lowered:
+        reason = '磁盘空间不足，请释放空间后重试。'
+    elif 'permissionerror' in lowered or 'permission denied' in lowered:
+        reason = '没有写入权限，请检查模型保存目录的权限。'
+    else:
+        reason = re.sub(r'^[\w.]+(?:Error|Exception):\s*', '', reason)
+    return f'准备未完成：{stage[:40]}；{reason[:120]} 已下载文件保留，可重新检查。'
 
 
 class Preparation(QThread):
@@ -23,6 +46,7 @@ class Preparation(QThread):
         self.beta_only = beta_only
         self.process = None
         self.cancelled = False
+        self.stage = '准备本地模型与组件'
 
     def cancel(self):
         self.cancelled = True
@@ -32,7 +56,8 @@ class Preparation(QThread):
             result = self.action()
             self.result.emit('准备已取消；已完成文件保留。' if self.cancelled else result)
         except Exception as exc:
-            self.result.emit(f"未完成：{exc}")
+            self.result.emit('准备已取消；已完成文件保留。' if self.cancelled else
+                             f"未完成：{self.stage}\n{exc}")
 
     def run_command(self, command, *, show_progress=True):
         if self.cancelled:
@@ -67,6 +92,8 @@ class Preparation(QThread):
                             try:
                                 event = json.loads(line[len(PREFIX):])
                                 if isinstance(event, dict):
+                                    if event.get('unit') == 'stage' and event.get('label'):
+                                        self.stage = str(event['label'])
                                     self.download.emit(event)
                                     continue
                             except ValueError:
@@ -78,7 +105,7 @@ class Preparation(QThread):
                 if self.cancelled:
                     raise RuntimeError('准备已取消；已有文件保留，可稍后继续。')
                 if code:
-                    raise RuntimeError("\n".join(tail)[-1500:])
+                    raise RuntimeError("\n".join(tail)[-1500:] or f'准备进程异常结束（退出码 {code}）')
             finally:
                 finished.set()
                 watcher.join(timeout=10)

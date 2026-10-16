@@ -8,6 +8,7 @@
 
 | 证据 | 已证明 | 范围与限制 |
 | --- | --- | --- |
+| 2026-10-16 通知/模型/更新检查复核 | 完整无音频 1073 passed / 2 Windows 专项跳过；最终状态保护 16 项补验、Cocoa 3 项通过。删除通知详情入口；更新安装操作不再自动消失；模型检查异常不冒充缺失，设置/文件复查不覆盖准备结果，取消不误报失败 | `64cb54c` 加本地修改；完整运行后增加的状态保护已包含在最终补验。日志 `.work/reports/followup-audit-*.log`、`preparation-feedback-*.log`、`remove-notification-details-*.log`。失败子进程为模拟故障，未重现用户此前首次下载失败，未执行真实下载/采集或 Windows 原生验收，未打包发布 |
 | 2026-10-16 v0.9.2 Mac 应用内更新 | 固定来源 `13d2a33`；真实 0.9.0→0.9.2 下载、安装、正常重启及数据保留通过；中断、取消、篡改拒绝、启动失败自动恢复通过。原始旧包访问生产 HTTPS 订阅再次升级通过 | [构建](https://github.com/Rand0MGG/agentscribe-local/actions/runs/38882483285)：1039 passed / 24 平台或可选组件跳过、真实 Sparkle 回调与 DMG 探针通过；[故障验收](https://github.com/Rand0MGG/agentscribe-local/actions/runs/38886470827)、[生产升级](https://github.com/Rand0MGG/agentscribe-local/actions/runs/38887571571)。一次性 Mac runner；录音/保存门禁为模拟状态，未验真实采集或 Windows 原生升级。原钥匙串签名、订阅部署完成，仍为 ad-hoc、未公证 |
 | 2026-10-16 更新状态修复阶段 | 本地完整无音频 1065 passed / 2 Windows 跳过；真实 Sparkle 的后台 404→手动重试→取消通过；渠道 18 项、更新/保存 43 项及最终 UI 9 项通过 | `.work/reports/update-e2e-20261016/`；完整运行后补了渠道与按钮反馈，定向补验通过。此行仅记录源码阶段，后续完整包与生产升级证据见上一行 |
 | 2026-10-16 v0.9.1 Mac DMG | 固定来源 `2ce4be5`；GitHub Mac 回归 1033 passed / 23 可选组件或平台跳过，Ruff、最终 DMG 校验及只读挂载包探针通过；上传后三个附件摘要核对一致 | [运行 38872564024](https://github.com/Rand0MGG/agentscribe-local/actions/runs/38872564024)，预览版已发布。312126171 字节，SHA256 以发行清单为准；ad-hoc、未公证，未验真实录音/旧包升级，未推进自动更新。保留本地完整回归及上传故障记录 `.work/reports/startup-polish-20261016/` |

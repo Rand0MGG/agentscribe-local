@@ -385,7 +385,7 @@ class CaptionCard(QFrame):
         self.target.setVisible(bool(self.target.text()))
         stale = bool(caption.translation and caption.translation_source
                      and caption.translation_source != caption.source)
-        self.pending.setText(('译文更新失败，请查看错误详情' if caption.error else '原文已更新，正在更新译文…')
+        self.pending.setText(('译文更新失败' if caption.error else '原文已更新，正在更新译文…')
                              if stale else '')
         self.pending.setToolTip(caption.error)
         self.pending.setVisible(self.translating and stale)
@@ -478,7 +478,7 @@ class Window(QMainWindow):
         self.pages.setContentsMargins(0, 0, 0, 0)
         self.pages.addWidget(split)
         layout.addWidget(self.pages, 1)
-        self.notifications = NotificationCenter(root, show_details=self.show_diagnostic_details)
+        self.notifications = NotificationCenter(root)
         self.library_migration = LibraryMigration(self)
         self.library_migration.progress.connect(lambda value: self.notifications.post(
             'migration', '正在迁移录音', kind='progress', progress=value,
@@ -951,16 +951,11 @@ class Window(QMainWindow):
         if sys.platform == 'darwin':
             self.setup_application_menu()
 
-    def show_diagnostic_details(self, text):
-        self.diagnostics.appendPlainText(text)
-        self.pages.setCurrentIndex(0)
-        self.diagnostics.show()
-
     def show_warning(self, title, message):
         if not hasattr(self, 'notifications'):
             QMessageBox.warning(self, title, message)
             return
-        self.notifications.post('operation', title + '，请重试或查看详情。', kind='error', details=str(message))
+        self.notifications.post('operation', title + '，请重试。', kind='error', details=str(message))
         self.diagnostics_append(str(message))
 
     def find_captions(self):
@@ -991,7 +986,7 @@ class Window(QMainWindow):
     def show_first_run(self):
         if self.asset_check_closed or self.recording_state.active or self.model_manager.preparing:
             return
-        if self.missing_model_assets is None:
+        if self.missing_model_assets is None or 'model-check' in self.notifications.notices:
             self.startup_model_guidance_pending = True
             self.check_model_assets()
             return
@@ -1030,8 +1025,8 @@ class Window(QMainWindow):
 
     def on_preparation_message(self, text):
         self.model_manager.download_card.setVisible(self.model_manager.preparing)
-        error = any(word in text for word in ('未完成', '失败'))
-        self.notifications.post('preparation', '模型或环境准备失败，请重试。' if error else
+        error = text.startswith(('未完成：', '准备未完成：'))
+        self.notifications.post('preparation', text if error else
                                 '正在准备本地模型与组件' if self.model_manager.preparing else text,
                                 kind='error' if error else 'progress' if self.model_manager.preparing else 'success',
                                 details=text if error else '',
@@ -1054,10 +1049,10 @@ class Window(QMainWindow):
         self.model_manager.download_card.setVisible(active)
         if not active:
             text = self.model_manager.status.text()
-            if any(word in text for word in ('未完成', '失败')):
+            if text.startswith(('未完成：', '准备未完成：')):
                 self.on_preparation_message(text)
             else:
-                self.notifications.post('preparation', '准备已取消，已有文件保留。' if '取消' in text else
+                self.notifications.post('preparation', '准备已取消，已有文件保留。' if text.startswith('准备已取消') else
                                         '本地模型与组件准备完成。', kind='success')
         if self.first_run:
             self.first_run.set_models(self.missing_model_assets, preparing=active)
@@ -1350,11 +1345,20 @@ class Window(QMainWindow):
         selection = self.preparation_selection()
         translating = self.translate.isChecked()
         def checked(value):
+            if self.asset_check_closed or generation != self.asset_check_generation:
+                return
             if selection != self.preparation_selection() or translating != self.translate.isChecked():
                 self.check_model_assets()
                 return
-            missing = value if isinstance(value, list) else ['本地模型检查未完成，可在模型管理中重新检查']
-            self.on_model_assets_checked(generation, missing)
+            if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+                self.model_action = None
+                self.startup_model_guidance_pending = False
+                message = '模型检查未完成，暂时无法确认是否就绪。请重新检查；已有模型文件保留。'
+                self.model_manager.status.setText(message)
+                self.notifications.post('model-check', message, kind='error',
+                                        action=self.check_model_assets, action_text='重新检查')
+                return
+            self.on_model_assets_checked(generation, value)
         arguments = ['--check', '--selection', json.dumps(selection, ensure_ascii=False)]
         if not translating:
             arguments += ['--only', 'asr']
@@ -1363,6 +1367,12 @@ class Window(QMainWindow):
     def on_model_assets_checked(self, generation, missing):
         if self.asset_check_closed or generation != self.asset_check_generation:
             return
+        check_error = self.notifications.notices.get('model-check')
+        self.notifications.clear('model-check')
+        if (check_error and not self.model_manager.preparing
+                and self.model_manager.status.text() == check_error.text):
+            self.model_manager.status.setText('所选模型已就绪。' if not missing else
+                                             '所选模型尚有缺失，请在模型管理中准备。')
         self.missing_model_assets = tuple(missing)
         if self.first_run:
             self.first_run.set_models(missing, preparing=self.model_manager.preparing)
@@ -2564,7 +2574,7 @@ class Window(QMainWindow):
             self.notifications.post('pipeline-' + name, name + '模型正在加载' if name != '音频' else '正在连接音频来源',
                                     kind='progress')
         elif any(word in state for word in ('失败', '错误')):
-            self.notifications.post('pipeline-' + name, name + '未就绪，请查看详情。', kind='error', details=state)
+            self.notifications.post('pipeline-' + name, name + '未就绪，请检查设置后重试。', kind='error', details=state)
         else:
             self.notifications.clear('pipeline-' + name)
         if name == '音频' and self.recording_state is RecordingState.LISTENING and not self.captions:
