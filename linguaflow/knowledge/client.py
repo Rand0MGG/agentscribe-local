@@ -32,21 +32,34 @@ class KnowledgeClient(QObject):
         self.close_error = ''
         self.retiring_process = None
         self.retiring_threads = []
+        self.disconnected = False
         self._received.connect(self._deliver, Qt.ConnectionType.QueuedConnection)
         self._closed.connect(self._finish_close, Qt.ConnectionType.QueuedConnection)
 
     @Slot(str, dict)
     def _deliver(self, epoch, value):
         if epoch == self.epoch:
+            if value['type'] == 'disconnected':
+                self.disconnected = True
             self.changed.emit(value)
 
+    @property
+    def connected(self):
+        return not self.disconnected and self.process is not None and self.process.poll() is None
+
+    def report_disconnected(self):
+        self.disconnected = True
+        self.changed.emit({'type': 'disconnected', 'message': '课程后台已停止，请重新连接；未保存的术语仍保留。',
+                           'busy': False})
+
     def open(self, library, item, captions=None):
-        if self.process is not None and self.identifier == item['id'] and self.process.poll() is None:
+        if self.connected and self.identifier == item['id']:
             self.send('view')
             return
         if not self.close():
             return
         epoch = self.epoch = uuid4().hex
+        self.disconnected = False
         self.identifier = item['id']
         self.process = subprocess.Popen([str(knowledge_python()), '-m', 'linguaflow.knowledge.worker'],
             cwd=resource_root(), env=python_environment(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -64,7 +77,8 @@ class KnowledgeClient(QObject):
                 pass
             finally:
                 if epoch == self.epoch:
-                    self._received.emit(epoch, {'type': 'error', 'message': '课程后台已停止，请重新打开课程资料。', 'busy': False})
+                    self._received.emit(epoch, {'type': 'disconnected',
+                        'message': '课程后台已停止，请重新连接；未保存的术语仍保留。', 'busy': False})
         def write():
             try:
                 while True:
@@ -76,7 +90,8 @@ class KnowledgeClient(QObject):
                     process.stdin.write(json.dumps(value, ensure_ascii=False) + '\n')
                     process.stdin.flush()
             except (OSError, ValueError):
-                pass
+                self._received.emit(epoch, {'type': 'disconnected',
+                    'message': '课程后台连接已中断，请重新连接；未保存的术语仍保留。', 'busy': False})
         self.threads = [Thread(target=read, daemon=True), Thread(target=write, daemon=True)]
         for thread in self.threads:
             thread.start()
@@ -84,7 +99,9 @@ class KnowledgeClient(QObject):
                   live=None if captions is None else [asdict(caption) for caption in captions])
 
     def send(self, operation, **value):
-        if self.process is None or self.process.poll() is not None:
+        if not self.connected:
+            if operation not in ('caption', 'saved', 'view'):
+                self.report_disconnected()
             return False
         command = {'operation': operation, **value}
         with self.condition:

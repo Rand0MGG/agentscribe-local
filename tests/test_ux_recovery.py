@@ -155,6 +155,65 @@ w.close()
 ''',tmp_path)
 
 
+def test_course_draft_survives_navigation_failure_and_exit_cancel(tmp_path):
+    run_ui('''
+from unittest.mock import patch
+from linguaflow.knowledge.session import read_manifest
+w.beta_features.setChecked(True)
+w.new_recording(name='术语草稿',check_models=False)
+identifier=w.current_item['id']
+w.open_knowledge();p=w.knowledge_panel
+wait(lambda:bool(p.view))
+course=p.terms_course_id
+p.append_term({'canonical':'unsaved term','aliases':[],'approved':True,'origin':'manual','evidence_ids':[]})
+assert w.new_recording(check_models=False)
+wait(lambda:not w.knowledge_client.closing)
+assert p.term_drafts[course][0]['canonical']=='unsaved term'
+w.show()
+with patch.object(module.QMessageBox,'question',return_value=module.QMessageBox.StandardButton.Cancel):
+    assert not w.close()
+assert p.has_unsaved_terms()
+w.open_library_item(w.library_rows[identifier],0)
+w.open_knowledge();wait(lambda:bool(p.view))
+assert p.terms_dirty and p.terms.item(0,1).text()=='unsaved term'
+assert not p.view['course']['terms']
+p.receive({'type':'error','message':'术语保存失败，请检查目录权限。','busy':False})
+assert p.terms_dirty and '目录权限' in w.notifications.notices['knowledge'].text
+p.save_terms();wait(lambda:not p.terms_dirty)
+assert not p.has_unsaved_terms()
+assert read_manifest(w.library,identifier)['asr_context']['terms']==['unsaved term']
+wait(lambda:p.view['manifest']['asr_context'].get('terms')==['unsaved term'])
+w.close()
+''',tmp_path)
+
+
+def test_active_term_editor_commits_before_recording_navigation(tmp_path):
+    run_ui('''
+from PySide6.QtWidgets import QLineEdit
+from PySide6.QtTest import QTest
+from unittest.mock import patch
+w.beta_features.setChecked(True);w.new_recording(name='编辑中的术语',check_models=False)
+identifier=w.current_item['id'];w.open_knowledge();p=w.knowledge_panel
+wait(lambda:bool(p.view));course=p.terms_course_id
+p.append_term({'canonical':'original','aliases':[],'approved':True,'origin':'manual','evidence_ids':[]})
+p.save_terms();wait(lambda:not p.terms_dirty)
+p.tabs.setCurrentIndex(1);p.show();settle_geometry(p)
+p.terms.editItem(p.terms.item(0,1));editor=p.terms.findChild(QLineEdit)
+assert editor is not None
+editor.selectAll();QTest.keyClicks(editor,'still editing')
+with patch.object(w.native_updater,'release_runtime') as release:
+    w.try_install_update()
+    release.assert_not_called()
+    assert '术语' in w.notifications.notices['update'].text
+w.cancel_update_install()
+assert w.new_recording(check_models=False)
+wait(lambda:not w.knowledge_client.closing)
+assert p.term_drafts[course][0]['canonical']=='still editing'
+with patch.object(module.QMessageBox,'question',return_value=module.QMessageBox.StandardButton.Discard):
+    w.close()
+''',tmp_path)
+
+
 def test_history_stays_readable_during_live_updates_and_deleted_rows_refill(tmp_path):
     run_ui('''
 from dataclasses import replace
@@ -196,8 +255,9 @@ w.library.save=fail
 assert not w.persist_session('incomplete')
 # A separate process must be denied until recovery is explicitly accepted.
 code="from pathlib import Path; from linguaflow.library_access import acquire_recording_lock; acquire_recording_lock(Path(sys.argv[1]))"
-r=subprocess.run([sys.executable,'-c','import sys;'+code,str(directory)],capture_output=True,text=True)
-assert r.returncode!=0 and '另一个窗口' in r.stderr
+r=subprocess.run([sys.executable,'-c','import sys;'+code,str(directory)],capture_output=True,
+                 text=True,encoding='utf-8',env={**os.environ,'PYTHONIOENCODING':'utf-8'})
+assert r.returncode!=0 and '另一个窗口' in r.stderr,(r.returncode,r.stderr)
 with patch.object(module.QFileDialog,'getSaveFileName',return_value=('','')):
     w.backup_recording_text()
 assert w.session_dirty and not w.export_saver.busy
@@ -253,7 +313,8 @@ from linguaflow.knowledge.panel import KnowledgePanel
 from linguaflow.knowledge.schemas import fingerprint
 class Client(QObject):
     changed=Signal(dict)
-    process=object()
+    connected=True
+    closing=False
     def send(self,*args,**kwargs):return False
 p=KnowledgePanel(Client(),lambda:None,lambda:True)
 p.receive({'type':'view','manifest':{'notes_cloud':False,'asr_context':{}},
@@ -311,8 +372,11 @@ w.library.save(item,captions,'complete');w.refresh_library()
 w.open_library_item(w.library_rows[item['id']],0)
 w.show();w.resize(640,480);settle_geometry(w)
 w.scroll.set_playback(True)
-w.locate_caption(item['id'],150);settle_geometry(w)
+w.locate_caption(item['id'],150)
 card=w.cards[150];bar=w.scroll.verticalScrollBar()
+# Search completion is the target card entering the viewport, not the size hint
+# of a window containing 200 wrapping labels becoming quiet.
+wait(lambda:bar.value()<=card.y()<bar.value()+w.scroll.viewport().height(),timeout=2)
 assert bar.value() <= card.y() < bar.value()+w.scroll.viewport().height(),(bar.value(),card.y(),bar.maximum())
 w.close()
 ''',tmp_path)

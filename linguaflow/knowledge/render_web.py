@@ -286,6 +286,49 @@ def render_web(source, output, limit, resource_source=None):
     columns, rows = math.ceil(width/1200), math.ceil(height/1500)
     if columns*rows > limit:
         raise ValueError('网页尺寸超过 1000 个页面分片预算，请按章节导入。')
+    # Read actual rendered text nodes, assigning each range to the same screen
+    # tiles as the images. Split only ranges crossing a tile; do not repeat the
+    # whole document on every page or treat hidden/script content as evidence.
+    extracted = []
+    loop = QEventLoop()
+    page.runJavaScript(r"""JSON.stringify((()=>{
+        const width=1200,height=1500,columns=Math.ceil(Math.max(innerWidth,document.documentElement.scrollWidth)/width);
+        const count=columns*Math.ceil(Math.max(innerHeight,document.documentElement.scrollHeight)/height);
+        const texts=Array(count).fill(''),parents=Array(count).fill(null),encoder=new TextEncoder();
+        const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
+        let node,used=0;
+        function collect(node,start,end,block){
+            const range=document.createRange();range.setStart(node,start);range.setEnd(node,end);
+            const rects=[...range.getClientRects()].filter(r=>r.width>0&&r.height>0);
+            const tiles=[...new Set(rects.map(r=>Math.floor(((r.top+r.bottom)/2+scrollY)/height)*columns+Math.floor(((r.left+r.right)/2+scrollX)/width)))];
+            if(!tiles.length)return;
+            if(end-start>1 && (tiles.length>1 || rects.some(r=>Math.floor(r.top/height)!==Math.floor((r.bottom-.01)/height)||Math.floor(r.left/width)!==Math.floor((r.right-.01)/width)))){
+                let mid=Math.floor((start+end)/2);
+                if(node.data.charCodeAt(mid)>=0xDC00&&node.data.charCodeAt(mid)<=0xDFFF)mid++;
+                if(mid<end){collect(node,start,mid,block);collect(node,mid,end,block);return;}
+            }
+            const tile=tiles[0];if(tile<0||tile>=count)return;
+            let text=node.data.slice(start,end);
+            if(!getComputedStyle(node.parentElement).whiteSpace.startsWith('pre'))text=text.replace(/\s+/g,' ');
+            used+=encoder.encode(text).length;
+            if(used>4*1024*1024)throw Error('text budget');
+            if(parents[tile]!==block && texts[tile])texts[tile]+='\n';
+            texts[tile]+=text;parents[tile]=block;
+        }
+        try{
+            while(node=walker.nextNode()){
+                const parent=node.parentElement;
+                if(!node.data||parent.closest('script,style,noscript,template'))continue;
+                if(!parent.checkVisibility({checkOpacity:true,checkVisibilityCSS:true}))continue;
+                collect(node,0,node.length,parent.closest('p,div,li,td,th,pre,h1,h2,h3,h4,h5,h6')||document.body);
+            }
+            return {texts:texts.map(text=>text.trim())};
+        }catch(error){return {error:true};}
+    })())""", lambda value: (extracted.append(json.loads(value) if value else {}), loop.quit()))
+    QTimer.singleShot(30000, loop.quit)
+    loop.exec()
+    if not extracted or extracted[0].get('error') or len(extracted[0].get('texts', [])) != columns*rows:
+        raise ValueError('原生文字提取失败或超过 4 MiB 预算，请按章节导入；已有课件保留。')
     # Capture screen CSS, canvas and SVG, including horizontal overflow; printing could hide content.
     output.mkdir()
     images, used = [], 0
@@ -316,6 +359,7 @@ def render_web(source, output, limit, resource_source=None):
                            'rectangle': {'x': left, 'y': top, 'width': image.width(), 'height': image.height()}})
     view.close()
     return {'pageCount': len(images), 'images': images, 'resources': assets, 'missingFonts': [],
+            'native_text': extracted[0]['texts'],
             'viewport': {'width': 1200, 'height': 1500}, 'layoutVersion': WEB_RENDER_VERSION}
 
 

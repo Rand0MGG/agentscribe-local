@@ -4,10 +4,20 @@
 
 ## 最近可核对的证据
 
-2026-10-16 此前 Mac UI 批次基于 `e82b957`，本次 Windows 补验基于 `92b8ed2` 加本地修改；源码同步与安装包发行分别进行。验证使用模拟设备/媒体，零音频访问尝试，只覆盖注明的平台与输入，不替代真实音频、GPU 或安装升级验收。历史轮次通过数不累加。
+各行单独注明代码、环境及证据；测试通过数不跨批次累加。无音频回归和隔离界面探针不替代真实录音、GPU、云端质量或安装升级验收。
 
 | 证据 | 已证明 | 范围与限制 |
 | --- | --- | --- |
+| 2026-10-17 0.10.0 构建前检查 | 源码、项目元数据及 Mac 包内说明统一为 0.10.0；封装/偏好/语言与导出搜索定向 70 passed / 1 skipped，完整 Ruff 与差异检查通过 | Windows Python 3.12；`.work/reports/v0100-preflight.xml`。跳过为链接权限；此前完整回归及后续定向证据见下方。两端候选构建须独立通过完整无音频回归及最终包探针，当前记录不代表安装包或 Release 已发布 |
+| 2026-10-17 同语言自动关闭翻译 | 语言同步专项 1 passed，偏好与录音小岛相关 31 passed；覆盖全部语言、设置/弹层双向同步、自动检测、简繁区别、保持关闭、活动会话设置不变及偏好恢复；Ruff/差异检查通过 | Windows Qt offscreen，无音频导入；日志 `.work/reports/language-selection-20261017.xml`、`language-related-final-20261017.xml`。只更改共享界面设置联动，未验 Mac 原生或真实识别翻译，未提交发布 |
+| 2026-10-17 文件夹行加号移除与侧栏对齐 | 文件夹行内加号、信号和点击热区移除，保留标题新建按钮及行菜单；导航图标按 20px 绘制，与根文件夹可见笔画和文字列对齐。Windows 原生明暗/宽窄窗口探针 1 passed，录音页回归最终 4 passed，Ruff/差异检查通过 | 初次新增用例按对象身份比较刷新后的文件夹行失败，改为稳定 ID 后通过；日志 `.work/reports/sidebar-row-plus-final-20261017.xml`、`sidebar-row-plus-recheck-20261017.xml`，截图 `.work/browser/sidebar-alignment-20261017/`。150% 缩放，无音频导入，未验 Mac 原生，未提交发布 |
+| 2026-10-17 新录音按钮样式统一 | 移除独立 15px 字号，复用侧栏导航样式；Windows 原生 1280×840 / 640×480、150% 缩放、明暗主题及禁用状态视觉复核，字号/高度/对齐和点击返回待录音页探针 1 passed，已有字幕反馈回归 3 passed | 初版探针错误要求点击立即创建录音，按现有待录音契约纠正后通过；原始/最终日志 `.work/reports/new-recording-button-20261017.xml`、`new-recording-button-final-20261017.xml`，截图 `.work/browser/new-recording-button-20261017/`。无音频导入，未验 Mac 原生；只删局部样式，无平台逻辑变更，未提交发布 |
+| 2026-10-17 导出/备份反馈与搜索分页修复 | 正常本机权限下定向 38 passed，覆盖队列持续进度、收起/新任务、失败/取消、备份恢复与跨页搜索；Windows 原生明暗主题截图补验 1 passed；Ruff、差异检查通过 | 初次受限运行 34 passed / 3 课程子进程超时，正常权限复查全过；日志 `.work/reports/export-search-20261017.xml`、`export-search-native-permissions-20261017.xml`、`export-search-visual-native-20261017.xml`。offscreen 字体缺失后另验原生截图 `.work/browser/export-search-20261017/`。零原生音频导入，未验 Mac 原生、真实音频或发行包；未提交发布 |
+| 2026-10-17 回看悬停背景移除及体验续查 | 字幕反馈及用户流程 25 passed；字幕交互与体验缺口探针 4 passed。明暗主题悬停背景不变，按压/待触发反馈、播放高亮及文字选择边界保留；Ruff、差异检查通过 | Windows Qt offscreen，无原生音频导入。日志 `.work/reports/hover-20261017.xml`、`hover-audit-20261017.xml`；审查探针 `.work/test_hover_ux_audit.py` 用受控写入和模拟通知到期确认 R21，用 150 条合成字幕确认 R22，探针通过不代表缺口已修复。未验 Mac 原生或真实音频，未提交发行 |
+| 2026-10-17 操作反馈与断线恢复修复 | Windows 完整无音频 **1093 passed / 26 skipped**，零音频导入；覆盖进度保留、收起后的取消入口、识别原因、模型检查重复/取消/迟到回执、新录音不扫描全库、真实课程子进程退出及重连保留草稿。最后的模型状态/关闭补验 1 passed，浅深主题及窄窗口视觉探针 1 passed；Ruff、差异检查通过 | `18c23fc` 加保留的本地改动；Python 3.12.8 / Qt 6.11.2。完整回归用正常本机权限及默认 pytest 临时路径；受限环境的 Python asyncio socketpair 初始化阻塞已独立定位，未改业务绕过。跳过为 Mac 专属、链接权限及缺原生编译器；汇总 `.work/reports/ui-feedback-20261017.json`，截图 `.work/browser/ui-feedback-20261017/`。Qt offscreen 仅验客户端布局，Mac 原生、真实音频/模型/供应商及安装升级未验；未提交发布 |
+| 2026-10-17 P1 与用户流程修复 | Windows 完整无音频 1086 passed / 26 skipped；最终课程/视觉专项 40 passed；Python 3.11/3.13、Qt 6.12 各 21 项及来源缓存专项各 1 项通过。真实 PDF/PPTX 离线原页、文本分片、术语导航/退出、后台读库及浅深主题/窄窗口走查通过 | `windows`、`18c23fc` 加本地修改；全量为 Python 3.12.8/Qt 6.11.2，最后的任务内校验复用及新增用例由 40 项补验覆盖。原始失败、最终日志和截图：`.work/reports/ux-fixes-20261017/`，汇总 `validated-results.json`；初次保存回执/视图同步假设已纠正，未放宽截止时间。跳过为 Mac 专属、链接权限及缺原生编译器，零音频导入；未验 Mac 原生、真实音频/模型/供应商或安装升级，未提交发布 |
+| 2026-10-17 用户流程审查 | 7 个探针复现跨录音术语丢失、浅色课程面板难读、具体错误被隐藏、窄设置页长路径溢出；核对 NLLB 截断、文本原生块与 PDF 离线预览缺口。101 条合成录音约 77 MB，库刷新/打开分别同步阻塞约 0.43/0.36 秒 | Windows，`18c23fc` 加 CI 修复，Python 3.12.8/PySide6 6.11.2；真实 Qt offscreen、临时库及适配器替身。`.work/reports/ux-review-20261017/audit-findings.json` 含源码定位、截图和分项证据。探针断言缺陷，执行通过不代表问题已修复；计时仅为本机单次观察，无设备、模型或供应商调用。待办归 ROADMAP |
+| 2026-10-17 CI 测试修复与渲染排查 | Windows 无音频 1067 passed / 26 skipped；3.11/Qt 6.12 定向 57 passed / 2 skipped；3.13/Qt 6.12、cp1252 环境关键回归 6 passed。固定子进程 UTF-8、等待实际业务状态；渲染进程成功/失败/取消及安全退出码日志通过，Ruff/差异检查通过 | `windows`、`18c23fc` 加本地修改；全量为 Python 3.12.8/Qt 6.11.2，之后的取消等待调整由 3.11/3.12 各 3 项补验覆盖。跳过为 Mac 专属、链接权限或缺原生编译器；零音频导入。命令/环境及控制台摘要：`.work/reports/ci-fix-20261017/validated-results.json`，非完整日志。Mac 原生异常未关闭；当时未提交/推送/发布 |
 | 2026-10-17 长录音、术语归属与保存恢复 | 完整桌面无音频 1087 passed / 2 Windows 专项跳过；长短字幕跨页定位及相关滚动/回听补验 5 passed，最终 Cocoa 专项 11 passed。覆盖 200 段分页、搜索/回听跨页、手动阅读位置、课程草稿隔离和旧回执、保存失败锁竞争、持久重试入口、草稿/即时原文 TXT 备份、取消/写失败/新文字/关闭确认边界，以及具体错误原因展示 | 基于 `c23600c` 加本地修改；macOS 26.6.2 arm64、Python 3.12.14、PySide6 6.11.2。完整收集未包含最后新增的长短字幕用例，该用例和最终滚动修改由 5 项补验及 Cocoa 11 项覆盖。初次受限运行有 19 项图形会话/本地端口权限失败，桌面会话完整复查通过；没有绕过检查。日志 `.work/reports/ux-audit-20261017/`，640×480 / 1280×840 示例窗口图 `.work/browser/ux-fixes-20261017/`。均使用临时数据及模拟会话，无原生音频导入尝试；未验真实录音、Windows 原生、安装升级。该批验证发生于版本号更新前；`0.9.3` 的源码/包内说明版本一致性检查、Ruff 与差异检查通过；版本、封装、更新及原生版本菜单补充回归 78 passed（`version-093-checks.log`）。源码集成不代表安装包发布 |
 | 2026-10-16 通知/模型/更新检查复核 | 完整无音频 1073 passed / 2 Windows 专项跳过；最终状态保护 16 项补验、Cocoa 3 项通过。删除通知详情入口；更新安装操作不再自动消失；模型检查异常不冒充缺失，设置/文件复查不覆盖准备结果，取消不误报失败 | `64cb54c` 加本地修改；完整运行后增加的状态保护已包含在最终补验。日志 `.work/reports/followup-audit-*.log`、`preparation-feedback-*.log`、`remove-notification-details-*.log`。失败子进程为模拟故障，未重现用户此前首次下载失败，未执行真实下载/采集或 Windows 原生验收，未打包发布 |
 | 2026-10-16 v0.9.2 Mac 应用内更新 | 固定来源 `13d2a33`；真实 0.9.0→0.9.2 下载、安装、正常重启及数据保留通过；中断、取消、篡改拒绝、启动失败自动恢复通过。原始旧包访问生产 HTTPS 订阅再次升级通过 | [构建](https://github.com/Rand0MGG/agentscribe-local/actions/runs/38882483285)：1039 passed / 24 平台或可选组件跳过、真实 Sparkle 回调与 DMG 探针通过；[故障验收](https://github.com/Rand0MGG/agentscribe-local/actions/runs/38886470827)、[生产升级](https://github.com/Rand0MGG/agentscribe-local/actions/runs/38887571571)。一次性 Mac runner；录音/保存门禁为模拟状态，未验真实采集或 Windows 原生升级。原钥匙串签名、订阅部署完成，仍为 ad-hoc、未公证 |
@@ -48,6 +58,8 @@
 2026-10-15 在 Windows、源码 `f37e351` 上完成文档修订与交叉审查：精简 AGENTS 并核对细则承接，区分 spec 目标、当前策略、实现缺口和待验证范围。61 份 Markdown 的 320 个本地引用（含 41 个标题锚点）、5 段 PowerShell 示例语法与 `git diff --check` 通过；示例未执行。历史正文、许可、业务代码、依赖与版本均未修改，没有重新运行应用、模型、音频、云端或生产升级验收。
 
 本地检查摘要在 `.work/reports/docs-improvement-20261015/validation.json`，示例语法结果在同目录 `powershell-examples.json`；与其他 `.work/` 证据一样不随 Git 同步。检查只证明可见文件、标题引用、修改范围与示例语法，不证明示例已在相应设备执行。
+
+2026-10-17 功能修复前的文档整理批次，修正安装/通知指引，补 R19 及 spec/验收；当日核对 GitHub Release。62 份 Markdown 的 327 个本地引用、39 个标题锚点及差异检查通过。当时仅改文档、未重跑应用验收；摘要：`.work/reports/docs-update-20261017/validation.json`。后续功能修复与验证见上表。
 
 ## 已发布产物
 

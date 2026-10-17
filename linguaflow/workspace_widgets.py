@@ -217,7 +217,7 @@ class LibraryDelegate(QStyledItemDelegate):
             text_x = x + 30
         painter.setFont(option.font)
         painter.setPen(QColor(("#303034" if selected else "#60606a") if light else ("#eeeeef" if selected else "#bdbdc3")))
-        rect = option.rect.adjusted(text_x - option.rect.x(), 0, -53, 0)
+        rect = option.rect.adjusted(text_x - option.rect.x(), 0, -28 if kind == 'folder' else -53, 0)
         title = str(index.data())
         if option.fontMetrics.horizontalAdvance(title) <= rect.width():
             painter.drawText(rect, Qt.AlignmentFlag.AlignVCenter, title)
@@ -238,16 +238,12 @@ class LibraryDelegate(QStyledItemDelegate):
             ink.fillRect(bounds, fade)
             ink.end()
             painter.drawPixmap(rect.topLeft(), layer)
-        if kind == "folder":
-            painter.setPen(QColor("#9999a1"))
-            painter.drawText(option.rect.adjusted(option.rect.width() - 50, 0, -26, 0), Qt.AlignmentFlag.AlignCenter, "+")
         if hover or selected:
             painter.drawText(option.rect.adjusted(option.rect.width() - 27, 0, -4, 0), Qt.AlignmentFlag.AlignCenter, "···")
         painter.restore()
 
 
 class LibraryTree(QTreeWidget):
-    newRequested = Signal(str)
     menuRequested = Signal(object, object)
 
     def __init__(self):
@@ -275,9 +271,6 @@ class LibraryTree(QTreeWidget):
             offset = rect.right() - event.position().x()
             if offset < 27:
                 self.menuRequested.emit(row, self.viewport().mapToGlobal(event.position().toPoint()))
-                return
-            if kind == "folder" and offset < 52:
-                self.newRequested.emit(identifier)
                 return
         super().mousePressEvent(event)
 
@@ -356,6 +349,8 @@ class SettingsWorkspace(QWidget):
         body.addWidget(text_label("文件与存储", "settingsSection"))
         card, rows = self.group()
         self.storage_path = text_label(str(storage_root), "muted")
+        self.storage_path.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.storage_path.setMinimumWidth(0)
         self.storage_path.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         storage_controls = QWidget()
         buttons = QHBoxLayout(storage_controls)
@@ -456,6 +451,7 @@ class SettingsWorkspace(QWidget):
 
     def set_storage_root(self, root):
         self.storage_path.setText(str(root))
+        self.storage_path.setToolTip(str(root))
 
     def page(self, name):
         scroll = QScrollArea()

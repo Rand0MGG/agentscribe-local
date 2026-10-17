@@ -19,6 +19,87 @@ from linguaflow.process_platform import spawn_options
 from linguaflow.runtime_paths import document_renderer
 
 
+def test_native_web_text_belongs_to_its_visible_tile(tmp_path):
+    source = tmp_path / 'positioned.html'
+    source.write_text('''<html><body style="margin:0;width:2300px;height:3200px">
+<p style="position:absolute;left:10px;top:10px">First <b>inline</b> word 😀</p>
+<p style="position:absolute;left:1250px;top:10px">Right marker</p>
+<p style="position:absolute;left:10px;top:1700px">Second row marker</p>
+<p style="display:none">Hidden marker</p><script>const privateScript='Script marker';</script>
+</body></html>''', encoding='utf-8')
+    library = Library(tmp_path / 'library')
+    folder = library.index['folders'][0]['id']
+    asyncio.run(import_document(library, folder, source))
+    course_path, course = course_for_folder(library, folder)
+    blocks = read_blocks(library, course_path, course)
+    assert 'First inline word 😀' in blocks[0].text
+    assert 'Right marker' in blocks[1].text and 'Right marker' not in blocks[0].text
+    assert 'Second row marker' in blocks[2].text and 'Second row marker' not in blocks[0].text
+    assert all('Hidden marker' not in block.text and 'Script marker' not in block.text for block in blocks)
+
+
+def test_native_text_survives_multiple_vertical_tiles(tmp_path):
+    source = tmp_path / 'long.txt'
+    source.write_text('Opening sentence 😀\n' + 'A real source line.\n'*240 + 'Final source marker', encoding='utf-8')
+    library = Library(tmp_path / 'library')
+    folder = library.index['folders'][0]['id']
+    asyncio.run(import_document(library, folder, source))
+    course_path, course = course_for_folder(library, folder)
+    blocks = read_blocks(library, course_path, course)
+    assert len(blocks) > 1 and 'Opening sentence 😀' in blocks[0].text
+    assert 'Final source marker' in blocks[-1].text
+    assert sum(block.text.count('Final source marker') for block in blocks) == 1
+    assert sum(block.text.count('A real source line.') for block in blocks) == 240
+
+
+@pytest.mark.parametrize('suffix', ['.pdf', '.pptx'])
+def test_worker_prepares_native_pages_without_cloud_consent(monkeypatch, samples, tmp_path, suffix):
+    import linguaflow.knowledge.worker as module
+    from linguaflow.knowledge.worker import KnowledgeWorker
+    try:
+        document_renderer()
+    except RuntimeError:
+        pytest.skip('Optional document renderer unavailable')
+    source = next(samples.glob('*'+suffix), None)
+    if suffix == '.pdf':
+        from pypdf import PdfWriter
+        from pypdf.generic import DecodedStreamObject, NameObject
+        source = tmp_path / 'diagram.pdf'
+        writer = PdfWriter()
+        page = writer.add_blank_page(width=400, height=300)
+        stream = DecodedStreamObject()
+        stream.set_data(b'0 0 1 rg 40 40 240 160 re f')
+        page[NameObject('/Contents')] = stream
+        writer.write(source)
+    if source is None:
+        pytest.skip('Optional document renderer unavailable')
+    library = Library(tmp_path / 'library')
+    item = library.create('inbox', {}, '离线课件')
+    library.save(item, [], 'complete')
+    document = asyncio.run(import_document(library, item['folder'], source))
+    events = []
+
+    def forbidden(**kwargs):
+        raise AssertionError('Offline preview must not create a cloud service')
+
+    monkeypatch.setattr(module, 'DeepSeekService', forbidden)
+
+    async def scenario():
+        worker = KnowledgeWorker(events.append)
+        await worker.command({'operation': 'open', 'root': str(library.root), 'identifier': item['id'],
+                              'folder_id': item['folder'], 'epoch': 'offline'})
+        await worker.command({'operation': 'preview'})
+        await worker.task
+        assert not any(event['type'] == 'error' for event in events), events[-3:]
+        view = next(event for event in reversed(events) if event['type'] == 'view' and 'blocks' in event)
+        assert view['blocks'] and all(block.get('preview_image_path') for block in view['blocks'])
+        assert all(Path(block['preview_image_path']).is_file() for block in view['blocks'])
+        assert not worker.manifest['notes_cloud'] and not worker.course.get('material_images_cloud', False)
+        base = material_cache(library, worker.course_path, document)
+        assert page_images(library, base, document['id'], len(view['blocks']))
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize('suffix', ['.png', '.html', '.docx'])
 def test_deep_library_import_keeps_complete_pages_and_originals(samples, tmp_path, suffix):
     if suffix in OFFICE_SUFFIXES:

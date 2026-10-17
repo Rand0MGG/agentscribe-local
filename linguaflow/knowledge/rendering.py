@@ -1,6 +1,7 @@
 """Local full-page rasterization through DSH's independent LibreOffice Kit dependency."""
 import asyncio
 import hashlib
+import logging
 import shutil
 import struct
 import sys
@@ -36,6 +37,9 @@ async def run_renderer(arguments):
         env=python_environment(), **spawn_options())
     try:
         if await asyncio.wait_for(process.wait(), 130):
+            # Native helpers can abort before writing error.json. Keep the exit
+            # status without logging arguments, document paths or page contents.
+            logging.getLogger(__name__).error('Course page renderer exited with code %s', process.returncode)
             raise RuntimeError('课件页面生成失败，请检查文件、字体、资源和组件安装；原件与已保存内容保留。')
     finally:
         process.stdin.close()

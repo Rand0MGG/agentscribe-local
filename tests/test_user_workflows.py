@@ -74,11 +74,10 @@ w.leave_settings(); w.close()
 ''', tmp_path)
 
 
-def test_feedback_popup_sizes_aligns_and_expires_without_progress_reopening(tmp_path):
+def test_feedback_popup_sizes_aligns_and_retains_progress_until_dismissed(tmp_path):
     run_ui('''
 from types import SimpleNamespace
 from unittest.mock import patch
-from PySide6.QtTest import QTest
 import linguaflow.notifications as notifications
 w.show(); settle_geometry(w)
 center=w.notifications
@@ -96,7 +95,10 @@ with patch.object(notifications,'time',SimpleNamespace(monotonic=lambda:clock[0]
     width=center.width()
     center.post('download','下载模型',kind='progress',progress=100); app.processEvents()
     assert center.width()==width
-    clock[0]+=6; QTest.qWait(550)
+    clock[0]+=6
+    center._refresh()
+    assert center.isVisible()
+    center.dismiss.click()
     assert center.isHidden()
     center.post('download','下载模型',kind='progress',progress=99)
     assert center.isHidden() and 'download' in center.notices
@@ -110,8 +112,9 @@ with patch.object(notifications,'time',SimpleNamespace(monotonic=lambda:clock[0]
         assert small<center.width()<=anchor.width()-32
         assert center.height()>44
         assert w.pages.geometry().bottom()>=w.centralWidget().height()-2
-    clock[0]+=9; QTest.qWait(550)
-    assert center.isHidden() and center.notices['error'].action is not None
+    clock[0]+=9
+    wait(center.isHidden,timeout=2)
+    assert center.notices['error'].action is not None
     center.post('success','新的任务已完成',kind='success')
     assert center.current_key=='success' and center.isVisible()
     center.dismiss.click(); assert center.isHidden()
@@ -360,7 +363,8 @@ assert captions[0].source=='keep caption'
 def test_update_abandonment_waits_for_runtime_shutdown_and_recovers(tmp_path, event):
     run_ui('''
 from linguaflow.runtime_preparation import RuntimePreparation
-w.show();settle_geometry(w)
+w.show();wait(w.isVisible,timeout=2)
+# This test exercises shutdown/cancellation, independent of window size hints.
 wait(lambda:not w.background_checks)
 runtime=RuntimePreparation()
 w.runtime=runtime

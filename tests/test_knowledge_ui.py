@@ -184,7 +184,8 @@ from PySide6.QtWidgets import QApplication
 from linguaflow.knowledge.panel import KnowledgePanel
 class Client(QObject):
  changed=Signal(dict)
- process=object()
+ connected=True
+ closing=False
  def send(self,*args,**kwargs): return True
 app=QApplication([])
 p=KnowledgePanel(Client(),lambda:None,lambda:True)

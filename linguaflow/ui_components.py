@@ -121,7 +121,7 @@ class NavigationButton(QPushButton):
             painter.setBrush(QColor(colors['selected' if self.isDown() else 'hover']))
             painter.drawRoundedRect(QRectF(self.rect()).adjusted(2, 2, -2, -2), 8, 8)
         # Keep the icon's visible stroke inside the same inset as the hover surface.
-        self.icon().paint(painter, 9, (self.height()-18)//2, 18, 18,
+        self.icon().paint(painter, 9, (self.height()-20)//2, 20, 20,
             Qt.AlignmentFlag.AlignCenter, self.icon().Mode.Normal if self.isEnabled() else self.icon().Mode.Disabled)
         painter.setPen(QColor(colors['text'] if self.isEnabled() else colors['disabled']))
         painter.setFont(self.font())

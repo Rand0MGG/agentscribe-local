@@ -12,9 +12,9 @@ from .api import DeepSeekService, save_credential
 from .files import FileChecks, checked_path, local_path, material_cache, read_json, write_json, write_text
 from .glossary import compile_context, term_text
 from .harness import run_agent
-from .materials import RENDERED_PARSER, course_for_folder, import_document, locate_course, read_blocks
+from .materials import course_for_folder, import_document, locate_course, read_blocks
 from .readings import load_readings, save_reading, validate_reading, visual_blocks
-from .rendering import image_bytes, render_material
+from .rendering import image_bytes, page_images, render_material
 from .retrieval import markdown
 from .schemas import Term, fingerprint
 from .session import read_manifest, write_manifest
@@ -97,7 +97,14 @@ class KnowledgeWorker:
                      'busy': self.task is not None and not self.task.done()}
         digest = fingerprint([self.course, self.material_error, [(row.id, row.version) for row in self.blocks]])
         if digest != self.last_view_course:
-            rendered = {row['id']: row for row in (self.course or {}).get('documents', []) if row['parser'] == RENDERED_PARSER}
+            rendered = {}
+            for row in (self.course or {}).get('documents', []):
+                pages = [block for block in self.blocks if block.document_id == row['id'] and block.evidence_type == 'native']
+                try:
+                    page_images(self.library, material_cache(self.library, self.course_path, row), row['id'], len(pages))
+                except (OSError, ValueError, KeyError, TypeError):
+                    continue  # Native text remains usable before local pages are prepared.
+                rendered[row['id']] = row
             display = [{**asdict(block),
                 'text': block.text[:1600] if block.evidence_type == 'visual' else block.text,
                 'preview_truncated': block.evidence_type == 'visual' and len(block.text) > 1600} for block in self.blocks]
@@ -113,9 +120,11 @@ class KnowledgeWorker:
     def course_version(self):
         return fingerprint([self.course or {}, [(row.id, row.version) for row in self.blocks]])
 
-    def authorize(self, operation, course_id=None):
+    def authorize(self, operation, course_id=None, job=None, checks=None):
         """Read the current consent before dispatch, including every harness model turn."""
         self.identity()
+        if self.task is not None and self.task.cancelling():
+            raise asyncio.CancelledError
         if course_id is not None and self.manifest['course_id'] != course_id:
             raise ValueError('课程关联已变化，未发起后续模型请求。')
         if operation == 'extract':
@@ -124,6 +133,13 @@ class KnowledgeWorker:
                 raise ValueError('课件上传许可已关闭，未发起模型请求。')
         elif not self.manifest['notes_cloud']:
             raise ValueError('笔记上传许可已关闭，未发起模型请求。')
+        if job is not None:
+            self.sync_materials(checks)
+            if self.material_error:
+                raise ValueError('课件来源已变化或不可用，未发起后续模型请求；已保存笔记保留。')
+            _, saved = self.library.load(self.item)
+            self.store.verify_saved(saved)
+            self.store.validate_job(job)
 
     def cancel(self):
         if self.task is not None and not self.task.done() and not self.task.cancelling():
@@ -170,7 +186,7 @@ class KnowledgeWorker:
             self.notify({'type': 'status', 'message': '课程任务已取消；点击更新笔记可继续自动更新，已保存内容保留。', 'busy': False})
             return
         self.identity()
-        if operation in ('import', 'terms', 'extract') and self.course is None:
+        if operation in ('import', 'terms', 'extract', 'preview') and self.course is None:
             raise ValueError('关联课程不可用，请恢复资料或选择课程重新关联。')
         if operation == 'import':
             if self.task is not None and not self.task.done():
@@ -233,6 +249,14 @@ class KnowledgeWorker:
             write_text(self.library.root, checked_path(self.library.root,
                 self.library.directory(self.item['id']) / '课堂笔记.md'), markdown(self.store.view()))
             self.notify({'type': 'status', 'message': '已保存课堂笔记.md，可在录音文件夹查看。', 'busy': False})
+        elif operation == 'preview':
+            if self.task is not None and not self.task.done():
+                raise ValueError('请先取消当前课程任务。')
+            self.sync_materials()
+            if self.material_error or not self.blocks:
+                raise ValueError('课件资料不可用，请恢复原件或重新导入；已有内容保留。')
+            self.task = asyncio.create_task(self.preview_task())
+            self.notify({'type': 'status', 'message': '正在本机准备原页，不上传课件，可取消。', 'busy': True})
         elif operation in ('extract', 'notes', 'organize', 'question'):
             self.start_task(operation, value.get('question', ''), value.get('section', ''))
         elif operation == 'view':
@@ -276,11 +300,33 @@ class KnowledgeWorker:
         finally:
             self.notify({'type': 'idle', 'busy': False})
 
+    async def preview_task(self):
+        course_id = self.manifest['course_id']
+        try:
+            descriptors = list(self.course['documents'])
+            for descriptor in descriptors:
+                pages = [row for row in self.blocks if row.document_id == descriptor['id'] and row.evidence_type == 'native']
+                await render_material(self.library, self.course_path, descriptor, len(pages))
+                self.identity()
+                if self.manifest['course_id'] != course_id or descriptor not in self.course['documents']:
+                    raise ValueError('课程资料已变化，请重新准备本地原页。')
+            self.last_view_course = None
+            self.sync_materials()
+            self.view()
+            self.notify({'type': 'status', 'message': '本地原页已准备，可离线核对；没有上传课件。', 'busy': False})
+        except asyncio.CancelledError:
+            self.notify({'type': 'status', 'message': '本地原页准备已取消，原件和已有内容保留。', 'busy': False})
+        except Exception as exc:
+            self.error(exc)
+        finally:
+            self.notify({'type': 'idle', 'busy': False})
+
     async def cloud_task(self, operation, question, section=''):
         service = None
+        checks = FileChecks(self.library.root)
         try:
             self.authorize(operation)
-            self.sync_materials()
+            self.sync_materials(checks)
             if self.material_error:
                 raise ValueError('课程资料不可用或校验失败，请恢复后重试；没有发起模型请求。')
             _, persisted = self.library.load(self.item)
@@ -294,8 +340,8 @@ class KnowledgeWorker:
                     return
             course_id = self.manifest['course_id']
             service = DeepSeekService(notify=lambda usage: self.notify({'type': 'usage', **usage}),
-                before_request=lambda: self.authorize(operation, course_id),
-                before_image_request=lambda: self.authorize('extract', course_id),
+                before_request=lambda: self.authorize(operation, course_id, job, checks),
+                before_image_request=lambda: self.authorize('extract', course_id, job, checks),
                 page_count=sum(row.evidence_type == 'native' for row in self.blocks) if operation == 'extract' else 0,
                 images_enabled=bool(self.course and self.course.get('material_images_cloud', False)))
             if operation == 'extract':
@@ -309,13 +355,11 @@ class KnowledgeWorker:
                 # Let queued changes invalidate a late result before publication.
                 await asyncio.sleep(0)
                 self.authorize(operation, course_id)
-                self.sync_materials()
+                self.sync_materials(checks)
                 if self.material_error:
                     raise ValueError('课件原件或缓存已变化，请恢复后重试；旧结果未发布。')
                 _, saved = self.library.load(self.item)
                 self.store.verify_saved(saved)
-                if self.course_version() != course_version:
-                    raise ValueError('课程材料或术语已变化，旧结果已拒绝。')
                 if operation == 'question':
                     self.store.validate_job(job, require_latest=True)
                     self.notify({'type': 'answer', **result, 'event_seq': job.event_seq,
@@ -343,6 +387,7 @@ class KnowledgeWorker:
                 pass
             self.error(exc)
         finally:
+            self.checked_materials = None
             if service is not None:
                 try:
                     self.identity()

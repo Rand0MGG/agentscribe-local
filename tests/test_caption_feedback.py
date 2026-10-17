@@ -43,10 +43,17 @@ for theme in (0,1):
     move(QPoint(text.width()-2, text.height()//2))
     base = colour()
     move(point)
-    wait(lambda: text.cursor().shape() == Qt.CursorShape.PointingHandCursor and card.interaction == 'hover')
+    wait(lambda: text.cursor().shape() == Qt.CursorShape.PointingHandCursor)
     assert text.cursor().shape() == Qt.CursorShape.PointingHandCursor, (theme, text._pointer_hit, text._interaction,
         text._text_contains(point), app.widgetAt(text.mapToGlobal(point)))
-    assert card.interaction == 'hover' and colour() != base, (theme, card.interaction, colour().name(), base.name())
+    assert card.interaction == '' and colour() == base, (theme, card.interaction, colour().name(), base.name())
+    card.setProperty('playing', True)
+    playing = colour()
+    assert playing != base
+    for position in (QPoint(text.width()-2, text.height()//2), point):
+        move(position)
+        assert card.interaction == '' and colour() == playing
+    card.setProperty('playing', False)
     hover = colour()
     text.setSelection(0,0)
     QTest.mousePress(text, Qt.MouseButton.LeftButton, pos=point)

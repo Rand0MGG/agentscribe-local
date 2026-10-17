@@ -1,6 +1,6 @@
 """Find and locate existing transcript segments without playing audio."""
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtWidgets import QLineEdit, QListWidget, QListWidgetItem, QPushButton
+from PySide6.QtWidgets import QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton
 
 from .ui_components import SurfaceDialog
 
@@ -18,6 +18,17 @@ class RecordingSearchDialog(SurfaceDialog):
         self.body.addWidget(self.query)
         self.results = QListWidget()
         self.body.addWidget(self.results, 1)
+        self.summary = QLabel()
+        self.summary.setWordWrap(True)
+        self.body.addWidget(self.summary)
+        self.previous = QPushButton('上一页')
+        self.next = QPushButton('下一页')
+        for button in (self.previous, self.next):
+            button.setObjectName('quiet')
+            button.setAutoDefault(False)
+            self.actions.addWidget(button)
+        self.previous.clicked.connect(lambda: self.show_page(self.page - 1))
+        self.next.clicked.connect(lambda: self.show_page(self.page + 1))
         self.locate = QPushButton('定位')
         self.locate.setObjectName('primary')
         self.actions.addStretch()
@@ -36,20 +47,26 @@ class RecordingSearchDialog(SurfaceDialog):
     def search(self):
         self.timer.stop()
         query = self.query.text().strip().casefold()
+        self.matches = [caption for caption, searchable in self.entries if not query or query in searchable]
+        self.show_page(0)
+
+    def show_page(self, page):
+        self.page = max(0, min(page, max(0, (len(self.matches)-1)//100)))
+        start = self.page * 100
         self.results.clear()
-        for caption, searchable in self.entries:
-            if not query or query in searchable:
-                seconds = int(caption.start)
-                excerpt = ' '.join((caption.source+' '+caption.translation).split())
-                row = QListWidgetItem(f'{seconds//60:02d}:{seconds%60:02d}  {excerpt[:140]}')
-                row.setData(Qt.ItemDataRole.UserRole, caption.id)
-                self.results.addItem(row)
-                if self.results.count() >= 100:
-                    break  # Bound widget creation; refine the query for later matches.
+        for caption in self.matches[start:start+100]:
+            seconds = int(caption.start)
+            excerpt = ' '.join((caption.source+' '+caption.translation).split())
+            row = QListWidgetItem(f'{seconds//60:02d}:{seconds%60:02d}  {excerpt[:140]}')
+            row.setData(Qt.ItemDataRole.UserRole, caption.id)
+            self.results.addItem(row)
         self.results.setCurrentRow(0)
         self.locate.setEnabled(self.results.count() > 0)
-        self.query.setToolTip('最多显示 100 个匹配段落；可继续输入缩小范围。' if self.results.count() == 100 else
-                              '没有匹配内容。' if not self.results.count() else '')
+        self.previous.setEnabled(self.page > 0)
+        self.next.setEnabled(start + 100 < len(self.matches))
+        self.summary.setText(f'共 {len(self.matches)} 条，显示第 {start+1}–{start+self.results.count()} 条'
+                             if self.matches else '没有匹配内容，请尝试其他关键词。'
+                             if self.query.text().strip() else '当前录音还没有字幕。')
 
     def choose(self):
         row = self.results.currentItem()

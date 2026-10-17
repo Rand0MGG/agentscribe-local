@@ -276,6 +276,9 @@ async def import_document(library, folder_id, path):
         if hashlib.sha256(source.read_bytes()).hexdigest() != digest:
             raise ValueError('导入期间课件发生变化，请重新导入。')
         texts = manifest.pop('native_text', [])
+        if texts:
+            # Version native evidence as well as pixels; old snapshots stay readable.
+            manifest['nativeTextSha256'] = fingerprint(texts)
         resources = manifest.pop('resources', [])
         manifest = normalize_pages(work / 'pages', manifest, digest)
         write_json(library.root, work / 'pages' / 'manifest.json', manifest)

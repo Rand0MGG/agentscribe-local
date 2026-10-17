@@ -46,6 +46,7 @@ git diff --check
 - 缺陷测试应能在修复前失败。修根因，不靠生产测试专用分支、假算法、吞异常、无条件重试、删测试或放宽断言换绿；测试替身留在测试侧。
 - UI 使用独立进程隔离 Qt 应用类型；共用 `tests/ui_support.py` 的有期限等待、退出和日志检查。`close()` 被调用不等于关闭成功，零退出码也不能掩盖 Python 绘制回调异常或 QPainter/QThread/QProcess 销毁警告；不能只在任务空闲后测退出。
 - 图片/网页要检查真实解码/页面内容，不能仅检查 HTML 含标签。状态等待有截止时间，布局稳定与业务结果分别断言，不用固定短 sleep 调整通过率。
+- 跨进程中文断言同时指定子进程输出和父进程解码的 UTF-8，不能依赖机器区域设置。通知等待实际收起，字幕定位等待目标卡片进入视口；窗口尺寸稳定不能代替业务完成。
 - `.github/workflows/checks.yml` 是 CI 矩阵的执行权威：两端 Python 3.11–3.13 无音频回归，Python 3.12 另做课程 SDK 和原生文档渲染，Ruff 独立执行。专用集成设置 `AGENTSCRIBE_REQUIRE_INTEGRATIONS=1`，选中用例有跳过即失败。
 - 普通回归列出跳过原因：平台不适用、缺组件、缺权限或尚未部署分别说明。模拟链接不能证明真实映射保护；另一平台模拟不能替代实机。
 - Cocoa 原生预览须有窗口服务，受限环境用 offscreen。预览入口 `scripts/preview_workspace.py --capture --output .work/browser/ui-design-<平台>` 使用示例库/设置，不能代替原生框架、权限、真实音频或 GPU 验收。

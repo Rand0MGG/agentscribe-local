@@ -147,6 +147,17 @@ class NllbTranslator:
             output = self.model.generate(
                 **inputs,
                 forced_bos_token_id=self.tokenizer.convert_tokens_to_ids(self.target),
+                # A forced EOS at the limit conceals truncation. Accept only the
+                # model's own termination, with the existing generation budget.
+                forced_eos_token_id=None,
                 **NLLB_GENERATION,
             )
-        return self.tokenizer.batch_decode(output, skip_special_tokens=True)[0].strip()
+        tokens = output[0][1:]  # Encoder/decoder generation starts with one decoder token.
+        eos = self.model.generation_config.eos_token_id
+        eos = eos if isinstance(eos, (list, tuple)) else [eos]
+        if len(tokens) >= NLLB_GENERATION['max_new_tokens'] and int(tokens[-1]) not in eos:
+            raise ValueError('译文达到长度上限，未将截断结果作为定稿；原文及已有译文保留。')
+        result = self.tokenizer.batch_decode(output, skip_special_tokens=True)[0].strip()
+        if not result:
+            raise ValueError('翻译模型未返回文字，原文已保留。')
+        return result

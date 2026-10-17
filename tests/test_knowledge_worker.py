@@ -197,6 +197,158 @@ def test_material_corruption_before_task_starts_prevents_any_model_request(monke
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize('change', ['live', 'saved', 'unrelated'])
+def test_every_model_turn_revalidates_frozen_sources(monkeypatch, tmp_path, change):
+    import linguaflow.knowledge.worker as module
+    library = Library(tmp_path / 'library')
+    item = library.create('inbox', {}, '录音')
+    caption = Caption(1, 0, 1, 'original evidence', 'en')
+    library.save(item, [caption], 'complete')
+    calls, events = [], []
+
+    class FakeService:
+        def __init__(self, **kwargs):
+            self.before_request = kwargs['before_request']
+            self.budget = SimpleNamespace(view=lambda: {})
+
+        async def update_notes(self, job):
+            self.before_request()
+            calls.append('first')
+            if change == 'live':
+                await worker.command({'operation': 'caption', 'caption': asdict(replace(caption, source='new evidence', revision=2))})
+            elif change == 'saved':
+                library.save(item, [replace(caption, source='externally changed', revision=2)])
+            else:
+                from linguaflow.knowledge.files import write_json
+                course = read_json(worker.course_path)
+                course['terms'].append({'canonical': 'Unrelated term', 'aliases': [], 'approved': False,
+                                        'origin': 'manual', 'evidence_ids': []})
+                write_json(library.root, worker.course_path, course)
+            self.before_request()
+            calls.append('second')
+            return {'upserts': [{'id': 'note', 'section': '课堂讲述', 'text': '说明', 'origin': 'lecture',
+                     'refs': [{'id': 'caption:1', 'quote': 'original evidence'}]}], 'delete_note_ids': []}
+
+        async def close(self):
+            calls.append('closed')
+
+    monkeypatch.setattr(module, 'DeepSeekService', FakeService)
+    worker = KnowledgeWorker(events.append)
+
+    async def scenario():
+        await worker.command({'operation': 'open', 'root': str(library.root), 'identifier': item['id'],
+                              'folder_id': item['folder'], 'epoch': 'test'})
+        await worker.command({'operation': 'permission', 'materials': False, 'notes': True})
+        worker.start_task('notes')
+        await worker.task
+        if change == 'unrelated':
+            assert calls == ['first', 'second', 'closed'] and worker.store.view()['notes']
+        else:
+            assert calls == ['first', 'closed'] and not worker.store.view()['notes']
+            assert worker.last_error
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('action', ['cancel', 'failure'])
+def test_local_preview_failure_or_cancel_preserves_original_and_old_pages(monkeypatch, tmp_path, action):
+    from test_knowledge_visual import fake_pages, setup_course
+
+    import linguaflow.knowledge.worker as module
+    from linguaflow.knowledge.files import material_cache
+    from linguaflow.knowledge.rendering import page_images
+    library, item, document = setup_course(tmp_path)
+    events = []
+
+    async def scenario():
+        worker = KnowledgeWorker(events.append)
+        await worker.command({'operation': 'open', 'root': str(library.root), 'identifier': item['id'],
+                              'folder_id': item['folder'], 'epoch': 'preview'})
+        before = fake_pages(library, worker.course_path, document, 3)
+        course_before = worker.course_path.read_bytes()
+        original = worker.course_path.parent / 'materials' / document['id'] / 'original.pptx'
+        original_before = original.read_bytes()
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def held(*args):
+            entered.set()
+            await release.wait()
+            raise ValueError('课件组件不可用，请安装后重试。')
+
+        monkeypatch.setattr(module, 'render_material', held)
+        await worker.command({'operation': 'preview'})
+        await entered.wait()
+        if action == 'cancel':
+            await worker.command({'operation': 'cancel'})
+        else:
+            release.set()
+        await worker.task
+        assert original.read_bytes() == original_before and worker.course_path.read_bytes() == course_before
+        assert page_images(library, material_cache(library, worker.course_path, document), document['id'], 3) == before
+        assert any('取消' in event.get('message', '') for event in events) if action == 'cancel' else any(
+            event['type'] == 'error' and '课件组件' in event['message'] for event in events)
+        assert events[-1] == {'type': 'idle', 'busy': False}
+    asyncio.run(scenario())
+
+
+def test_model_turn_checks_reuse_unchanged_materials_but_detect_changed_original(monkeypatch, tmp_path):
+    from pathlib import Path
+
+    from test_knowledge_visual import fake_pages, reading, setup_course
+
+    import linguaflow.knowledge.worker as module
+    from linguaflow.knowledge.materials import course_for_folder, read_blocks
+    from linguaflow.knowledge.readings import save_reading
+    library, item, document = setup_course(tmp_path)
+    course_path, course = course_for_folder(library, item['folder'])
+    images = fake_pages(library, course_path, document, 3)['images']
+    for block, image in zip(read_blocks(library, course_path, course), images, strict=True):
+        save_reading(library, course_path, block, image['sha256'], reading(block))
+    original = course_path.parent / 'materials' / document['id'] / 'original.pptx'
+    calls, reads, events = [], [], []
+    read_bytes = Path.read_bytes
+
+    def counted(path):
+        if path == original:
+            reads.append(path)
+        return read_bytes(path)
+
+    class FakeService:
+        def __init__(self, **kwargs):
+            self.before_request = kwargs['before_request']
+            self.budget = SimpleNamespace(view=lambda: {})
+
+        async def update_notes(self, job):
+            self.before_request()
+            calls.append('first')
+            count = len(reads)
+            assert count > 0
+            self.before_request()
+            calls.append('second')
+            assert len(reads) == count, 'Unchanged source was fully reread for another model turn'
+            original.write_bytes(b'externally changed during model task')
+            self.before_request()
+            calls.append('must not send')
+            raise AssertionError('Changed material allowed another request')
+
+        async def close(self):
+            calls.append('closed')
+
+    monkeypatch.setattr(Path, 'read_bytes', counted)
+    monkeypatch.setattr(module, 'DeepSeekService', FakeService)
+
+    async def scenario():
+        worker = KnowledgeWorker(events.append)
+        await worker.command({'operation': 'open', 'root': str(library.root), 'identifier': item['id'],
+                              'folder_id': item['folder'], 'epoch': 'checks'})
+        await worker.command({'operation': 'permission', 'materials': False, 'notes': True})
+        worker.start_task('notes')
+        await worker.task
+        assert calls == ['first', 'second', 'closed'] and worker.last_error
+        assert any(event['type'] == 'error' and '来源已变化' in event.get('message', '') for event in events)
+        assert not worker.store.view()['notes']
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize('operation', ['notes', 'organize', 'question', 'extract'])
 def test_permission_revoked_before_dispatch_prevents_service_creation(monkeypatch, tmp_path, operation):
     import linguaflow.knowledge.worker as module

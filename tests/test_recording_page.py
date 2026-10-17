@@ -173,3 +173,31 @@ w.release_recording_lock()
 w.current_item=None
 w.close()
 ''',tmp_path)
+
+
+def test_folder_row_former_plus_is_plain_selection_and_menu_remains(tmp_path):
+    run_ui(r'''
+from unittest.mock import patch
+from PySide6.QtCore import QPoint
+from PySide6.QtTest import QTest
+module.Window.start_background_check = lambda *args, **kwargs: None
+w.show();settle_geometry(w)
+row=w.library_tree.topLevelItem(0)
+identity=row.data(0,Qt.ItemDataRole.UserRole)
+rect=w.library_tree.visualItemRect(row)
+with patch.object(w,'new_recording') as create:
+    QTest.mouseClick(w.library_tree.viewport(),Qt.MouseButton.LeftButton,
+                    pos=QPoint(rect.right()-38,rect.center().y()))
+    create.assert_not_called()
+assert w.library_tree.currentItem().data(0,Qt.ItemDataRole.UserRole) == identity
+row=w.library_tree.currentItem()
+rect=w.library_tree.visualItemRect(row)
+menus=[]
+w.library_tree.menuRequested.disconnect()
+w.library_tree.menuRequested.connect(lambda item,point:menus.append(item))
+QTest.mouseClick(w.library_tree.viewport(),Qt.MouseButton.LeftButton,
+                pos=QPoint(rect.right()-12,rect.center().y()))
+assert menus==[row]
+assert w.folder_button.isVisibleTo(w) and w.folder_button.isEnabled()
+w.close()
+''',tmp_path)

@@ -31,6 +31,13 @@ def semantic_style(appearance):
     c = theme_colors(appearance)
     return f'''
 QWidget {{ color: {c['text']}; }}
+QDialog#knowledgePanel {{ background: {c['surface']}; }}
+QDialog#knowledgePanel QTableWidget, QDialog#knowledgePanel QListWidget,
+QDialog#knowledgePanel QTextBrowser {{ background: {c['control']}; color: {c['text']};
+    border: 1px solid {c['border']}; border-radius: 6px; }}
+QDialog#knowledgePanel QTableWidget::indicator {{ width: 16px; height: 16px;
+    background: {c['surface']}; border: 1px solid {c['focus']}; border-radius: 3px; }}
+QDialog#knowledgePanel QTableWidget::indicator:checked {{ background: {c['primary']}; }}
 QFrame#glassTopBar, QFrame#sidebar {{ background: transparent; border: none; }}
 QFrame#workspaceHeader {{ background: transparent; border: none; border-radius: 0;
     border-bottom: none; }}

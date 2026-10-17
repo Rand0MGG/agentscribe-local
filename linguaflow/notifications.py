@@ -39,10 +39,10 @@ class FeedbackLabel(QLabel):
 
 
 class NotificationCenter(QFrame):
-    """Quiet, non-modal notices with retained task state and a short display time.
+    """Non-modal feedback with persistent tasks and brief completion notices.
 
-    Percentage updates do not extend the popup lifetime or reopen it. Errors
-    retain retry actions until cleared, without permanently covering UI.
+    Percentage updates preserve explicit dismissal. Recovery actions remain in
+    their owning views or menus when the user dismisses a task or error.
     """
     def __init__(self, parent=None):
         super().__init__(parent, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
@@ -110,10 +110,10 @@ class NotificationCenter(QFrame):
             previous.action = action
             return
         # Stage and percentage changes preserve dismissal for the entire task.
-        # Preparation remains visible until dismissed or completed.
+        # A running task must not look finished merely because time elapsed.
         expires = (previous.expires if previous and previous.kind == kind == 'progress'
-                   else float('inf') if (key in ('preparation', 'update') and kind == 'progress')
-                   or (key in ('save', 'update') and kind == 'error')
+                   else float('inf') if kind == 'progress'
+                   or (key in ('save', 'update', 'session', 'knowledge') and kind == 'error')
                    or (key == 'update' and kind == 'attention' and action is not None)
                    else time.monotonic() + (8 if kind == 'error' else 5))
         self.notices.pop(key, None)

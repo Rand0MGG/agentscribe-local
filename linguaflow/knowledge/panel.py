@@ -2,8 +2,10 @@
 import html
 from urllib.parse import quote, unquote
 
-from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtCore import Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QDialog,
     QFileDialog,
@@ -14,6 +16,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -46,6 +49,7 @@ def refs_html(refs, sources):
 
 class KnowledgePanel(QDialog):
     seekRequested = Signal(float)
+    reconnectRequested = Signal()
 
     def __init__(self, client, cancel, before_notes, parent=None, *, feedback=None):
         super().__init__(parent)
@@ -56,6 +60,9 @@ class KnowledgePanel(QDialog):
         self.terms_fingerprint = ''
         self.terms_course_id = None
         self.term_drafts = {}
+        self.material_page = None
+        self.material_scroll = None
+        self.material_layout = None
         self.operation = ''
         self.answer_active = False
         self.answer_sources = {}
@@ -64,11 +71,7 @@ class KnowledgePanel(QDialog):
         self.setWindowTitle('课程资料与笔记 · Beta')
         self.resize(860, 680)
         self.setMinimumSize(640, 540)
-        self.setStyleSheet('QDialog { background: #202020; } QTableWidget, QListWidget, QTextBrowser '
-                          '{ background: #252525; border: 1px solid #454545; border-radius: 6px; } '
-                          'QTableWidget::indicator { width: 16px; height: 16px; background: #373737; '
-                          'border: 1px solid #8a8a8a; border-radius: 3px; } '
-                          'QTableWidget::indicator:checked { background: #bdbdbd; border-color: #dddddd; }')
+        self.setObjectName('knowledgePanel')
         layout = QVBoxLayout(self)
         title = QLabel('课件辅助识别 · 有来源的课堂笔记')
         title.setStyleSheet('font-size: 18px; font-weight: 600;')
@@ -93,6 +96,8 @@ class KnowledgePanel(QDialog):
         material_layout.addLayout(association)
         row = QHBoxLayout()
         self.import_button = self.button('导入课件', self.import_material, row)
+        self.preview_button = self.button('准备本地原页', lambda: self.command('preview'), row)
+        self.preview_button.setToolTip('只在本机生成页面预览，不上传课件，也不需要云端许可。')
         self.pages = QComboBox()
         self.pages.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.pages.setMinimumContentsLength(12)
@@ -164,6 +169,8 @@ class KnowledgePanel(QDialog):
         self.ask_button = self.button('提问', self.ask, row)
         note_layout.addLayout(row)
         footer = QHBoxLayout()
+        self.reconnect_button = self.button('重新连接', self.reconnectRequested.emit, footer)
+        self.reconnect_button.hide()
         self.credential_button = self.button('配置 DeepSeek 密钥', self.credential, footer)
         self.usage = QLabel('云端任务按输入与调用次数限额；不会上传录音。')
         self.usage.setWordWrap(True)
@@ -172,6 +179,7 @@ class KnowledgePanel(QDialog):
         self.cancel_button.setEnabled(False)
         layout.addLayout(footer)
         self.client.changed.connect(self.receive)
+        self.update_controls()
 
     @staticmethod
     def button(text, callback, layout):
@@ -181,6 +189,7 @@ class KnowledgePanel(QDialog):
         return button
 
     def reset(self):
+        self.retain_terms()
         self.view = {}
         self.busy = False
         self.operation = ''
@@ -189,7 +198,6 @@ class KnowledgePanel(QDialog):
         self.notes_fingerprint = ''
         self.terms_fingerprint = ''
         self.terms_course_id = None
-        self.term_drafts.clear()
         self.terms_dirty = False
         self.terms.setRowCount(0)
         self.pages.clear()
@@ -197,12 +205,41 @@ class KnowledgePanel(QDialog):
         self.material_text.clear()
         self.note_text.clear()
         self.status.setText('正在读取本机课程资料…')
+        self.update_controls()
+
+    def retain_terms(self):
+        if self.terms_course_id and self.terms_dirty:
+            self.term_drafts[self.terms_course_id] = self.term_rows()
+
+    def has_unsaved_terms(self):
+        return (self.terms_dirty or bool(self.term_drafts)
+                or self.terms.state() == QAbstractItemView.State.EditingState)
+
+    def confirm_exit(self):
+        self.retain_terms()
+        if not self.has_unsaved_terms():
+            return True
+        answer = QMessageBox.question(self.parentWidget() or self, '仍有未保存的课程术语',
+            '退出会放弃未保存的术语编辑。选择取消后，可打开对应录音的课程面板保存审核结果。\n\n是否放弃编辑并退出？',
+            QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Cancel)
+        if answer != QMessageBox.StandardButton.Discard:
+            return False
+        self.term_drafts.clear()
+        self.terms_dirty = False
+        return True
 
     def receive(self, value):
         kind = value['type']
         if kind == 'view':
             self.render(value)
+            if self.feedback and not value.get('busy'):
+                notice = self.feedback.notices.get('knowledge')
+                if notice and notice.kind == 'progress':
+                    self.feedback.clear('knowledge')
         elif kind == 'terms_saved':
+            draft = self.term_drafts.get(value['course_id'])
+            if draft is not None and value['terms_version'] == fingerprint(draft):
+                self.term_drafts.pop(value['course_id'], None)
             if (value['course_id'] == self.terms_course_id
                     and value['terms_version'] == fingerprint(self.term_rows())):
                 self.terms_dirty = False
@@ -219,12 +256,15 @@ class KnowledgePanel(QDialog):
                 + refs_html(value['refs'], self.answer_sources))
             self.tabs.setCurrentIndex(2)
         elif value.get('message'):
+            error = kind in ('error', 'disconnected')
             if self.feedback:
                 self.status.set_state_text(value['message'])
-                self.feedback.post('knowledge', '课程任务未完成，请重试。' if kind == 'error' else
-                                   '正在处理课程资料与笔记' if value.get('busy') else value['message'],
-                                   kind='error' if kind == 'error' else 'progress' if value.get('busy') else 'success',
-                                   details=value['message'] if kind == 'error' else '')
+                self.feedback.post('knowledge', '正在处理课程资料与笔记' if value.get('busy') and not error
+                                   else value['message'],
+                                   kind='error' if error else 'progress' if value.get('busy') else 'success',
+                                   details=value['message'] if error else '',
+                                   action=self.reconnectRequested.emit if kind == 'disconnected' else None,
+                                   action_text='重新连接' if kind == 'disconnected' else '')
             else:
                 self.status.setText(value['message'])
         if 'busy' in value:
@@ -378,9 +418,17 @@ class KnowledgePanel(QDialog):
     def show_page(self, *_):
         block = next((row for row in self.view.get('blocks', []) if row['id'] == self.pages.currentData()), None)
         if not block:
+            self.material_page = None
+            self.material_scroll = self.material_layout = None
             self.material_text.setPlainText('先导入本课程课件。')
             return
         visual = next((row for row in self.view.get('blocks', []) if row['id'] == block['id'] + ':visual'), None)
+        page = (block['id'], block.get('version'), (visual or {}).get('version'))
+        position = (self.material_text.verticalScrollBar().value() if self.material_scroll is None
+                    else self.material_scroll) if page == self.material_page else 0
+        self.material_page = page
+        self.material_scroll = position
+        layout = self.material_layout = object()
         reading = '<p>本页尚未完成视觉读取，以下仅为原生文字。</p>'
         if block.get('preview_image_path'):
             uri = html.escape(QUrl.fromLocalFile(block['preview_image_path']).toString(), quote=True)
@@ -394,6 +442,14 @@ class KnowledgePanel(QDialog):
                        f'<p>{html.escape(visual["text"]).replace(chr(10), "<br>")}{preview}</p>')
         self.material_text.setHtml(reading + '<p><b>原生文字</b></p><p>'
             + html.escape(block['text'] or '未提取到原生文字；视觉读取仍会查看整页。').replace('\n', '<br>') + '</p>')
+        # setHtml/relayout can otherwise scroll to the end of a tall page.
+        self.material_text.moveCursor(QTextCursor.MoveOperation.Start)
+        self.material_text.verticalScrollBar().setValue(position)
+        def restore_position():
+            if self.material_layout is layout:
+                self.material_text.verticalScrollBar().setValue(position)
+                self.material_scroll = None
+        QTimer.singleShot(0, self, restore_position)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -465,7 +521,10 @@ class KnowledgePanel(QDialog):
             value['section'] = self.section.currentData() or ''
         if self.client.send(operation, **value):
             self.operation = operation
-            self.busy = operation in ('notes', 'organize', 'question', 'extract', 'import')
+            self.busy = operation in ('notes', 'organize', 'question', 'extract', 'import', 'preview')
+            if self.busy and self.feedback:
+                self.feedback.clear('knowledge')
+                self.feedback.post('knowledge', '正在处理课程资料与笔记', kind='progress')
             self.update_controls()
 
     def set_recording(self, active):
@@ -473,12 +532,16 @@ class KnowledgePanel(QDialog):
         self.update_controls()
 
     def update_controls(self):
-        ready = bool(self.view) and self.client.process is not None
+        connected = self.client.connected
+        ready = bool(self.view) and connected
+        self.reconnect_button.setVisible(not connected)
+        self.reconnect_button.setEnabled(not self.active and not self.client.closing)
         for widget in (self.import_button, self.add_button, self.remove_button, self.save_terms_button,
                        self.terms, self.associate_button, self.courses):
             widget.setEnabled(ready and not self.active and not self.busy)
         self.extract_button.setEnabled(ready and not self.active and not self.busy and self.material_cloud.isChecked()
                                        and bool(self.view.get('blocks', [])))
+        self.preview_button.setEnabled(ready and not self.active and not self.busy and bool(self.view.get('blocks')))
         for widget in (self.update_button, self.export_button, self.edit_button, self.credential_button):
             widget.setEnabled(ready and not self.busy)
         for widget in (self.organize_button, self.ask_button):
@@ -488,5 +551,5 @@ class KnowledgePanel(QDialog):
         self.edit_button.setEnabled(ready and not self.busy and self.note_list.currentItem() is not None)
         self.material_cloud.setEnabled(ready and bool(self.view.get('course')))
         self.notes_cloud.setEnabled(ready)
-        self.cancel_button.setEnabled(self.busy)
+        self.cancel_button.setEnabled(connected and self.busy)
         self.import_button.setToolTip('录音结束后可更新课件；本次识别术语已固定。' if self.active else '保存完整原件并提取带页码文字；完整阅读会另行查看页面图像')
