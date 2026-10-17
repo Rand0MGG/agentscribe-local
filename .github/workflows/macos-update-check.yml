@@ -12,6 +12,11 @@ on:
         description: Existing signed candidate tag
         required: true
         type: string
+      old_tag:
+        description: Published old client to upgrade from
+        default: v0.9.2
+        required: true
+        type: string
       live:
         description: Use the actual deployed HTTPS feed and unchanged old package
         default: false
@@ -32,6 +37,7 @@ jobs:
     timeout-minutes: 40
     env:
       UPDATE_TAG: ${{ inputs.tag }}
+      OLD_TAG: ${{ inputs.old_tag || 'v0.9.2' }}
       UPDATE_LIVE: ${{ inputs.live || contains(github.event.head_commit.message, '[verify live mac update]') }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -48,6 +54,8 @@ jobs:
           from pathlib import Path
           tag=os.environ['UPDATE_TAG'] or 'v'+re.search(r'__version__ = "([^"]+)"',Path('linguaflow/__init__.py').read_text())[1]
           assert re.fullmatch(r'v\d+\.\d+\.\d+',tag)
+          assert re.fullmatch(r'v\d+\.\d+\.\d+',os.environ['OLD_TAG'])
+          assert os.environ['OLD_TAG'] != tag
           sha=subprocess.check_output(['git','rev-parse',tag+'^{commit}'],text=True).strip()
           with open(os.environ['GITHUB_ENV'],'a') as env:env.write('UPDATE_TAG='+tag+'\nUPDATE_SHA='+sha+'\n')
           PY
@@ -62,36 +70,27 @@ jobs:
           repo=os.environ['GITHUB_REPOSITORY'];tag=os.environ['UPDATE_TAG']
           releases=json.loads(subprocess.check_output(['gh','api','repos/'+repo+'/releases?per_page=100'],text=True))
           work=Path('.work/update-downloads');work.mkdir(parents=True)
-          for selected in ('v0.9.0',tag):
+          for selected in (os.environ['OLD_TAG'],tag):
               stem='AgentScribe-'+selected[1:]+'-macos-arm64'
-              if selected==tag and os.environ['UPDATE_LIVE']!='true':
-                  # Read the sealed build artifact rather than granting draft-release write access.
-                  # This fixture is fixed to the accepted 0.9.2 build and its PUBLIC signature.
-                  assert tag=='v0.9.2'
-                  cache=work/'build-artifact'
-                  subprocess.run(['gh','run','download','38882483285','--repo',repo,'--name','macos-preview-38882483285','--dir',str(cache)],check=True)
-                  expected={'.dmg':'1dcb9c7b33bfd2b76452c022c30b8b9363aa68e11cbd35a51fe87bd7598ca3e3',
-                            '.build.json':'400fb7206a4c61d227e7fb472a9c84249ca25054f874de1c6aa0e91116851c2d'}
-                  for suffix,digest in expected.items():
-                      source,=cache.rglob(stem+suffix)
-                      data=source.read_bytes()
-                      assert hashlib.sha256(data).hexdigest()==digest
-                      (work/(stem+suffix)).write_bytes(data)
-                  (work/(stem+'.dmg.ed25519')).write_text('uG8VIeY5eSG8G21OeIm3hl7BqjON6d7CoflDYeHPj4uYLoQlmLW7EcAMin8fK4Gjd/hFGUlCyYoTxKTWm4NLCw==\n')
-              else:
-                  release,=[r for r in releases if r['tag_name']==selected]
-                  assert not release['draft']
-                  suffixes=('.dmg','.build.json') if selected=='v0.9.0' else ('.dmg','.build.json','.dmg.ed25519')
-                  for suffix in suffixes:
-                      name=stem+suffix
-                      asset,=[a for a in release['assets'] if a['name']==name and a['state']=='uploaded']
-                      subprocess.run(['gh','release','download',selected,'--repo',repo,'--pattern',name,'--dir',str(work)],check=True)
-                      data=(work/name).read_bytes()
-                      assert len(data)==asset['size'] and 'sha256:'+hashlib.sha256(data).hexdigest()==asset['digest']
+              release,=[r for r in releases if r['tag_name']==selected]
+              assert not release['draft']
+              for suffix in ('.dmg','.build.json','.dmg.ed25519'):
+                  name=stem+suffix
+                  asset,=[a for a in release['assets'] if a['name']==name and a['state']=='uploaded']
+                  subprocess.run(['gh','release','download',selected,'--repo',repo,'--pattern',name,'--dir',str(work)],check=True)
+                  data=(work/name).read_bytes()
+                  assert len(data)==asset['size'] and 'sha256:'+hashlib.sha256(data).hexdigest()==asset['digest']
               manifest=json.loads((work/(stem+'.build.json')).read_text())
               assert manifest['source_modified'] is False
               assert manifest['dmg_sha256']==hashlib.sha256((work/(stem+'.dmg')).read_bytes()).hexdigest()
-              if selected==tag:assert manifest['source_commit']==os.environ['UPDATE_SHA']
+              assert manifest['target']=='macos-arm64' and manifest['version']==selected[1:]
+              assert manifest['dmg_bytes']==(work/(stem+'.dmg')).stat().st_size
+              sha=subprocess.check_output(['git','rev-parse',selected+'^{commit}'],text=True).strip()
+              assert manifest['source_commit']==sha
+              import base64
+              from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+              public=json.loads(Path('packaging/updates.json').read_text())['targets']['macos-arm64']['public_key']
+              Ed25519PublicKey.from_public_bytes(base64.b64decode(public)).verify(base64.b64decode((work/(stem+'.dmg.ed25519')).read_text().strip()),(work/(stem+'.dmg')).read_bytes())
           PY
       - name: Native upgrade and recovery acceptance
         run: |
@@ -99,7 +98,7 @@ jobs:
           import os,subprocess,sys
           from pathlib import Path
           stem=Path('.work/update-downloads')/f'AgentScribe-{os.environ["UPDATE_TAG"][1:]}-macos-arm64'
-          command=[sys.executable,'scripts/probe_macos_update.py','--old-dmg','.work/update-downloads/AgentScribe-0.9.0-macos-arm64.dmg','--candidate',str(stem)+'.dmg','--manifest',str(stem)+'.build.json','--signature',str(stem)+'.dmg.ed25519','--work','.work/update-acceptance']
+          command=[sys.executable,'scripts/probe_macos_update.py','--old-dmg',f'.work/update-downloads/AgentScribe-{os.environ["OLD_TAG"][1:]}-macos-arm64.dmg','--candidate',str(stem)+'.dmg','--manifest',str(stem)+'.build.json','--signature',str(stem)+'.dmg.ed25519','--work','.work/update-acceptance']
           if os.environ['UPDATE_LIVE']=='true':command.append('--live')
           subprocess.run(command,check=True)
           PY
