@@ -8,6 +8,7 @@
 
 | 证据 | 已证明 | 范围与限制 |
 | --- | --- | --- |
+| 2026-10-17 v0.10.0 Mac 应用内更新 | 固定产物 `95fa8c3`，原更新公钥签名核验；真实 0.9.2→0.10.0 升级、取消、断网、篡改拒绝、启动失败恢复及数据保留均通过；stable/beta 订阅已部署，原始 0.9.2 包经生产 HTTPS 订阅升级通过 | [原生故障验收](https://github.com/Rand0MGG/agentscribe-local/actions/runs/39029582117)、[订阅部署](https://github.com/Rand0MGG/agentscribe-local/actions/runs/39030015716)、[生产升级](https://github.com/Rand0MGG/agentscribe-local/actions/runs/39030120035)。一次性 macOS 15 arm64 runner；本地签名/订阅回归 18 passed。证据 `.work/releases/v0.10.0/mac-update-acceptance/`；录音/保存门禁为模拟状态，未验真实采集或 Windows 原生升级；Mac ad-hoc、未公证 |
 | 2026-10-17 0.10.0 构建前检查 | 源码、项目元数据及 Mac 包内说明统一为 0.10.0；封装/偏好/语言与导出搜索定向 70 passed / 1 skipped，完整 Ruff 与差异检查通过 | Windows Python 3.12；`.work/reports/v0100-preflight.xml`。跳过为链接权限；此前完整回归及后续定向证据见下方。两端候选构建须独立通过完整无音频回归及最终包探针，当前记录不代表安装包或 Release 已发布 |
 | 2026-10-17 同语言自动关闭翻译 | 语言同步专项 1 passed，偏好与录音小岛相关 31 passed；覆盖全部语言、设置/弹层双向同步、自动检测、简繁区别、保持关闭、活动会话设置不变及偏好恢复；Ruff/差异检查通过 | Windows Qt offscreen，无音频导入；日志 `.work/reports/language-selection-20261017.xml`、`language-related-final-20261017.xml`。只更改共享界面设置联动，未验 Mac 原生或真实识别翻译，未提交发布 |
 | 2026-10-17 文件夹行加号移除与侧栏对齐 | 文件夹行内加号、信号和点击热区移除，保留标题新建按钮及行菜单；导航图标按 20px 绘制，与根文件夹可见笔画和文字列对齐。Windows 原生明暗/宽窄窗口探针 1 passed，录音页回归最终 4 passed，Ruff/差异检查通过 | 初次新增用例按对象身份比较刷新后的文件夹行失败，改为稳定 ID 后通过；日志 `.work/reports/sidebar-row-plus-final-20261017.xml`、`sidebar-row-plus-recheck-20261017.xml`，截图 `.work/browser/sidebar-alignment-20261017/`。150% 缩放，无音频导入，未验 Mac 原生，未提交发布 |

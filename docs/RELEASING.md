@@ -65,6 +65,6 @@
 
 ## 当前状态
 
-2026-10-16 已发布 Mac `v0.9.2`，标签固定 `13d2a33`，DMG/清单/摘要/原公钥签名均已核对。真实 0.9.0→0.9.2 的升级、故障恢复与数据保留通过后，经既有 `release-updates` 审批部署 stable/beta 订阅；原始旧包通过真实线上地址再验成功。仍为 ad-hoc、未公证，录音门禁用模拟状态；Windows 与真实采集尚未同等验收。证据见 [VALIDATION](VALIDATION.md)，剩余范围见 [ROADMAP](ROADMAP.md)。
+2026-10-17 已发布 `v0.10.0`，标签固定 `95fa8c3`，Windows/Mac 安装包、清单和摘要均核对。Mac 使用既有更新私钥签署原 DMG，真实 0.9.2→0.10.0 的升级、故障恢复与数据保留通过，经既有 `release-updates` 审批部署 stable/beta 订阅；原始 0.9.2 包通过真实线上地址再验成功。Mac 仍为 ad-hoc、未公证；录音门禁用模拟状态，Windows 原生升级与真实采集尚未同等验收。证据见 [VALIDATION](VALIDATION.md)，剩余范围见 [ROADMAP](ROADMAP.md)。
 
 依据：[GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages)、[Actions 触发限制](https://docs.github.com/en/actions/how-tos/trigger-workflows)、[Sparkle](https://sparkle-project.org/documentation/)、[WinSparkle](https://winsparkle.org/guides/getting-started/)、[Inno Setup](https://jrsoftware.org/ishelp.php)。
