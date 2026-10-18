@@ -14,7 +14,7 @@ class Preference:
 
 PREFERENCES = (
     Preference('asr', 'editable'), Preference('translation', 'editable'),
-    Preference('source', 'text'), Preference('target', 'text'), Preference('compute', 'text'),
+    Preference('source', 'text', 'English'), Preference('target', 'text'), Preference('compute', 'text'),
     Preference('translate', 'bool', True),
     Preference('backend', 'data', 'wlk-whisper'),
     Preference('qwen_model', 'editable', 'Qwen/Qwen3-ASR-0.6B'),

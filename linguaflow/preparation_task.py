@@ -36,7 +36,6 @@ def preparation_error_message(text):
 
 class Preparation(QThread):
     result = Signal(str)
-    progress = Signal(str)
     download = Signal(dict)
 
     def __init__(self, action, parent, *, affects_runtime=True, beta_only=False):
@@ -99,8 +98,6 @@ class Preparation(QThread):
                             except ValueError:
                                 pass
                         tail.append(line.strip())
-                        if show_progress:
-                            self.progress.emit(line.strip()[-350:])
                 code = process.wait(timeout=10)
                 if self.cancelled:
                     raise RuntimeError('准备已取消；已有文件保留，可稍后继续。')

@@ -26,24 +26,40 @@ def test_desktop_backend_device_and_model_choices_roundtrip(tmp_path, system):
     code = '''
 import os, sys
 from pathlib import Path
+from types import SimpleNamespace
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication
+import linguaflow.app as module
 from linguaflow.app import STYLE, Window
 from linguaflow.model_options import MLX_MODEL, recommended_selection
 sys.platform = os.environ['FIXTURE_PLATFORM']
 app = QApplication([])
 app.setStyleSheet(STYLE)
 prefs = QSettings(str(Path(os.environ['AGENTSCRIBE_LIBRARY']) / 'prefs.ini'), QSettings.Format.IniFormat)
-def window(): return Window(discover=False, prefs=prefs)
+Window.check_model_assets = lambda self: None
+module.list_devices = lambda: [SimpleNamespace(id='fixture', name='Fixture', loopback=False)]
+def window(): return Window(discover=True, prefs=prefs)
 def values(combo): return tuple(combo.itemData(i) for i in range(combo.count()))
 w = window()
+w.show()
+app.processEvents()
 m = w.model_manager
 mac = sys.platform == 'darwin'
-# The missing-model prompt downloads the effective first-use choice. Only Mac
-# has a first-use preset; explicit choices must never be replaced by it.
-initial = m.preparation_selection()
-expected = recommended_selection() if mac else initial
+# Fresh preferences use the platform bundle before device refresh persists it.
+expected = recommended_selection()
+assert m.preparation_selection() == expected
+assert w.source.currentText() == 'English'
+assert w.source.findText('自动检测') == -1
 assert w.preparation_selection() == expected
+# Keep a chosen language when Qwen removes and Whisper restores auto-detect.
+w.source.setCurrentText('日本語')
+chosen_language = w.source.currentText()
+assert chosen_language == '日本語'
+m.backend.setCurrentIndex(m.backend.findData('wlk-whisper'))
+assert w.source.findText('自动检测') == 0 and w.source.currentText() == chosen_language
+m.backend.setCurrentIndex(m.backend.findData(expected['backend']))
+assert w.source.findText('自动检测') == -1 and w.source.currentText() == chosen_language
+
 downloads = []
 m.prepare_selected = lambda selection, **kwargs: downloads.append((selection.copy(), kwargs))
 w.prepare_recommended_models(only='asr')
@@ -91,6 +107,7 @@ w.save()
 saved = w.settings_binding.session_settings(('fixture', False))
 w.close()
 reopened = window()
+assert reopened.source.currentText() == chosen_language
 assert reopened.settings_binding.session_settings(('fixture', False)) == saved
 assert reopened.knowledge_client.process is None and reopened.session is None
 assert not {'soundcard', 'sounddevice', 'pyaudio', 'PySide6.QtMultimedia'} & sys.modules.keys()

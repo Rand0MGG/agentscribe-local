@@ -912,6 +912,15 @@ class Window(QMainWindow):
             pref.key: getattr(self, pref.key) if hasattr(self, pref.key) else getattr(self.model_manager, pref.key)
             for pref in PREFERENCES})
         self.restore()
+        if discover and not any(self.prefs.contains(key) for key in (
+                'backend', 'asr', 'qwen_model', 'translation', 'translation_engine',
+                'llama_model', 'translation_device', 'compute', 'translate')):
+            try:
+                # A first run must start from the recommended bundle; the device
+                # refresh below saves preferences before the model-check timer runs.
+                self.use_recommended_profile(enable_translation=False)
+            except (ValueError, RuntimeError):
+                pass
         self.initial_model_selection = self.model_manager.preparation_selection()
         self.apply_appearance()
         self.appearance.currentIndexChanged.connect(self.apply_appearance)
@@ -1408,6 +1417,7 @@ class Window(QMainWindow):
             self.model_manager.status.setText('所选模型已就绪。' if not missing else
                                              '所选模型尚有缺失，请在模型管理中准备。')
         self.missing_model_assets = tuple(missing)
+        self.update_translation_availability(missing)
         if self.first_run:
             self.first_run.set_models(missing, preparing=self.model_manager.preparing)
         if self.startup_model_guidance_pending:
@@ -1416,6 +1426,8 @@ class Window(QMainWindow):
                 self.show_first_run()
         action, self.model_action = self.model_action, None
         self.update_start_button()
+        blocking = [item for item in missing
+                    if not item.startswith(('翻译模型：', '翻译运行组件'))]
         if not missing:
             if self.model_prompt is not None:
                 self.model_prompt.close()
@@ -1426,7 +1438,10 @@ class Window(QMainWindow):
         elif action:
             if not self.save_error:
                 self.status.setText('需要准备所选模型')
-            self.prompt_missing_models()
+            if action == 'start' and not blocking:
+                self.start(models_checked=True)
+            else:
+                self.prompt_missing_models()
 
     def check_models_for_action(self, action):
         """Only explicit recording actions request a prompt; checks never download."""
@@ -1463,6 +1478,22 @@ class Window(QMainWindow):
         self.start_button.setAccessibleName(self.start_button.text())
         self.cancel_model_check_action.setEnabled(self.model_action is not None)
         self.update_transport_icons()
+
+    def translation_unavailable(self, missing=None):
+        missing = self.missing_model_assets if missing is None else missing
+        return bool(missing) and any(
+            item.startswith(('翻译模型：', '翻译运行组件')) for item in missing)
+
+    def update_translation_availability(self, missing=None):
+        unavailable = self.translation_unavailable(missing)
+        self.translate.setEnabled(not unavailable)
+        self.translate.setToolTip('翻译模型未准备；本次仅识别，准备好后可开启。' if unavailable else '')
+        if hasattr(self, 'language_popup'):
+            self.language_popup.translation_switch.setEnabled(not unavailable)
+            self.language_popup.translation_switch.setToolTip(self.translate.toolTip())
+        if hasattr(self, 'quick_language'):
+            self.update_quick_settings()
+            self.update_recording_hint()
 
     def prompt_missing_models(self):
         if (self.asset_check_closed or not self.missing_model_assets or not self.isVisible()
@@ -1525,12 +1556,13 @@ class Window(QMainWindow):
 
     def update_quick_settings(self):
         source = self.source.currentData()
-        if source and source[1] and source[1] == self.target.currentData() and self.translate.isChecked():
+        translated = self.translate.isChecked() and self.translate.isEnabled()
+        if source and source[1] and source[1] == self.target.currentData() and translated:
             self.translate.setChecked(False)
             return  # The toggled signal refreshes both views with the final state.
         language = self.source.currentText()
         self.quick_language.setToolTip(language + (' → ' + self.target.currentText()
-                                    if self.translate.isChecked() else ' · 仅原文'))
+                                    if translated else ' · 仅原文'))
         self.update_recording_hint()
 
     def open_recording_library(self, explicit_root):
@@ -1703,7 +1735,7 @@ class Window(QMainWindow):
         source = self.device.currentText() or '尚未选择音频来源，点击下方音频图标选择'
         self.quick_device.setToolTip(source)
         language = self.source.currentText() + (' → ' + self.target.currentText()
-                    if self.translate.isChecked() else ' · 仅原文')
+                    if self.translate.isChecked() and self.translate.isEnabled() else ' · 仅原文')
         self.empty.set_context(source, folder, language)
 
     def choose_recording_folder(self):
@@ -2439,6 +2471,23 @@ class Window(QMainWindow):
         self.compute.setCurrentIndex(data_index(self.compute, device))
         manager.qwen_model.setCurrentText(model)
         self.compute.setEnabled(not mlx)
+        self.sync_source_options()
+
+    def sync_source_options(self):
+        """Qwen requires a concrete language; only Whisper advertises auto-detect."""
+        qwen = self.model_manager.backend.currentData() in ('qwen3-streaming', 'qwen3-mlx')
+        auto = self.source.findText('自动检测')
+        current = self.source.currentText()
+        if qwen and auto >= 0:
+            if current == '自动检测':
+                current = 'English'
+            self.source.removeItem(auto)
+            index = self.source.findText(current)
+            self.source.setCurrentIndex(max(0, index))
+        elif not qwen and auto < 0:
+            self.source.insertItem(0, '自动检测', (None, None))
+            index = self.source.findText(current)
+            self.source.setCurrentIndex(max(0, index))
 
     def select_asr_device(self):
         if self.compute.currentData() == 'mlx':
@@ -2579,6 +2628,9 @@ class Window(QMainWindow):
         # The start action belongs to the recording page: freeze exactly the
         # source visible beside it, rather than reading a hidden settings view.
         settings = self.settings_binding.session_settings(device)
+        translation_skipped = settings.translate and self.translation_unavailable()
+        if translation_skipped:
+            settings = replace(settings, translate=False)
         if reason := start_problem(settings):
             self.show_warning(*reason)
             return
@@ -2595,7 +2647,7 @@ class Window(QMainWindow):
         self.pipeline_state = {
             "音频": "等待识别就绪",
             "识别": "准备中",
-            "翻译": "等待" if self.translate.isChecked() else "关闭",
+            "翻译": "等待" if settings.translate else "关闭",
         }
         self.on_stage("会话", "启动中")
         self.diagnostics.clear()
@@ -2628,6 +2680,8 @@ class Window(QMainWindow):
             self.on_failure(f"无法保存录音：{exc}")
             return
         self.caption_translation = settings.translate
+        if translation_skipped:
+            self.notifications.post('translation', '翻译模型未准备，本次仅识别。', kind='attention')
         self.workspace_title.setText(self.current_item["name"])
         self.refresh_library()
         try:

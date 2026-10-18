@@ -10,6 +10,7 @@ import zipfile
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
+from .download_progress import report
 from .hardware import CUDA_WHEEL, TORCH_VERSION, check_installation
 from .installation import preparation_lock, publish, run_command
 from .runtime_base import prepare_base, python_abi
@@ -124,7 +125,7 @@ def install(kind):
         base_python, base_slot = knowledge_python(), None
         if packaged():
             with preparation_lock(runtime_root() / 'base-python'):
-                print('准备独立基础 Python；程序升级不会移除它。', flush=True)
+                report('正在准备基础运行组件，已有环境保留', unit='stage')
                 base_python, base_slot = prepare_base(root / 'python', runtime_root() / 'base-python', base_python,
                                                      preferred_slot=(previous_metadata or {}).get('base_slot'))
         slot = uuid4().hex
@@ -141,6 +142,7 @@ def install(kind):
             run_command(command, env=environment, cwd=root)
 
         print('准备新环境；失败或取消不会替换现有环境。', flush=True)
+        report('正在创建独立运行环境', unit='stage')
         run([str(base_python), '-m', 'venv', str(destination)])
         if kind == 'wlk':
             suffix = '+' + CUDA_WHEEL if target == 'windows-x64' else ''
@@ -148,10 +150,14 @@ def install(kind):
                        f'torchaudio=={TORCH_VERSION}{suffix}']
             if target == 'windows-x64':
                 command += ['--index-url', 'https://download.pytorch.org/whl/' + CUDA_WHEEL]
+            report('正在安装语音处理组件，首次准备可能需要几分钟', unit='stage')
             run(command)
         dependency_file = prepare_sources(requirements, cache_root() / 'runtime-sources') if kind == 'wlk' else requirements
+        report('正在安装所需组件，首次准备可能需要几分钟', unit='stage')
         run([str(python), '-m', 'pip', 'install', '-r', str(dependency_file)])
+        report('正在检查组件是否完整兼容', unit='stage')
         run([str(python), '-m', 'pip', 'check'])
+        report('正在验证运行环境，请稍候', unit='stage')
         run([str(python), '-m', 'linguaflow.runtime_install', kind, '--verify'])
         if not python.is_file():
             raise RuntimeError('新环境缺少 Python 解释器，未切换现有环境。')

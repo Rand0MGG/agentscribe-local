@@ -3,13 +3,18 @@ from test_beta_features import run_ui
 
 
 def test_failed_preparation_shows_stage_and_reason_and_success_clears_error(tmp_path):
-    run_ui('''
+    run_ui(r'''
 w.show();settle_geometry(w)
 manager=w.model_manager
 import sys
 raw='ConnectionError: cannot connect to download host'
-script="from linguaflow.download_progress import report; report('准备字幕分句组件', unit='stage'); raise ConnectionError('cannot connect to download host')"
+script="from linguaflow.download_progress import report; from pathlib import Path; import time; report('准备字幕分句组件', unit='stage'); print('Collecting internal-package==1.2.3', flush=True);\nwhile not Path('RELEASE_PATH').exists(): time.sleep(.01)\nraise ConnectionError('cannot connect to download host')".replace('RELEASE_PATH', str(path.parent/'release').replace('\\', '/'))
 manager.prepare(lambda:manager.run_preparation([sys.executable,'-c',script]),affects_runtime=False)
+wait(lambda:manager.status.text()=='准备字幕分句组件')
+assert 'Collecting' not in manager.status.text() + manager.status.toolTip()
+assert '可随时取消' in manager.download_stats.text()
+assert manager.download_file.isHidden()
+(path.parent/'release').touch()
 wait(lambda:manager.worker is None)
 notice=w.notifications.notices['preparation']
 assert notice.kind=='error'

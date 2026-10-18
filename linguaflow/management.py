@@ -1,5 +1,6 @@
 """Model preparation lives outside the listening flow."""
 import json
+import time
 
 from PySide6.QtCore import Qt, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
@@ -48,6 +49,7 @@ class ModelManager(QDialog):
         self.resize(660, 640)
         self.worker = None
         self.preparation_result = None
+        self.preparation_started = 0.0
         self.close_requested = False
         self.session_active = False
         self.inventory_busy = False
@@ -515,6 +517,7 @@ class ModelManager(QDialog):
         self.download_stats.setText('正在检查…')
         self.status.show()
         self.status.setText(message)
+        self.preparation_started = time.monotonic()
         self.preparation_result = None
         self.worker = Preparation(action, self, affects_runtime=affects_runtime, beta_only=beta_only)
         self.worker.result.connect(self.on_preparation_result)
@@ -539,6 +542,7 @@ class ModelManager(QDialog):
         self.preparation_message.emit(text)
 
     def show_download(self, event):
+        self.download_file.setVisible(event.get('unit') != 'stage')
         set_download_progress(self.progress_bar, event)
         self.progress_bar.setTextVisible(False)
         name = str(event.get('label') or '下载文件').replace('\\', '/').rsplit('/', 1)[-1]
@@ -559,7 +563,10 @@ class ModelManager(QDialog):
             detail += f' · {amount(rate)}/s'
         self.download_stats.setText(detail)
         if event.get('unit') == 'stage':
-            self.download_stats.setText('正在准备…')
+            elapsed = max(0, int(time.monotonic() - self.preparation_started))
+            self.status.setText(str(event.get('label') or '正在准备本地组件'))
+            self.status.setToolTip(self.status.text())
+            self.download_stats.setText(f'已用时 {elapsed} 秒 · 可随时取消')
         self.download_title.setText('正在下载模型文件' if event.get('unit') == 'B' else '正在准备本地组件')
         self.download_changed.emit(event)
 

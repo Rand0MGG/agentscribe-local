@@ -219,12 +219,13 @@ import subprocess, sys, time
 from pathlib import Path
 Path(sys.argv[1]).write_bytes(b'partial-download')
 subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
-print('fixture child ready', flush=True)
+from linguaflow.download_progress import report
+report('fixture child ready', unit='stage')
 time.sleep(30)
 '''
     logs, errors = [], []
-    worker = SimpleNamespace(cancelled=False, process=None, progress=SimpleNamespace(emit=logs.append),
-                             download=SimpleNamespace(emit=lambda event: None))
+    worker = SimpleNamespace(cancelled=False, process=None,
+                             download=SimpleNamespace(emit=lambda event: logs.append(event.get('label'))))
     def run():
         try:
             Preparation.run_command(worker, [sys.executable, '-u', '-c', code, str(saved)])

@@ -22,6 +22,7 @@ def test_legacy_defaults_and_corrupt_values():
     assert values['backend'] == 'qwen3-streaming'
     assert values['draft_seconds'] == .5
     assert values['translate'] is True
+    assert values['beta_features'] is False
     assert values['translation_device'] is None  # UI falls back to selected compute device.
     assert 'audio_processing' not in values
 
@@ -41,8 +42,7 @@ def test_all_keys_roundtrip_and_missing_device_does_not_erase_selection():
 @pytest.mark.parametrize('stored, expected', [(False, False), (True, True), (0, False), (1, True),
     ('false', False), ('true', True), ('1', True), ('0', False), ('invalid', False), (None, False),
     (2, False), (1.0, False), ({}, False)])
-def test_beta_opt_in_defaults_off_and_rejects_corrupt_settings(stored, expected):
-    assert read_preferences(Store())['beta_features'] is False
+def test_beta_opt_in_parses_stored_values_and_rejects_corrupt_settings(stored, expected):
     assert read_preferences(Store(beta_features=stored))['beta_features'] is expected
 
 

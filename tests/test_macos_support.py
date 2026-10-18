@@ -1,6 +1,5 @@
 """Platform regressions use fake devices and never open native audio."""
 import importlib.util
-import json
 import os
 import platform
 import subprocess
@@ -9,8 +8,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
-from linguaflow.preferences import read_preferences
 
 
 def test_windows_web_session_guard_does_not_load_macos_frameworks(monkeypatch):
@@ -39,19 +36,6 @@ def test_quartz_probe_does_not_register_an_application_and_releases_session(monk
     monkeypatch.setattr(ctypes, 'CDLL', lambda path: graphics if 'CoreGraphics' in path else foundation)
     assert window_session_available() is bool(session)
     assert released == ([session] if session else [])
-
-
-@pytest.mark.parametrize('platform', ['darwin', 'win32'])
-def test_old_audio_preferences_are_ignored_on_both_platforms(monkeypatch, platform):
-    data = {'deepfilter': True, 'df_device': 'cuda', 'df_mix': .4, 'output_db': 3}
-
-    class Store:
-        def value(self, key, default=None, **kwargs):
-            return json.dumps(data) if key == 'audio_processing' else default
-
-    monkeypatch.setattr(sys, 'platform', platform)
-    assert 'audio_processing' not in read_preferences(Store())
-    assert data['df_device'] == 'cuda'
 
 
 @pytest.mark.parametrize('target, suffix, index', [

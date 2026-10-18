@@ -324,9 +324,10 @@ w.start(models_checked=True)
 assert w.notifications.notices['session'].text == '模型准备中 · 请等待模型准备完成，或在设置中取消准备。'
 w.model_manager.worker = None
 w.model_manager.backend.setCurrentIndex(w.model_manager.backend.findData('qwen3-streaming'))
-w.source.setCurrentIndex(0)
-w.start(models_checked=True)
-assert messages.pop() == '请选择原文语言'
+# Qwen no longer offers automatic detection and defaults to English; missing
+# source language remains covered by the inference preflight unit test.
+assert w.source.findText('自动检测') == -1
+assert w.source.currentText() == 'English'
 w.new_button.click()
 assert w.current_item is None and not w.library.index['sessions']
 assert w.session is None and w.start_button.isEnabled()

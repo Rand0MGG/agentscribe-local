@@ -145,6 +145,7 @@ class LanguagePopup(QDialog):
         super().__init__(parent, Qt.WindowType.Popup)
         self._soft_surface = PopupSurface(self)
         self.installEventFilter(self._soft_surface)
+        self._translate_control = translate
         self.setFixedWidth(320)
         form = QFormLayout(self)
         form.setContentsMargins(34, 26, 34, 34)
@@ -166,6 +167,8 @@ class LanguagePopup(QDialog):
         form.addRow(self.hint)
 
     def show_at(self, anchor, *, next_session=False):
+        self.translation_switch.setEnabled(self._translate_control.isEnabled())
+        self.translation_switch.setToolTip(self._translate_control.toolTip())
         self.hint.setVisible(next_session)
         self.adjustSize()
         point = anchor.mapToGlobal(QPoint(0, 0))
