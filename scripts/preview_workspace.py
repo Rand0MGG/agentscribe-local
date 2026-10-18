@@ -153,11 +153,14 @@ def main():
             point = QPoint(5, text.height()//2)
             for mode, name in ((0, 'light'), (1, 'dark')):
                 w.appearance.setCurrentIndex(mode)
+                QTest.qWait(50)
+                text._text_contains(QPoint(0, 0))
+                point = text._hit_rects[0].center().toPoint()
                 text.setSelection(0, 0)
                 app.sendEvent(text, QMouseEvent(QEvent.Type.MouseMove, QPointF(point),
                     QPointF(text.mapToGlobal(point)), Qt.MouseButton.NoButton,
                     Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
-                assert w.cards[1].interaction == 'hover'
+                assert text._interaction == 'hover' and w.cards[1].interaction == ''
                 capture('caption-hover-'+name)
                 QTest.mousePress(text, Qt.MouseButton.LeftButton, pos=point)
                 assert w.cards[1].interaction == 'pressed'
@@ -202,6 +205,12 @@ def main():
                                    ('运行环境', 'settings-runtime')):
                 w.open_settings(category)
                 capture(name)
+                for mode, theme in ((0, 'light'), (1, 'dark')):
+                    w.appearance.setCurrentIndex(mode)
+                    w.resize(640, 480)
+                    capture(name+'-'+theme+'-640x480')
+                w.appearance.setCurrentIndex(0)
+                w.resize(1280, 840)
             w.open_settings('模型管理')
             from linguaflow.model_options import recommended_selection
             selection = recommended_selection()

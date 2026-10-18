@@ -34,6 +34,7 @@ class ModelBrowser(QWidget):
         self.inventory_loaded = False
         self.busy = False
         self.deleting = False
+        self.notify_refresh = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         from .ui_components import ChoiceBox
@@ -60,7 +61,7 @@ class ModelBrowser(QWidget):
         layout.addWidget(self.list, 1)
         row = QHBoxLayout()
         self.refresh_button = QPushButton('刷新')
-        self.refresh_button.clicked.connect(self.refresh)
+        self.refresh_button.clicked.connect(lambda: self.refresh(notify=True))
         self.delete_button = QPushButton('删除模型')
         self.delete_button.setObjectName('danger')
         self.delete_button.clicked.connect(self.delete_selected)
@@ -122,14 +123,16 @@ class ModelBrowser(QWidget):
         self.delete_button.setToolTip('录音或下载期间不能删除模型。' if locked else
                                       '自选目录请在文件管理器中处理；这里只删除应用管理的模型缓存。')
 
-    def request(self, identifier=None):
+    def request(self, identifier=None, *, notify=False):
         if self.busy or self.start_check is None:
             return
         self.busy = True
         self.deleting = bool(identifier)
+        self.notify_refresh = notify
         self.deletion_changed.emit(bool(identifier))
         self.status.setText('正在删除模型…' if identifier else '正在读取本地模型…')
-        self.feedback.emit(self.status.text(), 'progress')
+        if self.deleting or self.notify_refresh:
+            self.feedback.emit(self.status.text(), 'progress')
         self.update_actions()
         arguments = ['--selected', json.dumps(self.selected_models(), ensure_ascii=False)]
         if identifier:
@@ -164,12 +167,14 @@ class ModelBrowser(QWidget):
                 self.list.setCurrentRow(0)
             self.sync_roles()
             self.changed.emit()
-            self.feedback.emit('模型已删除。' if self.deleting else '模型列表已刷新。', 'success')
+            if self.deleting or self.notify_refresh:
+                self.feedback.emit('模型已删除。' if self.deleting else '模型列表已刷新。', 'success')
         self.deleting = False
+        self.notify_refresh = False
         self.update_actions()
 
-    def refresh(self):
-        self.request()
+    def refresh(self, *, notify=False):
+        self.request(notify=notify)
 
     def open_selected(self):
         if entry := self.current():

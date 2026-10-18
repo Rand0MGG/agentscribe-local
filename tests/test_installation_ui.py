@@ -46,7 +46,8 @@ w.open_settings('常规')
 from linguaflow.runtime_paths import resource_root
 w.settings_workspace.set_storage_root(resource_root()/'录音')
 assert w.settings_workspace.storage_path.text() == str(resource_root()/'录音')
-assert w.settings_workspace.storage_path.parentWidget().objectName() == 'settingsRow'
+assert w.settings_workspace.isAncestorOf(w.settings_workspace.storage_path)
+assert w.settings_workspace.storage_path.isVisible()
 assert not hasattr(w.settings_workspace, 'storage_warning')
 app.processEvents()
 w.grab().save(str(folder/'storage.png'))

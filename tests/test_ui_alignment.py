@@ -44,6 +44,8 @@ for theme in (0,1):
                 menu=more.menu()
                 menu.popup(more.mapToGlobal(QPoint(0,more.height())))
                 settle_geometry(menu)
+                menu.setActiveAction(w.knowledge_action)
+                settle_geometry(menu)
                 assert menu.rect().contains(menu.actionGeometry(w.knowledge_action))
                 menu.close()
             controls=[w.workspace_title]+[b for b in w.recording_actions.findChildren(module.QPushButton) if b.isVisibleTo(w)]

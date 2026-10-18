@@ -7,8 +7,8 @@ from queue import Empty, Queue
 from threading import Thread
 
 import numpy as np
-from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
+from PySide6.QtCore import QEvent, QPoint, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QBrush, QColor, QImage, QPainter, QPixmap, QTransform
 from PySide6.QtWidgets import QApplication, QWidget
 from scipy.ndimage import gaussian_filter
 
@@ -103,6 +103,7 @@ class WallpaperBackdrop(QWidget):
         super().__init__()
         self.setObjectName('appRoot')
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.corner_radius = 0
         self._path = ''
         self._image = QImage()
         self._signature = None
@@ -204,15 +205,23 @@ class WallpaperBackdrop(QWidget):
         self._image = QImage()
         return True
 
+    def set_corner_radius(self, radius):
+        self.corner_radius = radius
+        self.update()
+
     def paintEvent(self, event):
         key = self._key()
         self._request(key)
         painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         mode = QApplication.instance().property('appearance') or 'light'
-        painter.fillRect(self.rect(), QColor(theme_colors(mode)['glass']))
+        brush = QBrush(QColor(theme_colors(mode)['glass']))
         if not self._image.isNull() and self._rendered == key:
             geometry = (self.window().screen() or QApplication.primaryScreen()).geometry()
-            origin = self.mapToGlobal(QPoint(0, 0))
-            source = QRect(origin.x()-geometry.x(), origin.y()-geometry.y(), self.width(), self.height())
-            painter.drawImage(self.rect(), self._image, source)
+            origin = self.mapToGlobal(QPoint(0, 0)) - geometry.topLeft()
+            brush = QBrush(self._image)
+            brush.setTransform(QTransform.fromTranslate(-origin.x(), -origin.y()))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(brush)
+        painter.drawRoundedRect(QRectF(self.rect()), self.corner_radius, self.corner_radius)
         painter.end()

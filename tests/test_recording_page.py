@@ -118,13 +118,17 @@ for choice in (w.quick_device,w.source,w.target,w.appearance):
     assert first.height()>=34
     assert popup.rect().contains(view.rect().translated(view.mapTo(popup,QPoint(0,0))))
     choice.hidePopup()
-# Every header menu action must remain fully visible, including the last row.
+# Every header menu action must be reachable inside the bounded viewport.
 more=next(button for button in w.recording_actions.findChildren(module.QPushButton) if button.menu())
 menu=more.menu()
 menu.popup(more.mapToGlobal(QPoint(0,more.height())))
 settle_geometry(menu)
-assert all(menu.rect().contains(menu.actionGeometry(action)) for action in menu.actions() if action.isVisible() and not action.isSeparator())
-assert menu.height()>sum(action.isVisible() for action in menu.actions())*20
+assert menu.available_bounds().contains(menu.geometry())
+for action in menu.actions():
+    if action.isVisible() and not action.isSeparator():
+        menu.setActiveAction(action)
+        app.processEvents()
+        assert menu.rect().contains(menu.actionGeometry(action))
 menu.close()
 # Mouse selection preserves the public QComboBox activation signal.
 activated=[]

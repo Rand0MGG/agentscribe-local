@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QProgressBar,
     QPushButton,
     QScrollArea,
@@ -48,6 +49,8 @@ class ModelManager(QDialog):
         self.setWindowTitle("模型管理 · 准备一次，随后直接聆听")
         self.resize(660, 640)
         self.worker = None
+        self.retry_request = None
+        self.preparation_location = "models"
         self.preparation_result = None
         self.preparation_started = 0.0
         self.close_requested = False
@@ -137,6 +140,7 @@ class ModelManager(QDialog):
         self.install_documents_button.clicked.connect(self.install_documents)
         self.preparation_buttons.append(self.install_documents_button)
         environment_form.addRow(self.install_documents_button)
+        self.runtime_form = environment_form
         self.hint(environment_form, "桌面界面与模型推理使用独立环境。无需手动启动服务。统一检查所需组件，补齐或重建损坏环境，并清理未发布的残留环境。模型在模型管理中准备。")
         update = self.update_button = QPushButton('检查软件更新')
         update.clicked.connect(self.check_updates)
@@ -162,6 +166,8 @@ class ModelManager(QDialog):
         self.download_card = QFrame()
         self.download_card.setObjectName('downloadCard')
         card = QVBoxLayout(self.download_card)
+        card.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
+        self.download_card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         card.setContentsMargins(20, 16, 20, 16)
         card.setSpacing(10)
         heading = QHBoxLayout()
@@ -172,11 +178,15 @@ class ModelManager(QDialog):
         self.cancel_button.setEnabled(False)
         self.cancel_button.clicked.connect(self.cancel_preparation)
         heading.addWidget(self.cancel_button)
+        self.retry_button = QPushButton('重试')
+        self.retry_button.setObjectName('secondary')
+        self.retry_button.clicked.connect(self.retry_preparation)
+        self.retry_button.hide()
+        heading.addWidget(self.retry_button)
         card.addLayout(heading)
         self.status = QLabel("下载只准备文件；开始聆听时才加载模型。")
         self.status.setObjectName('preparationStatus')
         self.status.setWordWrap(True)
-        self.status.setMaximumHeight(44)
         card.addWidget(self.status)
         details = QHBoxLayout()
         self.download_file = text_label('', 'muted')
@@ -198,6 +208,7 @@ class ModelManager(QDialog):
         card.addWidget(self.progress_bar)
         self.download_card.hide()
         layout.addWidget(self.download_card)
+        self.model_task_layout = layout
         self.pending_settings = QLabel('当前聆听继续使用原设置；修改已保存，下次开始聆听生效。')
         self.pending_settings.setWordWrap(True)
         self.pending_settings.hide()
@@ -427,6 +438,8 @@ class ModelManager(QDialog):
             column = QVBoxLayout(wrapper)
             column.setContentsMargins(0, 0, 6, 0)
             column.addWidget(page)
+            if page is self.runtime_form.parentWidget():
+                self.runtime_task_layout = column
             column.addStretch()
             scroll.setWidget(wrapper)
             scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -491,7 +504,7 @@ class ModelManager(QDialog):
             widget.setEnabled(qwen)
 
     def prepare(self, action, *, message='正在准备，可返回录音或修改下次设置；已有文件会复用。',
-                affects_runtime=False, beta_only=False):
+                affects_runtime=False, beta_only=False, location="models"):
         if self.update_fenced:
             self.preparation_message.emit('正在准备重启更新，完成后可继续准备模型。')
             return
@@ -504,6 +517,14 @@ class ModelManager(QDialog):
         if affects_runtime and self.session_active:
             self.preparation_status('运行环境修复请在本次录音结束后进行；设置仍可修改，下次生效。')
             return
+        self.retry_request = (action, dict(message=message, affects_runtime=affects_runtime,
+                                           beta_only=beta_only, location=location))
+        self.preparation_location = location
+        target_layout = getattr(self, 'runtime_task_layout', self.model_task_layout) if location == 'runtime' else self.model_task_layout
+        current_layout = self.download_card.parentWidget().layout()
+        current_layout.removeWidget(self.download_card)
+        target_layout.insertWidget(0 if location == 'runtime' else 1, self.download_card)
+        self.retry_button.hide()
         for button in self.preparation_buttons:
             button.setEnabled(False)
         self.cancel_button.setEnabled(True)
@@ -512,8 +533,9 @@ class ModelManager(QDialog):
         self.progress_bar.setRange(0, 0)
         self.progress_bar.setTextVisible(False)
         self.download_card.show()
-        self.download_title.setText('正在准备本地模型' if affects_runtime else '正在准备本地组件')
+        self.download_title.setText('检查 / 修复运行环境' if location == 'runtime' else '正在准备本地模型')
         self.download_file.clear()
+        self.download_stats.show()
         self.download_stats.setText('正在检查…')
         self.status.show()
         self.status.setText(message)
@@ -580,11 +602,18 @@ class ModelManager(QDialog):
             return
         self.prepare(lambda: self.run_preparation(installation_command('linguaflow.document_install')),
                      message='正在准备课件渲染组件；首次安装需要联网，可以取消。',
-                     affects_runtime=False, beta_only=True)
+                     affects_runtime=False, beta_only=True, location="runtime")
 
     def prepared(self):
+        failed = bool(self.preparation_result and self.preparation_result.startswith('准备未完成：'))
+        cancelled = self.worker.cancelled
+        may_retry = not (self.worker.beta_only and self.install_documents_button.isHidden())
         self.worker.deleteLater()
         self.worker = None
+        self.retry_button.setText('继续准备' if cancelled else '重试')
+        self.retry_button.setVisible(may_retry and (failed or cancelled))
+        if not may_retry or not (failed or cancelled):
+            self.retry_request = None
         for button in self.preparation_buttons:
             button.setEnabled(True)
         self.cancel_button.setEnabled(False)
@@ -593,6 +622,8 @@ class ModelManager(QDialog):
         self.download_title.setText('准备结果')
         self.download_file.clear()
         self.download_stats.clear()
+        self.download_file.hide()
+        self.download_stats.hide()
         if self.preparation_result is not None:
             self.status.setText(self.preparation_result)
             self.status.setToolTip(self.preparation_result)
@@ -608,6 +639,11 @@ class ModelManager(QDialog):
         if self.close_requested:
             self.close_requested = False
             self.reject()
+
+    def retry_preparation(self):
+        if self.worker is None and self.retry_request is not None:
+            action, options = self.retry_request
+            self.prepare(action, **options)
 
     def cancel_preparation(self):
         if self.worker:
@@ -634,7 +670,8 @@ class ModelManager(QDialog):
     def install_runtime(self):
         selection = json.dumps(self.preparation_selection(), ensure_ascii=False)
         command = installation_command('linguaflow.runtime_install', 'all', '--maintain', '--selection', selection)
-        self.prepare(lambda: self.run_preparation(command), affects_runtime=True)
+        self.prepare(lambda: self.run_preparation(command), affects_runtime=True, location="runtime",
+                     message="正在检查 / 修复运行环境；已有可用组件会复用，可随时取消。")
 
     def prepare_selected(self, selection, *, only=None):
         arguments = ['--selection', json.dumps(selection, ensure_ascii=False)]

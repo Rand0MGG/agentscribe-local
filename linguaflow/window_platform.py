@@ -55,40 +55,6 @@ def start_edge_resize(handle, point, size, *, maximized=False):
     return bool(edges and handle and handle.startSystemResize(edges))
 
 
-def enable_system_backdrop(native_handle):
-    """Enable wallpaper-only Mica behind the connected top and sidebar glass."""
-    if sys.platform != "win32" or os.environ.get("QT_QPA_PLATFORM") == "offscreen":
-        return False
-    try:
-        import ctypes
-        from ctypes import wintypes
-
-        class Margins(ctypes.Structure):
-            _fields_ = [("left", ctypes.c_int), ("right", ctypes.c_int),
-                        ("top", ctypes.c_int), ("bottom", ctypes.c_int)]
-
-        hwnd = wintypes.HWND(native_handle)
-        dwmapi = ctypes.windll.dwmapi
-        enabled = ctypes.c_int(1)
-        rounded = ctypes.c_int(2)
-        backdrop = ctypes.c_int(2)  # DWMSBT_MAINWINDOW / Mica samples the wallpaper only.
-        dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(enabled), ctypes.sizeof(enabled))
-        dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(rounded), ctypes.sizeof(rounded))
-        modern_result = dwmapi.DwmSetWindowAttribute(
-            hwnd, 38, ctypes.byref(backdrop), ctypes.sizeof(backdrop)
-        )
-        # Windows 11 21H2 exposed Mica through this earlier attribute before
-        # DWMWA_SYSTEMBACKDROP_TYPE became available.
-        legacy_result = dwmapi.DwmSetWindowAttribute(
-            hwnd, 1029, ctypes.byref(enabled), ctypes.sizeof(enabled)
-        )
-        margins = Margins(-1, -1, -1, -1)
-        dwmapi.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(margins))
-        return modern_result == 0 or legacy_result == 0
-    except (AttributeError, OSError, TypeError, ValueError, ctypes.ArgumentError):
-        return False
-
-
 def enable_native_resize(native_handle):
     """Restore Windows resize/Snap support for our Qt frame.
 

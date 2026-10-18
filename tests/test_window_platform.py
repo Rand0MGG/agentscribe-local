@@ -29,7 +29,6 @@ def test_system_resize_is_only_requested_for_windows(monkeypatch, system, offscr
     assert len(requests) == int(expected)
     if system != 'win32' or offscreen:
         assert not platform.enable_native_resize(0)
-        assert not platform.enable_system_backdrop(0)
 
 
 def test_overlay_behavior_preserves_flags_without_conflicting_space_policies():

@@ -1,7 +1,7 @@
 """Quiet navigation, explicit recording creation and the full-page settings view."""
 
 from PySide6.QtCore import QEasingCurve, QPoint, QPointF, QRectF, QSize, Qt, QVariantAnimation, Signal
-from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPixmap
+from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -25,8 +25,8 @@ from PySide6.QtWidgets import (
 
 from .qt_controls import text_label
 from .ui_components import ChoiceBox as QComboBox
-from .ui_components import ElidedLabel, PageTransition, PopupSurface, motion_enabled
-from .ui_theme import theme_colors
+from .ui_components import ElidedLabel, PageTransition, PopupSurface, ResponsiveRow, motion_enabled
+from .ui_theme import interaction_color, theme_colors
 
 PAGE_DESCRIPTIONS = {
     '模型管理': '查看、设置或删除已下载的识别与翻译模型。',
@@ -101,6 +101,7 @@ class Switch(QCheckBox):
         self.setFixedSize(38, 24)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.position = 0.
+        self.keyboard_focus = False
         self.motion = QVariantAnimation(self)
         self.motion.setDuration(150)
         self.motion.setEasingCurve(QEasingCurve.Type.OutCubic)
@@ -123,20 +124,36 @@ class Switch(QCheckBox):
     def hitButton(self, point):
         return self.rect().contains(point)
 
+    def focusInEvent(self, event):
+        self.keyboard_focus = event.reason() in (
+            Qt.FocusReason.TabFocusReason, Qt.FocusReason.BacktabFocusReason,
+            Qt.FocusReason.ShortcutFocusReason)
+        super().focusInEvent(event)
+        self.update()
+
+    def mousePressEvent(self, event):
+        self.keyboard_focus = False
+        super().mousePressEvent(event)
+        self.update()
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setOpacity(1 if self.isEnabled() else .4)
         c = theme_colors(QApplication.instance().property('appearance'))
-        painter.setBrush(QColor(c['primary'] if self.isChecked() else c['disabled']))
-        painter.drawRoundedRect(QRectF(1, 3, 36, 20), 10, 10)
-        painter.setBrush(QColor(c['primary_text'] if self.isChecked() else c['surface']))
+        def blend(first, last):
+            a, b = QColor(c[first]), QColor(c[last])
+            return QColor.fromRgbF(*[x+(y-x)*self.position for x, y in zip(a.getRgbF(), b.getRgbF())])
+        track = QRectF(1, 3, 36, 20)
+        painter.setBrush(blend('disabled', 'primary'))
+        painter.drawRoundedRect(track, 10, 10)
+        painter.setBrush(blend('surface', 'primary_text'))
         painter.drawEllipse(QRectF(3 + 16 * self.position, 5, 16, 16))
-        if self.hasFocus():
+        if self.hasFocus() and self.keyboard_focus:
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.setPen(QColor(c['focus']))
-            painter.drawRoundedRect(QRectF(.5, .5, 37, 23), 11, 11)
+            painter.setPen(QPen(QColor(c['focus']), 1.5))
+            painter.drawRoundedRect(track.adjusted(.75, .75, -.75, -.75), 9.25, 9.25)
 
 
 class LanguagePopup(QDialog):
@@ -192,8 +209,8 @@ class LibraryDelegate(QStyledItemDelegate):
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
         hover = bool(option.state & QStyle.StateFlag.State_MouseOver)
         if selected or hover:
-            colors = theme_colors(QApplication.instance().property('appearance'))
-            painter.setBrush(QColor(colors['selected' if selected else 'hover']))
+            appearance = QApplication.instance().property('appearance')
+            painter.setBrush(QColor(*interaction_color(appearance, 'secondary_hover' if selected else 'row_hover')))
             painter.drawRoundedRect(QRectF(option.rect).adjusted(2, 2, -2, -2), 8, 8)
         depth, parent = 0, index.parent()
         while parent.isValid():
@@ -407,6 +424,7 @@ class SettingsWorkspace(QWidget):
         model_settings.addStretch()
         body.addLayout(model_settings)
         body.addWidget(manager.download_card)
+        manager.model_task_layout = body
         body.addWidget(self.model_browser, 1)
         prepare = QPushButton('检查 / 补齐当前模型')
         prepare.clicked.connect(self.prepare_models_requested.emit)
@@ -427,7 +445,7 @@ class SettingsWorkspace(QWidget):
             self.row(rows, title, detail, button)
         body.addWidget(card)
         body.addWidget(text_label('聆听中的文字会发生什么？', 'settingsSection'))
-        body.addWidget(text_label('未提交  →  已提交，可修订  →  原文已定稿\n\n首次提交和已提交原文的变化立即排队初译，固定参考前后各 1 段已有的已定稿原文。识别段结束后原文独立定稿，再参考前 5 段、后 1 段已有的已定稿原文生成最终译文。相邻待译内容可以合并、共享背景；等待更新时保留已有译文并标注。翻译不阻挡原文更新，也不等待尚未出现的后文。暂停会停止收音并继续处理已有内容；点击“继续录音”可接着录，暂停时间不计入录音。停止聆听会处理剩余内容，请等待收尾完成。', 'infoBanner'))
+        body.addWidget(text_label('识别到的原文会先显示出来，后续可能随上下文修订。\n\n标注“优化中”的内容仍可能变化；显示“已定稿”后，该段原文已确认。启用翻译时，译文会随后补充并更新，等待期间保留已有文字。\n\n暂停会停止收音，并继续处理已收到的内容；点击“继续录音”可接着录，暂停时间不计入录音。停止聆听后仍需处理剩余内容，请等待收尾完成。', 'infoBanner'))
         body.addWidget(text_label('录音结束以后', 'settingsSection'))
         body.addWidget(text_label('从侧栏打开录音，可回听音频或导出双语 SRT、TXT 和 Markdown。使用「···」重命名、移动或打开保存位置；删除的录音先进入「最近删除」，可在那里恢复。', 'muted'))
         body.addStretch()
@@ -479,26 +497,15 @@ class SettingsWorkspace(QWidget):
 
     @staticmethod
     def row(rows, title, description, control):
-        frame = QFrame()
-        frame.setObjectName("settingsRow")
-        row = QHBoxLayout(frame)
-        row.setContentsMargins(0, 20, 0, 20)
-        row.setSpacing(20)
-        words = QVBoxLayout()
-        words.setSpacing(6)
-        words.addWidget(text_label(title, "settingsLabel"))
-        words.addWidget(description if isinstance(description, QWidget) else text_label(description, "muted"))
-        row.addLayout(words, 1)
         control.setMaximumWidth(270)
         control.setMinimumWidth(0)
         if isinstance(control, Switch):
             control.setFixedSize(38, 24)
         if isinstance(control, QComboBox):
             control.setMinimumContentsLength(10)
-            control.setFixedWidth(210)
+            control.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         control.show()
-        row.addWidget(control)
-        rows.addWidget(frame)
+        rows.addWidget(ResponsiveRow(title, description, control))
 
     def select(self, index):
         if index < 0:

@@ -45,12 +45,12 @@ def hub_progress():
         module.tqdm = original
 
 
-def copy_download(response, output, label, *, checksum=None):
+def copy_download(response, output, label, *, checksum=None, initial=0):
     """Stream owned HTTP downloads with byte progress; unknown totals stay unknown."""
     total = getattr(response, 'headers', {}).get('Content-Length')
-    total = int(total) if total and total.isdigit() else None
-    done, started, last = 0, time.monotonic(), 0.
-    report(label, total=total)
+    total = int(total)+initial if total and total.isdigit() else None
+    done, started, last = initial, time.monotonic(), 0.
+    report(label, done, total=total)
     while block := response.read(1024 * 1024):
         output.write(block)
         if checksum is not None:
@@ -59,5 +59,7 @@ def copy_download(response, output, label, *, checksum=None):
         now = time.monotonic()
         if now - last >= .25:
             last = now
-            report(label, done, total, rate=done / max(now - started, .001))
-    report(label, done, total, rate=done / max(time.monotonic() - started, .001))
+            report(label, done, total, rate=(done-initial) / max(now - started, .001))
+    if total is not None and done < total:
+        raise ConnectionError(f'下载中断：{label}，已保留 {done} / {total} 字节。')
+    report(label, done, total, rate=(done-initial) / max(time.monotonic() - started, .001))

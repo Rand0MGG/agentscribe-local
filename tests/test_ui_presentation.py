@@ -31,7 +31,7 @@ w.close()
 ''', tmp_path)
 
 
-def test_hover_darkens_existing_colour_without_effects(tmp_path):
+def test_hover_uses_semantic_colour_without_effects(tmp_path):
     from test_beta_features import run_ui
     run_ui(r'''
 from PySide6.QtCore import QPoint
@@ -60,8 +60,13 @@ before = sampled_colour()
 QTest.mouseMove(button, QPoint(15,15))
 QTest.qWait(30)
 after = sampled_colour()
-assert all(0 < a < b for a,b in zip(after.getRgb()[:3],before.getRgb()[:3])), (before.getRgb(),after.getRgb(),button.underMouse())
-assert after.red()-after.green() > 40 and after.blue()-after.green() > 25, (before.getRgb(),after.getRgb())
+from PySide6.QtGui import QColor
+from linguaflow.ui_theme import interaction_color
+r,g,b,a = interaction_color(app.property('appearance'), 'ghost_hover')
+expected = QColor(*(round(f*a/255 + base*(1-a/255)) for f,base in zip((r,g,b), before.getRgb()[:3])))
+assert max(abs(x-y) for x,y in zip(after.getRgb(), expected.getRgb())) <= 1
+assert after != before
+assert button.geometry().width() == 160
 assert button.graphicsEffect() is None
 probe.close()
 w.close()
@@ -459,3 +464,33 @@ w.close()
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path)})
     assert_ui_process(result)
+
+
+def test_window_frame_restores_margins_and_keeps_backdrop_lifecycle(tmp_path):
+    from test_beta_features import run_ui
+    run_ui(r'''
+from PySide6.QtTest import QTest
+from linguaflow.ui_theme import WINDOW_SHADOW_MARGIN, WINDOW_RADIUS
+from linguaflow.ui_backdrop import WallpaperBackdrop
+w.show()
+settle_geometry(w)
+root = w.centralWidget()
+assert isinstance(root, WallpaperBackdrop)
+if w.custom_frame:
+    assert w.contentsMargins().left() == WINDOW_SHADOW_MARGIN
+    assert root.corner_radius == WINDOW_RADIUS
+    image = w.grab().toImage()
+    scale = w.devicePixelRatioF()
+    assert image.pixelColor(0, 0).alpha() == 0
+    assert 0 < image.pixelColor(round(12*scale), round(w.height()/2*scale)).alpha() < 100
+    w.showMaximized()
+    QTest.qWait(100)
+    assert w.isMaximized() and w.contentsMargins().left() == 0
+    assert root.corner_radius == 0
+    w.showNormal()
+    QTest.qWait(100)
+    assert w.contentsMargins().left() == WINDOW_SHADOW_MARGIN
+    assert root.corner_radius == WINDOW_RADIUS
+assert w.centralWidget() is root
+w.close()
+''', tmp_path)

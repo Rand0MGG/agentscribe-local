@@ -91,14 +91,21 @@ from .ui_components import (
     NavigationButton,
     RecordingTitle,
     SurfaceDialog,
+    paint_window_shadow,
 )
 from .ui_components import ChoiceBox as QComboBox
-from .ui_theme import STYLE, WORKSPACE_RADIUS, appearance_style, theme_colors
+from .ui_theme import (
+    STYLE,
+    WINDOW_RADIUS,
+    WINDOW_SHADOW_MARGIN,
+    WORKSPACE_RADIUS,
+    appearance_style,
+    theme_colors,
+)
 from .ui_tooltips import install_tooltips
 from .window_platform import (
     configure_main_window,
     enable_native_resize,
-    enable_system_backdrop,
     expand_window_content,
     start_edge_resize,
 )
@@ -401,11 +408,14 @@ class Window(QMainWindow):
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.integrated_titlebar = expand_window_content(self)
         self._native_titlebar_attempted = False
-        self._backdrop_applied = False
         self._backdrop_attempted = False
         self._native_resize_applied = False
-        if sys.platform == "win32" and os.environ.get("QT_QPA_PLATFORM") != "offscreen":
+        self.custom_frame = sys.platform == "win32" and QApplication.platformName() == 'windows'
+        if self.custom_frame:
             self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+            self.setWindowFlag(Qt.WindowType.NoDropShadowWindowHint, True)
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+            self.setContentsMargins(*([WINDOW_SHADOW_MARGIN] * 4))
         self.setWindowTitle("AgentScribe · 本地同声字幕")
         self.resize(1280, 840)
         self.setMinimumSize(640, 480)
@@ -473,6 +483,8 @@ class Window(QMainWindow):
         root = WallpaperBackdrop()
         root.shutdown_complete.connect(self.close)
         self.setCentralWidget(root)
+        if self.custom_frame:
+            root.set_corner_radius(WINDOW_RADIUS)
         layout = QVBoxLayout(root)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -1057,23 +1069,23 @@ class Window(QMainWindow):
         self.prepare_recommended_models(only=None if self.translate.isChecked() else 'asr')
 
     def update_preparation_feedback(self, *_):
-        models_visible = (self.pages.currentIndex() == 1 and
-                          self.settings_workspace.pages.currentIndex() == self.settings_workspace.mapping['模型管理'])
-        self.notifications.set_suppressed('preparation', models_visible and self.model_manager.preparing)
+        manager = self.model_manager
+        visible = manager.download_card.isVisibleTo(self)
+        self.notifications.set_suppressed('preparation', visible and manager.preparing)
 
     def on_preparation_message(self, text):
-        self.model_manager.download_card.setVisible(self.model_manager.preparing)
+        self.model_manager.download_card.setVisible(self.model_manager.preparing or self.model_manager.retry_request is not None)
         error = text.startswith(('未完成：', '准备未完成：'))
         self.notifications.post('preparation', text if error else
                                 '正在准备本地模型与组件' if self.model_manager.preparing else text,
                                 kind='error' if error else 'progress' if self.model_manager.preparing else 'success',
                                 details=text if error else '',
                                 action=self.model_manager.cancel_preparation if self.model_manager.preparing else
-                                (lambda: self.open_settings('模型管理')) if error else None,
-                                action_text='取消' if self.model_manager.preparing else '模型管理')
+                                self.model_manager.retry_preparation if error else None,
+                                action_text='取消' if self.model_manager.preparing else '重试')
 
     def on_download_progress(self, event):
-        self.model_manager.download_card.setVisible(self.model_manager.preparing)
+        self.model_manager.download_card.setVisible(self.model_manager.preparing or self.model_manager.retry_request is not None)
         done, total = event.get('completed', 0), event.get('total')
         known = isinstance(total, (int, float)) and total > 0 and event.get('unit') != 'stage'
         self.notifications.post('preparation', '正在下载模型' if event.get('unit') == 'B' else '正在准备本地组件',
@@ -1083,8 +1095,8 @@ class Window(QMainWindow):
     def on_preparation_changed(self, active):
         if active:
             self.notifications.clear('preparation')
+        self.model_manager.download_card.setVisible(active or self.model_manager.retry_request is not None)
         self.update_preparation_feedback()
-        self.model_manager.download_card.setVisible(active)
         if not active:
             text = self.model_manager.status.text()
             if text.startswith(('未完成：', '准备未完成：')):
@@ -1167,7 +1179,7 @@ class Window(QMainWindow):
                             (QPalette.ColorRole.Highlight, colors[2]), (QPalette.ColorRole.HighlightedText, colors[3])):
             palette.setColor(role, QColor(color))
         app.setPalette(palette)
-        app.setStyleSheet(appearance_style(STYLE, mode))
+        app.setStyleSheet(appearance_style(mode))
         install_tooltips(app).hide()
         for button, kind in ((self.new_button, 'new'), (self.settings_button, 'settings'),
                              (self.deleted_button, 'trash'),
@@ -1872,6 +1884,9 @@ class Window(QMainWindow):
         self.loading_saved = True
         self.clear_captions()
         self.current_item = item
+        row = self.library_rows.get(item["id"])
+        if row is not None:
+            self.library_tree.setCurrentItem(row)
         self.folder_id = item["folder"]
         self.caption_translation = data["settings"].get("translate", True)
         self.captions = {caption.id: caption for caption in captions if caption.source}
@@ -3331,8 +3346,20 @@ class Window(QMainWindow):
         super().changeEvent(event)
         if event.type() == QEvent.Type.WindowStateChange and hasattr(self, "title_bar"):
             maximized = self.isMaximized()
+            if self.custom_frame:
+                expanded = maximized or self.isFullScreen()
+                self.setContentsMargins(*([0 if expanded else WINDOW_SHADOW_MARGIN] * 4))
+                self.centralWidget().set_corner_radius(0 if expanded else WINDOW_RADIUS)
+                self.update()
             self.title_bar.maximize.update()
             self.title_bar.maximize.setToolTip("还原" if maximized else "最大化")
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self.custom_frame and not (self.isMaximized() or self.isFullScreen()):
+            painter = QPainter(self)
+            paint_window_shadow(painter, self.contentsRect(), WINDOW_RADIUS)
+            painter.end()
 
     def moveEvent(self, event):
         super().moveEvent(event)
@@ -3354,7 +3381,6 @@ class Window(QMainWindow):
                 and os.environ.get("QT_QPA_PLATFORM") != "offscreen"):
             self._backdrop_attempted = True
             self._native_resize_applied = enable_native_resize(int(self.winId()))
-            self._backdrop_applied = enable_system_backdrop(int(self.winId()))
 
     def update_titlebar_inset(self, margins):
         self.title_bar.setFixedHeight(max(36, margins.top()))
@@ -3436,7 +3462,7 @@ def main():
     app.setApplicationName("AgentScribe")
     app.setApplicationVersion(__version__)
     app.setStyle("Fusion")
-    app.setStyleSheet(appearance_style(STYLE))
+    app.setStyleSheet(STYLE)
     runtime = RuntimePreparation()
     window = Window(runtime=runtime)
     window.show()

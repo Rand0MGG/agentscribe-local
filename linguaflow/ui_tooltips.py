@@ -111,6 +111,8 @@ class TooltipManager(QObject):
 
 
 def install_tooltips(app):
+    from .qt_controls import install_focus_visibility
+    install_focus_visibility(app)
     if not hasattr(app, '_agentscribe_tooltips'):
         app._agentscribe_tooltips = TooltipManager(app)
     return app._agentscribe_tooltips

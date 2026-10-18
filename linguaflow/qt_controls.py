@@ -1,6 +1,6 @@
 """Small reusable Qt presentation adapters with no application dependencies."""
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QLabel, QSlider, QStyle, QStyleOptionSlider
+from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtWidgets import QAbstractItemView, QLabel, QPushButton, QSlider, QStyle, QStyleOptionSlider
 
 
 class ClickSlider(QSlider):
@@ -55,3 +55,32 @@ def text_label(text, name=None):
 def data_index(combo, value):
     """Python equality also handles tuple item data (QVariant matching does not)."""
     return next((i for i in range(combo.count()) if combo.itemData(i) == value), -1)
+
+
+class FocusVisibility(QObject):
+    """Keep keyboard focus visible without leaving mouse-click borders behind."""
+    def eventFilter(self, widget, event):
+        if (event.type() == QEvent.Type.MouseButtonPress
+                and isinstance(getattr(widget, 'parentWidget', lambda: None)(), QAbstractItemView)):
+            widget = widget.parentWidget()
+        if isinstance(widget, (QPushButton, QAbstractItemView)):
+            kind = event.type()
+            visible = None
+            if kind == QEvent.Type.FocusIn:
+                visible = event.reason() in (Qt.FocusReason.TabFocusReason,
+                                              Qt.FocusReason.BacktabFocusReason,
+                                              Qt.FocusReason.ShortcutFocusReason)
+            elif kind == QEvent.Type.MouseButtonPress:
+                visible = False
+            if visible is not None and widget.property('keyboardFocus') != visible:
+                widget.setProperty('keyboardFocus', visible)
+                widget.style().unpolish(widget)
+                widget.style().polish(widget)
+                widget.update()
+        return False
+
+
+def install_focus_visibility(app):
+    if not hasattr(app, '_agentscribe_focus_visibility'):
+        app._agentscribe_focus_visibility = FocusVisibility(app)
+        app.installEventFilter(app._agentscribe_focus_visibility)
