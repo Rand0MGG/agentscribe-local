@@ -41,6 +41,8 @@ git diff --check
 
 常用回归定位：`test_capture_control.py` / `test_wlk_session.py`、`test_recording_save.py` / `test_recording_document.py`、`test_translation_*.py` / `test_qwen_*.py`、`test_knowledge_*.py`、`test_ui_*.py`、`test_packaging.py` / `test_update_*.py`。实际选择以调用关系为准，不强制每次重跑无关模型。
 
+UI 改动须按 [Demo 一致性契约](UI_DESIGN.md#demo-一致性与优先复用)，核对组件 Demo、正式流程 Demo 与受影响正式页面：同主题、尺寸及状态比较外观，同操作序列验证交互、动效和恢复。按改动范围选择 `test_component_lab.py`、`test_workflow_preview.py` 及对应页面回归；新增共享能力同批补 Demo 场景。仅改规范文档时检查链接与契约一致性，不以未执行的 UI 检查作验收声明。
+
 ## 通过条件与 CI
 
 - 缺陷测试应能在修复前失败。修根因，不靠生产测试专用分支、假算法、吞异常、无条件重试、删测试或放宽断言换绿；测试替身留在测试侧。

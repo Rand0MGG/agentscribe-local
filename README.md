@@ -26,4 +26,8 @@
 
 准备模型 → 新录音 → 开始聆听；来源、语言、文件夹和名称按需修改。停止保存后可回听或导出。源码中的新功能不自动出现在旧安装包中；已知实现缺口见 [计划](docs/ROADMAP.md#实现缺口)，真实设备、长会话及各平台证据见 [验证索引](docs/VALIDATION.md)。现有短样本不构成全面准确率或同类产品比较。
 
+## UI Demo 与开发基准
+
+[界面规范与 Demo 入口](docs/UI_DESIGN.md#demo-一致性与优先复用) 是产品 spec 的一部分。后续界面优先复用组件 Demo 与正式流程 Demo 使用的共享实现，保持交互逻辑、视觉风格、外观及状态反馈一致；新增能力同步维护 Demo 与正式页面。
+
 [全部发行](https://github.com/Rand0MGG/agentscribe-local/releases) · [反馈问题](https://github.com/Rand0MGG/agentscribe-local/issues) · [文档地图](docs/PROJECT_STRUCTURE.md) · [开发约定](AGENTS.md) · [第三方说明](THIRD_PARTY_NOTICES.md)

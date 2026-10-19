@@ -9,6 +9,7 @@
 | 基本开发规范、分支与授权边界 | [AGENTS](../AGENTS.md) |
 | 文档归属、状态表达与维护方法 | [本文文档维护](#文档维护) |
 | 产品边界与功能要求 | [specs](specs/README.md)；视觉交互见 [UI_DESIGN](UI_DESIGN.md) |
+| UI 开发基准、Demo 入口与一致性验收 | [UI_DESIGN：Demo 一致性与优先复用](UI_DESIGN.md#demo-一致性与优先复用)，属于产品 spec |
 | 模块、执行流、数据与资源归属 | [ARCHITECTURE](ARCHITECTURE.md) |
 | 诊断日志目录、隐私与问题反馈 | [WORKSPACE：诊断日志](WORKSPACE.md#诊断日志与问题反馈) |
 | 诊断事件与延迟口径 | [ARCHITECTURE：诊断日志](ARCHITECTURE.md#诊断日志) |
