@@ -10,6 +10,8 @@
 | 文档归属、状态表达与维护方法 | [本文文档维护](#文档维护) |
 | 产品边界与功能要求 | [specs](specs/README.md)；视觉交互见 [UI_DESIGN](UI_DESIGN.md) |
 | 模块、执行流、数据与资源归属 | [ARCHITECTURE](ARCHITECTURE.md) |
+| 诊断日志目录、隐私与问题反馈 | [WORKSPACE：诊断日志](WORKSPACE.md#诊断日志与问题反馈) |
+| 诊断事件与延迟口径 | [ARCHITECTURE：诊断日志](ARCHITECTURE.md#诊断日志) |
 | 如何选择和运行测试 | [TESTING](TESTING.md)；[AMI](testing/AMI_BENCHMARK.md)、[评分](testing/SCORING_SYSTEM.md) 是复用协议 |
 | 当前优先级、未完成与已完成 | [ROADMAP](ROADMAP.md) |
 | 哪些已有证据、证据的适用范围 | [VALIDATION](VALIDATION.md) |

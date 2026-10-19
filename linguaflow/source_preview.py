@@ -1,5 +1,24 @@
 """Display-only ASR revisions; semantic captions remain the source of truth."""
+from .core import Caption
 from .wlk_captions import _common_prefix_end, source_snapshot
+
+
+def preview_captions(captions, event):
+    """Freeze latest source as a recoverable draft, without changing live IDs."""
+    if event is None:
+        return list(captions.values())
+    keep = set(event['keep_ids'])
+    retained = [c for key, c in captions.items() if key in keep]
+    replaced = [c for key, c in captions.items() if key not in keep]
+    if event['source']:
+        identifier = min((c.id for c in replaced), default=max(captions, default=0)+1)
+        retained.append(Caption(identifier, event['start'], event['end'], event['source'], event['language'],
+            translation='\n'.join(c.translation for c in replaced if c.translation),
+            translation_source=' '.join(c.translation_source or c.source for c in replaced if c.translation),
+            translation_phase='initial',
+            final=False, revision=max((c.revision for c in replaced), default=0)+1,
+            error='实时原文草稿，尚未完成分句，请对照录音。'))
+    return retained
 
 
 class SourcePreview:

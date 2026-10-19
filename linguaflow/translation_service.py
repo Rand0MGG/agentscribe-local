@@ -82,6 +82,8 @@ async def _consume_translations(queue, create_translator, current_caption, publi
     try:
         translator = await asyncio.to_thread(create_translator)
     except Exception as exc:
+        from .diagnostic_log import exception
+        exception('translation_load_exception', exc)
         load_error = str(exc)
         status('翻译加载失败，原文继续：' + load_error)
     while True:
@@ -127,6 +129,8 @@ async def _consume_translations(queue, create_translator, current_caption, publi
                         cache.popitem(last=False)
                 results = [replace(c, translation=text.strip(), error='') for c, text in zip(captions, texts, strict=True)]
             except Exception as exc:
+                from .diagnostic_log import exception
+                exception('translation_exception', exc)
                 results = [replace(c, error=str(exc)) for c in captions]
             if len(batch) > 1:
                 published = await publish_batch(results, contexts)

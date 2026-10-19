@@ -76,6 +76,60 @@ def stub_worker(monkeypatch, platform='win32'):
     return configured, online, stores
 
 
+def test_loading_backlog_backpressures_input_without_dropping_pcm(monkeypatch):
+    import base64
+    stub_worker(monkeypatch)
+    base = sys.modules['whisperlivekit'].AudioProcessor
+
+    async def exercise():
+        full, release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        consumed, reads = [], []
+        class Processor(base):
+            async def create_tasks(self):
+                async def consume():
+                    await release.wait()
+                    while True:
+                        value = await self.transcription_queue.get()
+                        self.transcription_queue.task_done()
+                        if value is None:
+                            finished.set()
+                            return
+                        consumed.append(value)
+                self.consumer = asyncio.create_task(consume())
+                async def results():
+                    yield SimpleNamespace(lines=[],to_dict=lambda:{},error='',
+                        remaining_time_transcription_processing=0,remaining_time_transcription_policy=0)
+                    await finished.wait()
+                return results()
+            async def process_audio(self, pcm):
+                await self.transcription_queue.put(pcm or None)
+                if self.transcription_queue.full():
+                    full.set()
+            async def cleanup(self):
+                self.consumer.cancel()
+                await asyncio.gather(self.consumer,return_exceptions=True)
+        monkeypatch.setattr(sys.modules['whisperlivekit'],'AudioProcessor',Processor)
+        expected=[bytes([i,0])*80 for i in range(100)]
+        async def read():
+            index=len(reads)
+            reads.append(index)
+            return ({'type':'audio','pcm':base64.b64encode(expected[index]).decode()}
+                    if index<len(expected) else {'type':'stop'})
+        settings=Settings('file',backend='qwen3-streaming',asr_device='cpu',source='en',translate=False)
+        task=asyncio.create_task(wlk_worker.serve(asdict(settings),lambda event:None,read))
+        try:
+            await asyncio.wait_for(full.wait(),3)
+            assert len(reads)<len(expected) and not task.done()
+            release.set()
+            await asyncio.wait_for(task,3)
+            assert consumed==expected
+        finally:
+            release.set()
+            task.cancel()
+            await asyncio.gather(task,return_exceptions=True)
+    asyncio.run(exercise())
+
+
 @pytest.mark.parametrize('old_mode', ['fast', 'accurate'])
 def test_windows_worker_installs_the_same_qwen_revision_pipeline(monkeypatch, old_mode):
     configured, online, stores = stub_worker(monkeypatch)

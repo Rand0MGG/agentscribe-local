@@ -94,7 +94,7 @@ class FakeSession(QObject):
     caption=Signal(object);source_preview=Signal(object);level=Signal(float);source_changed=Signal(int);failure=Signal(str);finished=Signal()
     def __init__(self,settings,parent,recording_path,runtime=None):
         super().__init__(parent);self.model_ready=Event()
-    def start(self): self.model_ready.set();self.ready.emit()
+    def start(self): self.source_changed.emit(0);self.model_ready.set();self.ready.emit()
     def stop(self): self.finished.emit()
 module.Session=FakeSession
 try:

@@ -73,10 +73,11 @@ w.device.addItem('fixture', ('fixture', False))
 import linguaflow.llama_assets as assets
 def missing(settings): raise ValueError('fixture missing assets')
 assets.resolve_assets = missing
-warnings = []
-w.show_warning = lambda title, message: warnings.append(message)
-w.start(models_checked=True)
-assert w.session is None and 'fixture missing' in warnings[0]
+from linguaflow.inference_startup import start_problem
+# Asset validation now runs in Session after capture starts; exercise the same
+# validator here without launching native capture in this UI settings test.
+problem = start_problem(w.settings_binding.session_settings(('fixture',False)))
+assert w.session is None and 'fixture missing' in problem[1]
 if sys.platform == 'darwin':
     w.use_mac_profile()
     assert manager.translation_engine.currentData() == 'llama'
@@ -92,7 +93,7 @@ w.close()
 
 
 @pytest.mark.parametrize('system', ['darwin', 'win32'])
-def test_start_validates_only_active_translation_model(tmp_path, system):
+def test_background_validation_uses_only_active_translation_model(tmp_path, system):
     code = r"""
 import os, sys
 from pathlib import Path
@@ -114,26 +115,29 @@ w.translate.setChecked(True)
 checks, warnings, next_steps = [], [], []
 assets.resolve_assets = lambda settings: checks.append(settings.translation_engine)
 w.show_warning = lambda title, message: warnings.append(message)
-# Stop after preflight, before a recording or inference process is created.
-def new_recording(**kwargs):
-    assert kwargs['check_models'] is False and kwargs['name']  # Preflight checked files; use the suggested title.
-    return next_steps.append('new recording') or False
-w.new_recording = new_recording
-w.start(models_checked=True)
+# Validate the frozen UI settings at the background validation boundary.
+from linguaflow.inference_startup import start_problem
+def validate():
+    problem=start_problem(w.settings_binding.session_settings(('fixture',False)))
+    if problem:
+        warnings.append(problem[1])
+    else:
+        next_steps.append('load models')
+validate()
 assert checks == ['llama'] and not warnings and len(next_steps) == 1
 manager.translation_engine.setCurrentIndex(manager.translation_engine.findData('pytorch'))
-w.start(models_checked=True)
+validate()
 assert len(warnings) == 1 and len(next_steps) == 1
 # Disabling translation permits an empty translation model on either engine.
 for engine in ('pytorch', 'llama'):
     manager.translation_engine.setCurrentIndex(manager.translation_engine.findData(engine))
     w.translate.setChecked(False)
-    w.start(models_checked=True)
+    validate()
 assert len(warnings) == 1 and len(next_steps) == 3 and checks == ['llama']
 # ASR validation still applies with llama.cpp translation selected.
 w.translate.setChecked(True)
 w.asr.setCurrentText('')
-w.start(models_checked=True)
+validate()
 assert len(warnings) == 2 and len(next_steps) == 3
 w.close()
 """

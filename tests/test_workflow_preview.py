@@ -79,16 +79,27 @@ with preview_window(Path(os.environ['PREVIEW_FIXTURE'])) as (w, scenario):
     w.playback.setProperty('available', True)
     w.playback_duration(60000)
     w.update_transport()
-    QTest.qWait(50)
-    assert island.resize_motion.state()==island.resize_motion.State.Running
-    assert initial.width() < island.width() < island._target_geometry.width()
-    QTest.qWait(300)
-    assert island.geometry()==island._target_geometry
+    def verify_morph(start):
+        motion = island.resize_motion
+        wait_until(lambda:motion.state()==motion.State.Running)
+        target = island._target_geometry
+        assert start != target, (start,target)
+        assert motion.startValue()==start and motion.endValue()==target
+        # Inspect a deterministic middle frame, not a 50ms wall-clock guess.
+        # Platform fonts can make playback narrower rather than wider.
+        motion.pause()
+        motion.setCurrentTime(motion.duration()//2)
+        middle = island.geometry()
+        assert middle != start and middle != target, (start,middle,target)
+        for a,b,c in zip(start.getRect(),middle.getRect(),target.getRect()):
+            assert min(a,c) <= b <= max(a,c), (start,middle,target)
+        motion.resume()
+        wait_until(lambda:motion.state()==motion.State.Stopped and island.geometry()==target)
+    verify_morph(initial)
+    initial = island.geometry()
     w.playback.setProperty('available', False)
     w.update_transport()
-    QTest.qWait(50)
-    assert island.resize_motion.state()==island.resize_motion.State.Running
-    QTest.qWait(300)
+    verify_morph(initial)
     w.resize(640,480)
     QTest.qWait(80)
     menu=ActionMenu(w)

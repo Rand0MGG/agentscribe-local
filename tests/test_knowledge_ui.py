@@ -27,7 +27,7 @@ class FakeSession(QObject):
         super().__init__(parent)
         self.settings=settings;self.model_ready=Event()
     def start(self):
-        self.model_ready.set();self.ready.emit()
+        self.source_changed.emit(0);self.model_ready.set();self.ready.emit()
     def stop(self): self.finished.emit()
 module.Session=FakeSession
 app=QApplication([])

@@ -5,6 +5,7 @@ import subprocess
 from collections import deque
 from threading import Event, Lock, Thread, Timer
 
+from . import diagnostic_log as diag
 from .process_platform import close_process_pipes, spawn_options, stop_tree
 from .runtime_paths import python_environment, resource_root, runtime_python
 
@@ -51,6 +52,7 @@ class PreparedWorker:
             self.diagnostics.start()
             self.read_ready()
         except Exception as exc:
+            diag.exception('runtime_start_exception', exc)
             if self.error is None:
                 self.error = exc
         finally:

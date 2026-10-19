@@ -1,6 +1,7 @@
 """Ordinary directories are the source of truth; JSON only accompanies recordings."""
 
 import json
+import os
 import re
 import shutil
 from dataclasses import asdict
@@ -50,7 +51,10 @@ class Library:
     @staticmethod
     def _write(path, value):
         temporary = path.with_suffix(path.suffix + ".tmp")
-        temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+        with temporary.open('w', encoding='utf-8') as output:
+            json.dump(value, output, ensure_ascii=False, indent=2)
+            output.flush()
+            os.fsync(output.fileno())
         temporary.replace(path)
 
     @staticmethod

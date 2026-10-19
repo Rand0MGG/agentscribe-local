@@ -189,7 +189,7 @@ def test_pipe_cleanup_preserves_output_error_and_closes_remaining_streams():
     close_process_pipes(process)
 
 
-def test_cancel_before_runtime_ready_never_captures_and_reaps_process(monkeypatch,tmp_path):
+def test_cancel_before_session_start_keeps_capture_closed_and_pool_owned(monkeypatch,tmp_path):
     runtime,_=pool(monkeypatch,tmp_path,'import time; time.sleep(30)')
     worker=runtime.worker
     worker.ready.wait(.05)
@@ -199,10 +199,12 @@ def test_cancel_before_runtime_ready_never_captures_and_reaps_process(monkeypatc
     session.start()
     try:
         assert session.wait(5000) and not session.last_error
-        assert runtime.worker is None and not runtime.busy
-        assert worker.process.poll() is not None
+        # No session lease was acquired. Independent prewarming remains owned
+        # by the pool, whose shutdown must still reap it and its reader.
+        assert runtime.worker is worker and not runtime.busy
     finally:
         runtime.close()
+    assert worker.process.poll() is not None and not worker.reader.is_alive()
 
 
 def test_preparation_timeout_reaps_owned_process(monkeypatch,tmp_path):

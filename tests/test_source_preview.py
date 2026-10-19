@@ -46,6 +46,68 @@ def test_whisper_preview_includes_mutable_tail_without_semantic_prediction():
     assert event['start'] == 0 and event['end'] == 2
 
 
+def test_slow_empty_qwen_then_mixed_source_visible_before_stop_and_hy_ready(monkeypatch):
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from linguaflow import backends, qwen_accurate, wlk_worker
+    from linguaflow.translation_models import HY_MODEL
+    _, online, _ = stub_worker(monkeypatch)
+    loading, release = Event(), Event()
+    def translator(*args):
+        loading.set()
+        assert release.wait(5), 'test did not release translation loading'
+        return SimpleNamespace(translate=lambda *args: '译文')
+    monkeypatch.setattr(backends, 'create_translator', translator)
+    clock = [0.]
+    monkeypatch.setattr(qwen_accurate, 'time', SimpleNamespace(perf_counter=lambda: clock[0]))
+
+    async def exercise():
+        events = []
+        ready, visible, stop = (asyncio.Event() for _ in range(3))
+        text = '先说中文 Then English.'
+        def emit(event):
+            events.append(event)
+            if event['type'] == 'ready':
+                ready.set()
+            if event['type'] == 'source_preview' and event['data']['source'] == text:
+                visible.set()
+        async def read():
+            await stop.wait()
+            return {'type': 'stop'}
+        settings = Settings('file', backend='qwen3-streaming', asr_device='cpu',
+                            source='en', translate=True, translation_model=HY_MODEL)
+        task = asyncio.create_task(wlk_worker.serve(asdict(settings), emit, read))
+        try:
+            await asyncio.wait_for(ready.wait(), 3)
+            assert await asyncio.to_thread(loading.wait, 2)
+            calls = []
+            def decode(audio):
+                calls.append(len(audio))
+                clock[0] += 12 if len(calls) == 1 else .1
+                return '' if len(calls) == 1 else text
+            online[0].decode = decode
+            online[0].insert_audio_chunk(np.ones(8000), .5)
+            await asyncio.to_thread(online[0].process_iter)
+            online[0].insert_audio_chunk(np.ones(12 * 16000), 12.5)
+            await asyncio.to_thread(online[0].process_iter)
+            await asyncio.wait_for(visible.wait(), 2)
+            assert not release.is_set() and not stop.is_set()
+            assert online[0].confirmed_end == 0
+            assert not any(e['type'] == 'caption' and e['data']['final'] for e in events)
+            release.set()
+            stop.set()
+            await asyncio.wait_for(task, 3)
+            assert events[-1]['type'] == 'done'
+        finally:
+            release.set()
+            stop.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    asyncio.run(exercise())
+
+
 @pytest.mark.parametrize('backend', ['qwen3-streaming', 'qwen3-mlx'])
 def test_worker_emits_newest_preview_while_semantics_is_blocked(monkeypatch, backend):
     from linguaflow import mlx_asr, qwen_accurate, semantic_model, wlk_worker
@@ -183,3 +245,153 @@ assert saved[0].source=='Latest corrected words' and saved[0].translation=='已�
 w.set_recording_state(module.RecordingState.IDLE)
 w.close()
 ''', tmp_path)
+
+
+def test_preview_autosaves_before_semantics_and_completed_rows_replace_draft(tmp_path):
+    run_ui(r'''
+from PySide6.QtCore import QObject
+from linguaflow.core import Caption
+assert w.new_recording(name='崩溃恢复',check_models=False)
+w.session=QObject(w)
+w.set_recording_state(module.RecordingState.LISTENING)
+w.on_caption(Caption(1,0,1,'Saved prefix','en'))
+w.on_caption(Caption(2,1,2,'Old tail','en','旧译文',final=False))
+w.on_source_preview(dict(sequence=1,keep_ids=[1],source='Latest words',start=1.,end=3.,language='en'))
+assert w.recording_saver.flush()
+_,saved=w.library.load(w.current_item)
+assert [c.source for c in saved]==['Saved prefix','Latest words']
+assert not saved[-1].final and saved[-1].translation=='旧译文'
+assert saved[-1].translation_source=='Old tail'
+assert w.captions[2].source=='Old tail' and w.source_preview is not None
+assert not w.session_dirty
+w.on_source_preview(dict(sequence=2,keep_ids=[1],source='Corrected words',start=1.,end=3.,language='en'))
+w.on_source_preview(dict(sequence=1,done=True))
+assert w.recording_saver.flush()
+assert w.library.load(w.current_item)[1][-1].source=='Corrected words'
+w.on_caption(Caption(2,1,3,'Corrected words','en',revision=2))
+w.on_source_preview(dict(sequence=2,done=True))
+assert w.recording_saver.flush()
+_,saved=w.library.load(w.current_item)
+assert len(saved)==2 and saved[-1].final and not saved[-1].error
+w.session=None
+w.set_recording_state(module.RecordingState.IDLE)
+assert w.persist_session('complete')
+w.close()
+''', tmp_path)
+
+
+@pytest.mark.parametrize('cancel_session', [False, True])
+def test_stop_or_cancel_joins_inflight_semantics_before_finalization(monkeypatch, cancel_session):
+    from linguaflow import wlk_captions, wlk_worker
+    _, online, _ = stub_worker(monkeypatch)
+    entered, release, overlap = Event(), Event(), []
+    update = wlk_captions.CaptionMapper.update
+    active = [False]
+    def blocked_update(self, value, done=False):
+        if value.get('revision_text') and not done and not entered.is_set():
+            active[0] = True
+            entered.set()
+            assert release.wait(5)
+            try:
+                return update(self, value, done=done)
+            finally:
+                active[0] = False
+        if done and active[0]:
+            overlap.append(True)
+        return update(self, value, done=done)
+    monkeypatch.setattr(wlk_captions.CaptionMapper, 'update', blocked_update)
+
+    async def exercise():
+        events = []
+        ready, stop, initial_output = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        def emit(event):
+            events.append(event)
+            if event['type']=='ready':
+                ready.set()
+            elif event['type']=='metrics':
+                initial_output.set()
+        async def read():
+            await stop.wait()
+            return {'type':'stop'}
+        settings=Settings('file', backend='qwen3-streaming',asr_device='cpu',source='en',translate=False)
+        task=asyncio.create_task(wlk_worker.serve(asdict(settings),emit,read))
+        try:
+            await asyncio.wait_for(ready.wait(),3)
+            await asyncio.wait_for(initial_output.wait(),3)
+            online[0].revisions.update(0,0.,1.,'Retained sentence.',18,False)
+            assert await asyncio.to_thread(entered.wait,2)
+            if cancel_session:
+                task.cancel()
+            else:
+                stop.set()
+            # Give cancellation a chance to reach the blocked mapper.
+            await asyncio.sleep(.05)
+            assert not task.done() and not overlap
+            release.set()
+            if cancel_session:
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task,3)
+                assert not any(e['type']=='caption' for e in events)
+            else:
+                await asyncio.wait_for(task,3)
+                final=[e['data'] for e in events if e['type']=='caption' and e['data']['final']]
+                assert final[-1]['source']=='Retained sentence.'
+                assert events[-1]['type']=='done'
+            assert not active[0] and not overlap
+        finally:
+            release.set()
+            task.cancel()
+            await asyncio.gather(task,return_exceptions=True)
+    asyncio.run(exercise())
+
+
+def test_abrupt_process_exit_recovers_preview_and_partial_audio_without_cleanup(tmp_path):
+    run_ui(r'''
+import wave
+from linguaflow.library_access import acquire_recording_lock
+assert w.new_recording(name='异常退出 原件保留',check_models=False)
+directory=w.library.directory(w.current_item['id'])
+w.recording_lock=acquire_recording_lock(directory)
+w.library.begin(w.current_item,{})
+w.session=QObject(w)
+w.set_recording_state(module.RecordingState.LISTENING)
+raw=(directory/'录音.wav').open('wb')
+writer=wave.open(raw,'wb')
+writer.setparams((1,2,48000,0,'NONE','not compressed'))
+writer.writeframes(b'\x01\x00'*40)
+raw.flush()
+# Terminate after physical PCM reaches disk but before the data header update.
+raw.write(b'\x02\x00'*5+b'\x03')
+raw.flush()
+w.on_source_preview(dict(sequence=1,keep_ids=[],source='Latest before crash',start=0.,end=1.,language='en'))
+wait(lambda: not w.session_dirty)
+# No Session.stop, wave.close, window.close, saver.flush or lock release.
+if os.name=='nt':
+    # os._exit on Windows runs DLL detach, which can crash Qt TLS teardown.
+    # Terminate only this test child, as an external hard kill would.
+    import ctypes
+    terminate=ctypes.WinDLL('kernel32',use_last_error=True).TerminateProcess
+    terminate.argtypes=[ctypes.c_void_p,ctypes.c_uint]
+    assert terminate(ctypes.c_void_p(-1),0)
+os._exit(0)
+''', tmp_path)
+    import io
+    import wave
+
+    from linguaflow.library import Library
+    from linguaflow.playback_stream import PlaybackStream
+    library=Library(tmp_path)
+    item=library.index['sessions'][0]
+    data,captions=library.load(item)
+    assert data['session']['state']=='recording'
+    assert len(captions)==1 and captions[0].source=='Latest before crash' and not captions[0].final
+    path=library.directory(item['id'])/'录音.wav'
+    original=path.read_bytes()
+    stream=PlaybackStream(path,recover_recording=True)
+    try:
+        with wave.open(io.BytesIO(bytes(stream.readAll()))) as reader:
+            assert reader.getnframes()==45
+            assert reader.readframes(100)==b'\x01\x00'*40+b'\x02\x00'*5
+    finally:
+        stream.close()
+    assert path.read_bytes()==original

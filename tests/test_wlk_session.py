@@ -67,6 +67,33 @@ print(json.dumps({'type':'done'}), flush=True)
 '''
 
 
+def test_worker_timing_correlates_with_capture_log(monkeypatch, tmp_path):
+    import json
+
+    from linguaflow import diagnostic_log as diag
+    monkeypatch.setenv('AGENTSCRIBE_LOG_DIR', str(tmp_path / 'logs'))
+    path = diag.start_logging('test-session')
+    sessions = []
+    program = PROGRAM.replace("print(json.dumps({'type':'done'}), flush=True)",
+        "print(json.dumps({'type':'asr_timing','decode_id':7,'window_end':0.5}), flush=True)\n"
+        "print(json.dumps({'type':'done'}), flush=True)")
+    def capture(settings, stop, block):
+        for _ in range(13):
+            block(np.ones(1600, dtype=np.float32) * .01)
+    try:
+        _, failures = execute(monkeypatch, tmp_path, program, capture, setup=sessions.append)
+        assert not failures
+        rows = [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines()]
+        lag = next(row for row in rows if row['event'] == 'asr_capture_lag')
+        assert lag['session'] == sessions[0].log_session
+        assert lag['decode_id'] == 7 and lag['lag_seconds_estimate'] == pytest.approx(.8)
+        assert lag['journal_pending_seconds'] == 0
+        assert any(row['event'] == 'session_end' and row['complete'] for row in rows)
+    finally:
+        diag.close_logging()
+        diag.set_session(None)
+
+
 def test_captured_pcm_is_drained_before_process_stops(monkeypatch, tmp_path):
     sessions = []
     def capture(settings, stop, block):
@@ -81,6 +108,57 @@ def test_captured_pcm_is_drained_before_process_stops(monkeypatch, tmp_path):
         assert recording.getnframes() == 13 * 1600
         assert recording.getframerate() == 16000
         assert recording.getsampwidth() == 2
+
+
+@pytest.mark.parametrize('stop_while_loading', [False, True])
+def test_capture_precedes_runtime_and_loading_backlog_drains_in_order(monkeypatch, tmp_path, stop_while_loading):
+    import hashlib
+    import wave
+    from threading import Event
+
+    captured = Event()
+    sessions, order = [], []
+    expected = b''.join((np.full(1600, i/100, np.float32)*32767).astype('<i2').tobytes()
+                        for i in range(1,21))
+    gate = tmp_path/'finish-loading'
+    def setup(session):
+        sessions.append(session)
+        acquire = session.runtime.acquire
+        def delayed_runtime(cancelled):
+            assert captured.wait(3), 'capture waited for runtime readiness'
+            return acquire(cancelled)
+        session.runtime.acquire = delayed_runtime
+        session.source_changed.connect(lambda _: order.append('capture'))
+        session.ready.connect(lambda: order.append('model'))
+    def capture(settings, stop, block):
+        assert not sessions[0].model_ready.is_set()
+        for i in range(1,21):
+            block(np.full(1600,i/100,np.float32))
+        with wave.open(str(tmp_path/'recording.wav')) as reader:
+            assert reader.readframes(40000)==expected  # Persisted while model is unavailable.
+        captured.set()
+        if stop_while_loading:
+            assert stop.wait(3)
+        else:
+            gate.touch()
+    def tick(session):
+        if stop_while_loading and captured.is_set() and not gate.exists():
+            session.stop()
+            assert not session.abort.is_set()
+            gate.touch()
+    program = PROGRAM.replace('total = 0', 'total = 0\npayload = bytearray()')
+    program = program.replace("print(json.dumps({'type':'ready'}), flush=True)",
+        "from pathlib import Path\nimport time,hashlib\n"
+        +f"while not Path({str(gate)!r}).exists(): time.sleep(.01)\n"
+        +"print(json.dumps({'type':'ready'}), flush=True)")
+    program = program.replace("total += len(base64.b64decode(message['pcm']))",
+                              "payload.extend(base64.b64decode(message['pcm']))\n    total = len(payload)")
+    program = program.replace("'source':str(total)", "'source':hashlib.sha256(payload).hexdigest()")
+    captions, failures = execute(monkeypatch,tmp_path,program,capture,setup=setup,tick=tick)
+    assert not failures
+    assert order == ['capture','model']
+    assert captions[0].source==hashlib.sha256(expected).hexdigest()
+    assert sessions[0].recorded_seconds==2
 
 
 def test_source_previews_are_forwarded_independently_of_semantic_captions(monkeypatch, tmp_path):
@@ -115,7 +193,7 @@ def test_crashed_worker_reports_failure_without_hanging(monkeypatch, tmp_path):
     program = "import sys; sys.stdin.readline(); sys.exit(7)"
     opened = []
     _, failures = execute(monkeypatch, tmp_path, program, lambda *args: opened.append(True))
-    assert not opened and failures and "7" in failures[0]
+    assert opened and failures and "7" in failures[0]
 
 
 def test_capture_exception_terminates_waiting_worker(monkeypatch, tmp_path):
@@ -131,7 +209,7 @@ def test_unresponsive_startup_is_terminated(monkeypatch, tmp_path):
     _, failures = execute(monkeypatch, tmp_path,
                           "import sys,time; sys.stdin.readline(); time.sleep(30)",
                           lambda *args: opened.append(True))
-    assert not opened
+    assert opened
     assert any("启动长时间没有进展" in error for error in failures)
 
 
@@ -140,7 +218,7 @@ def test_stop_cancels_model_loading_without_waiting(monkeypatch, tmp_path):
     _, failures = execute(monkeypatch, tmp_path,
                           "import sys,time; sys.stdin.readline(); time.sleep(30)",
                           lambda *args: opened.append(True), cancel_loading=True)
-    assert not opened and not failures
+    assert opened and not failures
 
 
 @pytest.mark.parametrize('user_stop', [False, True])
@@ -197,21 +275,27 @@ subprocess.Popen([sys.executable, '-c', code, str(os.getpid())])
 time.sleep(30)
 '''
     _, failures = execute(monkeypatch, tmp_path, program,
-                         lambda *a: (_ for _ in ()).throw(AssertionError('no capture')))
+                         lambda *a: None)
     assert any('长时间没有进展' in error for error in failures)
 
 
-def test_model_load_error_prevents_capture(monkeypatch, tmp_path):
+def test_model_load_error_preserves_audio_already_captured(monkeypatch, tmp_path):
     program = '''
 import json, sys, time
 sys.stdin.readline()
 print(json.dumps({'type': 'error', 'text': 'SaT 分句模型加载失败'}), flush=True)
 time.sleep(30)
 '''
-    opened = []
-    captions, failures = execute(monkeypatch, tmp_path, program, lambda *args: opened.append(True))
-    assert not opened and not captions
+    def capture(settings, stop, block):
+        block(np.full(1600,.25,dtype=np.float32))
+        stop.wait(5)
+    captions, failures = execute(monkeypatch, tmp_path, program, capture)
+    assert not captions
     assert any('SaT' in error for error in failures)
+    import wave
+    with wave.open(str(tmp_path/'recording.wav')) as reader:
+        assert reader.getnframes()==1600
+        assert reader.readframes(1600)==(np.full(1600,.25,dtype=np.float32)*32767).astype('<i2').tobytes()
 
 
 def test_pause_closes_capture_drains_audio_and_resumes_same_recording(monkeypatch, tmp_path):

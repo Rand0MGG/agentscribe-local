@@ -6,10 +6,12 @@ import wave
 from collections import deque
 from dataclasses import asdict, replace
 from threading import Event, Thread
+from uuid import uuid4
 
 import numpy as np
 from PySide6.QtCore import QThread, Signal
 
+from . import diagnostic_log as diag
 from .audio import capture
 from .capture_control import CaptureControl
 from .core import Caption
@@ -36,6 +38,7 @@ class Session(QThread):
     def __init__(self, settings, parent=None, capture_fn=capture, diagnostic=False, recording_path=None,
                  runtime=None):
         super().__init__(parent)
+        self.log_session = uuid4().hex
         self.settings = settings
         self.diagnostic = diagnostic
         self.capture_fn = capture_fn
@@ -45,6 +48,7 @@ class Session(QThread):
         self.process = None
         self.process_owned = Event()
         self.model_ready = Event()
+        self.capture_started = Event()
         self.stop_started = None
         self.last_error = ""
         self.recording_path = recording_path
@@ -56,7 +60,7 @@ class Session(QThread):
         self.runtime = runtime if runtime is not None else RuntimePreparation()
 
     def pause(self):
-        if not self.model_ready.is_set() or self.stop_capture.is_set():
+        if not self.capture_started.is_set() or self.stop_capture.is_set():
             return False
         return self.capture_control.pause()
 
@@ -79,9 +83,10 @@ class Session(QThread):
     def stop(self, discard=False):
         if self.stop_started is None:
             self.stop_started = time.monotonic()
+        diag.event('stop_requested', session=self.log_session, discard=discard, recorded_seconds=self.recorded_seconds)
         self.stop_capture.set()
         self.capture_control.stop()
-        if discard or ((self.process is not None or self.runtime is not None) and not self.model_ready.is_set()):
+        if discard or not self.capture_started.is_set():
             self.abort.set()
             if self.process and self.process_owned.is_set() and self.process.poll() is None:
                 self.process_owned.clear()  # Repeated cancellation must not spawn more cleanup tasks.
@@ -89,81 +94,39 @@ class Session(QThread):
                 Thread(target=stop_tree, args=(self.process,), kwargs={'force': True}).start()
 
     def fail(self, text):
+        diag.event('session_failure', session=self.log_session)
         self.last_error = text
         self.failure.emit(text)
         self.stop(discard=True)
 
     def run(self):
+        diag.set_session(self.log_session)
+        diag.event('session_start', backend=self.settings.backend, device=self.settings.asr_device,
+                   sample_rate=self.settings.input_sample_rate, draft_seconds=self.settings.draft_seconds,
+                   window_seconds=self.settings.qwen_window_seconds, translate=self.settings.translate)
         workers = []
         journal = None
         prepared = None
         completed = False
         try:
-            python = runtime_python()
-            if not python.is_file():
-                raise RuntimeError("请先运行 scripts/install_runtime.py 安装 WhisperLiveKit 推理环境。")
-            self.stage.emit("识别", "加载 WhisperLiveKit")
-            self.status.emit("正在启动本地推理进程…首次导入运行库可能需要较长时间，可点击停止取消。")
-            self.status.emit('正在等待后台准备的运行环境…')
-            prepared = self.runtime.acquire(self.abort)
-            self.process = prepared.process
-            self.process_owned.set()
-            if self.abort.is_set():
-                raise RuntimeError('启动已取消。')
-
-            def send(message):
-                self.process.stdin.write(json.dumps(message) + "\n")
-                self.process.stdin.flush()
-
-            last_progress = [time.monotonic()]
-            recent_errors = deque(maxlen=12)
-
-            def diagnostics():
-                cursor = 0
-                while not self.abort.wait(.05):
-                    for serial, text in prepared.recent_logs(cursor):
-                        cursor = serial
-                        last_progress[0] = time.monotonic()
-                        recent_errors.append(text)
-                        self.status.emit(text)
-
-            def watch_progress():
-                while not self.abort.wait(.1):
-                    if self.process.poll() is not None:
-                        return
-                    now = time.monotonic()
-                    if self.model_ready.is_set():
-                        # Keep a total deadline even if a stalled worker keeps printing logs.
-                        if self.stop_started is not None and now - self.stop_started > self.stop_timeout:
-                            self.fail('录音收尾超时，已结束自有推理进程；已有录音和字幕保留，本次录音将标记为未完整结束。')
-                            return
-                    elif now - last_progress[0] > self.startup_idle_timeout:
-                        self.fail("模型启动长时间没有进展，已结束推理进程。请在模型管理中检查模型文件和运行环境。\n"
-                                  + "\n".join(recent_errors)[-1200:])
-                        return
-
-            watchdog = Thread(target=watch_progress)
-            watchdog.start()
-            workers.append(watchdog)
-
-            diagnostics_thread = Thread(target=diagnostics)
-            diagnostics_thread.start()
-            workers.append(diagnostics_thread)
-            settings = asdict(self.settings)
-            settings['_diagnostic'] = self.diagnostic
-            self.status.emit('运行环境已准备；正在加载本次会话模型…')
-            send(settings)
+            if self.abort.is_set() or self.stop_capture.is_set():
+                return
             journal = AudioJournal(self.settings.input_sample_rate)
 
             def record():
                 silent_samples = 0
                 warned = False
                 recording = None
+                recording_file = None
                 def write_block(samples):
                     nonlocal silent_samples, warned
                     if recording is not None:
                         recording.writeframes((np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes())
+                        recording_file.flush()
                     journal.append(samples)
+                    if not self.capture_started.is_set():
+                        diag.event('capture_first_block', session=self.log_session, samples=len(samples))
+                    self.capture_started.set()
                     self.recorded_seconds = journal.written / (self.settings.input_sample_rate * 4)
                     self.level.emit(float(np.sqrt(np.mean(samples * samples))))
                     silent_samples = silent_samples + len(samples) if not np.any(samples) else 0
@@ -178,20 +141,25 @@ class Session(QThread):
                 def paused():
                     nonlocal silent_samples, warned
                     silent_samples, warned = 0, False
+                    diag.event('capture_pause', session=self.log_session, recorded_seconds=self.recorded_seconds)
                     journal.mark_pause()
                     self.level.emit(0.)
                     self.stage.emit("音频", "已暂停 · 不采集声音")
                     self.paused.emit(True)
 
                 def resumed():
+                    diag.event('capture_resume', session=self.log_session, recorded_seconds=self.recorded_seconds)
                     self.stage.emit("音频", "连续采集")
                     self.paused.emit(False)
                 try:
                     if self.recording_path:
-                        recording = wave.open(str(self.recording_path), "wb")
+                        recording_file = open(self.recording_path, 'wb')
+                        recording = wave.open(recording_file, "wb")
                         recording.setnchannels(1)
                         recording.setsampwidth(2)
                         recording.setframerate(self.settings.input_sample_rate)
+                        recording.writeframes(b'')
+                        recording_file.flush()
                     previous_revision = 0
                     while (segment := self.capture_control.next_segment(paused, resumed)) is not None:
                         with self.capture_control.condition:
@@ -200,6 +168,7 @@ class Session(QThread):
                             source_settings = self.capture_settings
                             revision = self.source_revision
                         if revision != previous_revision:
+                            diag.event('source_switch', session=self.log_session, revision=revision, recorded_seconds=self.recorded_seconds)
                             journal.mark_pause()  # Flush old-source speech before new PCM.
                             silent_samples, warned = 0, False
                             self.level.emit(0.)
@@ -218,18 +187,88 @@ class Session(QThread):
                         if not segment.is_set():
                             break
                 except Exception as exc:
+                    diag.exception('capture_exception', exc)
                     self.fail(f"录音失败：{exc}")
                 finally:
                     if recording is not None:
                         try:
                             recording.close()
-                        except OSError as exc:
+                        except (OSError, wave.Error) as exc:
+                            diag.exception('recording_wav_finalize_exception', exc)
+                            self.fail(f"录音保存失败：{exc}")
+                    if recording_file is not None:
+                        try:
+                            recording_file.close()
+                        except (OSError, wave.Error) as exc:
+                            diag.exception('recording_file_close_exception', exc)
                             self.fail(f"录音保存失败：{exc}")
                     self.capture_done.set()
                     if self.stop_started is None:
                         self.stop_started = time.monotonic()
                     self.stage.emit("音频", "已停止")
 
+            capture_thread = Thread(target=record)
+            capture_thread.start()
+            workers.append(capture_thread)
+            last_progress = [time.monotonic()]
+            recent_errors = deque(maxlen=12)
+
+            def diagnostics():
+                cursor = 0
+                while not self.abort.wait(.05):
+                    for serial, text in prepared.recent_logs(cursor):
+                        cursor = serial
+                        last_progress[0] = time.monotonic()
+                        recent_errors.append(text)
+                        self.status.emit(text)
+
+            def watch_progress():
+                while not self.abort.wait(.1):
+                    if self.process is not None and self.process.poll() is not None:
+                        return
+                    now = time.monotonic()
+                    # Stopping during loading still drains accepted audio, but
+                    # cannot wait forever even while the loader reports progress.
+                    if self.stop_started is not None and now - self.stop_started > self.stop_timeout:
+                        self.fail('录音收尾超时，已有录音和字幕保留，本次录音将标记为未完整结束。')
+                        return
+                    elif not self.model_ready.is_set() and now - last_progress[0] > self.startup_idle_timeout:
+                        self.fail("模型启动长时间没有进展，已结束推理进程。请在模型管理中检查模型文件和运行环境。\n"
+                                  + "\n".join(recent_errors)[-1200:])
+                        return
+
+            watchdog = Thread(target=watch_progress)
+            watchdog.start()
+            workers.append(watchdog)
+
+            from .inference_startup import start_problem
+            if problem := start_problem(self.settings):
+                raise RuntimeError('：'.join(problem))
+            python = runtime_python()
+            if not python.is_file():
+                raise RuntimeError("请先运行 scripts/install_runtime.py 安装 WhisperLiveKit 推理环境。")
+            self.stage.emit("识别", "加载 WhisperLiveKit")
+            self.status.emit("录音与模型加载并行；正在启动本地推理进程…")
+            self.status.emit('正在等待后台准备的运行环境…')
+            prepared = self.runtime.acquire(self.abort)
+            self.process = prepared.process
+            self.process_owned.set()
+            if self.abort.is_set():
+                raise RuntimeError('启动已取消。')
+
+            def send(message):
+                self.process.stdin.write(json.dumps(message) + "\n")
+                self.process.stdin.flush()
+
+            diagnostics_thread = Thread(target=diagnostics)
+            diagnostics_thread.start()
+            workers.append(diagnostics_thread)
+            settings = asdict(self.settings)
+            settings['_diagnostic'] = self.diagnostic
+            settings['_log_session'] = self.log_session
+            diag.event('worker_attached', worker_pid=getattr(self.process, 'pid', None))
+            self.status.emit('运行环境已准备；正在加载本次会话模型…')
+            send(settings)
             def feed():
                 try:
                     while not self.abort.is_set():
@@ -245,6 +284,7 @@ class Session(QThread):
                         else:
                             self.abort.wait(0.02)
                 except Exception as exc:
+                    diag.exception('audio_transport_exception', exc)
                     if not self.abort.is_set():
                         self.fail(f"音频传递失败：{exc}")
 
@@ -254,16 +294,17 @@ class Session(QThread):
                 event = json.loads(line)
                 kind = event["type"]
                 if kind == "ready":
-                    self.model_ready.set()
-                    if self.stop_capture.is_set():
-                        send({"type": "stop"})
+                    if self.model_ready.is_set():
                         continue
-                    for action in [record, feed]:
-                        thread = Thread(target=action)
-                        thread.start()
-                        workers.append(thread)
+                    diag.event('model_ready', session=self.log_session, journal_pending_seconds=journal.pending_seconds)
+                    self.model_ready.set()
+                    if self.abort.is_set():
+                        break
+                    thread = Thread(target=feed)
+                    thread.start()
+                    workers.append(thread)
                     self.ready.emit()
-                    self.stage.emit("音频", "连续采集")
+                    self.stage.emit("识别", "模型已就绪，正在处理积压音频")
                 elif kind == "caption":
                     self.caption.emit(Caption(**event["data"]))
                 elif kind == 'source_preview':
@@ -272,13 +313,28 @@ class Session(QThread):
                     self.source_preview.emit(dict(sequence=event['sequence'], done=True))
                 elif kind == "model_result" and self.diagnostic:
                     self.model_result.emit(event["data"])
+                elif kind == 'asr_timing':
+                    diag.event('asr_capture_lag', session=self.log_session, decode_id=event['decode_id'],
+                               recorded_seconds=self.recorded_seconds, decoded_end=event['window_end'],
+                               lag_seconds_estimate=max(0., self.recorded_seconds - event['window_end']),
+                               journal_pending_seconds=journal.pending_seconds)
                 elif kind == "metrics":
-                    self.stage.emit("识别", f"计算延后 {event['compute_lag']:.1f}s · 待确认 {event['commit_lag']:.1f}s")
+                    processed = event.get('processed_audio_seconds')
+                    lag = (max(0., self.recorded_seconds - processed) if processed is not None
+                           else max(float(event['compute_lag']), journal.pending_seconds))
+                    diag.event('pipeline_progress', session=self.log_session, recorded_seconds=self.recorded_seconds,
+                               processed_seconds=processed, lag_seconds=lag, journal_pending_seconds=journal.pending_seconds,
+                               compute_lag=event['compute_lag'], commit_lag=event['commit_lag'])
+                    state = f"正在追赶识别 · 延后 {lag:.1f}s" if lag > 1 else "实时识别"
+                    self.stage.emit("识别", state + f" · 待确认 {event['commit_lag']:.1f}s")
                 elif kind == "status":
                     self.status.emit(event["text"])
                     if not self.model_ready.is_set():
                         self.stage.emit("识别", event["text"])
                 elif kind == "translation_metrics":
+                    diag.event('translation_progress', session=self.log_session, pending=event['pending'],
+                               compute_seconds=event['compute_seconds'], wait_seconds=event['wait_seconds'],
+                               failed=bool(event['error']))
                     if event["error"]:
                         self.stage.emit("翻译", "失败 · 原文保留")
                     else:
@@ -295,6 +351,7 @@ class Session(QThread):
             if not completed and not self.abort.is_set():
                 raise RuntimeError(f"推理进程提前退出（{code}）。\n" + "\n".join(recent_errors)[-1200:])
         except Exception as exc:
+            diag.exception('session_exception', exc)
             if not self.abort.is_set():
                 self.fail(str(exc))
         finally:
@@ -308,6 +365,7 @@ class Session(QThread):
                 try:
                     self.runtime.release(prepared, reusable and not self.owns_runtime)
                 except Exception as exc:
+                    diag.exception('worker_release_exception', exc)
                     self.fail('会话模型释放失败：' + str(exc))
             if self.owns_runtime:
                 self.runtime.close()
@@ -315,3 +373,5 @@ class Session(QThread):
                 thread.join()
             if journal:
                 journal.close()
+            diag.event('session_end', session=self.log_session, complete=completed, failed=bool(self.last_error),
+                       recorded_seconds=self.recorded_seconds, worker_exit=self.process.poll() if self.process else None)

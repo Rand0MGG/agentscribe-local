@@ -1,5 +1,6 @@
 """Read and seek amplified WAV bytes without loading an audio backend."""
 import hashlib
+import io
 import struct
 import wave
 
@@ -7,6 +8,56 @@ import numpy as np
 import pytest
 
 from linguaflow.playback_stream import PlaybackStream, amplify
+
+
+@pytest.mark.parametrize('cut', [0, 1, 7])
+def test_interrupted_recording_recovers_physical_frames_without_modifying_original(tmp_path, cut):
+    path = tmp_path/'录音.wav'
+    pcm = np.arange(100, dtype='<i2').tobytes()
+    with wave.open(str(path), 'wb') as writer:
+        writer.setparams((1, 2, 48000, 0, 'NONE', 'not compressed'))
+        writer.writeframes(pcm[:80])
+    with path.open('ab') as output:
+        output.write(pcm[80:len(pcm)-cut] if cut else pcm[80:])
+    original = path.read_bytes()
+    stream = PlaybackStream(path, recover_recording=True)
+    try:
+        assert stream.recovered
+        restored = bytes(stream.readAll())
+        expected = pcm[:(len(pcm)-cut)//2*2]
+        with wave.open(io.BytesIO(restored)) as reader:
+            assert reader.getnframes() == len(expected)//2
+            assert reader.readframes(1000) == expected
+        for start in (3, 5, 39, 41, len(restored)-1):
+            assert stream.seek(start)
+            assert bytes(stream.read(8)) == restored[start:start+8]
+        stream.set_gain(2)
+        assert stream.seek(44)
+        assert bytes(stream.readAll()) == amplify(expected, 1, 16, 2)
+    finally:
+        stream.close()
+    assert path.read_bytes() == original
+
+
+def test_live_recording_cannot_be_recovered_and_generic_wav_tail_is_not_audio(tmp_path):
+    from linguaflow.library_access import acquire_recording_lock
+    path = tmp_path/'录音.wav'
+    with wave.open(str(path), 'wb') as writer:
+        writer.setparams((1, 2, 16000, 0, 'NONE', 'not compressed'))
+        writer.writeframes(b'\x01\x00'*20)
+    lock = acquire_recording_lock(tmp_path)
+    try:
+        with pytest.raises(ValueError, match='另一个窗口'):
+            PlaybackStream(path, recover_recording=True)
+    finally:
+        lock.unlock()
+    with path.open('ab') as output:
+        output.write(b'physical tail outside RIFF')
+    stream = PlaybackStream(path)
+    try:
+        assert not stream.recovered and stream.data_size == 40
+    finally:
+        stream.close()
 
 
 def test_gain_stream_preserves_headers_original_and_random_byte_seeks(tmp_path):

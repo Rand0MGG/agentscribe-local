@@ -48,6 +48,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import __version__
+from . import diagnostic_log as diag
 from .audio import list_devices
 from .caption_view import CaptionScrollArea, CaptionText
 from .core import LANGUAGES, Caption
@@ -691,6 +692,7 @@ class Window(QMainWindow):
         menu.addSeparator()
         diagnostics_button = menu.addAction("诊断记录")
         diagnostics_button.setCheckable(True)
+        menu.addAction("打开诊断日志文件夹", self.open_diagnostic_logs)
         more.setMenu(menu)
         header_actions.addWidget(more)
         for button in self.recording_actions.findChildren(QPushButton):
@@ -1683,10 +1685,12 @@ class Window(QMainWindow):
         else:
             state = self.save_target_state
         token = (self.save_generation, self.current_item['id'])
+        from .source_preview import preview_captions
         self.recording_saver.submit(self.library.save, token, self.caption_version,
-                                   self.current_item, self.captions.values(), state)
+                                   self.current_item, preview_captions(self.captions, self.source_preview), state)
 
     def on_saved(self, snapshot, state, error):
+        diag.event('recording_save_result', revision=snapshot.revision, state=state, success=not bool(error))
         if not self.current_item or snapshot.token != (self.save_generation, self.current_item['id']):
             return
         if error:
@@ -2295,11 +2299,16 @@ class Window(QMainWindow):
                     '录音无法播放', self.player.errorString()))
             from .playback_stream import PlaybackStream
             try:
-                self.playback_stream = PlaybackStream(path, self.player)
+                self.playback_stream = PlaybackStream(path, self.player,
+                    recover_recording=(self.recording_lock is None
+                                       and self.current_item['state'] in ('recording', 'incomplete')))
             except (OSError, ValueError) as exc:
                 self.release_playback()
                 self.show_warning('录音无法播放', str(exc))
                 return
+            if self.playback_stream.recovered:
+                self.notifications.post('playback', '已恢复可读取的完整音频采样；原文件未修改，未落盘的尾部无法恢复。',
+                                        kind='attention')
             self.playback_volume.slider.setMaximum(300 if self.playback_stream.supports_gain else 100)
             if not self.playback_stream.supports_gain:
                 self.notifications.post('playback', '该录音格式可正常回放，但暂不支持超过 100% 的放大。', kind='attention')
@@ -2374,6 +2383,16 @@ class Window(QMainWindow):
     def on_source_changed(self, revision):
         if self.sender() is not None and self.sender() is not self.session:
             return
+        if self.recording_state is RecordingState.STARTING and not self.last_error:
+            self.set_recording_state(RecordingState.LISTENING)
+            self.on_stage('会话', '录音中')
+            self.on_stage('音频', '连续采集')
+            if self.session.model_ready.is_set():
+                self.on_ready()
+            else:
+                self.state_caption.setText('录音中 · 加载模型')
+                self.on_status('已开始录音，正在加载识别模型。')
+                self.empty.setText('已开始录音，正在加载识别模型。\n音频已保存，模型就绪后处理积压。')
         if revision == self.pending_source_revision:
             self.pending_source_revision = None
             self.update_volume_caption()
@@ -2538,6 +2557,12 @@ class Window(QMainWindow):
             self.use_recommended_profile()
         self.model_manager.prepare_selected(self.model_manager.preparation_selection(), only=only)
 
+    def open_diagnostic_logs(self):
+        from PySide6.QtGui import QDesktopServices
+        path = diag.log_directory()
+        if not path.is_dir() or not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
+            self.notifications.post('diagnostic-log', '无法打开诊断日志文件夹。', kind='error', details=str(path))
+
     def diagnostics_append(self, message):
         self.diagnostics.appendPlainText(message)
 
@@ -2632,23 +2657,17 @@ class Window(QMainWindow):
         if reason := self.model_manager.start_block_reason():
             self.notifications.post('session', ' · '.join(reason), kind='attention')
             return
-        if not models_checked:
-            self.check_models_for_action('start')
-            return
+        self.cancel_model_check()
         device = self.quick_device.currentData()
         if device is None:
             self.show_warning("没有音频来源", "请连接录音设备并刷新列表。")
             return
-        from .inference_startup import start_problem
         # The start action belongs to the recording page: freeze exactly the
         # source visible beside it, rather than reading a hidden settings view.
         settings = self.settings_binding.session_settings(device)
         translation_skipped = settings.translate and self.translation_unavailable()
         if translation_skipped:
             settings = replace(settings, translate=False)
-        if reason := start_problem(settings):
-            self.show_warning(*reason)
-            return
         if not self.current_item or self.current_item["state"] != "draft":
             if not self.new_recording(name=getattr(self, "pending_recording_name", default_recording_name()), check_models=False):
                 return
@@ -2660,14 +2679,14 @@ class Window(QMainWindow):
             if key.startswith('pipeline-'):
                 self.notifications.clear(key)
         self.pipeline_state = {
-            "音频": "等待识别就绪",
+            "音频": "正在连接音频来源",
             "识别": "准备中",
             "翻译": "等待" if settings.translate else "关闭",
         }
         self.on_stage("会话", "启动中")
         self.diagnostics.clear()
-        self.on_status("正在启动本地推理环境…可点击停止取消加载。")
-        self.empty.setText("正在准备模型…\n准备好后自动开始录音。")
+        self.on_status("正在启动录音，同时加载识别模型。")
+        self.empty.setText("正在连接音频来源…\n识别模型同时加载。")
         if self.beta_features.isChecked() and settings.backend in ('qwen3-streaming', 'qwen3-mlx'):
             try:
                 context = session_context(self.library, self.current_item['id'])
@@ -2682,6 +2701,9 @@ class Window(QMainWindow):
             self.attach_knowledge(force=True)
         else:
             self.attach_knowledge()
+        # Persist the same visible source that the recording snapshot uses.
+        with QSignalBlocker(self.device):
+            self.device.setCurrentIndex(self.quick_device.currentIndex())
         self.save()
         self.set_recording_state(RecordingState.STARTING)
         try:
@@ -2765,6 +2787,11 @@ class Window(QMainWindow):
 
     def on_stage(self, name, state):
         self.pipeline_state[name] = state
+        if name == '识别' and self.recording_state is RecordingState.LISTENING:
+            if state.startswith('正在追赶'):
+                self.state_caption.setText('录音中 · 追赶识别')
+            elif state.startswith('实时识别'):
+                self.state_caption.setText('录音中 · 实时识别')
         self.pipeline.setText(
             "   /   ".join(f"{name}：{value}" for name, value in self.pipeline_state.items())
         )
@@ -2783,7 +2810,12 @@ class Window(QMainWindow):
             if state.startswith('输入持续为零'):
                 self.empty.setText('没有收到声音。\n请检查所选音频来源、静音和麦克风权限。')
             elif state.startswith('已收到声音'):
-                self.empty.setText('正在聆听…')
+                self.empty.setText(self.capture_wait_text())
+
+    def capture_wait_text(self):
+        ready = getattr(self.session, 'model_ready', None)
+        return ('已开始录音，正在加载识别模型。\n音频已保存，模型就绪后处理积压。'
+                if ready is not None and not ready.is_set() else '正在聆听…')
 
     def on_status(self, message):
         self.diagnostics.appendPlainText(time.strftime("%H:%M:%S") + "  " + message)
@@ -2797,7 +2829,11 @@ class Window(QMainWindow):
         if not self.save_error:
             self.status.setToolTip(message)
         if self.recording_state is RecordingState.STARTING:
-            self.notifications.post('session', '正在加载识别模型', kind='progress', action=self.stop, action_text='取消')
+            self.notifications.post('session', '正在连接音频来源，识别模型同时加载', kind='progress')
+        elif (self.recording_state is RecordingState.LISTENING and self.session is not None
+              and getattr(self.session, 'model_ready', None) is not None
+              and not self.session.model_ready.is_set()):
+            self.notifications.post('session', '已开始录音，正在加载识别模型', kind='progress')
         elif self.recording_state is RecordingState.STOPPING:
             self.notifications.post('session', '正在收尾并保存录音', kind='progress')
         elif self.recording_state in (RecordingState.PAUSING, RecordingState.RESUMING):
@@ -2836,14 +2872,18 @@ class Window(QMainWindow):
     def on_ready(self):
         if self.last_error:
             return
-        if self.recording_state is not RecordingState.STARTING:
+        if self.recording_state not in (RecordingState.STARTING, RecordingState.LISTENING,
+                                       RecordingState.PAUSED, RecordingState.PAUSING, RecordingState.RESUMING):
             return
-        self.set_recording_state(RecordingState.LISTENING)
-        self.notifications.post('session', '识别已就绪，开始聆听。', kind='success')
-        self.on_stage("会话", "聆听中")
-        self.on_status("识别已就绪，正在聆听；翻译模型独立加载。" if self.caption_translation
-                       else "识别已就绪，正在聆听。")
-        self.empty.setText("正在聆听…")
+        if self.recording_state is RecordingState.STARTING:
+            self.notifications.post('session', '识别模型已就绪，正在连接音频来源。', kind='progress')
+            self.empty.setText('识别模型已就绪，正在连接音频来源…')
+            return
+        self.notifications.post('session', '识别模型已就绪，正在处理已录音频。', kind='success')
+        self.state_caption.setText(self.recording_state.value)
+        self.on_status('识别模型已就绪，正在追赶已录音频；录音按当前状态继续。')
+        if self.recording_state in (RecordingState.STARTING, RecordingState.LISTENING):
+            self.empty.setText('识别模型已就绪，正在处理已录音频…')
 
     def clear_captions(self):
         self.clear_source_preview()
@@ -2900,7 +2940,7 @@ class Window(QMainWindow):
         if paused:
             self.meter.setValue(0)
         if not self.captions:
-            self.empty.setText("已暂停收音" if paused else "正在聆听…")
+            self.empty.setText("已暂停收音" if paused else self.capture_wait_text())
 
     def on_failure(self, message):
         self.last_error = message
@@ -2992,11 +3032,13 @@ class Window(QMainWindow):
         if event.get('done'):
             if self.source_preview is not None and sequence == self.source_preview_sequence:
                 self.clear_source_preview()
+                self.save_source_preview()
             return
         if sequence <= self.source_preview_sequence:
             return
         self.source_preview_sequence = sequence
         self.source_preview = event
+        self.save_source_preview()
         self.backup_action.setEnabled(True)
         self.scroll.prepare_update()
         caption = Caption(0, event['start'], event['end'], event['source'], event['language'], final=False)
@@ -3010,6 +3052,14 @@ class Window(QMainWindow):
         self.empty.setVisible(not caption.source and not event['keep_ids'])
         self.sync_overlay(animate=False)
         self.scroll.content_changed()
+
+    def save_source_preview(self):
+        # The saver coalesces pending revisions off the UI thread. Do not wait
+        # for SaT or restart a debounce timer on every recognition update.
+        if self.current_item and not self.loading_saved:
+            self.session_dirty = True
+            self.caption_version += 1
+            self.queue_session_save()
 
     def apply_source_preview(self):
         if self.source_preview is not None:
@@ -3040,18 +3090,16 @@ class Window(QMainWindow):
         event = self.source_preview
         if event is None:
             return
+        from .source_preview import preview_captions
+        snapshot = preview_captions(self.captions, event)
         keep = set(event['keep_ids'])
         replaced = [caption for identifier, caption in self.captions.items() if identifier not in keep]
-        identifier = min((caption.id for caption in replaced), default=max(self.captions, default=0)+1)
-        revision = max((caption.revision for caption in replaced), default=0)+1
         self.clear_source_preview()
         for caption in replaced:
             self.on_caption(replace(caption, source='', revision=caption.revision+1))
-        if event['source']:
-            self.on_caption(Caption(identifier, event['start'], event['end'], event['source'], event['language'],
-                translation='\n'.join(c.translation for c in replaced if c.translation),
-                translation_source=' '.join(c.source for c in replaced), translation_phase='initial',
-                final=False, revision=revision, error='分句未完成，已保留最新原文草稿及已有译文。'))
+        for caption in snapshot:
+            if caption.id not in keep:
+                self.on_caption(caption)
         if not self.last_error:
             self.on_failure('原文分句未完成，最新识别结果已作为草稿保留，请对照录音。')
 
@@ -3455,6 +3503,8 @@ class Window(QMainWindow):
 
 
 def main():
+    diag.start_logging('desktop')
+    diag.install_exception_hooks()
     from .process_platform import hold_installation_mutex
     from .runtime_paths import packaged
     hold_installation_mutex(installed=packaged())
@@ -3466,6 +3516,14 @@ def main():
     runtime = RuntimePreparation()
     window = Window(runtime=runtime)
     window.show()
+    def report_log_error():
+        if diag.log_error():
+            window.notifications.post('diagnostic-log', diag.log_error(), kind='error', details=str(diag.log_directory()))
+    log_health = QTimer(window)
+    log_health.setInterval(10000)
+    log_health.timeout.connect(report_log_error)
+    log_health.start()
+    QTimer.singleShot(0, report_log_error)
     from .update_recovery import mark_startup_healthy, take_recovery_notice
     def startup_feedback():
         if mark_startup_healthy():

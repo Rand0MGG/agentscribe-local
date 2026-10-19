@@ -78,12 +78,16 @@ for mode in (1, 0, 1, 0):
     QTest.qWait(30)
     assert not popup.isVisible() and choice.currentIndex() == mode
     assert not choice.property('keyboardFocus')
+    # Offscreen popup dismissal does not reliably reactivate its owner on Mac.
+    # setFocus on an inactive window only records a future focus request.
+    app.setActiveWindow(w)
+    wait_until(w.isActiveWindow)
     mouse_image = choice.grab().toImage()
     choice.clearFocus()
     app.processEvents()
     assert mouse_image == choice.grab().toImage()
     choice.setFocus(Qt.FocusReason.TabFocusReason)
-    app.processEvents()
+    wait_until(choice.hasFocus)
     assert choice.property('keyboardFocus')
     assert mouse_image != choice.grab().toImage()
     choice.clearFocus()

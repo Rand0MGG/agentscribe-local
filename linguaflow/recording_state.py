@@ -25,7 +25,7 @@ class RecordingState(Enum):
 
     def status(self, elapsed=0):
         if self is self.STARTING:
-            return f'正在准备模型 · {elapsed} 秒'
+            return f'正在连接音频来源 · {elapsed} 秒'
         if self is self.STOPPING:
             return '正在停止 · 保存剩余字幕'
         if self is self.LISTENING:

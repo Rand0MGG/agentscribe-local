@@ -12,10 +12,15 @@ from dataclasses import asdict
 from threading import Lock
 from types import SimpleNamespace
 
+from . import diagnostic_log as diag
+
 
 async def serve(settings, emit, read_message):
+    diag.event('runtime_import_start')
     emit({"type": "status", "text": "正在导入 PyTorch 运行库…"})
     import torch
+    diag.event('torch_imported', version=getattr(torch, '__version__', None),
+               cuda_runtime=getattr(getattr(torch, 'version', None), 'cuda', None))
     if settings.get("asr_device") == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("推理环境没有可用 CUDA；请运行 scripts/install_runtime.py 安装 GPU 版本。")
     emit({"type": "status", "text": "正在导入 WhisperLiveKit 及语音检测组件…"})
@@ -31,7 +36,7 @@ async def serve(settings, emit, read_message):
     if not mlx and settings.get('asr_device') == 'mlx':
         raise ValueError('Apple GPU 设备需要选择 Qwen · MLX 4-bit 识别引擎。')
     # Request fresh hypotheses independently of semantic readiness. Upstream
-    # still paces decoding against actual compute time; no audio is discarded.
+    # serializes decoding and coalesces queued PCM; no audio is discarded.
     draft_seconds = max(0.25, min(3., float(settings.get("draft_seconds", .5))))
     config = WhisperLiveKitConfig(
         backend="qwen3-streaming" if qwen else "whisper",
@@ -68,6 +73,7 @@ async def serve(settings, emit, read_message):
         from .model_cache import resolve_whisper_cached
         config.model_path = resolve_whisper_cached(settings.get("asr_model", "large-v3"))
     def load_recognition(own):
+        diag.event('recognition_load_start', backend=settings['backend'], device=settings.get('asr_device'))
         emit({"type": "status", "text": "正在加载 WhisperLiveKit / " + config.backend})
         if qwen:
             # The common engine supplies scheduling, not a second ASR model.
@@ -95,6 +101,7 @@ async def serve(settings, emit, read_message):
         return engine, online
 
     def load_semantic():
+        diag.event('semantic_load_start')
         emit({"type": "status", "text": "加载本地字幕分句组件…"})
         try:
             from .semantic_model import SemanticModel
@@ -106,6 +113,7 @@ async def serve(settings, emit, read_message):
 
     from .inference_startup import load_components
     async with load_components(load_recognition, load_semantic) as (recognition, semantic):
+        diag.event('models_loaded')
         engine, online = recognition
         await _run_session(settings, emit, read_message, config, engine, online, semantic)
 
@@ -131,8 +139,12 @@ async def _run_session(settings, emit, read_message, config, engine, online, sem
     if qwen:
         processor.transcription = online
         processor.args.transcription = True
-        processor.transcription_queue = asyncio.Queue()
+        processor.transcription_queue = asyncio.Queue(maxsize=32)
         processor.sep = " "
+    elif processor.transcription_queue is not None:
+        # Backpressure reaches stdin and then the session's disk journal.
+        # Loading backlog must not turn into an unbounded in-memory PCM queue.
+        processor.transcription_queue = asyncio.Queue(maxsize=32)
 
     async def process_pcm(pcm=None):
         if frontend is None:
@@ -219,11 +231,30 @@ async def _run_session(settings, emit, read_message, config, engine, online, sem
                 elif closed_audio_time >= 0:
                     snapshot['closed_audio_time'] = max(snapshot.get('closed_audio_time', -1), closed_audio_time)
                 sequence = show_preview(snapshot)
-                captions = await asyncio.to_thread(mapper.update, snapshot, done=done)
+                # Cancelling to_thread does not stop SaT. Keep ownership and
+                # the caption lock until it finishes and its changes publish;
+                # otherwise EOF can mutate the same mapper concurrently, or
+                # lose changes already recorded in mapper.previous.
+                mapping = asyncio.create_task(asyncio.to_thread(mapper.update, snapshot, done=done))
+                cancelled = False
+                while True:
+                    try:
+                        captions = await asyncio.shield(mapping)
+                        break
+                    except asyncio.CancelledError:
+                        if mapping.cancelled():
+                            raise
+                        cancelled = True
+                if not preview_open:
+                    raise asyncio.CancelledError
                 rebased = preview.complete(mapper, sequence)
                 if rebased is not None:
                     emit({'type': 'source_preview', 'data': rebased})
                 for caption in captions:
+                    diag.event('caption_revision', caption_id=caption.id, revision=caption.revision,
+                               start=caption.start, end=caption.end, chars=len(caption.source),
+                               stable_chars=len(caption.stable_source), asr_final=caption.asr_final,
+                               boundary_final=caption.boundary_final, ready=caption.ready, reason=caption.boundary_reason)
                     emit({"type": "caption", "data": asdict(caption)})
                 emit({'type': 'source_preview_done', 'sequence': sequence})
                 if settings.get('translate'):
@@ -232,6 +263,8 @@ async def _run_session(settings, emit, read_message, config, engine, online, sem
                             translation_queue.discard(caption.id)
                     for caption in context_planner.update_changes(captions):
                         translation_queue.put_nowait(caption)
+                if cancelled:
+                    raise asyncio.CancelledError
             finally:
                 translation_queue.end_source_update()
 
@@ -266,8 +299,12 @@ async def _run_session(settings, emit, read_message, config, engine, online, sem
             latest.update(caption_snapshot(snapshot))
             if os.environ.get("LINGUAFLOW_TRACE_SNAPSHOTS") == "1":
                 emit({"type": "snapshot", "data": latest.copy()})
+            processed = (max(0., processor.total_pcm_samples / processor.sample_rate
+                             - snapshot.remaining_time_transcription_processing)
+                         if getattr(processor, 'sample_rate', 0) else None)
             await publish(latest)
             emit({"type": "metrics", "compute_lag": snapshot.remaining_time_transcription_processing,
+                  "processed_audio_seconds": processed,
                   "commit_lag": snapshot.remaining_time_transcription_policy})
             if snapshot.error:
                 raise RuntimeError(snapshot.error)
@@ -307,6 +344,7 @@ async def _run_session(settings, emit, read_message, config, engine, online, sem
     output_task = asyncio.create_task(output())
     def output_finished(task):
         if not task.cancelled() and task.exception():
+            diag.exception('worker_task_exception', task.exception())
             emit({"type": "error", "text": str(task.exception())})
     output_task.add_done_callback(output_finished)
     if revision_task:
@@ -319,6 +357,7 @@ async def _run_session(settings, emit, read_message, config, engine, online, sem
         while True:
             message = await read_message()
             if message is None or message.get("type") == "stop":
+                diag.event('worker_input_end', reason='eof' if message is None else 'stop')
                 await process_pcm()
                 await processor.process_audio(b"")
                 break
@@ -353,10 +392,13 @@ async def _run_session(settings, emit, read_message, config, engine, online, sem
             await asyncio.gather(revision_task, return_exceptions=True)
         output_task.cancel()
         translation_task.cancel()
+        await asyncio.gather(output_task, translation_task, return_exceptions=True)
         await processor.cleanup()
 
 
 def main():
+    diag.start_logging('worker')
+    diag.install_exception_hooks()
     protocol = sys.stdout
     sys.stdout = sys.stderr  # Upstream prints must never corrupt the protocol.
     output_lock = Lock()
@@ -369,20 +411,30 @@ def main():
         line = await asyncio.to_thread(sys.stdin.readline)
         return json.loads(line) if line else None
 
+    diag.set_sink(emit)
     try:
         prepare_runtime()
         emit({'type': 'runtime_ready'})
         while first := sys.stdin.readline():
             settings = json.loads(first)
+            diag.set_session(settings.pop('_log_session', None))
+            diag.event('worker_session_start')
             os.environ['LINGUAFLOW_TRACE_REVISIONS'] = '1' if settings.pop('_diagnostic', False) else '0'
             asyncio.run(serve(settings, emit, read_message))
             release_runtime_models()
+            diag.event('worker_session_released')
+            diag.set_session(None)
             emit({'type': 'runtime_ready'})
     except Exception as exc:
+        diag.exception('worker_exception', exc)
         import traceback
         traceback.print_exc()
         emit({"type": "error", "text": str(exc)})
         sys.exit(1)
+    finally:
+        diag.set_sink(None)
+        diag.set_session(None)
+        diag.close_logging()
 
 
 def prepare_runtime():

@@ -10,14 +10,23 @@ from PySide6.QtCore import QIODevice
 
 
 class PlaybackStream(QIODevice):
-    def __init__(self, path, parent=None):
+    def __init__(self, path, parent=None, *, recover_recording=False):
         super().__init__(parent)
         self._lock = RLock()
         self._file = Path(path).open('rb')
         self._size = os.fstat(self._file.fileno()).st_size
         self.gain = 1.
+        self.recovered = False
+        self._header = b''
         self.data_start, self.data_size, self.encoding, self.bits = 0, 0, 0, 0
         try:
+            if recover_recording:
+                from .library_access import acquire_recording_lock
+                lock = acquire_recording_lock(Path(path).parent)
+                try:
+                    self._recover_header()
+                finally:
+                    lock.unlock()
             self._inspect()
             self._file.seek(0)
             self.open(QIODevice.OpenModeFlag.ReadOnly | QIODevice.OpenModeFlag.Unbuffered)
@@ -25,12 +34,42 @@ class PlaybackStream(QIODevice):
             self._file.close()
             raise
 
+    def _recover_header(self):
+        """Expose complete persisted frames of our interrupted mono PCM writer.
+
+        Never rewrite the original or interpret arbitrary WAV trailing chunks as
+        audio. The caller must identify an unfinished app recording; its lock
+        prevents inspecting a live writer. Only our exact 44-byte layout qualifies.
+        """
+        self._file.seek(0)
+        header = self._file.read(44)
+        if (len(header) != 44 or header[:4] != b'RIFF' or header[8:16] != b'WAVEfmt '
+                or header[36:40] != b'data'):
+            return
+        fmt_size, encoding, channels, rate, byte_rate, align, bits = struct.unpack_from('<IHHIIHH', header, 16)
+        if (fmt_size, encoding, channels, align, bits) != (16, 1, 1, 2, 16) or not rate or byte_rate != rate*2:
+            return
+        size = (self._size-44)//align*align
+        if size > 0xffffffff-36:
+            raise ValueError('录音超出 WAV 长度上限，请保留原件并使用音频恢复工具。')
+        fixed = bytearray(header)
+        struct.pack_into('<I', fixed, 4, size+36)
+        struct.pack_into('<I', fixed, 40, size)
+        self.recovered = bytes(fixed) != header or self._size != size+44
+        self._header = bytes(fixed)
+        self._size = size+44
+
     def _inspect(self):
-        header = self._file.read(12)
+        self._file.seek(0)
+        header = self._header[:12] or self._file.read(12)
+        self._file.seek(12)
         if header[:4] != b'RIFF' or header[8:] != b'WAVE':
             return
-        while self._file.tell()+8 <= self._size:
-            kind, size = struct.unpack('<4sI', self._file.read(8))
+        limit = min(self._size, struct.unpack_from('<I', header, 4)[0]+8)
+        while self._file.tell()+8 <= limit:
+            offset = self._file.tell()
+            raw = self._file.read(8)
+            kind, size = struct.unpack('<4sI', self._header[offset:offset+8] or raw)
             start = self._file.tell()
             if start+size > self._size:
                 raise ValueError('录音 WAV 数据不完整。')
@@ -76,8 +115,11 @@ class PlaybackStream(QIODevice):
                 return b''
             try:
                 start = self._file.tell()
-                raw = self._file.read(min(maximum, 1024*1024))
+                raw = self._file.read(min(maximum, 1024*1024, self._size-start))
                 end = start+len(raw)
+                if self._header and start < len(self._header):
+                    count = min(end, len(self._header))-start
+                    raw = self._header[start:start+count]+raw[count:]
                 if self.gain == 1 or end <= self.data_start or start >= self.data_start+self.data_size:
                     return raw
                 width = self.bits//8

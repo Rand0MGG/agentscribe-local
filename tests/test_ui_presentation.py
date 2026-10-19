@@ -324,9 +324,9 @@ checks[-1][0](['识别模型：fixture'])
 assert w.model_prompt.isVisible() and w.current_item['name'] == '保留这份录音名称'
 w.model_prompt.reject()
 assert not downloads
-# Another explicit start must prompt again, even after dismissing the previous one.
-start = w.start
-w.start_button.click()
+# Explicit model checks still prompt without downloading; recording no longer waits for this check.
+start = lambda: w.check_models_for_action('start')
+start()
 assert w.session is None and w.model_action == 'start'
 checks[-1][0](['识别模型：fixture'])
 assert w.model_prompt.isVisible() and not downloads

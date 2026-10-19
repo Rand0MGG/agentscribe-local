@@ -30,6 +30,7 @@ class Runtime:
 class Window(QWidget):
     def __init__(self,runtime):
         super().__init__()
+        self.background_checks = set()
         assert isinstance(runtime,Runtime)
     def show(self):
         super().show()
@@ -315,8 +316,9 @@ assert messages.pop() == '没有音频来源'
 w.device.addItem('fixture', ('fixture', True))
 w.model_manager.backend.setCurrentIndex(0)
 w.asr.setCurrentText('')
-w.start(models_checked=True)
-assert messages.pop() == '模型为空'
+from linguaflow.inference_startup import start_problem
+# Model validation belongs to the background session, after capture starts.
+assert start_problem(w.settings_binding.session_settings(('fixture',True)))[0] == '模型为空'
 w.asr.setCurrentText('small')
 from linguaflow.management import Preparation
 w.model_manager.worker = Preparation(lambda: 'ready', w.model_manager)
@@ -456,6 +458,7 @@ class FakeSession(QObject):
         self.model_ready = Event()
         self.recording_path = recording_path
     def start(self):
+        self.source_changed.emit(0)
         self.model_ready.set()
         self.ready.emit()
     def stop(self):
