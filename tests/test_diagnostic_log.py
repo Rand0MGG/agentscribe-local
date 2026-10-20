@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from types import SimpleNamespace
 
@@ -26,12 +27,13 @@ def logs(tmp_path, monkeypatch):
 
 
 def read_rows(path):
+    assert diag.flush()
     return [json.loads(s) for s in path.read_text(encoding='utf-8').splitlines()]
 
 
 def test_rotation_retention_and_private_exception(logs):
     logs.mkdir()
-    stale = logs / 'support-desktop-old.jsonl'
+    stale = logs / 'support-desktop-20000101T000000-999999999-12345678.jsonl'
     stale.write_text('old', encoding='utf-8')
     os.utime(stale, (time.time() - 15 * 86400,) * 2)
     unrelated = logs / 'keep.txt'
@@ -43,6 +45,7 @@ def test_rotation_retention_and_private_exception(logs):
         raise ValueError('private transcript api_key=SECRET C:/Users/private-name/recording.wav')
     except ValueError as exc:
         diag.exception('failure', exc)
+    assert diag.flush()
     assert not stale.exists() and unrelated.exists()
     files = list(logs.glob('support-*'))
     assert len(files) <= 3
@@ -60,6 +63,7 @@ def test_log_write_failure_does_not_break_application(logs, monkeypatch):
         raise OSError('disk full')
     monkeypatch.setattr(diag._handler, 'shouldRollover', fail)
     diag.event('recording_continues')
+    assert diag.flush()
     assert '写入失败' in diag.log_error()
 
 
@@ -160,3 +164,117 @@ def test_worker_exit_releases_diagnostic_output(logs, monkeypatch, failed):
     assert diag._handler is None
     rows = read_rows(next(logs.glob('support-*.jsonl')))
     assert any(r['event'] == 'worker_exception' for r in rows) == failed
+
+
+def test_slow_disk_is_bounded_and_recovers_without_blocking_producer(logs, monkeypatch):
+    path = diag.start_logging('test')
+    assert diag.flush()
+    entered, release = threading.Event(), threading.Event()
+    original = diag._handler.emit
+    def slow(record):
+        entered.set()
+        assert release.wait(3)
+        original(record)
+    monkeypatch.setattr(diag._handler, 'emit', slow)
+    try:
+        diag.event('first')
+        assert entered.wait(1)
+        for index in range(1100):
+            diag.event('queued', index=index)
+        assert diag._writer.pending.qsize() == 1024
+        assert '积压' in diag.log_error()
+        assert not diag.flush(timeout=.01)
+    finally:
+        release.set()
+    assert diag.flush()
+    diag.event('recovered')
+    rows = read_rows(path)
+    assert rows[-1]['event'] == 'recovered'
+    assert rows[-1]['dropped_events'] == 76
+    diag.close_logging()
+    assert json.loads(path.read_text(encoding='utf-8').splitlines()[-1])['event'] == 'process_log_close'
+
+
+def test_invalid_metadata_sink_and_console_never_break_logging(logs, monkeypatch):
+    path = diag.start_logging('test')
+    class Private:
+        def __repr__(self):
+            raise AssertionError('must not stringify arbitrary objects')
+    class BrokenConsole:
+        def write(self, value):
+            raise OSError('closed')
+    def fail(row):
+        raise ValueError('PRIVATE')
+    monkeypatch.setattr(sys, 'stderr', BrokenConsole())
+    diag.set_sink(fail)
+    diag.event('asr_decode_end', value=Private(), infinite=float('inf'), long='x' * 1000)
+    diag.event('oversized', values=['x' * 512] * 32)
+    rows = read_rows(path)
+    assert rows[-2]['value'] is None and rows[-2]['infinite'] is None
+    assert len(rows[-2]['long']) == 512
+    assert rows[-1]['metadata_omitted']
+    assert 'PRIVATE' not in path.read_text(encoding='utf-8')
+
+
+def test_actions_correlate_results_without_arguments_and_progress_is_coalesced(logs):
+    path = diag.start_logging('test')
+    def callback():
+        diag.event('result')
+        return False
+    assert diag.action('recording.start', callback)(True) is False
+    for _ in range(20):
+        diag.periodic('progress', key='task')
+    diag.clear_session('test-session')
+    diag.event('after_session')
+    rows = read_rows(path)
+    action, result, dispatched = rows[1:4]
+    assert action['operation'] == result['operation'] == dispatched['operation']
+    assert dispatched['outcome'] == 'rejected'
+    assert sum(r['event'] == 'progress' for r in rows) == 1
+    assert rows[-1]['session'] is None and rows[-1]['operation'] is None
+
+
+def test_retention_preserves_live_and_unrelated_files(logs, monkeypatch):
+    logs.mkdir()
+    live = logs / f'support-desktop-20000101T000000-{os.getpid()}-12345678.jsonl'
+    unrelated = logs / 'support-unrelated.jsonl'
+    for path in (live, unrelated):
+        path.write_text('preserve', encoding='utf-8')
+        os.utime(path, (time.time() - 15 * 86400,) * 2)
+    diag.start_logging('test')
+    assert live.exists() and unrelated.exists()
+
+
+def test_worker_logging_does_not_require_desktop_psutil(logs, monkeypatch):
+    monkeypatch.setitem(sys.modules, 'psutil', None)
+    path = diag.start_logging('worker')
+    diag.event('worker_ready')
+    assert read_rows(path)[-1]['event'] == 'worker_ready'
+
+
+def test_directory_budget_removes_oldest_inactive_logs(logs):
+    logs.mkdir()
+    paths = [logs / f'support-desktop-20261020T000000-999999999-{index:08x}.jsonl'
+             for index in range(2)]
+    for index, path in enumerate(paths):
+        with path.open('wb') as stream:
+            stream.truncate(65 * 1024 * 1024)
+        os.utime(path, (time.time() - 100 + index,) * 2)
+    diag.start_logging('test')
+    assert not paths[0].exists() and paths[1].exists()
+
+
+def test_default_budget_readable_severity_and_idle_shutdown(logs):
+    path = diag.start_logging('test')
+    assert diag._handler.maxBytes == 8 * 1024 * 1024
+    assert diag._handler.backupCount == 3  # Current file plus three backups = 32 MiB.
+    diag.event('preparation_started', stage='准备模型')
+    diag.exception('preparation_failed', ValueError('PRIVATE'))
+    rows = read_rows(path)
+    assert rows[-2]['level'] == 'INFO' and rows[-1]['level'] == 'ERROR'
+    assert '准备模型' in path.read_text(encoding='utf-8')
+    writer = diag._writer
+    # The idle writer blocks on its queue; close must wake it and retain the tail.
+    diag.close_logging()
+    assert not writer.is_alive()
+    assert json.loads(path.read_text(encoding='utf-8').splitlines()[-1])['event'] == 'process_log_close'

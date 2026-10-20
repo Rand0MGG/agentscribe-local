@@ -4,6 +4,71 @@ import pytest
 from linguaflow.journal import AudioJournal
 
 
+def test_consumed_chunks_release_disk_and_preserve_absolute_pause_positions(monkeypatch):
+    import tempfile
+
+    streams = []
+    create = tempfile.TemporaryFile
+
+    def tracked(*args, **kwargs):
+        stream = create(*args, **kwargs)
+        streams.append(stream)
+        return stream
+
+    monkeypatch.setattr('linguaflow.journal.tempfile.TemporaryFile', tracked)
+    journal = AudioJournal()
+    journal.chunk_bytes = 64
+    try:
+        for cycle in range(20):
+            samples = np.arange(45, dtype=np.float32) + cycle * 45
+            journal.append(samples[:20])
+            journal.mark_pause()
+            journal.append(samples[20:])
+            np.testing.assert_array_equal(journal.read(100), samples[:20])
+            assert streams[-3].closed  # Consumed prefix freed with backlog still present.
+            assert journal.take_pause()
+            np.testing.assert_array_equal(journal.read(100), samples[20:])
+            assert journal.pending_seconds == 0
+            live = [stream for stream in streams if not stream.closed]
+            assert len(live) == 1
+            live[0].seek(0, 2)
+            assert live[0].tell() == 0  # One reusable empty file, no consumed PCM.
+            assert journal.written == (cycle + 1) * 45 * 4
+        journal.append(np.ones(17, dtype=np.float32))
+    finally:
+        journal.close()
+    assert all(stream.closed for stream in streams)
+
+
+def test_live_draining_reuses_one_empty_file_and_keeps_pause_clock(monkeypatch):
+    import tempfile
+
+    streams = []
+    create = tempfile.TemporaryFile
+
+    def tracked(*args, **kwargs):
+        stream = create(*args, **kwargs)
+        streams.append(stream)
+        return stream
+
+    monkeypatch.setattr('linguaflow.journal.tempfile.TemporaryFile', tracked)
+    journal = AudioJournal()
+    samples = np.arange(1600, dtype=np.float32)
+    try:
+        for _ in range(1000):
+            journal.append(samples)
+            journal.mark_pause()
+            np.testing.assert_array_equal(journal.read(16000), samples)
+            assert journal.take_pause() and not journal.take_pause()
+        assert journal.written == journal.read_position == 1000 * 1600 * 4
+        assert len(streams) == 1 and journal.pending_seconds == 0
+        streams[0].seek(0, 2)
+        assert streams[0].tell() == 0
+    finally:
+        journal.close()
+    assert streams[0].closed
+
+
 @pytest.mark.parametrize("rate", [16000, 48000])
 def test_journal_preserves_quiet_samples_and_backlog(rate):
     journal = AudioJournal(rate)

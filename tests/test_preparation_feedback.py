@@ -107,3 +107,28 @@ callbacks[-1]([])
 assert w.first_run is None and w.model_prompt is None
 w.close()
 ''',tmp_path)
+
+
+def test_model_check_failure_reason_and_retry_preserve_existing_assets(tmp_path):
+    run_ui('''
+callbacks=[]
+class Job:
+    failure_reason='检查超时，请稍后重试。'
+job=Job()
+def start_check(module, callback, *args):
+    callbacks.append(callback)
+    return job
+w.start_background_check=start_check
+w.missing_model_assets=()
+w.check_models_for_action('check')
+callbacks[-1](None)
+notice=w.notifications.notices['model-check']
+assert '超时' in notice.text and '文件保留' in notice.text
+assert notice.action_text=='重新检查' and w.session is None
+assert w.missing_model_assets==() and w.model_prompt is None
+notice.action()
+callbacks[-1]([])
+assert 'model-check' not in w.notifications.notices
+assert '已就绪' in w.model_manager.status.text()
+w.close()
+''',tmp_path)

@@ -7,7 +7,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from threading import Event, Lock
+from threading import Event, Lock, Thread
 from types import SimpleNamespace
 
 import numpy as np
@@ -58,6 +58,7 @@ for line in sys.stdin:
 
 
 def pool(monkeypatch, tmp_path, program=PROGRAM):
+    __import__('asyncio')  # Windows subclasses Popen during its first import.
     path=tmp_path/'prepared-worker.py'
     path.write_text(program)
     original=subprocess.Popen
@@ -66,7 +67,7 @@ def pool(monkeypatch, tmp_path, program=PROGRAM):
         if 'linguaflow.wlk_worker' not in command:
             return original(command, **kwargs)
         calls.append(command)
-        return original([sys.executable, '-u', str(path)], **kwargs)
+        return original([sys.executable, *command[1:-1], str(path)], **kwargs)
     monkeypatch.setattr(preparation, 'runtime_python', lambda: Path(sys.executable))
     monkeypatch.setattr(session_module, 'runtime_python', lambda: Path(sys.executable))
     monkeypatch.setattr(preparation.subprocess, 'Popen', spawn)
@@ -143,6 +144,120 @@ def test_second_lease_is_rejected_without_disrupting_first(monkeypatch,tmp_path)
         runtime.close()
 
 
+def test_crashed_worker_descendants_and_pipe_readers_are_reaped(monkeypatch, tmp_path):
+    import psutil
+
+    child_file = tmp_path / 'descendant.pid'
+    program = f'''
+import subprocess, sys, time
+from pathlib import Path
+child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'],
+                         stdin=subprocess.DEVNULL)
+Path({str(child_file)!r}).write_text(str(child.pid))
+print('{{"type":"runtime_ready"}}', flush=True)
+sys.stdin.readline()
+'''
+    runtime, _ = pool(monkeypatch, tmp_path, program)
+    worker = runtime.acquire(Event())
+    descendants = psutil.Process(worker.process.pid).children(recursive=True)
+    assert int(child_file.read_text()) in {p.pid for p in descendants}
+    for process in descendants:
+        process.create_time()  # Retain identities while ancestry is known.
+    failures = []
+
+    def close():
+        try:
+            runtime.close()
+        except Exception as exc:
+            failures.append(exc)
+
+    closer = Thread(target=close, daemon=True)
+    try:
+        worker.process.stdin.write('exit\n')
+        worker.process.stdin.flush()
+        worker.process.wait(timeout=5)
+        closer.start()
+        closer.join(8)
+        assert not closer.is_alive(), 'cleanup blocked on a pipe held by a descendant'
+        assert not failures
+        assert not worker.reader.is_alive() and not worker.diagnostics.is_alive()
+        assert all(p.closed for p in (worker.process.stdin, worker.process.stdout, worker.process.stderr))
+        _, alive = psutil.wait_procs(descendants, timeout=3)
+        assert not [p for p in alive if p.status() != psutil.STATUS_ZOMBIE]
+    finally:
+        for process in reversed(descendants):
+            try:
+                if process.is_running():
+                    process.kill()
+            except psutil.NoSuchProcess:
+                pass
+        psutil.wait_procs(descendants, timeout=3)
+        if closer.ident is not None:
+            closer.join(5)
+        worker.close()
+        runtime.close()
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows Job Object lifetime')
+def test_owner_exit_reaps_worker_job_without_python_cleanup(tmp_path):
+    import psutil
+
+    from linguaflow.process_platform import close_process_pipes, spawn_options
+    from linguaflow.runtime_paths import python_environment
+
+    ready, exit_owner = tmp_path / 'child.pid', tmp_path / 'exit-owner'
+    worker = tmp_path / 'job-worker.py'
+    worker.write_text(f'''
+import subprocess, sys, time
+from pathlib import Path
+child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+Path({str(ready)!r}).write_text(str(child.pid))
+time.sleep(30)
+''')
+    owner = tmp_path / 'job-owner.py'
+    owner.write_text(f'''
+import os, subprocess, sys, time
+from pathlib import Path
+from linguaflow.process_platform import WindowsWorkerJob, spawn_options
+from linguaflow.runtime_paths import python_environment
+job = WindowsWorkerJob()
+process = subprocess.Popen([sys.executable, '-u', '-m', 'linguaflow.process_platform', {str(worker)!r}],
+                           env=job.environment(python_environment()), **spawn_options())
+deadline = time.monotonic() + 15
+while not Path({str(exit_owner)!r}).exists() and time.monotonic() < deadline:
+    time.sleep(.01)
+os._exit(0)
+''')
+    process = subprocess.Popen([sys.executable, str(owner)], env=python_environment(),
+                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               **spawn_options())
+    descendants = []
+    try:
+        deadline = time.monotonic() + 8
+        while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert ready.exists()
+        descendants = psutil.Process(process.pid).children(recursive=True)
+        assert int(ready.read_text()) in {p.pid for p in descendants}
+        for child in descendants:
+            child.create_time()
+        exit_owner.touch()
+        process.wait(timeout=5)
+        _, alive = psutil.wait_procs(descendants, timeout=5)
+        assert not alive
+    finally:
+        for child in reversed(descendants):
+            try:
+                child.kill()
+            except psutil.NoSuchProcess:
+                pass
+        psutil.wait_procs(descendants, timeout=3)
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=3)
+        close_process_pipes(process)
+
+
 @pytest.mark.parametrize('broken_pipe', [True, False])
 def test_exited_worker_closes_all_pipes_when_stdin_flush_fails(broken_pipe):
     import errno
@@ -158,9 +273,10 @@ def test_exited_worker_closes_all_pipes_when_stdin_flush_fails(broken_pipe):
     worker = object.__new__(preparation.PreparedWorker)
     worker.lock, worker.close_lock = Lock(), Lock()
     worker.closed, worker.ready = Event(), Event()
+    worker.job = None
     joined = []
-    worker.reader = SimpleNamespace(join=lambda timeout: joined.append('reader'))
-    worker.diagnostics = SimpleNamespace(join=lambda timeout: joined.append('diagnostics'))
+    worker.reader = SimpleNamespace(join=lambda timeout: joined.append('reader'), is_alive=lambda: False)
+    worker.diagnostics = SimpleNamespace(join=lambda timeout: joined.append('diagnostics'), is_alive=lambda: False)
     worker.process = SimpleNamespace(stdin=stdin, stdout=io.StringIO(), stderr=io.StringIO(), poll=lambda:0)
     if broken_pipe:
         worker.close()
@@ -187,6 +303,43 @@ def test_pipe_cleanup_preserves_output_error_and_closes_remaining_streams():
     assert caught.value is error
     assert all(pipe.closed for pipe in (process.stdin, process.stdout, process.stderr))
     close_process_pipes(process)
+
+
+def test_reader_timeout_keeps_pipes_owned_and_retry_can_complete(monkeypatch):
+    monkeypatch.setattr(preparation.sys, 'platform', 'win32')
+    worker = object.__new__(preparation.PreparedWorker)
+    worker.lock, worker.close_lock = Lock(), Lock()
+    worker.closed, worker.ready = Event(), Event()
+    worker.job = None
+    alive = [True]
+    worker.reader = SimpleNamespace(join=lambda timeout: None, is_alive=lambda: alive[0])
+    worker.process = SimpleNamespace(stdin=io.StringIO(), stdout=io.StringIO(),
+                                     stderr=io.StringIO(), poll=lambda: 0)
+    with pytest.raises(RuntimeError, match='读取线程未退出'):
+        worker.close()
+    assert not any(p.closed for p in (worker.process.stdin, worker.process.stdout, worker.process.stderr))
+    alive[0] = False
+    worker.close()
+    assert all(p.closed for p in (worker.process.stdin, worker.process.stdout, worker.process.stderr))
+
+
+def test_shutdown_collects_diagnostics_created_during_startup_join(monkeypatch):
+    monkeypatch.setattr(preparation.sys, 'platform', 'win32')
+    worker = object.__new__(preparation.PreparedWorker)
+    worker.lock, worker.close_lock = Lock(), Lock()
+    worker.closed, worker.ready = Event(), Event()
+    worker.job = None
+    joined = []
+
+    def join_startup(timeout):
+        worker.diagnostics = SimpleNamespace(join=lambda timeout: joined.append('logs'), is_alive=lambda: False)
+
+    worker.reader = SimpleNamespace(join=join_startup, is_alive=lambda: False)
+    worker.process = SimpleNamespace(stdin=io.StringIO(), stdout=io.StringIO(),
+                                     stderr=io.StringIO(), poll=lambda: 0)
+    worker.close()
+    assert joined == ['logs']
+    assert all(p.closed for p in (worker.process.stdin, worker.process.stdout, worker.process.stderr))
 
 
 def test_cancel_before_session_start_keeps_capture_closed_and_pool_owned(monkeypatch,tmp_path):

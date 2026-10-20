@@ -9,6 +9,32 @@ def line(text, start=0, end=1):
     return {"text": text, "start": start, "end": end}
 
 
+def test_unchanged_context_and_tail_reuse_segmentation_but_readiness_advances():
+    calls, clock = [], [0.]
+
+    def predict(value):
+        calls.append(value)
+        return [i + 1 for i, c in enumerate(value) if c == '.']
+
+    mapper = CaptionMapper('en', predictor=predict, clock=lambda: clock[0])
+    for value in ('First sentence. Following words',
+                  'First sentence. Following words continue with more detail'):
+        snapshot = dict(revision_text=value, stable_end=len(value), revision_spans=[])
+        mapper.update(snapshot)
+    assert mapper.fixed
+    mapper.update(snapshot)  # Warm the distinct context and tail entries.
+    calls.clear()
+    assert all(mapper.update(snapshot) == [] for _ in range(20))
+    assert calls == []
+    clock[0] = 4
+    events = mapper.update(snapshot)
+    assert any(c.ready and not c.final for c in events)
+    assert calls == []
+    changed = value.replace('detail', 'evidence')
+    mapper.update(dict(snapshot, revision_text=changed, stable_end=len(changed)))
+    assert calls and any('evidence' in c.source for c in mapper.previous.values())
+
+
 def text(mapper):
     return " ".join(c.source for c in mapper.previous.values())
 

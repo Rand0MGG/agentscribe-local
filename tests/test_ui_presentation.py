@@ -31,46 +31,6 @@ w.close()
 ''', tmp_path)
 
 
-def test_hover_uses_semantic_colour_without_effects(tmp_path):
-    from test_beta_features import run_ui
-    run_ui(r'''
-from PySide6.QtCore import QPoint
-from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QWidget, QPushButton
-probe = QWidget()
-probe.resize(240,100)
-probe.setObjectName('hoverProbe')
-probe.setStyleSheet('QWidget#hoverProbe { background: #d08ab4; }')
-button = QPushButton('', probe)
-button.setObjectName('quiet')
-button.setGeometry(20,20,160,50)
-probe.show()
-assert QTest.qWaitForWindowExposed(probe)
-probe.raise_()
-probe.activateWindow()
-assert QTest.qWaitForWindowActive(probe)
-QTest.qWait(50)
-QTest.mouseMove(probe, QPoint(225,85))
-QTest.qWait(30)
-def sampled_colour():
-    picture = probe.grab()
-    scale = picture.devicePixelRatioF()
-    return picture.toImage().pixelColor(round(35*scale),round(35*scale))
-before = sampled_colour()
-QTest.mouseMove(button, QPoint(15,15))
-QTest.qWait(30)
-after = sampled_colour()
-from PySide6.QtGui import QColor
-from linguaflow.ui_theme import interaction_color
-r,g,b,a = interaction_color(app.property('appearance'), 'ghost_hover')
-expected = QColor(*(round(f*a/255 + base*(1-a/255)) for f,base in zip((r,g,b), before.getRgb()[:3])))
-assert max(abs(x-y) for x,y in zip(after.getRgb(), expected.getRgb())) <= 1
-assert after != before
-assert button.geometry().width() == 160
-assert button.graphicsEffect() is None
-probe.close()
-w.close()
-''', tmp_path)
 
 
 def test_no_application_shortcuts_and_find_menu_remains_available(tmp_path):

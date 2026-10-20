@@ -8,7 +8,7 @@ version = "0.10.1"
 description = "Local live speech recognition and translation for Windows and macOS"
 requires-python = ">=3.11,<3.14"
 dependencies = [
-  "PySide6>=6.7,<7", "numpy>=1.26,<3", "scipy>=1.12,<2",
+  "PySide6>=6.7,<7", "numpy>=1.26,<3", "scipy>=1.12,<2", "psutil>=7.2.2,<8",
   "SoundCard>=0.4.3,<0.5", "huggingface-hub>=0.34,<1", "hf_xet>=1.1,<2",
   "pyobjc-framework-ScreenCaptureKit==11.1; sys_platform == 'darwin'",
   "pyobjc-framework-CoreMedia==11.1; sys_platform == 'darwin'",

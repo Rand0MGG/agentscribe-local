@@ -12,6 +12,8 @@ from linguaflow.wlk_session import Session
 
 
 def execute(monkeypatch, tmp_path, program, capture, stopped=False, cancel_loading=False, setup=None, tick=None):
+    # Initialize Windows' Popen subclass before replacing subprocess.Popen.
+    __import__('asyncio')
     import linguaflow.runtime_preparation as preparation
     import linguaflow.wlk_session as module
     script = tmp_path / "worker.py"
@@ -22,7 +24,7 @@ def execute(monkeypatch, tmp_path, program, capture, stopped=False, cancel_loadi
     monkeypatch.setattr(preparation, "runtime_python", lambda: __import__("pathlib").Path(sys.executable))
     def spawn(command, **kwargs):
         if 'linguaflow.wlk_worker' in command:
-            return original([sys.executable, '-u', str(script)], **kwargs)
+            return original([sys.executable, *command[1:-1], str(script)], **kwargs)
         return original(command, **kwargs)
     monkeypatch.setattr(preparation.subprocess, 'Popen', spawn)
     app = QCoreApplication.instance() or QCoreApplication([])
@@ -83,6 +85,7 @@ def test_worker_timing_correlates_with_capture_log(monkeypatch, tmp_path):
     try:
         _, failures = execute(monkeypatch, tmp_path, program, capture, setup=sessions.append)
         assert not failures
+        assert diag.flush()
         rows = [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines()]
         lag = next(row for row in rows if row['event'] == 'asr_capture_lag')
         assert lag['session'] == sessions[0].log_session

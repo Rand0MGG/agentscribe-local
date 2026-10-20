@@ -322,7 +322,7 @@ class Session(QThread):
                     processed = event.get('processed_audio_seconds')
                     lag = (max(0., self.recorded_seconds - processed) if processed is not None
                            else max(float(event['compute_lag']), journal.pending_seconds))
-                    diag.event('pipeline_progress', session=self.log_session, recorded_seconds=self.recorded_seconds,
+                    diag.periodic('pipeline_progress', key=self.log_session, session=self.log_session, recorded_seconds=self.recorded_seconds,
                                processed_seconds=processed, lag_seconds=lag, journal_pending_seconds=journal.pending_seconds,
                                compute_lag=event['compute_lag'], commit_lag=event['commit_lag'])
                     state = f"正在追赶识别 · 延后 {lag:.1f}s" if lag > 1 else "实时识别"
@@ -332,7 +332,7 @@ class Session(QThread):
                     if not self.model_ready.is_set():
                         self.stage.emit("识别", event["text"])
                 elif kind == "translation_metrics":
-                    diag.event('translation_progress', session=self.log_session, pending=event['pending'],
+                    diag.periodic('translation_progress', key=self.log_session, session=self.log_session, pending=event['pending'],
                                compute_seconds=event['compute_seconds'], wait_seconds=event['wait_seconds'],
                                failed=bool(event['error']))
                     if event["error"]:
@@ -375,3 +375,4 @@ class Session(QThread):
                 journal.close()
             diag.event('session_end', session=self.log_session, complete=completed, failed=bool(self.last_error),
                        recorded_seconds=self.recorded_seconds, worker_exit=self.process.poll() if self.process else None)
+            diag.clear_session(self.log_session)

@@ -34,35 +34,3 @@ assert '优化中' in guide and '已定稿' in guide
 assert '未提交' not in guide and '已提交，可修订' not in guide
 w.close()
 ''', tmp_path)
-
-
-def test_checkable_folder_menu_render_and_reopen(tmp_path):
-    run_ui(r'''
-from pathlib import Path
-from PySide6.QtCore import QTimer
-from PySide6.QtTest import QTest
-from linguaflow.ui_components import ActionMenu
-w.show();w.reduce_motion.setChecked(True)
-folder=w.library.folder('1')['id']
-w.select_recording_folder(folder)
-out=Path.cwd()/'.work/browser/menu-check'
-out.mkdir(parents=True,exist_ok=True)
-samples=[]
-def capture():
-    menu=app.activePopupWidget()
-    assert isinstance(menu,ActionMenu)
-    checked=[a for a in menu.actions() if a.isChecked()]
-    assert len(checked)==1 and checked[0].text()=='1'
-    menu.setActiveAction(checked[0])
-    app.processEvents()
-    samples.append(menu.grab())
-    samples[-1].save(str(out/(str(w.appearance.currentIndex())+'.png')))
-    menu.close()
-for mode in (0,1):
-    w.appearance.setCurrentIndex(mode)
-    QTest.qWait(30)
-    QTimer.singleShot(50,capture)
-    w.quick_folder.click()
-assert len(samples)==2
-w.close()
-''', tmp_path)

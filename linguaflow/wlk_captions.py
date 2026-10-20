@@ -1,6 +1,7 @@
 """Context boundaries, mutable presentation rows and separately committed text."""
 import time
 from bisect import bisect_right
+from collections import OrderedDict
 from dataclasses import replace
 from difflib import SequenceMatcher
 
@@ -64,11 +65,12 @@ class BoundaryPolicy:
         if not callable(predictor):
             raise TypeError("字幕分句需要 SaT 边界预测器。")
         self.predictor = predictor
-        self.cache = None
+        self.cache = OrderedDict()
 
     def split(self, text):
-        if self.cache and self.cache[0] == text:
-            return list(self.cache[1])
+        if text in self.cache:
+            self.cache.move_to_end(text)
+            return list(self.cache[text])
         proposals = set()
         for start in range(0, len(text), 1024):
             window_start = max(0, start - 128)
@@ -84,7 +86,10 @@ class BoundaryPolicy:
         boundaries = [(end, "上下文分句") for end in sorted(proposals)]
         if not boundaries or boundaries[-1][0] < len(text):
             boundaries.append((len(text), "等待后文"))
-        self.cache = (text, tuple(boundaries))
+        # Context reconsideration and mutable-tail splitting alternate each tick.
+        self.cache[text] = tuple(boundaries)
+        if len(self.cache) > 2:
+            self.cache.popitem(last=False)
         return boundaries
 
 

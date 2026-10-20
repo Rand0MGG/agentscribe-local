@@ -84,8 +84,11 @@ class MLXClient:
             return result
 
     def decode(self, audio):
+        from . import diagnostic_log as diag
         result = self.request({'pcm': base64.b64encode(
             np.asarray(audio, dtype='<f4').tobytes()).decode('ascii')})
+        diag.periodic('gpu_memory', scope='mlx_asr_allocator', active_bytes=result.get('active_bytes'),
+                      peak_bytes=result.get('peak_bytes'))
         self.report(f"Apple GPU · 识别 {result['compute_seconds']:.2f}s · "
                     f"MLX 分配峰值 {result['peak_bytes'] / 1024**3:.2f} GiB")
         return result['text']

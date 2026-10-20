@@ -2,6 +2,7 @@
 
 AgentScribe uses the pinned WhisperLiveKit pipeline. Source pins are maintained in requirements-runtime.txt; binary distributions retain their own exact dependency manifests and notices.
 
+- psutil 7.2.2: https://github.com/giampaolo/psutil — BSD-3-Clause. Desktop-only CPU/RAM process-tree sampling on Windows and macOS; upstream wheel retains its license. Model runtimes do not require it.
 - WhisperLiveKit: https://github.com/QuentinFuxa/WhisperLiveKit
   - Commit: 94a2ac6f1b7a4a54b9dd1218039ee09bc78ccb7e
   - Apache-2.0. Its own distribution retains upstream research implementation notices.

@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from PySide6.QtCore import QEvent, QRect, Qt, QTimer
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QProgressBar, QPushButton, QSizePolicy
 
+from . import diagnostic_log as diag
+
 
 @dataclass
 class Notice:
@@ -119,6 +121,11 @@ class NotificationCenter(QFrame):
         self.notices.pop(key, None)
         self.notices[key] = Notice(text, kind, action, action_text, progress, details,
                                   expires)
+        if key in ('operation', 'save', 'session', 'preparation', 'update', 'export',
+                   'model-check', 'migration', 'knowledge'):
+            if previous is None or previous.kind != kind or kind == 'error':
+                diag.event('ui_feedback', level='ERROR' if kind == 'error' else 'INFO',
+                           channel=key, kind=kind, recovery_available=action is not None)
         self._refresh()
 
     def clear(self, key):

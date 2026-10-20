@@ -36,6 +36,9 @@ for name in ['good','bad','error','slow','missing']:
     while not done and time.monotonic()<deadline:
         app.processEvents();time.sleep(.005)
     assert done == [1] and results == ([[1,2]] if name=='good' else [None]), (name,results,done)
+    expected_reason = {'good':'', 'bad':'返回内容无法解析', 'error':'退出码 1',
+                       'slow':'超时', 'missing':'无法启动'}[name]
+    assert expected_reason in check.failure_reason, (name, check.failure_reason)
     assert check.state() == QProcess.ProcessState.NotRunning
     check.deliver(None)
     assert done == [1] and len(results) == 1

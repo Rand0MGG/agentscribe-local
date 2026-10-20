@@ -198,7 +198,7 @@
 
 ### 正式流程展示
 
-入口：[scripts/preview_workflows.py](../scripts/preview_workflows.py)，运行 `.venv\Scripts\python.exe scripts/preview_workflows.py`。复用正式 Window、录音库选择、设置、菜单、模型弹窗、准备线程与信号；仅录音/下载任务由隔离夹具替换，示例目录位于 `.work/workspace-preview/workflows/`。覆盖文件夹切到录音、55% 失败后原任务重试、环境阶段进度、取消继续、窄窗口长菜单及小岛到回放轨道双向过渡。场景面板可切换主题和窗口尺寸。此演示不证明真实下载服务器续传或音频可用。
+入口：[scripts/preview_workflows.py](../scripts/preview_workflows.py)，运行 `.venv\Scripts\python.exe scripts/preview_workflows.py`。复用正式 Window、录音库选择、设置、菜单、模型弹窗、准备线程与信号；仅录音/下载任务由隔离夹具替换，示例目录位于 `.work/workspace-preview/workflows/`。覆盖文件夹切到录音、55% 失败后原任务重试、环境阶段进度、取消继续、窄窗口长菜单及小岛到回放轨道双向过渡。场景面板可切换主题和窗口尺寸。取消准备使用正式组件：立即反馈正在取消、禁用重复点击，迟到进度不得覆盖该状态；后台结束后才提供继续准备。此演示不证明真实下载服务器续传或音频可用。
 
 原组件展示只覆盖单组件和内存任务，不能替代正式页面的异步状态、任务入口和数据选择验收。操作菜单超出窗口可用高度时使用可滚动视口；键盘末项、禁用项浏览、子菜单和反复开关都需验证，不能仅裁掉超出部分。
 

@@ -33,7 +33,8 @@ class _SaveJob(Thread):
             self.saved_state = item['state']
         except Exception as exc:
             from .diagnostic_log import exception
-            exception('recording_save_exception', exc)
+            exception('recording_save_exception', exc, session=None,
+                      recording_id=item.get('id', item.get('recording_id')))
             self.error = f'{type(exc).__name__}: {exc}'
         finally:
             self.notify()

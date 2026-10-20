@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import __version__
+from . import diagnostic_log as diag
 from .model_options import asr_backends, asr_devices, qwen_models, translation_devices
 from .preparation_task import Preparation, preparation_error_message
 from .qt_controls import text_label
@@ -132,18 +133,18 @@ class ModelManager(QDialog):
         environment_form.addRow(text_label('本地推理组件', 'settingsSection'))
         environment_form.addRow(self.runtime_status)
         install = QPushButton("检查 / 修复运行环境")
-        install.clicked.connect(self.install_runtime)
+        install.clicked.connect(diag.action('runtime.install', self.install_runtime))
         self.preparation_buttons.append(install)
         environment_form.addRow(install)
         self.install_documents_button = QPushButton('安装 / 修复课件渲染组件')
         self.install_documents_button.hide()
-        self.install_documents_button.clicked.connect(self.install_documents)
+        self.install_documents_button.clicked.connect(diag.action('documents.install', self.install_documents))
         self.preparation_buttons.append(self.install_documents_button)
         environment_form.addRow(self.install_documents_button)
         self.runtime_form = environment_form
         self.hint(environment_form, "桌面界面与模型推理使用独立环境。无需手动启动服务。统一检查所需组件，补齐或重建损坏环境，并清理未发布的残留环境。模型在模型管理中准备。")
         update = self.update_button = QPushButton('检查软件更新')
-        update.clicked.connect(self.check_updates)
+        update.clicked.connect(diag.action('updates.check', self.check_updates))
         self.update_url = ''
         self.update_link = QPushButton('查看发行页')
         self.update_link.hide()
@@ -176,11 +177,11 @@ class ModelManager(QDialog):
         self.cancel_button = QPushButton('取消')
         self.cancel_button.setObjectName('quiet')
         self.cancel_button.setEnabled(False)
-        self.cancel_button.clicked.connect(self.cancel_preparation)
+        self.cancel_button.clicked.connect(diag.action('models.cancel_preparation', self.cancel_preparation))
         heading.addWidget(self.cancel_button)
         self.retry_button = QPushButton('重试')
         self.retry_button.setObjectName('secondary')
-        self.retry_button.clicked.connect(self.retry_preparation)
+        self.retry_button.clicked.connect(diag.action('models.retry_preparation', self.retry_preparation))
         self.retry_button.hide()
         heading.addWidget(self.retry_button)
         card.addLayout(heading)
@@ -564,6 +565,8 @@ class ModelManager(QDialog):
         self.preparation_message.emit(text)
 
     def show_download(self, event):
+        if self.worker is not None and self.worker.cancelled:
+            return
         self.download_file.setVisible(event.get('unit') != 'stage')
         set_download_progress(self.progress_bar, event)
         self.progress_bar.setTextVisible(False)
@@ -646,8 +649,11 @@ class ModelManager(QDialog):
             self.prepare(action, **options)
 
     def cancel_preparation(self):
-        if self.worker:
+        if self.worker and not self.worker.cancelled:
             self.worker.cancel()
+            self.cancel_button.setEnabled(False)
+            self.download_title.setText('正在取消准备')
+            self.download_stats.setText('等待后台任务结束；已完成文件保留')
             self.preparation_status("已请求取消；正在结束准备任务…")
 
     def prepare_whisper(self, model):

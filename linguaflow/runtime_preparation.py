@@ -2,11 +2,12 @@
 import atexit
 import json
 import subprocess
+import sys
 from collections import deque
 from threading import Event, Lock, Thread, Timer
 
 from . import diagnostic_log as diag
-from .process_platform import close_process_pipes, spawn_options, stop_tree
+from .process_platform import WindowsWorkerJob, close_process_pipes, spawn_options, stop_tree
 from .runtime_paths import python_environment, resource_root, runtime_python
 
 
@@ -16,6 +17,7 @@ class PreparedWorker:
     def __init__(self, python):
         self.python = python
         self.process = None
+        self.job = None
         self.error = None
         self.ready = Event()
         self.closed = Event()
@@ -41,12 +43,16 @@ class PreparedWorker:
             with self.lock:
                 if self.closed.is_set():
                     return
-                command = [str(python), '-u', '-m', 'linguaflow.wlk_worker']
+                environment = python_environment()
+                if sys.platform == 'win32':
+                    self.job = WindowsWorkerJob()
+                    environment = self.job.environment(environment)
+                command = [str(python), '-u', '-m', 'linguaflow.process_platform', 'linguaflow.wlk_worker']
                 self.process = subprocess.Popen(
                     command,
                     cwd=resource_root(), stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
-                    env=python_environment(),
+                    env=environment,
                     **spawn_options())
             self.diagnostics = Thread(target=self.read_logs, daemon=True)
             self.diagnostics.start()
@@ -99,8 +105,6 @@ class PreparedWorker:
 
     def settle(self):
         """Wait for the post-session marker, emitted only after model cleanup."""
-        self.ready.clear()
-        self.error = None
         def read():
             try:
                 self.read_ready()
@@ -108,8 +112,13 @@ class PreparedWorker:
                 self.error = exc
             finally:
                 self.ready.set()
-        self.reader = Thread(target=read, daemon=True)
-        self.reader.start()
+        with self.lock:
+            if self.closed.is_set():
+                raise RuntimeError('推理运行环境已关闭。')
+            self.ready.clear()
+            self.error = None
+            self.reader = Thread(target=read, daemon=True)
+            self.reader.start()
         self.wait(self.closed)
 
     def close(self):
@@ -119,8 +128,18 @@ class PreparedWorker:
         with self.close_lock:
             with self.lock:
                 process = self.process
+                job = self.job
+            if job is not None:
+                job.close()  # Also reaps descendants when the launcher has already exited.
             if process is None:
                 return
+            readers = [self.reader]
+            diagnostics = getattr(self, 'diagnostics', None)
+            if diagnostics:
+                readers.append(diagnostics)
+            if sys.platform != 'win32' and (process.poll() is None or any(t.is_alive() for t in readers)):
+                # The process group survives its leader. Do not skip surviving children.
+                stop_tree(process, force=True)
             if process.poll() is None:
                 # Windows venv launchers have a native Python child. Stopping
                 # only the launcher can leave imports/inference running.
@@ -131,9 +150,14 @@ class PreparedWorker:
                     stop_tree(process, force=True)
                     process.wait(timeout=2)
             self.reader.join(timeout=2)
+            # start() can create diagnostics after close() first obtains the
+            # process. Join startup first, then collect its final reader set.
             diagnostics = getattr(self, 'diagnostics', None)
             if diagnostics:
                 diagnostics.join(timeout=2)
+            readers = [self.reader] + ([diagnostics] if diagnostics else [])
+            if any(thread.is_alive() for thread in readers):
+                raise RuntimeError('推理管道读取线程未退出；已保留资源，不能安全关闭管道。')
             close_process_pipes(process)
 
 

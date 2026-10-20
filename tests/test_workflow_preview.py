@@ -147,3 +147,62 @@ print('actual workflow regressions passed')
                             env={**os.environ, 'PREVIEW_FIXTURE': str(tmp_path),
                                  'QT_QPA_PLATFORM': os.environ.get('LAB_TEST_PLATFORM', 'offscreen')})
     assert_ui_process(result)
+
+
+def test_preparation_cancel_feedback_survives_late_progress(tmp_path):
+    code = r'''
+import os
+from pathlib import Path
+from threading import Event
+from PySide6.QtWidgets import QApplication
+from scripts.preview_workflows import preview_window
+from tests.ui_support import wait_until
+app = QApplication([])
+with preview_window(Path(os.environ['PREVIEW_FIXTURE'])) as (w, scenario):
+    w.open_settings('运行环境')
+    m = w.model_manager
+    started, release = Event(), Event()
+    def task():
+        started.set()
+        assert release.wait(8)
+        return '准备完成'
+    m.prepare(task, location='runtime')
+    try:
+        wait_until(started.is_set)
+        m.cancel_button.click()
+        notice = w.notifications.notices['preparation']
+        assert '取消' in notice.text, notice.text
+        assert notice.action is None
+        assert not m.cancel_button.isEnabled()
+        cancelled = m.status.text()
+        m.worker.download.emit(dict(unit='stage', label='迟到的校验进度'))
+        m.worker.download.emit(dict(unit='B', completed=80, total=100))
+        app.processEvents()
+        assert m.status.text() == cancelled
+        assert '取消' in w.notifications.notices['preparation'].text
+        assert w.notifications.notices['preparation'].action is None
+        assert m.worker is not None and not m.retry_button.isVisible()
+        from PySide6.QtTest import QTest
+        for theme, width, height in ((0, 900, 650), (1, 640, 480)):
+            w.appearance.setCurrentIndex(theme)
+            w.resize(width, height)
+            QTest.qWait(100)
+            w.grab().save(str(Path(os.environ['PREVIEW_FIXTURE']) / f'cancel-{theme}.png'))
+        w.leave_settings()
+        app.processEvents()
+        assert w.notifications.notices['preparation'].kind == 'progress'
+        assert w.notifications.notices['preparation'].expires == float('inf')
+    finally:
+        release.set()
+        wait_until(lambda:m.worker is None)
+    assert '已取消' in m.status.text()
+    assert m.retry_button.text() == '继续准备'
+    m.retry_button.click()
+    wait_until(lambda:m.worker is None)
+    assert m.retry_request is None and '准备完成' in m.status.text()
+'''
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True,
+                            encoding='utf-8', errors='backslashreplace', timeout=30,
+                            env={**os.environ, 'PREVIEW_FIXTURE': str(tmp_path),
+                                 'QT_QPA_PLATFORM': os.environ.get('LAB_TEST_PLATFORM', 'offscreen')})
+    assert_ui_process(result)

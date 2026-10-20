@@ -7,6 +7,94 @@ import subprocess
 import sys
 
 _installation_mutex = None
+_WORKER_JOB = 'AGENTSCRIBE_WORKER_JOB'
+
+
+def _job_api():
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    signatures = {
+        'CreateJobObjectW': ([wintypes.LPVOID, wintypes.LPCWSTR], wintypes.HANDLE),
+        'OpenJobObjectW': ([wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR], wintypes.HANDLE),
+        'SetInformationJobObject': ([wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD], wintypes.BOOL),
+        'AssignProcessToJobObject': ([wintypes.HANDLE, wintypes.HANDLE], wintypes.BOOL),
+        'GetCurrentProcess': ([], wintypes.HANDLE),
+        'CloseHandle': ([wintypes.HANDLE], wintypes.BOOL),
+    }
+    for name, (arguments, result) in signatures.items():
+        function = getattr(kernel, name)
+        function.argtypes, function.restype = arguments, result
+    return kernel
+
+
+class WindowsWorkerJob:
+    """Parent-held lifetime for the worker and descendants, even after its crash."""
+
+    def __init__(self):
+        import ctypes
+        from ctypes import wintypes
+        from uuid import uuid4
+
+        class Limits(ctypes.Structure):
+            _fields_ = [('process_time', ctypes.c_int64), ('job_time', ctypes.c_int64),
+                        ('flags', wintypes.DWORD), ('minimum_working_set', ctypes.c_size_t),
+                        ('maximum_working_set', ctypes.c_size_t), ('active_processes', wintypes.DWORD),
+                        ('affinity', ctypes.c_size_t), ('priority', wintypes.DWORD),
+                        ('scheduling', wintypes.DWORD)]
+
+        class ExtendedLimits(ctypes.Structure):
+            _fields_ = [('basic', Limits), ('io_counters', ctypes.c_uint64 * 6),
+                        ('process_memory', ctypes.c_size_t), ('job_memory', ctypes.c_size_t),
+                        ('peak_process_memory', ctypes.c_size_t), ('peak_job_memory', ctypes.c_size_t)]
+
+        self.name = 'Local\\AgentScribe.Worker.' + uuid4().hex
+        self.kernel = _job_api()
+        self.handle = self.kernel.CreateJobObjectW(None, self.name)
+        if not self.handle:
+            raise ctypes.WinError(ctypes.get_last_error())
+        limits = ExtendedLimits()
+        limits.basic.flags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE; no breakaway.
+        if not self.kernel.SetInformationJobObject(self.handle, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
+            error = ctypes.WinError(ctypes.get_last_error())
+            self.close()
+            raise error
+
+    def environment(self, environment):
+        return {**environment, _WORKER_JOB: self.name}
+
+    def close(self):
+        if self.handle is not None:
+            import ctypes
+            if not self.kernel.CloseHandle(self.handle):
+                raise ctypes.WinError(ctypes.get_last_error())
+            self.handle = None
+
+
+def worker_entry():
+    """Join ownership before importing model code or spawning any descendants."""
+    import runpy
+    name = os.environ.pop(_WORKER_JOB, None)
+    if sys.platform == 'win32':
+        import ctypes
+        if not name:
+            raise RuntimeError('推理进程缺少资源归属，未启动模型。')
+        kernel = _job_api()
+        job = kernel.OpenJobObjectW(1, False, name)  # JOB_OBJECT_ASSIGN_PROCESS
+        if not job:
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            if not kernel.AssignProcessToJobObject(job, kernel.GetCurrentProcess()):
+                raise ctypes.WinError(ctypes.get_last_error())
+        finally:
+            # Only the desktop retains a handle, so its crash also reaps the tree.
+            kernel.CloseHandle(job)
+    target = sys.argv[1]
+    sys.argv = sys.argv[1:]
+    if target.endswith('.py'):
+        runpy.run_path(target, run_name='__main__')
+    else:
+        runpy.run_module(target, run_name='__main__')
 
 
 def hold_installation_mutex(*, installed):
@@ -122,3 +210,7 @@ def parent_disconnected(fd):
     else:
         readable = bool(select.select([fd], [], [], 0)[0])
     return readable and not os.read(fd, 4096)
+
+
+if __name__ == '__main__':
+    worker_entry()

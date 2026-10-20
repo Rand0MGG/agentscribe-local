@@ -4,9 +4,11 @@ import re
 import subprocess
 from collections import deque
 from threading import Event, Thread
+from uuid import uuid4
 
 from PySide6.QtCore import QThread, Signal
 
+from . import diagnostic_log as diag
 from .download_progress import PREFIX
 from .process_platform import spawn_options, stop_tree
 from .runtime_paths import installation_command, python_environment, resource_root
@@ -46,17 +48,29 @@ class Preparation(QThread):
         self.process = None
         self.cancelled = False
         self.stage = '准备本地模型与组件'
+        self.log_task = uuid4().hex
 
     def cancel(self):
+        if not self.cancelled:
+            diag.event('preparation_cancel_requested', task_id=self.log_task)
         self.cancelled = True
 
     def run(self):
+        outcome = 'success'
+        diag.event('preparation_started', task_id=self.log_task, affects_runtime=self.affects_runtime,
+                   beta_only=self.beta_only)
         try:
             result = self.action()
             self.result.emit('准备已取消；已完成文件保留。' if self.cancelled else result)
         except Exception as exc:
+            outcome = 'failed'
+            if not self.cancelled:
+                diag.exception('preparation_exception', exc, task_id=self.log_task)
             self.result.emit('准备已取消；已完成文件保留。' if self.cancelled else
                              f"未完成：{self.stage}\n{exc}")
+        finally:
+            diag.event('preparation_finished', task_id=self.log_task,
+                       outcome='cancelled' if self.cancelled else outcome)
 
     def run_command(self, command, *, show_progress=True):
         if self.cancelled:

@@ -9,6 +9,41 @@ from linguaflow.playback import PlaybackIndex
 from linguaflow.update_config import bundle_version, update_identity
 
 
+def test_exports_to_same_path_survive_recording_revision_reset(tmp_path):
+    run_ui('''
+from threading import Event
+from linguaflow.core import Caption
+import linguaflow.recording_export as exports
+target=Path(os.environ['AGENTSCRIBE_LIBRARY'])/'export.txt'
+module.QFileDialog.getSaveFileName=lambda *args:(str(target),exports.FORMATS['txt'][0])
+entered,release=Event(),Event()
+original=exports.write_export
+completed=[]
+def delayed(item,captions,state):
+    if not entered.is_set():
+        entered.set()
+        assert release.wait(5)
+    original(item,captions,state)
+exports.write_export=delayed
+w.export_saver.completed.connect(lambda snapshot,state,error:completed.append(error))
+try:
+    w.captions={1:Caption(1,0,1,'Recording A','en')}
+    w.caption_version=10
+    w.export()
+    assert entered.wait(2)
+    w.clear_captions()
+    w.captions={1:Caption(1,0,1,'Recording B','en')}
+    assert w.caption_version==0
+    w.export()
+finally:
+    release.set()
+    assert w.export_saver.flush(5000)
+assert completed==['','']
+assert target.read_text(encoding='utf-8-sig')=='Recording B'
+w.close()
+''', tmp_path)
+
+
 def test_playback_boundaries_silence_and_order():
     index = PlaybackIndex([Caption(2, 8, 10, 'second', 'en'), Caption(1, 1, 4, 'first', 'en')])
     assert [index.at(t) for t in (0, 1, 3.9, 4, 7, 8, 10)] == [None, 1, 1, None, None, 2, None]
@@ -129,7 +164,10 @@ import linguaflow.notifications as feedback
 w.show();settle_geometry(w)
 manager=w.model_manager
 cancelled=[]
-manager.worker=SimpleNamespace(cancel=lambda:cancelled.append(True))
+def cancel():
+    cancelled.append(True)
+    manager.worker.cancelled=True
+manager.worker=SimpleNamespace(cancel=cancel,cancelled=False)
 manager.cancel_button.setEnabled(True);manager.cancel_button.show()
 w.on_preparation_changed(True)
 w.on_download_progress({'completed':1,'total':100,'unit':'B'})
