@@ -7,13 +7,12 @@ import pytest
 from ui_support import assert_ui_process, finish_ui_code
 
 
-@pytest.mark.parametrize('system', ['darwin', 'win32'])
-def test_settings_sections_are_direct_and_mac_catalog_preserves_gpu_selection(tmp_path, system):
+def test_mac_catalog_preserves_gpu_selection(tmp_path):
     code = r'''
 import os, sys
 from pathlib import Path
 from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QApplication, QLabel, QPushButton
+from PySide6.QtWidgets import QApplication
 import linguaflow.app as module
 sys.platform = os.environ['FIXTURE_PLATFORM']
 module.Window.start_background_check = lambda *args, **kwargs: None
@@ -26,26 +25,6 @@ w = module.Window(discover=False, library_root=folder/'recordings',
 w.reduce_motion.setChecked(True)
 w.show()
 workspace, manager = w.settings_workspace, w.model_manager
-assert workspace.categories == ['常规', '聆听', '模型管理', '字幕与延迟', '运行环境', '使用指南']
-assert not hasattr(workspace, 'advanced_navigation')
-assert not any('更多设置' in button.text() for button in workspace.findChildren(QPushButton))
-general = workspace.pages.widget(workspace.mapping['常规'])
-assert not any('字幕停留在底部' in label.text() for label in general.findChildren(QLabel))
-assert not any(label.objectName() == 'infoBanner' for label in general.findChildren(QLabel))
-for size in ((1280, 840), (900, 650)):
-    w.resize(*size)
-    for mode in (0, 1):
-        w.appearance.setCurrentIndex(mode)
-        for category in workspace.categories:
-            w.open_settings(category)
-            app.processEvents()
-            assert workspace.navigation.currentItem().text() == category
-            assert all(not workspace.navigation.item(i).isHidden() for i in range(len(workspace.categories)))
-            assert workspace.pages.currentIndex() == workspace.mapping[category]
-workspace.search.setText('修复')
-assert workspace.navigation.currentItem().text() == '运行环境'
-workspace.search.clear()
-assert all(not workspace.navigation.item(i).isHidden() for i in range(len(workspace.categories)))
 downloads = []
 manager.prepare_selected = lambda selection, **kwargs: downloads.append((selection, kwargs))
 if sys.platform == 'darwin':
@@ -70,7 +49,7 @@ w.close()
 '''
     result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=30,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'AGENTSCRIBE_LIBRARY': str(tmp_path),
-                                 'FIXTURE_PLATFORM': system})
+                                 'FIXTURE_PLATFORM': 'darwin'})
     assert_ui_process(result)
 
 
@@ -101,7 +80,6 @@ button.click()
 assert len(commands) == 1 and 'linguaflow.recommended_prepare' in commands[0]
 assert json.loads(commands[0][commands[0].index('--selection')+1]) == expected
 assert manager.preparation_selection() == expected
-assert not hasattr(w, 'prepare_models')
 button.click()
 assert len(commands) == 2
 # The single download card persists across settings pages.

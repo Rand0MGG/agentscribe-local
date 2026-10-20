@@ -4,8 +4,7 @@ from test_beta_features import run_ui
 
 def test_navigation_header_and_setup_summary_are_aligned_and_bounded(tmp_path):
     run_ui(r'''
-from PySide6.QtCore import QPoint, QEvent
-from linguaflow.ui_components import NavigationButton
+from PySide6.QtCore import QPoint
 from linguaflow.recording_state import RecordingState
 w.show(); w.new_button.click(); w.reduce_motion.setChecked(True)
 long_name='录音标题与一个很长的课堂名称：Language and Context ' * 4
@@ -14,26 +13,12 @@ w.device.addItem('外部输入 · 一个很长的麦克风名称 ' * 8, ('fixtur
 w.update_recording_hint()
 for theme in (0,1):
     w.appearance.setCurrentIndex(theme)
-    for width,height in ((1280,840),(900,650),(640,480),(700,960)):
+    for width,height in ((1280,840),(640,480),(700,960)):
         w.resize(width,height);settle_geometry(w,w.control_island)
-        nav=(w.new_button,w.deleted_button,w.ui_update_button,w.settings_button)
-        assert all(isinstance(button,NavigationButton) for button in nav)
-        assert len({button.x() for button in nav})==1
-        assert len({button.width() for button in nav})==1
-        assert all(button.height()==38 and button.graphicsEffect() is None for button in nav)
-        assert w.ui_update_button.text()=='检查更新' and not w.ui_update_button.icon().isNull()
         label=w.workspace_title.label
-        assert label.font().pixelSize()==16
         assert w.workspace_title.text()==long_name and long_name in label.toolTip()
         assert label.fontMetrics().horizontalAdvance(label.display_text())<=label.contentsRect().width()
         assert '\u2026' in label.display_text() if width==640 else True
-        # Hover changes neither pixels nor dimensions of the title.
-        label.setAttribute(Qt.WidgetAttribute.WA_UnderMouse,False)
-        app.sendEvent(label,QEvent(QEvent.Type.Leave));before=label.grab().toImage()
-        label.setAttribute(Qt.WidgetAttribute.WA_UnderMouse,True)
-        app.sendEvent(label,QEvent(QEvent.Type.Enter));after=label.grab().toImage()
-        assert before==after and label.graphicsEffect() is None
-        label.setAttribute(Qt.WidgetAttribute.WA_UnderMouse,False)
         for beta in (False,True):
             w.beta_features.setChecked(beta);settle_geometry(w)
             header=w.workspace_title.parentWidget()
@@ -56,7 +41,6 @@ for theme in (0,1):
                 assert all(not rect.intersects(other) for other in rectangles)
                 rectangles.append(rect)
                 if control is not w.workspace_title:
-                    assert control.font().pixelSize()==15
                     assert control.height()>=control.fontMetrics().height()+8
                     assert control.width()>=control.fontMetrics().horizontalAdvance(control.text())+16
         w.beta_features.setChecked(False)

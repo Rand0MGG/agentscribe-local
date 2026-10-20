@@ -67,25 +67,6 @@ w.close()
 ''',tmp_path)
 
 
-def test_folder_selection_and_reset_reuse_setup_instead_of_old_placeholder(tmp_path):
-    run_ui(r'''
-module.Window.start_background_check=lambda *args,**kwargs:None
-w.show();settle_geometry(w)
-assert w.empty.details.isVisibleTo(w) and '音频来源' in w.empty.text()
-folder=w.library.folder('课程文件夹');w.refresh_library()
-w.open_library_item(w.library_rows[folder['id']],0);settle_geometry(w)
-assert w.current_item is None and w.folder_id==folder['id']
-assert w.empty.details.isVisibleTo(w) and '保存文件夹：课程文件夹' in w.empty.text()
-assert not w.library.index['sessions']
-w.reset_recording_view();settle_geometry(w)
-assert w.empty.details.isVisibleTo(w) and '音频来源' in w.empty.text()
-if os.environ.get('AGENTSCRIBE_SCREENSHOTS'):
-    output=Path(os.environ['AGENTSCRIBE_SCREENSHOTS']);output.mkdir(parents=True,exist_ok=True)
-    w.grab().save(str(output/'ready-workspace.png'))
-w.close()
-''',tmp_path)
-
-
 def test_only_top_fades_but_island_zone_is_excluded_from_following(tmp_path):
     run_ui(r'''
 from PySide6.QtWidgets import QWidget

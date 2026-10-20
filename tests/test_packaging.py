@@ -327,13 +327,13 @@ def test_actual_windows_builder_excludes_ignored_file_from_clean_source_payload(
     assert not (payload / 'Licenses/Qt-PySide/unrelated-local.txt').exists()
 
 
-@pytest.mark.parametrize('extra', ['private.txt', '.env', 'unrelated.py'])
-def test_declared_licenses_exclude_unlisted_files(tmp_path, extra):
+def test_declared_licenses_exclude_unlisted_files(tmp_path):
     source, target = tmp_path / 'downloads', tmp_path / 'payload'
     source.mkdir()
     license = source / 'license.txt'
     license.write_text('allowed fixture')
-    (source / extra).write_text('not allowed fixture')
+    for extra in ('private.txt', '.env', 'unrelated.py'):
+        (source / extra).write_text('not allowed fixture')
     packaging_common.copy_notices([{'filename': 'license.txt', 'sha256': packaging_common.digest(license)}],
                                   source, target)
     assert {p.name for p in target.iterdir()} == {'license.txt'}

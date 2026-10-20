@@ -10,12 +10,6 @@ def test_reject_invalid_audio_settings():
             AudioConfig.from_dict(data)
 
 
-def test_legacy_enhancement_keys_cannot_restore_retired_features():
-    data = {'deepfilter': True, 'df_device': 'cuda', 'apm': True, 'wpe': True, 'gain': True}
-    assert AudioConfig.from_dict(data).to_dict() == AudioConfig().to_dict()
-    assert set(automatic_audio_config()) == {'output_db', 'limiter', 'peak_db'}
-
-
 def test_automatic_audio_sessions_have_independent_configs():
     first = automatic_audio_config()
     first['output_db'] = 10

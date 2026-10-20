@@ -33,7 +33,11 @@ commands.clear()
 manager.prepare_qwen('.')
 selection = json.loads(commands[0][commands[0].index('--selection')+1])
 assert selection['backend'] == 'qwen3-streaming' and selection['asr_model'] == '.'
-assert not hasattr(manager, 'semantic_device') and not hasattr(manager, 'semantic_lookahead')
+commands.clear()
+manager.prepare_translation('fixture-translation')
+selection = json.loads(commands[0][commands[0].index('--selection')+1])
+assert selection['translation_model'] == 'fixture-translation'
+assert commands[0][-2:] == ['--only', 'translation']
 def fail(command):
     raise RuntimeError('required model missing')
 manager.run_preparation = fail

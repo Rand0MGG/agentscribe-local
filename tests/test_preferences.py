@@ -18,13 +18,17 @@ class Store:
 
 
 def test_legacy_defaults_and_corrupt_values():
-    values = read_preferences(Store(backend='qwen-stream', draft_seconds='bad', audio_processing='bad'))
+    values = read_preferences(Store(backend='qwen-stream', draft_seconds='bad', offline=True,
+                                    audio_processing=json.dumps({'deepfilter': True, 'output_db': 10})))
     assert values['backend'] == 'qwen3-streaming'
     assert values['draft_seconds'] == .5
     assert values['translate'] is True
     assert values['beta_features'] is False
     assert values['translation_device'] is None  # UI falls back to selected compute device.
-    assert 'audio_processing' not in values
+    assert 'audio_processing' not in values and 'offline' not in values
+    destination = Store()
+    write_preferences(destination, values)
+    assert 'audio_processing' not in destination.values and 'offline' not in destination.values
 
 
 def test_all_keys_roundtrip_and_missing_device_does_not_erase_selection():
@@ -46,34 +50,10 @@ def test_beta_opt_in_parses_stored_values_and_rejects_corrupt_settings(stored, e
     assert read_preferences(Store(beta_features=stored))['beta_features'] is expected
 
 
-def test_retired_offline_preference_is_ignored():
-    values = read_preferences(Store(offline=True, translate=False))
-    assert 'offline' not in values
-    assert values['translate'] is False
-
-
-def test_retired_manual_audio_settings_do_not_return_or_get_saved():
-    store = Store(audio_processing=json.dumps({'deepfilter': True, 'output_db': 10}))
-    values = read_preferences(store)
-    assert 'audio_processing' not in values
-    destination = Store()
-    write_preferences(destination, values)
-    assert 'audio_processing' not in destination.values
-
-
 def test_legacy_metal_migrates_to_llama_without_overriding_explicit_engine():
     assert read_preferences(Store(translation_device='metal'))['translation_engine'] == 'llama'
     assert read_preferences(Store(translation_device='cuda'))['translation_engine'] == 'pytorch'
     assert read_preferences(Store(translation_device='metal', translation_engine='pytorch'))['translation_engine'] == 'pytorch'
-
-
-def test_legacy_context_preferences_parse_without_defining_session_policy():
-    """Old values remain readable; session policy is tested at SettingsBinding."""
-    assert read_preferences(Store())['translation_before'] == 5
-    assert read_preferences(Store())['translation_initial_before'] == 1
-    for before in range(11):
-        assert read_preferences(Store(translation_before=before))['translation_before'] == before
-    assert read_preferences(Store(translation_before=3, translation_initial_before=0))['translation_before'] == 3
 
 
 @pytest.mark.parametrize('stored, expected', [('3', 3), (-4, 0), (500, 10), (None, 5),

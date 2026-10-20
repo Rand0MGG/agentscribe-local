@@ -87,7 +87,8 @@ def test_startup_requires_actual_full_gpu_offload_and_closes_failed_helper(monke
     assert calls == ['wait'] and process.stdin.closed and process.stdout.closed
 
 
-@pytest.mark.parametrize('device', ['cpu', 'metal', 'cuda', 'vulkan'])
+# Cache flags are shared; keep the CPU and GPU startup branches.
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
 def test_server_disables_historical_prompt_cache_for_long_sessions(monkeypatch, device):
     import linguaflow.llama_translation as module
     monkeypatch.setattr(module, 'resolve_assets', lambda _: (Path('fake'), Path('fake.gguf')))

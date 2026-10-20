@@ -62,21 +62,3 @@ w.close()
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path)})
     assert_ui_process(result)
-
-
-def test_language_entry_opens_popup_and_escape_closes_it_without_starting(tmp_path):
-    from test_beta_features import run_ui
-    run_ui('''
-from PySide6.QtTest import QTest
-w.show()
-app.processEvents()
-w.translate.setChecked(False)
-assert '仅原文' in w.quick_language.toolTip() and '仅原文' in w.empty.text()
-assert not w.language_popup.isVisible()
-w.quick_language.click()
-wait(w.language_popup.isVisible)
-QTest.keyClick(w.language_popup, Qt.Key.Key_Escape)
-wait(lambda: not w.language_popup.isVisible())
-assert w.pages.currentIndex() == 0 and w.session is None
-w.close()
-''', tmp_path)

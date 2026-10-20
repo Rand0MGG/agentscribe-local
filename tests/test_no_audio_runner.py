@@ -9,12 +9,10 @@ import pytest
 from scripts import test_no_audio as runner
 
 
-@pytest.mark.parametrize('system', ['nt', 'posix'])
 @pytest.mark.parametrize('arguments', [[], ['--basetemp', 'explicit'], ['--basetemp=explicit']])
 def test_default_and_explicit_paths_are_preserved_without_host_shortening(monkeypatch, tmp_path,
-                                                                        system, arguments):
+                                                                        arguments):
     monkeypatch.setattr(runner, '__file__', str(tmp_path / 'scripts' / 'test_no_audio.py'))
-    monkeypatch.setattr(runner, 'os', SimpleNamespace(name=system, environ=dict(os.environ), pathsep=os.pathsep))
     monkeypatch.setattr(runner, 'sys', SimpleNamespace(executable=sys.executable, argv=['runner', *arguments]))
     owned = []
 

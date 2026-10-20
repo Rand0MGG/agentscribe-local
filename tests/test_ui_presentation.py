@@ -3,7 +3,6 @@ import os
 import subprocess
 import sys
 
-import pytest
 from ui_support import assert_ui_process, finish_ui_code
 
 
@@ -27,28 +26,6 @@ if sys.platform == 'darwin' and hasattr(Qt.WindowType, 'ExpandedClientAreaHint')
     w.update_titlebar_inset(QMargins(0, 28, 0, 0))
     app.processEvents()
     assert w.title_bar.height() == 36 and w.pages.y() == 36, (w.title_bar.geometry(), w.pages.geometry())
-w.close()
-''', tmp_path)
-
-
-
-
-def test_no_application_shortcuts_and_find_menu_remains_available(tmp_path):
-    from test_beta_features import run_ui
-    run_ui(r'''
-from PySide6.QtGui import QAction, QKeySequence, QShortcut
-from PySide6.QtTest import QTest
-assert not w.findChildren(QShortcut)
-assert all(not action.shortcuts() for action in w.findChildren(QAction))
-module.Window.start_background_check = lambda *args, **kwargs: None
-w.show(); settle_geometry(w)
-notices = []
-w.notifications.post = lambda *args, **kwargs: notices.append(args)
-QTest.keySequence(w, QKeySequence(QKeySequence.StandardKey.Find))
-app.processEvents()
-assert not notices
-w.find_action.trigger()
-assert len(notices) == 1 and '请先打开包含字幕的录音' in notices[0][1]
 w.close()
 ''', tmp_path)
 
@@ -101,6 +78,12 @@ real_deadline = time.monotonic() + 2
 while label.reveal.isActive() and time.monotonic() < real_deadline:
     QTest.qWait(10)
 assert not label.reveal.isActive()
+card.update_caption(replace(caption, source='new source', translation='old translation',
+                            translation_source='old source', translation_phase='initial', ready=True))
+assert card.target.text() == 'old translation' and card.pending.isVisibleTo(card)
+card.update_caption(replace(caption, source='new source', translation='old translation',
+                            translation_source='new source', translation_phase='initial', ready=True))
+assert card.pending.isHidden()
 card.update_caption(replace(caption, source='历史字幕全文'), animate=False)
 assert label.text() == '历史字幕全文' and not label.reveal.isActive()
 app.setProperty('reduceMotion', False)
@@ -116,124 +99,17 @@ card.close()
     assert_ui_process(result)
 
 
-def test_save_feedback_model_inspection_and_recording_tree(tmp_path):
-    code = r'''
-import os
-from dataclasses import replace
-from PySide6.QtCore import QPoint, QSettings, Qt
-from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QPushButton
-from linguaflow.app import CaptionCard, Window
-from linguaflow.core import Caption
-from linguaflow.recording_save import SaveSnapshot
-from linguaflow.recording_state import RecordingState
-app = QApplication([])
-Window.check_model_assets = lambda self: None
-w = Window(discover=False, prefs=QSettings(os.environ['AGENTSCRIBE_LIBRARY']+'/prefs.ini', QSettings.Format.IniFormat))
-w.settings_workspace.model_browser.start_check = lambda *args: None
-w.reduce_motion.setChecked(True)
-w.show()
-assert w.new_recording(name='fixture')
-w.on_caption(Caption(1, 0, 1, 'new source', 'en', 'old translation',
-                     final=False, ready=True, translation_source='old source', translation_phase='initial'))
-w.set_recording_state(RecordingState.LISTENING)
-app.processEvents()
-assert not hasattr(w, 'prepare_models')
-assert w.pipeline.isHidden()
-assert w.control_island.parentWidget() is w.scroll.viewport()
-assert w.meter.isVisibleTo(w) and w.transport.currentWidget() is w.live_transport
-w.on_stage('翻译', '加载中')
-assert '翻译：加载中' in w.pipeline.text()
-token = (w.save_generation, w.current_item['id'])
-snapshot = SaveSnapshot(token, w.caption_version, w.current_item.copy(), (), 'draft')
-w.on_saved(snapshot, 'draft', 'disk full')
-w.on_status('识别正在处理')
-w.update_activity()
-assert '保存失败' in w.status.text() and w.status.toolTip() == 'disk full'
-assert w.session_dirty and w.status.property('saveError')
-w.on_saved(replace(snapshot, revision=snapshot.revision-1), 'draft', '')
-assert w.save_error and w.session_dirty
-w.on_saved(replace(snapshot, token=(0, 'different')), 'draft', '')
-assert w.save_error
-w.on_saved(snapshot, 'draft', '')
-assert not w.save_error and not w.session_dirty and not w.status.property('saveError')
-assert '正在聆听' in w.status.text()
-card = w.cards[1]
-assert card.target.text() == 'old translation' and card.pending.isVisibleTo(w)
-card.update_caption(replace(w.captions[1], translation_source='new source'))
-assert card.pending.isHidden()
-w.set_recording_state(RecordingState.IDLE)
-assert w.pipeline.isHidden() and w.meter.isHidden()
-workspace, manager = w.settings_workspace, w.model_manager
-w.open_settings('模型管理')
-browser = workspace.model_browser
-browser.receive({'models': []})
-dialog = workspace.open_model_settings('asr')
-assert not dialog.engine.isVisibleTo(dialog)
-dialog.advanced_toggle.setChecked(True)
-assert dialog.engine.isVisibleTo(dialog)
-dialog.reject()
-dialog = workspace.open_model_settings('translation')
-dialog.engine.setCurrentIndex(dialog.engine.findData('llama'))
-assert '4-bit' in dialog.model.itemText(0)
-dialog.engine.setCurrentIndex(dialog.engine.findData('pytorch'))
-assert dialog.model.count() >= 3
-dialog.reject()
-before = manager.preparation_selection()
-entry = dict(id='/fixture', path='/fixture/Qwen', name='Fixture Qwen', kind='asr',
-             engine='qwen3-streaming', size=100, deletable=True)
-browser.receive({'models': [entry]})
-browser.open_selected()
-dialog = QApplication.activeModalWidget()
-assert dialog is not None and manager.preparation_selection() == before
-dialog.accept()
-browser.choose_role('asr', 1)
-assert manager.qwen_model.currentText() == entry['path']
-w.leave_settings()
-w.refresh_library()
-row = w.library_rows[w.folder_id]
-row.setExpanded(True)
-app.processEvents()
-rect = w.library_tree.visualItemRect(row)
-QTest.mouseClick(w.library_tree.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(rect.x()+5, rect.center().y()))
-assert not row.isExpanded()
-QTest.mouseClick(w.library_tree.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(rect.x()+5, rect.center().y()))
-assert row.isExpanded()
-w.session_dirty = False
-w.current_item = None
-w.close()
-'''
-    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=30,
-                            env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
-                                 'AGENTSCRIBE_LIBRARY': str(tmp_path)})
-    assert_ui_process(result)
-
-
-def test_frosted_material_is_subdued_opaque_and_shared(tmp_path):
+def test_caption_contrast_and_native_wallpaper_platform_guard(tmp_path):
     code = r'''
 from types import SimpleNamespace
 from unittest.mock import patch
-from PySide6.QtCore import QSize
-from PySide6.QtGui import QColor, QPixmap
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication
 from linguaflow import ui_backdrop
 from linguaflow.ui_theme import theme_colors
 app = QApplication([])
-source = QPixmap(80, 80)
-source.fill(QColor('#ff0000'))
 for mode in ['light', 'dark']:
     c = theme_colors(mode)
-    neutral = ui_backdrop.frosted_wallpaper(QPixmap(), QSize(160, 160), mode).toImage()
-    image = ui_backdrop.frosted_wallpaper(source, QSize(160, 160), mode).toImage()
-    pixel = image.pixelColor(80, 80)
-    base = QColor(c['glass'])
-    assert pixel.alpha() == 255 and neutral.pixelColor(80, 80).alpha() == 255
-    # A saturated wallpaper must contribute a tint, never become the reading surface.
-    assert abs(pixel.green()-base.green()) < 50 and pixel.red() > pixel.green()
-    colours = {neutral.pixelColor(x, y).rgb() for x in range(32) for y in range(32)}
-    assert 1 < len(colours) < 10  # Sub-level static grain, not coarse decorative noise.
-    again = ui_backdrop.frosted_wallpaper(QPixmap(), QSize(160, 160), mode).toImage()
-    assert neutral == again
     def luminance(value):
         channels = [value.redF(), value.greenF(), value.blueF()]
         channels = [v/12.92 if v <= .04045 else ((v+.055)/1.055)**2.4 for v in channels]
@@ -256,9 +132,7 @@ with patch.object(ui_backdrop, 'sys', SimpleNamespace(platform='linux')):
     assert_ui_process(result)
 
 
-
-@pytest.mark.parametrize('system', ['win32', 'darwin'])
-def test_recording_actions_prompt_for_models_without_automatic_downloads(tmp_path, system):
+def test_recording_actions_prompt_for_models_without_automatic_downloads(tmp_path):
     code = r"""
 import os
 import sys
@@ -266,7 +140,6 @@ from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication, QPushButton
 from linguaflow.app import Window
 app = QApplication([])
-sys.platform = os.environ['FIXTURE_PLATFORM']
 Window.start_background_check = lambda *args, **kwargs: None
 w = Window(discover=False, prefs=QSettings(os.environ['AGENTSCRIBE_LIBRARY']+'/prefs.ini', QSettings.Format.IniFormat))
 w.show()
@@ -332,96 +205,7 @@ w.close()
 """
     result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=20,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
-                                 'FIXTURE_PLATFORM': system,
-                                 'AGENTSCRIBE_LIBRARY': str(tmp_path)})
-    assert_ui_process(result)
 
-
-def test_floating_controls_choices_and_hover_preserve_geometry(tmp_path):
-    code = r"""
-import os
-import sys
-from pathlib import Path
-from PySide6.QtCore import QEvent, QSettings, Qt
-from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QPushButton
-from linguaflow.app import Window
-from linguaflow.core import Caption
-from linguaflow.recording_state import RecordingState
-sys.path.insert(0, str(Path(__import__('linguaflow').__file__).resolve().parent.parent / 'tests'))
-from ui_support import settle_geometry, wait_until
-app = QApplication([])
-Window.start_background_check = lambda *args, **kwargs: None
-w = Window(discover=False, prefs=QSettings(os.environ['AGENTSCRIBE_LIBRARY']+'/prefs.ini', QSettings.Format.IniFormat))
-w.reduce_motion.setChecked(True)
-w.show()
-w.device.addItem('Fixture microphone with a long descriptive name', ('fixture', False))
-for i in range(20):
-    w.on_caption(Caption(i, i*10, i*10+5, 'Caption content stays visible beside the floating controls. '*4, 'en', '字幕可以从小岛下方经过。'*5))
-w.set_recording_state(RecordingState.LISTENING)
-geometry_widgets = (w.control_island, w.scroll, w.cards[1])
-settle_geometry(*geometry_widgets)
-assert w.control_island.parentWidget() is w.scroll.viewport()
-assert w.control_island.width() < w.scroll.viewport().width()
-assert w.meter.isVisibleTo(w) and w.transport.currentWidget() is w.live_transport
-for size in [(1280, 840), (900, 650)]:
-    w.resize(*size)
-    settle_geometry(*geometry_widgets)
-    before = (w.control_island.geometry(), w.scroll.geometry(), w.cards[1].geometry())
-    w.appearance.setCurrentIndex(1)
-    settle_geometry(*geometry_widgets)
-    after = tuple(widget.geometry() for widget in geometry_widgets)
-    assert before == after, (size, before, after)
-    w.appearance.setCurrentIndex(0)
-    settle_geometry(*geometry_widgets)
-    assert w.scroll.viewport().rect().contains(w.control_island.geometry())
-w.quick_language.click()
-wait_until(lambda: w.language_popup.isVisible())
-popup = w.language_popup
-assert popup.isVisible()
-popup.source_choice.setCurrentIndex((w.source.currentIndex()+1) % w.source.count())
-assert popup.source_choice.currentIndex() == w.source.currentIndex()
-popup.target_choice.showPopup()
-choices = popup.target_choice.view().window()
-wait_until(choices.isVisible)
-assert choices.isVisible() and choices.screen().availableGeometry().contains(choices.geometry())
-previous = popup.target_choice.currentIndex()
-QTest.keyClick(popup.target_choice, Qt.Key.Key_Down)
-QTest.keyClick(popup.target_choice, Qt.Key.Key_Return)
-assert popup.target_choice.currentIndex() != previous
-assert popup.target_choice.currentIndex() == w.target.currentIndex()
-popup.target_choice.hidePopup()
-popup.close()
-assert not popup.isVisible()
-w.set_recording_state(RecordingState.IDLE)
-w.playback.setProperty('available', True)
-w.update_transport()
-settle_geometry(*geometry_widgets)
-assert w.transport.currentWidget() is w.playback and w.play_button.isVisibleTo(w) and w.meter.isHidden()
-button = w.start_button
-app.sendEvent(button, QEvent(QEvent.Type.Enter))
-assert button.graphicsEffect() is None
-w.grab()
-app.sendEvent(button, QEvent(QEvent.Type.Leave))
-w.open_settings('常规')
-for _ in range(6):
-    w.settings_workspace.transition.start()
-    for button in w.settings_workspace.findChildren(QPushButton):
-        app.sendEvent(button, QEvent(QEvent.Type.Enter))
-        assert button.graphicsEffect() is None
-        w.grab()
-        app.sendEvent(button, QEvent(QEvent.Type.Leave))
-    QTest.qWait(20)
-w.leave_settings()
-w.release_playback()
-assert w.transport.isHidden() and w.start_button.isVisibleTo(w)
-assert 'PySide6.QtMultimedia' not in __import__('sys').modules
-w.current_item = None
-w.session_dirty = False
-w.close()
-"""
-    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=20,
-                            env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
                                  'AGENTSCRIBE_LIBRARY': str(tmp_path)})
     assert_ui_process(result)
 

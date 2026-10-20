@@ -64,8 +64,9 @@ def translator_fixture(engine, output):
 
 
 @pytest.mark.parametrize('engine', ['pytorch', 'llama'])
-@pytest.mark.parametrize('before', [0, 1, 3, 10])
-@pytest.mark.parametrize('final', [False, True])
+# Initial requests use 0/1 neighbours regardless of the final-history setting.
+# Final requests retain disabled, partial-window and maximum-window boundaries.
+@pytest.mark.parametrize('before,final', [(0, False), (1, False), (0, True), (3, True), (10, True)])
 @pytest.mark.parametrize('batch_size', [1, 4])
 def test_long_history_model_requests_only_include_selected_neighbours(engine, before, final, batch_size):
     async def exercise():

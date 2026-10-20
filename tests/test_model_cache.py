@@ -33,28 +33,6 @@ def test_sharded_model_requires_all_shards(tmp_path):
     assert has_weights(tmp_path)
 
 
-def test_model_manager_can_still_prepare_translation(tmp_path, monkeypatch):
-    from linguaflow.management import ModelManager
-
-    monkeypatch.setitem(sys.modules, 'huggingface_hub',
-                        SimpleNamespace(snapshot_download=None, HfApi=None))
-    completed = []
-    commands = []
-    manager = SimpleNamespace(
-        preparation_selection=lambda: dict(backend='wlk-whisper', asr_model='tiny',
-                                           translation_engine='pytorch', translation_model='old',
-                                           translation_device='cpu'),
-        prepare=lambda action, **kwargs: completed.append(action()),
-        run_preparation=lambda command: commands.append(command) or 'verified in child')
-    manager.prepare_selected = lambda selection, **kwargs: ModelManager.prepare_selected(manager, selection, **kwargs)
-    ModelManager.prepare_translation(manager, str(tmp_path))
-    assert completed == ['verified in child']
-    assert 'linguaflow.recommended_prepare' in commands[0]
-    selection = json.loads(commands[0][commands[0].index('--selection')+1])
-    assert selection['translation_model'] == str(tmp_path)
-    assert commands[0][-2:] == ['--only', 'translation']
-
-
 def test_download_selects_one_weight_format(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr('linguaflow.download_progress.hub_progress', lambda: nullcontext())

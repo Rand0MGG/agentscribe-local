@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from linguaflow.core import Caption, export_md, export_txt
+from linguaflow.core import Caption, export_md, export_srt, export_txt, srt_time
 from linguaflow.recording_export import FORMATS, export_target, write_export
 
 
@@ -16,6 +16,10 @@ def captions():
 
 
 def test_text_and_markdown_preserve_finality_translation_and_literal_text():
+    assert srt_time(3599.9996) == "01:00:00,000"
+    assert export_srt([Caption(7, 1.25, 2.75, "Hello", "en", "你好")]) == (
+        "1\n00:00:01,250 --> 00:00:02,750\nHello\n你好\n"
+    )
     source = captions()
     assert export_txt(source) == 'Hello *world*\n[初译] 你好\n\nFinal\n最终'
     md = export_md(source)

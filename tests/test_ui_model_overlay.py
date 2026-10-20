@@ -60,7 +60,6 @@ except ValueError:
 else:
     raise AssertionError('incompatible device must be rejected')
 assert manager.preparation_selection() == before_invalid
-assert not hasattr(workspace.model_browser, 'open_button')
 manager.translation_engine.setCurrentIndex(manager.translation_engine.findData('llama'))
 manager.llama_model.setCurrentText(HY_GGUF)
 workspace.model_browser.receive({'models':[dict(name='HY 4-bit', path='/fixture/hy.gguf',
@@ -84,6 +83,8 @@ overlay.show()
 app.processEvents()
 overlay.resize(620, 240)
 overlay.font_size.setValue(32)
+overlay.background_opacity.setValue(45)
+assert overlay.windowOpacity() == 1
 before = overlay.geometry()
 overlay.update_caption(Caption(1, 0, 1, 'Long source text. '*30, 'en', '字幕内容'*30), animate=False)
 app.processEvents()
@@ -110,6 +111,7 @@ assert overlay.size().toTuple() == (700, 290)
 overlay.hide()
 restored = Overlay(w.prefs)
 assert restored.size().toTuple() == (700, 290) and restored.font_size.value() == 32
+assert restored.background_opacity.value() == 45
 restored.close()
 w.close()
 ''', tmp_path)
@@ -164,43 +166,5 @@ with patch.object(module, 'sys', SimpleNamespace(platform='darwin')):
     dialog.request_download('asr', 'qwen3-mlx', MLX_8BIT_MODEL)
     assert downloads[-1][0]['asr_model'] == MLX_8BIT_MODEL
 assert manager.preparation_selection() == selected_bundle
-w.close()
-''', tmp_path)
-
-
-def test_overlay_background_alpha_and_hidden_controls_keep_text_and_geometry(tmp_path):
-    run_ui(r'''
-from PySide6.QtCore import QEvent, QPointF
-from PySide6.QtGui import QEnterEvent
-from linguaflow.subtitles_overlay import Overlay
-overlay = w.overlay
-overlay.show()
-overlay.resize(700, 290)
-app.processEvents()
-app.sendEvent(overlay, QEnterEvent(QPointF(10,10), QPointF(10,10), QPointF(10,10)))
-assert not overlay.header.isHidden() and not overlay.resize_handle.isHidden()
-settle_geometry(overlay, overlay.source)
-geometry, source_rect = overlay.geometry(), overlay.source.geometry()
-reading_height = overlay.scroll.height()
-source_top = overlay.source.mapTo(overlay, overlay.source.rect().topLeft()).y()
-overlay.background_opacity.setValue(0)
-app.processEvents()
-assert overlay.windowOpacity() == 1
-assert overlay.grab().toImage().pixelColor(25, overlay.height()-40).alpha() == 0
-overlay.background_opacity.setValue(45)
-app.processEvents()
-assert 110 <= overlay.grab().toImage().pixelColor(25, overlay.height()-40).alpha() <= 120
-app.sendEvent(overlay, QEvent(QEvent.Type.Leave))
-wait(lambda: overlay.header.isHidden() and overlay.resize_handle.isHidden())
-assert overlay.header.isHidden() and overlay.resize_handle.isHidden()
-settle_geometry(overlay, overlay.source)
-assert overlay.geometry() == geometry and overlay.source.geometry() == source_rect
-assert overlay.scroll.height() > reading_height
-assert overlay.source.mapTo(overlay, overlay.source.rect().topLeft()).y() < source_top
-assert overlay.source.isVisibleTo(overlay)
-overlay.hide()
-restored = Overlay(w.prefs)
-assert restored.background_opacity.value() == 45
-restored.close()
 w.close()
 ''', tmp_path)

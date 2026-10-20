@@ -54,18 +54,42 @@ UI 改动须按 [Demo 一致性契约](UI_DESIGN.md#demo-一致性与优先复�
 - 普通回归列出跳过原因：平台不适用、缺组件、缺权限或尚未部署分别说明。模拟链接不能证明真实映射保护；另一平台模拟不能替代实机。
 - Cocoa 原生预览须有窗口服务，受限环境用 offscreen。预览入口 `scripts/preview_workspace.py --capture --output .work/browser/ui-design-<平台>` 使用示例库/设置，不能代替原生框架、权限、真实音频或 GPU 验收。
 
-### 2026-10-20 测试精简范围
+### 2026-10-20 全测试体系精简
 
-退役 6 项细粒度外观检查，删除 3 个独立测试文件，另从 2 个混合文件移除对应函数。它们是早期 UI 打磨留下的检查，当前不再作为每次回归的门禁；未将仍有价值的短逻辑测试按行数删除。
+第二轮以 `188c99b` 为基线，盘点全部 122 个测试文件及 1190 个收集项，检查测试职责、调用入口、关键断言和参数矩阵。修改 36 个测试文件：删除或合并 26 个函数，缩减重复参数组合，测试净减少 861 行；最终 121 个文件、1134 个收集项，净减少 **56 项**。收集项包括参数化展开，不能把函数数、改名产生的 node ID 差异或循环次数当作删除数量。此前第一轮仅退役 6 项外观检查，历史结果保留在 VALIDATION。
 
-| 退役检查 | 保留行为覆盖与减少的检查 |
+检查后的取舍：
+
+| 测试领域 | 处理与保留边界 |
 | --- | --- |
-| `test_button_feedback.py` 及 `test_ui_presentation.py` 的独立 hover 色值用例 | `test_component_lab.py` 保留禁用、鼠标/键盘焦点及实际点击；不再逐按钮比较 hover/pressed 图片与混色误差 |
-| `test_popup_surfaces.py` | `test_component_lab.py` / `test_workflow_preview.py` 保留弹层开关、选择、Escape、边界及正式页面菜单；不再逐弹层采样透明角和阴影 alpha |
-| `test_hover_center.py` 的两个用例 | `test_ui_alignment.py` 保留窄窗口、长文字和控件边界，组件/流程用例保留焦点与状态交互；不再逐像素检查导航图标内边距、关闭前后图片相等或每个侧栏宽度下中心偏差 ≤2px |
-| `test_quiet_refresh_and_menu.py` 的菜单截图用例 | `test_workflow_preview.py` 保留文件夹选择和操作菜单键盘导航；自动/手动刷新反馈仍在原文件；不再单独检查文件夹菜单勾选标记或生成两张菜单截图作为通过条件 |
+| 录音、暂停/切源、ASR 与分句 | 保留采样完整性、代次、暂停交接、取消/停止、背压、修订/撤回及缓存回归；删除两个被其他分句用例覆盖的简单文本场景，减少相同前缀/上下文路径的中间参数 |
+| 翻译模型、上下文与队列 | 保留双引擎、初译/定稿、单条/批量、背景越界、版本 ABA、迟到结果和资源释放；合并基础排队重复检查，减少初译重复背景配置及相同缓存开关的 GPU 组合 |
+| 运行环境、模型准备与缓存 | 保留安装失败、损坏缓存、取消、进程树、管道、超时、活跃租约、回滚与清理归属；把重复复用检查并入真实跨会话测试，模型下载委派合入真实 ModelManager 用例 |
+| 文件库、保存、导出、迁移与回放 | 保留所有写失败、旧回执、锁、崩溃恢复、原件保护、路径/链接、迁移失败及回放数据测试；SRT 时间进位和双语序列化归入导出测试 |
+| 课程资料、SDK、渲染与云端权限 | 保留原文件/页覆盖、来源变更、每轮许可、取消、旧结果隔离、格式差异与真实 SDK 集成；相似测试覆盖不同入口、格式或生命周期阶段，不视为重复 |
+| 更新、封装与原生平台 | 保留签名、信任、平台/渠道、旧包恢复、受控进程和封装载荷保护；许可证白名单一次同时放入三种无关文件，免去重复夹具 |
+| 诊断日志、资源与性能 | 保留隐私、轮转/容量、慢盘/溢出、故障恢复、CPU/GPU 缺值、跨平台计数器与进程归属回归 |
+| UI、交互与设置 | 保留用户操作、最低窗口尺寸、长文字、无响应/取消/退出与持久化；删除重复整窗布局循环、历史控件不存在断言、装饰像素及固定文案小项；独有行为移入保留用例 |
+| 评测与测试基础设施 | 保留参考可信度、哈希/完整性、计分边界、无音频拒绝和 CI 禁止跳过门禁；删除 AMI 旧 offline 标记专用检查，移除已无平台分支的 runner 参数矩阵 |
 
-保存失败与旧回执、任务取消与迟到结果、线程/进程退出、平台差异、录音数据保护及性能缺陷回归全部保留。外观修改仍按上文 Demo 契约选择人工或针对性检查；此次减少自动像素门禁，不宣称覆盖完全等价。
+删除/合并的具体归属（未列出的该文件测试继续保留）：
+
+| 删除或缩减内容 | 保留覆盖或明确退役的范围 |
+| --- | --- |
+| `test_ami_evaluation.py` 的历史 offline；`test_audio_config.py` 的旧增强开关；`test_runtime_preparation.py` 的 retired ONNX；`test_runtime_network.py` 的 standalone 旧 offline | 退役对已删除功能名称的专用门禁。`test_preferences.py` 的读取/写回同时拒绝旧 offline 与 audio_processing；prepared worker 保留网络环境及会话 trace 重置，MLX 保留未设置/显式设置环境两条路径；设备快照由 worker/backend 测试保护 |
+| `test_preferences.py` 的两个旧字段独立用例及逐值枚举旧 context 默认值 | 旧字段过滤并入 `test_legacy_defaults_and_corrupt_values`；保留读写往返、损坏值、Metal 迁移和 context 范围校验，实际会话默认值由 SettingsBinding/UI 回归覆盖 |
+| `test_model_options.py` 的目录/推荐标识符重复断言；`test_model_cache.py` 的翻译准备委派 | 双平台桌面选择往返、真实目录下载信号继续覆盖目录用途；翻译模型与 `--only translation` 迁入 `test_model_preparation.py`，后者仍验证命令失败 |
+| `test_runtime_preparation.py` 的 compatible preparation 专用用例 | 空闲重复 prepare 并入 `test_successful_sessions_reuse_process_with_fresh_language_and_audio`；活跃 prepare/二次租约拒绝并入 `test_second_lease_is_rejected_without_disrupting_first` |
+| `test_translation_queue.py` 的基础 coalescing 用例 | `test_translation_context.py::test_initial_inflight_is_superseded_and_queued_revisions_coalesce` 通过实际消费、发布和 `queue.join()` 覆盖；原版本 ABA 判断保留 |
+| `test_wlk_captions.py` 的 unfinished clause / learned boundaries 简例 | 原文保真由 semantic model、长文本/碎片 token 和 pending-tail 用例覆盖；无标点模型边界及 ready 状态由 `test_model_offsets_determine_short_and_unpunctuated_segments` 覆盖并保留 reason 断言。上下文 20 行与 200 行用例重复，保留 3/10/200 行；前缀保留起点、1024 分块前后及末尾 |
+| `test_core.py` | 删除文件；全部 SRT 进位与双语精确输出断言迁入 `test_recording_export.py`，没有取消格式回归 |
+| `test_caption_feedback.py` 的 brand/pointer pixel；`test_recording_page.py` 的 control sizes 与 former-plus 坐标；`test_responsive_transport.py` 的 input-level 布局 | 文字点击/双击/选择/录音禁播由 `test_interaction_fixes.py` 保留；组件用例补公开 activated 信号；暂停零电平迁入录音时钟用例。退役品牌对齐、控件精确尺寸、阴影及已删加号位置门禁 |
+| `test_ui_presentation.py` 的 no-shortcuts、混合 save/model/tree、floating hover；`test_workspace_appearance.py` 的 theme/model/progress | 查找由用户流程/长录音搜索覆盖；保存旧回执由 `test_ui.py`/`test_ux_recovery.py` 覆盖；旧译文 pending 显示迁入 caption reveal；模型选择/只读检查由 model overlay/options 覆盖；保留实际 HTTP 下载跨页进度。退役无快捷键属性、Qt 树箭头及重复 hover/主题循环 |
+| `test_ui_experience.py` 的语言弹层；`test_startup_workspace_polish.py` 的 folder/reset；`test_ui_model_overlay.py` 的独立透明背景；`test_user_workflows.py` 的无详情入口布局 | 语言 Escape/不启动录音迁入 `test_language_selection.py`；新工作区/文件夹由 recording page/library defaults 覆盖；背景透明度持久化迁入 overlay drag/resize，隐藏控制栏由 live overlay 流程覆盖；重试点击迁入 feedback 用例。退役透明像素采样及按钮列表精确相等 |
+
+参数精简保留真实执行分支：翻译长历史矩阵从 32 项变为 20 项，保留初译 0/1 邻句、定稿 0/3/10 邻句和双引擎/批量维度；缓存启动保留 CPU/GPU 两类，设备识别另有 Metal/CUDA/Vulkan 专用回归。共享设置/提示流程使用当前平台，平台选择测试仍显式覆盖 Windows/Mac；Mac 目录信号用例保留模拟 Mac 路径。设置页无关宽度、runner 无效系统维度以及 MLX 环境 `'0'` 的重复组合退役。
+
+本次降低自动检查粒度，不宣称覆盖完全等价：细粒度样式、历史控件名称及任意中间参数不再全部作为门禁。UI 变更仍须按上文 Demo 契约做相关检查。关键失败/取消/数据保护/平台分支不能为缩短耗时而删减；实际运行结果与平台限制见 [VALIDATION](VALIDATION.md)。
 
 ## 算法与性能证据
 

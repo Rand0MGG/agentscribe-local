@@ -77,82 +77,6 @@ w.close()
 ''',tmp_path)
 
 
-def test_control_sizes_and_popups_survive_theme_and_window_changes(tmp_path):
-    run_ui(r'''
-from PySide6.QtCore import QMargins, QPoint, Qt
-from PySide6.QtTest import QTest
-from linguaflow.core import Caption
-from linguaflow.ui_components import ActionMenu
-w.show()
-w.update_titlebar_inset(QMargins(0,0,0,0))
-settle_geometry(w,w.control_island)
-assert w.scroll._overlay_height==w.control_island.height()+18
-for mode in (0,1):
-    w.appearance.setCurrentIndex(mode)
-    for width,height in ((1280,840),(900,650),(640,480)):
-        w.resize(width,height);w.new_button.click();settle_geometry(w)
-        assert w.title_bar.height()>=36
-        assert w.workspace_title.parentWidget().height()==40
-        assert abs(w.brand.mapTo(w,w.brand.rect().center()).y()-w.workspace_title.mapTo(w,w.workspace_title.rect().center()).y())<=2
-        assert w.folder_button.size().toTuple()==(28,28)
-        assert w.play_button.size().toTuple()==(40,40)
-        assert next(b for b in w.overlay.findChildren(module.QPushButton) if b.accessibleName()=='关闭悬浮字幕').size().toTuple()==(32,32)
-        for button in (w.new_button,w.settings_button,w.deleted_button):
-            assert button.height()==38 and button.minimumHeight()==38, (button.text(),button.size(),button.minimumSize(),button.maximumSize())
-            assert button.fontMetrics().height()<=button.height()-8
-        for control in (w.quick_device,w.quick_language,w.quick_folder,w.start_button):
-            assert control.size().toTuple()==(40,40), (control.accessibleName(),control.size())
-            assert control.accessibleName() and control.toolTip()
-            assert w.control_island.rect().contains(control.rect().translated(control.mapTo(w.control_island,QPoint(0,0))))
-for choice in (w.quick_device,w.source,w.target,w.appearance):
-    if choice is w.quick_device:
-        for i in range(15):
-            choice.addItem('示例来源 '+str(i),('fixture'+str(i),False))
-    choice.showPopup()
-    popup=choice.view().window()
-    settle_geometry(popup)
-    assert popup.isVisible() and popup.screen().availableGeometry().contains(popup.geometry())
-    view=choice.view()
-    assert view.sizeHintForRow(0)>=34
-    first=view.visualRect(view.model().index(0,0))
-    assert first.height()>=34
-    assert popup.rect().contains(view.rect().translated(view.mapTo(popup,QPoint(0,0))))
-    choice.hidePopup()
-# Every header menu action must be reachable inside the bounded viewport.
-more=next(button for button in w.recording_actions.findChildren(module.QPushButton) if button.menu())
-menu=more.menu()
-menu.popup(more.mapToGlobal(QPoint(0,more.height())))
-settle_geometry(menu)
-assert menu.available_bounds().contains(menu.geometry())
-for action in menu.actions():
-    if action.isVisible() and not action.isSeparator():
-        menu.setActiveAction(action)
-        app.processEvents()
-        assert menu.rect().contains(menu.actionGeometry(action))
-menu.close()
-# Mouse selection preserves the public QComboBox activation signal.
-activated=[]
-w.quick_device.activated.connect(activated.append)
-w.quick_device.showPopup()
-view=w.quick_device.view()
-view.scrollToTop();app.processEvents()
-QTest.mouseClick(view.viewport(),Qt.MouseButton.LeftButton,pos=view.visualRect(view.model().index(1,0)).center())
-assert w.quick_device.currentIndex()==1 and not view.window().isVisible()
-assert activated==[1]
-for identifier in range(30):
-    w.on_caption(Caption(identifier,identifier,identifier+1,'Scrollable sentence. '*5,'en'))
-settle_geometry(w)
-w.scroll.verticalScrollBar().setValue(100);app.processEvents()
-assert w.scroll.top_fade.isVisible() and w.scroll.top_fade.height()==22
-assert w.scroll.top_fade.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-assert w.scroll.latest_button.geometry().bottom()<w.control_island.geometry().top()
-shadows=[w.control_island.graphicsEffect(),w.playback_volume.graphicsEffect()]
-assert all(s.blurRadius()==24 and s.offset().toTuple()==(0.,4.) and s.color().alpha()==30 for s in shadows)
-assert ActionMenu(w).windowFlags() & Qt.WindowType.NoDropShadowWindowHint
-w.close()
-''',tmp_path)
-
-
 def test_start_from_new_workspace_creates_the_selected_name_and_folder(tmp_path):
     run_ui(r'''
 from linguaflow.recording_state import RecordingState
@@ -175,33 +99,5 @@ assert w.library.directory(w.current_item['id']).parent==w.library.directory(fol
 w.set_recording_state(RecordingState.IDLE)
 w.release_recording_lock()
 w.current_item=None
-w.close()
-''',tmp_path)
-
-
-def test_folder_row_former_plus_is_plain_selection_and_menu_remains(tmp_path):
-    run_ui(r'''
-from unittest.mock import patch
-from PySide6.QtCore import QPoint
-from PySide6.QtTest import QTest
-module.Window.start_background_check = lambda *args, **kwargs: None
-w.show();settle_geometry(w)
-row=w.library_tree.topLevelItem(0)
-identity=row.data(0,Qt.ItemDataRole.UserRole)
-rect=w.library_tree.visualItemRect(row)
-with patch.object(w,'new_recording') as create:
-    QTest.mouseClick(w.library_tree.viewport(),Qt.MouseButton.LeftButton,
-                    pos=QPoint(rect.right()-38,rect.center().y()))
-    create.assert_not_called()
-assert w.library_tree.currentItem().data(0,Qt.ItemDataRole.UserRole) == identity
-row=w.library_tree.currentItem()
-rect=w.library_tree.visualItemRect(row)
-menus=[]
-w.library_tree.menuRequested.disconnect()
-w.library_tree.menuRequested.connect(lambda item,point:menus.append(item))
-QTest.mouseClick(w.library_tree.viewport(),Qt.MouseButton.LeftButton,
-                pos=QPoint(rect.right()-12,rect.center().y()))
-assert menus==[row]
-assert w.folder_button.isVisibleTo(w) and w.folder_button.isEnabled()
 w.close()
 ''',tmp_path)

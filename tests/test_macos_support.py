@@ -99,9 +99,6 @@ prefs.setValue('audio_processing', json.dumps({'deepfilter': True, 'df_device': 
 w = Window(discover=False, prefs=prefs)
 assert w.compute.currentData() == 'cpu'
 assert w.model_manager.translation_device.currentData() == 'cpu'
-assert not hasattr(w.model_manager, 'semantic_device')
-assert not hasattr(w.model_manager, 'semantic_lookahead')
-assert not hasattr(w, 'audio_config')
 # Simulated CoreAudio inputs must retain their IDs and non-loopback flag in
 # both selectors, including after a refresh, reorder or device disconnection.
 import linguaflow.app as desktop

@@ -2,31 +2,6 @@
 from test_beta_features import run_ui
 
 
-def test_input_level_has_no_idle_placeholder_and_fills_available_width(tmp_path):
-    run_ui('''
-from linguaflow.recording_state import RecordingState
-w.show(); settle_geometry(w)
-assert w.meter.isHidden() and w.volume_caption.isHidden()
-assert '开始后显示' not in w.volume_caption.text()
-w.set_recording_state(RecordingState.LISTENING)
-lengths=[]
-for width,height in ((1280,840),(900,650),(640,480)):
-    w.resize(width,height); settle_geometry(w)
-    assert w.volume_caption.text()=='输入音量'
-    assert not w.meter.isHidden()
-    assert w.meter.geometry().right()>=w.live_transport.width()-2
-    assert w.meter.width()>=64
-    lengths.append(w.meter.width())
-assert all(length>=64 for length in lengths)
-assert w.control_island.width()<=320 and w.control_island.height()<=90
-w.set_recording_state(RecordingState.PAUSED)
-assert w.volume_caption.text()=='已暂停' and w.meter.value()==0
-w.set_recording_state(RecordingState.IDLE)
-assert w.meter.isHidden() and w.volume_caption.isHidden()
-w.close()
-''',tmp_path)
-
-
 def test_device_refresh_is_atomic_and_start_uses_visible_source(tmp_path):
     run_ui(r'''
 from PySide6.QtCore import QSignalBlocker

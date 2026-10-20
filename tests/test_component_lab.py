@@ -49,16 +49,21 @@ for _ in range(3):
 w.choice.showPopup()
 QTest.mouseClick(w.choice.choice_popup, Qt.MouseButton.LeftButton, pos=QPoint(-10, -10))
 assert not w.choice.choice_popup.isVisible()
+activated=[]
+w.choice.activated.connect(activated.append)
 w.choice.showPopup()
 QTest.keyClick(w.choice.view(), Qt.Key.Key_Down)
 QTest.keyClick(w.choice.view(), Qt.Key.Key_Return)
 assert w.choice.currentIndex() == 1 and not w.choice.choice_popup.isVisible()
+assert activated == [1]
 w.choice.showPopup()
 QTest.keyClick(w.choice.view(), Qt.Key.Key_Escape)
 assert not w.choice.choice_popup.isVisible()
 w.choice.setCurrentIndex(0)
 # Choose themes through the popup's native window, then move the pointer away.
 # Mouse selection must not leave a focus border; keyboard entry must retain one.
+theme_activations=[]
+w.theme.activated.connect(theme_activations.append)
 for mode in (1, 0, 1, 0):
     choice = w.theme
     QTest.mouseClick(w.windowHandle(), Qt.MouseButton.LeftButton,
@@ -91,6 +96,7 @@ for mode in (1, 0, 1, 0):
     assert choice.property('keyboardFocus')
     assert mouse_image != choice.grab().toImage()
     choice.clearFocus()
+assert theme_activations == [1, 0, 1, 0]
 # Disabled role styling must win over normal secondary styling in both themes.
 disabled = next(b for b in w.findChildren(QPushButton) if b.text() == '不可用')
 for mode in range(2):

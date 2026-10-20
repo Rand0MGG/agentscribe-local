@@ -5,10 +5,18 @@ from test_beta_features import run_ui
 def test_matching_languages_disable_translation_in_both_views(tmp_path):
     run_ui(r'''
 from types import SimpleNamespace
+from PySide6.QtTest import QTest
 from linguaflow.recording_state import RecordingState
 from linguaflow.core import LANGUAGES
 module.Window.start_background_check = lambda *args, **kwargs: None
 popup=w.language_popup
+w.show();app.processEvents()
+w.translate.setChecked(False)
+assert '仅原文' in w.quick_language.toolTip() and '仅原文' in w.empty.text()
+w.quick_language.click();wait(popup.isVisible)
+QTest.keyClick(popup, Qt.Key.Key_Escape)
+wait(lambda:not popup.isVisible())
+assert w.session is None and w.pages.currentIndex() == 0
 for name,code,token in LANGUAGES:
     w.source.setCurrentIndex(0)
     w.target.setCurrentIndex(w.target.findData(token))

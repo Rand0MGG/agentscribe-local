@@ -116,6 +116,9 @@ def execute(runtime, source, count):
 def test_successful_sessions_reuse_process_with_fresh_language_and_audio(monkeypatch, tmp_path):
     runtime, calls=pool(monkeypatch, tmp_path)
     try:
+        original = runtime.worker
+        runtime.prepare()
+        assert runtime.worker is original
         first, captions, failures=execute(runtime, 'en', 3)
         assert not failures and captions[-1].source=='en:9600'
         first.stop(discard=True)
@@ -136,6 +139,8 @@ def test_second_lease_is_rejected_without_disrupting_first(monkeypatch,tmp_path)
     runtime,_=pool(monkeypatch,tmp_path)
     try:
         worker=runtime.acquire(Event())
+        runtime.prepare()
+        assert runtime.worker is worker and worker.process.poll() is None
         with pytest.raises(RuntimeError, match='另一会话'):
             runtime.acquire(Event())
         runtime.release(worker, reusable=False)
@@ -547,38 +552,3 @@ def test_preparation_preserves_network_and_resets_each_sessions_trace(monkeypatc
     monkeypatch.setattr(worker.sys,'stdout',io.StringIO())
     worker.main()
     assert seen==[None,(None,'1'),(None,'0')]
-
-
-def test_compatible_preparation_is_reused_without_a_device_profile(monkeypatch, tmp_path):
-    runtime, calls = pool(monkeypatch, tmp_path)
-    try:
-        original = runtime.worker
-        runtime.prepare()
-        assert runtime.worker is original and len(calls) <= 1
-        leased = runtime.acquire(Event())
-        runtime.prepare()
-        assert runtime.worker is leased and leased.process.poll() is None
-        with pytest.raises(RuntimeError, match='另一会话'):
-            runtime.acquire(Event())
-        runtime.release(leased, reusable=False)
-    finally:
-        runtime.close()
-
-
-def test_worker_ignores_retired_onnx_device_and_preserves_asr_device(monkeypatch):
-    import linguaflow.wlk_worker as worker
-    seen = []
-    async def serve(settings, emit, read):
-        seen.append(settings)
-        emit({'type': 'done'})
-    monkeypatch.setattr(worker, 'prepare_runtime', lambda: None)
-    monkeypatch.setattr(worker, 'release_runtime_models', lambda: None)
-    monkeypatch.setattr(worker, 'serve', serve)
-    monkeypatch.setattr(worker.sys, 'stdin', io.StringIO(
-        '{"semantic_device":"cuda","asr_device":"cuda"}\n'))
-    output = io.StringIO()
-    monkeypatch.setattr(worker.sys, 'stdout', output)
-    worker.main()
-    assert seen[0]['asr_device'] == 'cuda'
-    assert [json.loads(line)['type'] for line in output.getvalue().splitlines()] == [
-        'runtime_ready', 'done', 'runtime_ready']

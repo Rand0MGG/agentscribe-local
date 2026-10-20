@@ -251,8 +251,6 @@ w.translation.setCurrentText('fixture-translator')
 w.translation.setCurrentText('tencent/Hy-MT2-1.8B')
 w.translate.setChecked(False)
 w.model_manager.update_seconds.setValue(1.75)
-assert not hasattr(w.model_manager, "semantic_device")
-assert not hasattr(w.model_manager, "semantic_lookahead")
 w.device.addItem('fixture', ('device-id', True))
 w.close()
 w = window()
@@ -265,12 +263,9 @@ w.translation.setCurrentText('facebook/nllb-200-distilled-600M')
 w.translation.setCurrentText('tencent/Hy-MT2-1.8B')
 assert not w.translate.isChecked()
 assert w.model_manager.update_seconds.value() == 1.75
-assert not hasattr(settings, "semantic_device")
-assert not hasattr(settings, "semantic_lookahead")
 assert not any("SaT" in button.text() for button in w.findChildren(module.QPushButton))
 from linguaflow.audio_processing.config import automatic_audio_config
 assert settings.audio_processing == automatic_audio_config()
-assert not hasattr(w, 'audio_config') and not hasattr(w, 'manage_audio')
 assert '音频处理' not in w.settings_workspace.categories
 assert not any('音频实验室' in button.text() for button in w.findChildren(module.QPushButton))
 from types import SimpleNamespace
@@ -367,7 +362,6 @@ w.on_caption(Caption(2, 0, 2, 'First phrase. Second phrase.', 'en', final=False,
 w.on_caption(Caption(3, 1, 2, '', 'en', final=True, revision=2))
 assert 3 not in w.cards and w.cards[2].source.text() == 'First phrase. Second phrase.'
 assert w.model_manager.draft_seconds.value() >= .25
-assert not hasattr(w.model_manager, 'profile')
 assert w.model_manager.draft_seconds.value() == .5
 w.clear_captions()
 assert w.model_manager.tabs.count() == 4

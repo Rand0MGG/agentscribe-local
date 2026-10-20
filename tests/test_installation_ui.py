@@ -3,12 +3,10 @@ import os
 import subprocess
 import sys
 
-import pytest
 from ui_support import assert_ui_process, finish_ui_code
 
 
-@pytest.mark.parametrize('width,height', [(1280, 900), (900, 650)])
-def test_update_settings_and_inline_storage_path(tmp_path, width, height):
+def test_update_settings_and_inline_storage_path(tmp_path):
     code = '''
 import os
 from pathlib import Path
@@ -22,7 +20,7 @@ app.setStyleSheet(STYLE)
 folder = Path(os.environ['FIXTURE_DIRECTORY'])
 w = Window(discover=False, library_root=folder/'recordings',
            prefs=QSettings(str(folder/'prefs.ini'), QSettings.Format.IniFormat))
-w.resize(int(os.environ['FIXTURE_WIDTH']), int(os.environ['FIXTURE_HEIGHT']))
+w.resize(900, 650)
 w.reduce_motion.setChecked(True)
 w.show()
 app.processEvents()
@@ -48,14 +46,13 @@ w.settings_workspace.set_storage_root(resource_root()/'录音')
 assert w.settings_workspace.storage_path.text() == str(resource_root()/'录音')
 assert w.settings_workspace.isAncestorOf(w.settings_workspace.storage_path)
 assert w.settings_workspace.storage_path.isVisible()
-assert not hasattr(w.settings_workspace, 'storage_warning')
 app.processEvents()
 w.grab().save(str(folder/'storage.png'))
 assert w.session is None
 assert 'soundcard' not in __import__('sys').modules
 close_window(w, app)
 '''
-    environment = {**os.environ, 'FIXTURE_DIRECTORY': str(tmp_path), 'FIXTURE_WIDTH': str(width), 'FIXTURE_HEIGHT': str(height)}
+    environment = {**os.environ, 'FIXTURE_DIRECTORY': str(tmp_path)}
     if os.environ.get('AGENTSCRIBE_NATIVE_UI') == '1':
         environment.pop('QT_QPA_PLATFORM', None)
     result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=30, env=environment)

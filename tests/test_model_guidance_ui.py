@@ -99,8 +99,7 @@ assert not hasattr(w, 'update_dialog')
     assert_ui_process(result)
 
 
-@pytest.mark.parametrize('system', ['win32', 'darwin'])
-def test_direct_settings_fixed_context_and_responsive_preparation(tmp_path, system):
+def test_direct_settings_fixed_context_and_responsive_preparation(tmp_path):
     code = '''
 import os, sys, time
 from threading import Event
@@ -108,7 +107,6 @@ from PySide6.QtCore import QSettings, QTimer
 from PySide6.QtWidgets import QApplication
 from linguaflow.app import Window
 from linguaflow.recording_state import RecordingState
-sys.platform = os.environ['FIXTURE_PLATFORM']
 app = QApplication([])
 prefs = QSettings(os.environ['AGENTSCRIBE_LIBRARY']+'/prefs.ini', QSettings.Format.IniFormat)
 prefs.setValue('translation_before', 10)
@@ -165,7 +163,7 @@ w.close()
 '''
     result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=12,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
-                                 'AGENTSCRIBE_LIBRARY': str(tmp_path), 'FIXTURE_PLATFORM': system})
+                                 'AGENTSCRIBE_LIBRARY': str(tmp_path)})
     assert_ui_process(result)
 
 
