@@ -1,9 +1,7 @@
 """Shared settings display; isolated preferences, mocked updates, no audio."""
 import os
-import subprocess
-import sys
 
-from ui_support import assert_ui_process, finish_ui_code
+from ui_support import run_ui_process
 
 
 def test_update_settings_and_inline_storage_path(tmp_path):
@@ -55,12 +53,12 @@ close_window(w, app)
     environment = {**os.environ, 'FIXTURE_DIRECTORY': str(tmp_path)}
     if os.environ.get('AGENTSCRIBE_NATIVE_UI') == '1':
         environment.pop('QT_QPA_PLATFORM', None)
-    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=30, env=environment)
-    assert_ui_process(result)
+    run_ui_process(code, timeout=30,
+                   env=environment)
 
 
 def test_slow_update_check_does_not_block_local_recording_and_save(tmp_path):
-    from test_beta_features import run_ui
+    from ui_support import run_ui
     run_ui('''
 from threading import Event
 from linguaflow.core import Caption

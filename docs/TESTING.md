@@ -41,7 +41,7 @@ git diff --check
 
 常用回归定位：`test_capture_control.py` / `test_wlk_session.py`、`test_recording_save.py` / `test_recording_document.py`、`test_translation_*.py` / `test_qwen_*.py`、`test_knowledge_*.py`、`test_ui_*.py`、`test_packaging.py` / `test_update_*.py`。实际选择以调用关系为准，不强制每次重跑无关模型。
 
-UI 改动须按 [Demo 一致性契约](UI_DESIGN.md#demo-一致性与优先复用)，核对组件 Demo、正式流程 Demo 与受影响正式页面：同主题、尺寸及状态比较外观，同操作序列验证交互、动效和恢复。按改动范围选择 `test_component_lab.py`、`test_workflow_preview.py` 及对应页面回归；新增共享能力同批补 Demo 场景。仅改规范文档时检查链接与契约一致性，不以未执行的 UI 检查作验收声明。
+UI 改动须按 [Demo 一致性契约](UI_DESIGN.md#demo-一致性与优先复用)，核对组件 Demo、正式流程 Demo 与受影响正式页面：同主题、尺寸及状态比较外观，同操作序列验证交互、动效和恢复。组件 Demo 作为按需人工检查入口；自动回归优先 `test_workflow_preview.py` 的准备/恢复流程及对应核心页面测试，不恢复外观细节专用门禁。新增共享能力按需要补 Demo 场景。仅改规范文档时检查链接与契约一致性，不以未执行的 UI 检查作验收声明。
 
 ## 通过条件与 CI
 
@@ -53,6 +53,56 @@ UI 改动须按 [Demo 一致性契约](UI_DESIGN.md#demo-一致性与优先复�
 - `.github/workflows/checks.yml` 是 CI 矩阵的执行权威：两端 Python 3.11–3.13 无音频回归，Python 3.12 另做课程 SDK 和原生文档渲染，Ruff 独立执行。专用集成设置 `AGENTSCRIBE_REQUIRE_INTEGRATIONS=1`，选中用例有跳过即失败。
 - 普通回归列出跳过原因：平台不适用、缺组件、缺权限或尚未部署分别说明。模拟链接不能证明真实映射保护；另一平台模拟不能替代实机。
 - Cocoa 原生预览须有窗口服务，受限环境用 offscreen。预览入口 `scripts/preview_workspace.py --capture --output .work/browser/ui-design-<平台>` 使用示例库/设置，不能代替原生框架、权限、真实音频或 GPU 验收。
+
+### 流程测试与故障边界的分工
+
+正常路径优先复用已有完整流程，在同一个任务中检查输入、状态转移、结果持久化及资源释放；不要另建一套“完整流程”框架，也不要把不相关的故障拼成一个大测试。外部设备、模型输出与网络响应可以使用确定性夹具，文件库、保存器、会话线程及进程通信仍走真实实现。不同层次的测试不能互相冒充：Window 的模拟 Session 验证界面编排，真实 Session/worker 子进程验证通信与排空，两者都不证明真实模型质量。
+
+| 主流程入口 | 覆盖职责 | 仍独立保留的边界 |
+| --- | --- | --- |
+| `test_ui.py::test_named_recording_start_finish_and_settings_routes` | 草稿命名/选文件夹、开始、暂停/继续、停止、保存、删除恢复与退出 | 异步保存旧回执、失败重译、损坏录音、无效启动 |
+| `test_ui.py::test_preferences_roundtrip_and_recording_guards` | 重开持久化、录音中保护 | 损坏/旧配置解析、平台专属菜单与设备分支 |
+| `test_library_defaults.py` / `test_recording_page.py` | 空库恢复默认目录、过期目录选择、空目录菜单、新工作区保留旧录音 | 默认目录写入失败单独运行；非法名称及旧文件保护继续断言 |
+| `test_wlk_session.py::test_captured_pcm_drains_to_wav_and_correlates_with_capture_log` / `test_runtime_preparation.py::test_successful_sessions_reuse_process_with_fresh_language_and_audio` | 合成 PCM 经真实 Session、子进程与 WAV 写入，核对排空、诊断关联和跨会话进程复用 | 加载中停止、暂停/切源、后代占管道、超时、取消、清理失败重试 |
+| `test_library.py::test_reopen_keeps_revisions_and_exports_only_final` | 保存、重开、字幕修订、草稿过滤、初译元数据和导出标记 | 原子写失败、路径越界、重名、删除恢复冲突、迁移校验 |
+| `test_workflow_preview.py` / `test_workspace_appearance.py` | 正式窗口导航、准备失败重试/取消、本地 HTTP 下载跨页进度 | 迟到进度、下载归属、未完成任务退出、实际传输取消 |
+
+UI 测试统一从 `ui_support` 导入：`run_ui` 创建无设备发现的正式窗口；`run_ui_process` 运行需要自行初始化的隔离脚本。两者共用超时、UTF-8 输出、真实窗口关闭和 Qt 错误检查，保留调用方原超时及平台环境。专用预览、原生平台诊断或并非 Window 的进程探针保留自身启动协议。测试模块不再从 `test_beta_features` 借用夹具。
+
+### 当前取舍：2026-10-21 低优先级检查退役
+
+按用户“重要程度不高的测试都去掉”的要求，本轮直接删除低优先级门禁，不把断言搬进大用例。以上一轮结束的 **1135 个收集项、713 个测试函数、19722 行测试 Python** 为基线，退役 **47 个函数、57 个收集项、6 个完整文件**；保留 **1078 个收集项、666 个函数、17809 行**，净减 **1913 行（9.7%）**。此前的流程归并记录仅说明当时状态，后续退役以本节为准。
+
+| 退役范围 | 取消的自动覆盖 |
+| --- | --- |
+| 整个 `test_component_lab.py` | 演示页自身的控件交互、主题焦点、像素、IME 示例、弹窗边界和模拟任务；演示脚本保留，正式业务的取消/退出另有测试 |
+| 整个 `test_ui_alignment.py`、`test_ui_island.py` | 标题/摘要/长设备名几何、小岛尺寸/动画/控件边界、录音时钟文案和空设备菜单的专用检查 |
+| 整个 `test_playback_controls.py`、`test_caption_changes.py`、`test_quiet_refresh_and_menu.py` | 平滑跟随帧轨迹、修订提示措辞、自动/手动刷新提示细节 |
+| `test_caption_view`、`test_caption_feedback`、`test_interaction_fixes` | 平滑跟随/触控板阶段、文字命中区域更新、滑杆和提示气泡、回放箭头和句子偏移；仍保留字幕点击/选择、录音禁播、真实流关闭和 tooltip 销毁 |
+| `test_ui_presentation`、`test_responsive_transport`、`test_startup_workspace_polish`、`test_ui_model_overlay` | 刘海/工具栏布局、逐字动画、对比度/壁纸平台样式、阴影边距、时间显示和按钮显隐、窄窗滑杆、首启下载路由、顶部渐隐、浮窗拖拽/字号/透明度 |
+| `test_ux_journeys`、`test_window_platform`、`test_ui_backdrop` | 主题/长路径布局、资料页滚动位置、简单 resize 边界、标题栏与旧 Qt 样式、壁纸缓存合并性能、浮窗恢复设置的专用检查；保留活动渲染退出、原生调用边界与显示器移除后位置恢复 |
+| `test_user_workflows`、`test_preparation_feedback`、`test_ui_feedback`、`test_update_feedback` | 提示尺寸/位置/过期、首启向导展示、重复错误提示保留、识别错误展示细节、新页不重扫优化、更新完成提示重开；保留失败后重试、迟到结果、任务取消和保存状态保护 |
+| `test_model_guidance_ui`、`test_export_search_feedback`、`test_download_progress`、`test_resource_monitor` | 版本菜单、启动更新提示、重复设置/准备展示、搜索分页、下载字节回调刷新频率、精细 CPU/RAM 数字和缺失 GPU 数字逐值检查；保留下载异常恢复/离线边界、监控超时/恢复/退出及隐私过滤 |
+| 保留流程内的细节检查 | 从 `test_workflow_preview` 删除小岛变形、长菜单键盘/几何及圆角截图；从 preferences 流程删除上轮迁入的设置搜索/导航/动效检查，保留实际设置往返与录音中修改保护 |
+
+保留标准：数据完整性、录音/翻译核心结果、算法边界、权限与路径、失败/取消/迟到结果、进程线程退出、安装更新信任与恢复。低优先级功能并未从产品删除，但其外观和便利性退化可能不再被日常自动回归发现；这是明确减少覆盖，不宣称等价替代。测试数量和通过率不代表产品全部验收。
+
+本轮删除清单与前后快照在 `.work/reports/test-priority-retired.json`、`test-priority-before.json`、`test-priority-summary.json`；实际执行结果见 [VALIDATION](VALIDATION.md)。
+
+### 2026-10-21 流程归并
+
+以本轮开始时的工作区快照为基线（含上一轮尚未提交的进程修复），全套 **1140 个收集项、719 个测试函数、19849 行测试 Python**。本轮改变 41 个测试/支持文件，84 个文件原样保留；合并 6 个函数，新增共享入口超时参数项，收集项变为 **1135**，函数数 **713**，测试 Python **19722 行**（净减 127 行）。这些数字不混用上一轮 1190 项的历史基线；主要收益是收敛重复启动和流程归属，不是大幅压缩测试体积。
+
+| 原独立检查 | 归并后的证据位置 |
+| --- | --- |
+| `test_recording_page` 的选定名称/文件夹后开始 | `test_named_recording_start_finish_and_settings_routes` 从实际空草稿开始，检查 Session 的设备设置、唯一目录归属，再继续暂停和保存 |
+| `test_ui_experience` 的搜索/导航/动效/重开 | `test_preferences_roundtrip_and_recording_guards` 保留搜索命中、空结果清除、指南跳转、Disclosure、取消命名及持久化；退役“旧跟随菜单不存在”的历史控件枚举，其实际跟随行为仍由 playback/UI 流程验证 |
+| `test_library_defaults` 的过期目录选择和空目录菜单 | 接入已有删除—重建—恢复目录流程，检查仅余目录的选择、无目录时的菜单重建及不创建空录音；写入失败仍独立 |
+| `test_wlk_session` 的普通 PCM 排空 | 与诊断关联共用同一次真实 Session/worker 运行，保留帧数、采样率、位宽、录音时长和 worker 消费字节数 |
+| `test_library` 的初译保存/导出 | 接入已有保存—重开—修订流程，并通过新的 Library 实例读取初译来源/阶段，保留 TXT/SRT 标记 |
+| 29 处子进程启动与 Beta 模块内共享窗口夹具 | 移至现有 `ui_support.py`，保留隔离、退出检查和原超时，统一中文输出/超时诊断；真实非零退出及超时参数检查证明失败不会被吞掉 |
+
+算法分句/翻译版本与队列边界、数据保护、取消/迟到结果、课程许可、安装签名与平台差异没有按“名称相似”删减。完整运行结果及限制见 [VALIDATION](VALIDATION.md)。
 
 ### 2026-10-20 全测试体系精简
 

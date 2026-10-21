@@ -1,9 +1,7 @@
 import os
-import subprocess
-import sys
 
 import pytest
-from ui_support import assert_ui_process, finish_ui_code
+from ui_support import run_ui_process
 
 
 @pytest.mark.parametrize('system', ['darwin', 'win32'])
@@ -86,10 +84,8 @@ if sys.platform == 'darwin':
 assert 'soundcard' not in sys.modules and 'PySide6.QtMultimedia' not in sys.modules
 w.close()
 '''
-    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=20,
-                            env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
-                                 'AGENTSCRIBE_LIBRARY': str(tmp_path), 'FIXTURE_PLATFORM': system})
-    assert_ui_process(result)
+    run_ui_process(code, timeout=20,
+                   env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'AGENTSCRIBE_LIBRARY': str(tmp_path), 'FIXTURE_PLATFORM': system})
 
 
 @pytest.mark.parametrize('system', ['darwin', 'win32'])
@@ -141,7 +137,5 @@ validate()
 assert len(warnings) == 2 and len(next_steps) == 3
 w.close()
 """
-    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=20,
-                            env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
-                                 'AGENTSCRIBE_LIBRARY': str(tmp_path), 'FIXTURE_PLATFORM': system})
-    assert_ui_process(result)
+    run_ui_process(code, timeout=20,
+                   env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'AGENTSCRIBE_LIBRARY': str(tmp_path), 'FIXTURE_PLATFORM': system})

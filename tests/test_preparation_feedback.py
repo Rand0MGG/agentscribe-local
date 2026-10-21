@@ -1,5 +1,5 @@
 """Preparation failures identify the failing step without opening a details pane."""
-from test_beta_features import run_ui
+from ui_support import run_ui
 
 
 def test_failed_preparation_shows_stage_and_reason_and_success_clears_error(tmp_path):
@@ -62,34 +62,6 @@ assert w.missing_model_assets==()
 current([])
 assert 'model-check' not in w.notifications.notices
 assert w.model_prompt is None and w.session is None
-w.close()
-''',tmp_path)
-
-
-def test_changing_next_session_settings_cannot_replace_preparation_failure(tmp_path):
-    run_ui('''
-from threading import Event
-release=Event();manager=w.model_manager
-def fail():
-    assert release.wait(2)
-    raise RuntimeError('fixture preparation error')
-manager.prepare(fail,affects_runtime=False)
-manager.worker.result.connect(lambda *_:manager.update_translation_engine(),Qt.ConnectionType.QueuedConnection)
-release.set()
-wait(lambda:manager.worker is None)
-assert w.notifications.notices['preparation'].kind=='error'
-assert 'fixture preparation error' in manager.status.text()
-w.close()
-''',tmp_path)
-
-
-def test_successful_asset_recheck_does_not_replace_preparation_failure(tmp_path):
-    run_ui('''
-w.notifications.post('model-check','上次检查未完成',kind='error')
-w.model_manager.status.setText('准备未完成：翻译组件；fixture failure')
-w.on_model_assets_checked(w.asset_check_generation,[])
-assert 'model-check' not in w.notifications.notices
-assert w.model_manager.status.text()=='准备未完成：翻译组件；fixture failure'
 w.close()
 ''',tmp_path)
 

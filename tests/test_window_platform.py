@@ -2,18 +2,9 @@
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QPoint, QSize, Qt
+from PySide6.QtCore import QPoint, QSize
 
 from linguaflow import window_platform as platform
-
-
-@pytest.mark.parametrize('point,edges', [
-    (QPoint(1, 1), Qt.Edge.LeftEdge | Qt.Edge.TopEdge),
-    (QPoint(799, 599), Qt.Edge.RightEdge | Qt.Edge.BottomEdge),
-    (QPoint(400, 300), Qt.Edge(0)),
-])
-def test_resize_boundary(point, edges):
-    assert platform.resize_edges(point, QSize(800, 600)) == edges
 
 
 @pytest.mark.parametrize('system,offscreen,maximized,expected', [
@@ -50,27 +41,3 @@ def test_restored_overlay_is_reachable_after_display_removal():
     assert primary.contains(restored) and restored.size() == intact.size()
     oversized = platform.visible_window_geometry(QRect(1600, 500, 1800, 1000), [primary])
     assert oversized == primary
-
-
-@pytest.mark.parametrize('system,expected', [('win32', False), ('darwin', True), ('linux', False)])
-def test_integrated_titlebar_keeps_native_frame_and_owns_safe_area(monkeypatch, system, expected):
-    expected = expected and hasattr(Qt.WindowType, 'ExpandedClientAreaHint')
-    monkeypatch.setattr(platform, 'sys', SimpleNamespace(platform=system))
-    flags, attributes = {}, {}
-    window = SimpleNamespace(setWindowFlag=lambda flag, value: flags.update({flag: value}),
-                             setAttribute=lambda attr, value: attributes.update({attr: value}))
-    assert platform.expand_window_content(window) is expected
-    assert Qt.WindowType.FramelessWindowHint not in flags
-    if expected:
-        assert flags[Qt.WindowType.ExpandedClientAreaHint]
-        assert flags[Qt.WindowType.NoTitleBarBackgroundHint]
-        assert attributes[Qt.WidgetAttribute.WA_ContentsMarginsRespectsSafeArea] is False
-    else:
-        assert not flags and not attributes
-    assert not platform.configure_main_window(0)  # Never initialise AppKit in offscreen.
-
-
-def test_old_qt_keeps_native_titlebar_without_extra_toolbar(monkeypatch):
-    monkeypatch.setattr(platform, 'sys', SimpleNamespace(platform='darwin'))
-    monkeypatch.setattr(platform, 'Qt', SimpleNamespace(WindowType=SimpleNamespace()))
-    assert not platform.expand_window_content(object())

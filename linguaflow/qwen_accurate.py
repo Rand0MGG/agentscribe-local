@@ -9,10 +9,9 @@ import time
 from collections import OrderedDict
 from types import SimpleNamespace
 
-import numpy as np
-
 from . import diagnostic_log as diag
 from .asr_stability import StablePrefix, choose_cut, stitch_window
+from .audio_processing.buffer import PCMBuffer
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +35,7 @@ class QwenAccurateOnline:
         self.asr = SimpleNamespace(sep=' ')
         self.update_seconds = max(.25, float(update_seconds))
         self.window_seconds = max(8., min(40., float(window_seconds)))
-        self.audio_buffer = np.zeros(0, np.float32)
+        self._audio = PCMBuffer(round((self.window_seconds + 5) * self.SAMPLING_RATE))
         self.start = self.end = 0.
         self.text = ''
         self.decoded_samples = 0
@@ -67,6 +66,10 @@ class QwenAccurateOnline:
     def set_revision_store(self, store):
         """Use the same full-hypothesis store as the streaming Qwen backend."""
         self.revisions = store
+
+    @property
+    def audio_buffer(self):
+        return self._audio.samples
 
     def _observe(self, text, stable, end, closed=False):
         if self.revisions is not None:
@@ -103,7 +106,7 @@ class QwenAccurateOnline:
             if self.pending_silence < self.pause_context_seconds:
                 # Keep a brief hesitation in the next decode, with its real
                 # duration, so later speech can correct the whole phrase.
-                self.audio_buffer = np.concatenate((self.audio_buffer, np.zeros(gap, np.float32)))
+                self._audio.silence(gap)
             else:
                 self.pending_tokens.extend(self._drain('long_silence'))
                 self.drafts.clear()
@@ -111,7 +114,7 @@ class QwenAccurateOnline:
         if not len(self.audio_buffer):
             self.start = audio_stream_end_time - len(audio) / self.SAMPLING_RATE
             self.utterance_start = self.start
-        self.audio_buffer = np.concatenate((self.audio_buffer, np.asarray(audio, np.float32)))
+        self._audio.append(audio)
         self.end = audio_stream_end_time
 
     def _decode(self, count, reason='update'):
@@ -189,7 +192,7 @@ class QwenAccurateOnline:
                    old_start=self.start, cut_seconds=self.start + cut / self.SAMPLING_RATE,
                    new_start=self.start + drop / self.SAMPLING_RATE, dropped_seconds=drop / self.SAMPLING_RATE,
                    retained_seconds=(len(self.audio_buffer) - drop) / self.SAMPLING_RATE)
-        self.audio_buffer = self.audio_buffer[drop:].copy()
+        self._audio.discard(drop)
         self.start += drop / self.SAMPLING_RATE
         self.decoded_samples = 0
 
@@ -218,7 +221,7 @@ class QwenAccurateOnline:
                    audio_end=end, chars=len(text))
         self.interval += 1
         self.finalized_until = end
-        self.audio_buffer = self.audio_buffer[count:].copy()
+        self._audio.discard(count)
         self.start = end
         self.text = ''
         self.decoded_samples = 0

@@ -4,8 +4,8 @@ from dataclasses import asdict
 from threading import Event
 
 import pytest
-from test_beta_features import run_ui
 from test_shared_qwen_worker import stub_worker
+from ui_support import run_ui
 
 from linguaflow.core import Settings
 from linguaflow.source_preview import SourcePreview

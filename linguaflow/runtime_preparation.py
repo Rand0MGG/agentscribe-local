@@ -2,12 +2,11 @@
 import atexit
 import json
 import subprocess
-import sys
 from collections import deque
 from threading import Event, Lock, Thread, Timer
 
 from . import diagnostic_log as diag
-from .process_platform import WindowsWorkerJob, close_process_pipes, spawn_options, stop_tree
+from .process_platform import close_process_transport, start_worker, stop_worker
 from .runtime_paths import python_environment, resource_root, runtime_python
 
 
@@ -43,17 +42,11 @@ class PreparedWorker:
             with self.lock:
                 if self.closed.is_set():
                     return
-                environment = python_environment()
-                if sys.platform == 'win32':
-                    self.job = WindowsWorkerJob()
-                    environment = self.job.environment(environment)
-                command = [str(python), '-u', '-m', 'linguaflow.process_platform', 'linguaflow.wlk_worker']
-                self.process = subprocess.Popen(
-                    command,
+                self.process, self.job = start_worker(
+                    python, 'linguaflow.wlk_worker',
                     cwd=resource_root(), stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
-                    env=environment,
-                    **spawn_options())
+                    env=python_environment())
             self.diagnostics = Thread(target=self.read_logs, daemon=True)
             self.diagnostics.start()
             self.read_ready()
@@ -121,6 +114,12 @@ class PreparedWorker:
             self.reader.start()
         self.wait(self.closed)
 
+    def _readers(self):
+        yield self.reader
+        diagnostics = getattr(self, 'diagnostics', None)
+        if diagnostics:
+            yield diagnostics
+
     def close(self):
         with self.lock:
             self.closed.set()
@@ -129,36 +128,11 @@ class PreparedWorker:
             with self.lock:
                 process = self.process
                 job = self.job
-            if job is not None:
-                job.close()  # Also reaps descendants when the launcher has already exited.
+            stop_worker(process, job, self._readers())
             if process is None:
                 return
-            readers = [self.reader]
-            diagnostics = getattr(self, 'diagnostics', None)
-            if diagnostics:
-                readers.append(diagnostics)
-            if sys.platform != 'win32' and (process.poll() is None or any(t.is_alive() for t in readers)):
-                # The process group survives its leader. Do not skip surviving children.
-                stop_tree(process, force=True)
-            if process.poll() is None:
-                # Windows venv launchers have a native Python child. Stopping
-                # only the launcher can leave imports/inference running.
-                stop_tree(process)
-                try:
-                    process.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    stop_tree(process, force=True)
-                    process.wait(timeout=2)
-            self.reader.join(timeout=2)
-            # start() can create diagnostics after close() first obtains the
-            # process. Join startup first, then collect its final reader set.
-            diagnostics = getattr(self, 'diagnostics', None)
-            if diagnostics:
-                diagnostics.join(timeout=2)
-            readers = [self.reader] + ([diagnostics] if diagnostics else [])
-            if any(thread.is_alive() for thread in readers):
-                raise RuntimeError('推理管道读取线程未退出；已保留资源，不能安全关闭管道。')
-            close_process_pipes(process)
+            close_process_transport(process, self._readers(), timeout=2,
+                error='推理管道读取线程未退出；已保留资源，不能安全关闭管道。')
 
 
 class RuntimePreparation:
@@ -167,6 +141,7 @@ class RuntimePreparation:
 
     def __init__(self):
         self.lock = Lock()
+        self.close_lock = Lock()
         self.worker = None
         self.busy = False
         self.closed = False
@@ -241,37 +216,49 @@ class RuntimePreparation:
             raise
 
     def release(self, worker, reusable):
+        cleaned = False
         try:
             if reusable and not self.closed:
-                worker.settle()
+                try:
+                    worker.settle()
+                except BaseException:
+                    reusable = False
+                    worker.close()
+                    cleaned = True
+                    raise
             else:
+                reusable = False
                 worker.close()
-        except BaseException:
-            worker.close()
-            reusable = False
-            raise
+                cleaned = True
         finally:
             with self.lock:
                 self.busy = False
                 if not reusable or self.closed:
-                    if self.worker is worker:
+                    if cleaned and self.worker is worker:
                         self.worker = None
                 else:
                     self.arm_idle(worker)
 
     def close(self, wait=True):
         with self.lock:
-            if self.closed:
-                return
             self.closed = True
-            worker, self.worker = self.worker, None
             if self.idle_timer:
                 self.idle_timer.cancel()
                 self.idle_timer = None
-        atexit.unregister(self.close)
-        if worker:
-            if wait:
+        if wait:
+            self._close_worker()
+        else:
+            # Non-daemon cleanup finishes even after Qt's event loop exits.
+            Thread(target=self._close_worker).start()
+
+    def _close_worker(self):
+        # Serialize synchronous retries with an outstanding asynchronous close.
+        with self.close_lock:
+            with self.lock:
+                worker = self.worker
+            if worker:
                 worker.close()
-            else:
-                # Non-daemon cleanup finishes even after Qt's event loop exits.
-                Thread(target=worker.close).start()
+                with self.lock:
+                    if self.worker is worker:
+                        self.worker = None
+            atexit.unregister(self.close)

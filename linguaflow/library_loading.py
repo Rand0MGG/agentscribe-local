@@ -45,14 +45,19 @@ class LibraryReader(QObject):
                 self._finished.emit()
 
         self.job = Thread(target=read)
-        self.job.start()
+        try:
+            self.job.start()
+        except RuntimeError as exc:
+            self.error = f'无法启动后台读取线程，请重试：{exc}'
+            self._finished.emit()
         return True
 
     def cancel(self):
         self.cancelled.set()
 
     def _deliver(self):
-        self.job.join()
+        if self.job.ident is not None:
+            self.job.join()
         self.job = None
         result = None if self.cancelled.is_set() else self.result
         self.result = None

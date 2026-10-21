@@ -65,17 +65,21 @@ class RecordingSaver(QObject):
         """
         if self.job is not None and self.job.snapshot.token == token and revision < self.job.snapshot.revision:
             return
-        snapshot = SaveSnapshot(token, revision, item.copy(), tuple(replace(c) for c in captions), state)
+        pending_index = None
         for index, (_write, old) in enumerate(self.pending):
             if old.token == token:
                 if revision < old.revision:
                     return
                 if old.state is not None and state is None:
-                    snapshot = replace(snapshot, state=old.state)
-                self.pending[index] = (write, snapshot)
+                    state = old.state
+                pending_index = index
                 break
-        else:
+        # Reject superseded requests before copying the entire transcript.
+        snapshot = SaveSnapshot(token, revision, item.copy(), tuple(replace(c) for c in captions), state)
+        if pending_index is None:
             self.pending.append((write, snapshot))
+        else:
+            self.pending[pending_index] = (write, snapshot)
         self._start()
 
     def _start(self):

@@ -1,5 +1,29 @@
 """Manage unrelated recordings and rename the live title without moving its writer."""
-from test_beta_features import run_ui
+from ui_support import run_ui
+
+
+def test_library_thread_start_failure_reports_and_allows_retry_and_close(tmp_path):
+    run_ui(r'''
+import linguaflow.library_loading as loading
+from ui_support import wait_until
+warnings=[]
+w.show_warning=lambda title,detail: warnings.append((title,detail))
+original=loading.Thread
+class FailedThread(original):
+    def start(self):
+        raise RuntimeError('injected start failure')
+loading.Thread=FailedThread
+try:
+    w.rescan_library()
+    w.library_reader.cancel()
+    wait_until(lambda: not w.library_reader.busy)
+    assert len(warnings)==1 and 'injected start failure' in warnings[0][1]
+finally:
+    loading.Thread=original
+w.rescan_library()
+wait_until(lambda: not w.library_reader.busy)
+assert len(warnings)==1
+''', tmp_path)
 
 
 def test_live_title_and_unrelated_operations_preserve_capture_path(tmp_path):

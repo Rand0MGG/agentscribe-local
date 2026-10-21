@@ -6,8 +6,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QFontDatabase, QPainter, QPen
+from PySide6.QtCore import QEvent, Qt, QTimer
+from PySide6.QtGui import QFontDatabase, QPainter
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -38,6 +38,7 @@ from linguaflow.ui_components import (
 )
 from linguaflow.ui_theme import WINDOW_RADIUS, WINDOW_SHADOW_MARGIN, appearance_style, theme_colors
 from linguaflow.ui_tooltips import install_tooltips
+from linguaflow.window_chrome import WindowButton
 from linguaflow.workspace_widgets import Switch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,34 +59,6 @@ def button(text, callback=None, role='secondary'):
     return widget
 
 
-class PreviewWindowButton(QPushButton):
-    """Match the app's centred vector window controls without importing its runtime."""
-    def __init__(self, host, kind, callback):
-        super().__init__()
-        self.host, self.kind = host, kind
-        self.setObjectName('windowClose' if kind == '关闭' else 'windowControl')
-        self.setAccessibleName(kind)
-        self.setFixedSize(38, 32)
-        self.clicked.connect(callback)
-
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        colors = theme_colors(QApplication.instance().property('appearance'))
-        painter.setPen(QPen(QColor('#ffffff' if self.kind == '关闭' and self.underMouse() else colors['text']), 1.2))
-        x, y = self.width()/2, self.height()/2
-        if self.kind == '关闭':
-            painter.drawLine(QPointF(x-4, y-4), QPointF(x+4, y+4))
-            painter.drawLine(QPointF(x-4, y+4), QPointF(x+4, y-4))
-        elif self.kind == '最小化':
-            painter.drawLine(QPointF(x-5, y), QPointF(x+5, y))
-        elif self.host.isMaximized():
-            painter.drawRect(QRectF(x-3, y-5, 8, 8))
-            painter.fillRect(QRectF(x-5, y-3, 8, 8), QColor(colors['surface']))
-            painter.drawRect(QRectF(x-5, y-3, 8, 8))
-        else:
-            painter.drawRect(QRectF(x-4, y-4, 8, 8))
 
 
 
@@ -177,7 +150,11 @@ class ComponentLab(QWidget):
         heading.addWidget(text_label('交互组件展示', 'settingsTitle'), 1)
         for name, action in (('最小化', self.showMinimized),
                              ('最大化或还原', self.toggle_maximized), ('关闭', self.close)):
-            control = PreviewWindowButton(self, name, action)
+            kind = {'最小化': 'minimize', '最大化或还原': 'maximize', '关闭': 'close'}[name]
+            control = WindowButton(self, kind)
+            control.setAccessibleName(name)
+            control.setFixedSize(38, 32)
+            control.clicked.connect(action)
             heading.addWidget(control)
         shell.addLayout(heading)
         shell.addWidget(text_label('示例数据 · 不连接设备，不读取录音，不下载模型', 'muted'))

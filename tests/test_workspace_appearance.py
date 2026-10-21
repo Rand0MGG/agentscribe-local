@@ -1,6 +1,6 @@
 """Real download progress and cleanup across settings navigation, without audio."""
 def test_streamed_http_download_progress_stays_live_across_settings(tmp_path):
-    from test_beta_features import run_ui
+    from ui_support import run_ui
     run_ui(r'''
 import sys
 import faulthandler

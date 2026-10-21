@@ -1,4 +1,5 @@
 """Real process handoff, cancellation and reused-session isolation without models."""
+import atexit
 import errno
 import io
 import json
@@ -18,6 +19,62 @@ import linguaflow.runtime_preparation as preparation
 import linguaflow.wlk_session as session_module
 from linguaflow.core import Settings
 from linguaflow.wlk_session import Session
+
+
+@pytest.mark.parametrize('entry', ['close', 'release', 'async_close'])
+def test_pool_retains_failed_cleanup_for_explicit_retry(monkeypatch, entry):
+    tasks = []
+    class Worker:
+        attempts = 0
+        def close(self):
+            self.attempts += 1
+            if self.attempts == 1:
+                raise RuntimeError('cleanup failed')
+    runtime = preparation.RuntimePreparation()
+    worker = runtime.worker = Worker()
+    try:
+        if entry == 'async_close':
+            monkeypatch.setattr(preparation, 'Thread',
+                lambda target: SimpleNamespace(start=lambda: tasks.append(target)))
+            runtime.close(wait=False)
+            action = tasks.pop()
+        elif entry == 'release':
+            runtime.busy = True
+            def action():
+                runtime.release(worker, reusable=False)
+        else:
+            action = runtime.close
+        with pytest.raises(RuntimeError, match='cleanup failed'):
+            action()
+        assert runtime.worker is worker and worker.attempts == 1
+        runtime.close()
+        runtime.close()
+        assert worker.attempts == 2 and runtime.worker is None
+    finally:
+        atexit.unregister(runtime.close)
+
+
+def test_async_pool_close_is_joined_by_synchronous_retry():
+    entered, finish = Event(), Event()
+    class Worker:
+        attempts = 0
+        def close(self):
+            self.attempts += 1
+            entered.set()
+            assert finish.wait(5)
+    runtime = preparation.RuntimePreparation()
+    worker = runtime.worker = Worker()
+    retry = Thread(target=runtime.close)
+    try:
+        runtime.close(wait=False)
+        assert entered.wait(3) and runtime.worker is worker
+        retry.start()
+        finish.set()
+        retry.join(5)
+        assert not retry.is_alive() and runtime.worker is None and worker.attempts == 1
+    finally:
+        finish.set()
+        runtime.close()
 
 
 @pytest.mark.parametrize('platform,returncode,ignored', [('win32', 0, True), ('win32', None, False),
@@ -55,6 +112,51 @@ for line in sys.stdin:
     print(json.dumps({'type':'done'}), flush=True)
     print(json.dumps({'type':'runtime_ready'}), flush=True)
 '''
+
+
+@pytest.mark.parametrize('system', ['win32', 'darwin'])
+def test_worker_spawn_failure_releases_platform_ownership(monkeypatch, system):
+    import linguaflow.process_platform as platform
+    closed, calls = [], []
+    class Job:
+        def environment(self, env):
+            return {**env, 'test_job': 'owned'}
+        def close(self):
+            closed.append(True)
+    error = OSError('cannot spawn')
+    def spawn(command, **options):
+        calls.append((command, options))
+        raise error
+    monkeypatch.setattr(sys, 'platform', system)
+    monkeypatch.setattr(platform, 'WindowsWorkerJob', Job)
+    monkeypatch.setattr(platform.subprocess, 'Popen', spawn)
+    monkeypatch.setattr(platform.subprocess, 'CREATE_NO_WINDOW', 123, raising=False)
+    with pytest.raises(OSError) as caught:
+        platform.start_worker('python', 'worker', env={'test': 'kept'}, cwd='.')
+    assert caught.value is error
+    command, options = calls[0]
+    assert command[-2:] == ['linguaflow.process_platform', 'worker']
+    assert options['env']['test'] == 'kept'
+    assert closed == ([True] if system == 'win32' else [])
+    if system == 'win32':
+        assert options['env']['test_job'] == 'owned' and options['creationflags'] == 123
+    else:
+        assert options['start_new_session'] and 'test_job' not in options['env']
+
+
+def test_exited_posix_leader_still_reaps_group_while_transport_is_active(monkeypatch):
+    import linguaflow.process_platform as platform
+    monkeypatch.setattr(sys, 'platform', 'darwin')
+    stopped = []
+    process = SimpleNamespace(poll=lambda: 0)
+    alive = [True]
+    reader = SimpleNamespace(is_alive=lambda: alive[0])
+    monkeypatch.setattr(platform, 'stop_tree', lambda p, force: stopped.append((p, force)))
+    platform.stop_worker(process, None, [reader])
+    assert stopped == [(process, True)]
+    alive[0] = False
+    platform.stop_worker(process, None, [reader])
+    assert len(stopped) == 1  # A completed cleanup must not signal a reused group ID.
 
 
 def pool(monkeypatch, tmp_path, program=PROGRAM):
@@ -311,7 +413,7 @@ def test_pipe_cleanup_preserves_output_error_and_closes_remaining_streams():
 
 
 def test_reader_timeout_keeps_pipes_owned_and_retry_can_complete(monkeypatch):
-    monkeypatch.setattr(preparation.sys, 'platform', 'win32')
+    monkeypatch.setattr(sys, 'platform', 'win32')
     worker = object.__new__(preparation.PreparedWorker)
     worker.lock, worker.close_lock = Lock(), Lock()
     worker.closed, worker.ready = Event(), Event()
@@ -329,7 +431,7 @@ def test_reader_timeout_keeps_pipes_owned_and_retry_can_complete(monkeypatch):
 
 
 def test_shutdown_collects_diagnostics_created_during_startup_join(monkeypatch):
-    monkeypatch.setattr(preparation.sys, 'platform', 'win32')
+    monkeypatch.setattr(sys, 'platform', 'win32')
     worker = object.__new__(preparation.PreparedWorker)
     worker.lock, worker.close_lock = Lock(), Lock()
     worker.closed, worker.ready = Event(), Event()

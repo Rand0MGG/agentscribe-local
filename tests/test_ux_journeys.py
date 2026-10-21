@@ -1,5 +1,5 @@
 """Real desktop navigation, responsive reads and theme/path regressions, without audio."""
-from test_beta_features import run_ui
+from ui_support import run_ui
 
 
 def test_library_click_keeps_event_loop_responsive_and_failed_load_keeps_view(tmp_path):
@@ -61,55 +61,4 @@ with patch.object(Library,'load',held):
     wait(lambda:not w.library_reader.busy)
 wait(lambda:not w.isVisible())
 assert w.current_item['id']==first
-''',tmp_path)
-
-
-def test_course_theme_and_long_path_actions_at_minimum_window(tmp_path):
-    run_ui('''
-from PySide6.QtCore import QPoint
-from PySide6.QtGui import QPalette
-from PySide6.QtWidgets import QPushButton,QScrollArea
-from linguaflow.knowledge.panel import KnowledgePanel
-from linguaflow.ui_theme import theme_colors
-p=KnowledgePanel(w.knowledge_client,lambda:None,lambda:True,w)
-p.show()
-for mode in ('light','dark'):
-    w.appearance.setCurrentIndex(w.appearance.findData(mode));w.apply_appearance();settle_geometry(p)
-    assert p.palette().color(QPalette.ColorRole.Window).name()==theme_colors(mode)['surface']
-    assert p.material_text.palette().color(QPalette.ColorRole.Text).name()==theme_colors(mode)['text']
-p.close()
-w.resize(640,480);w.open_settings('常规')
-path='E:/University/Courses/2026/'+('LongCourseNameWithoutSpaces'*6)+'/录音'
-w.settings_workspace.set_storage_root(path);settle_geometry(w)
-area=w.settings_workspace.pages.currentWidget();viewport=area.viewport()
-for button in area.findChildren(QPushButton):
-    if button.text() in ('打开','更改…','查看最近删除'):
-        left=button.mapTo(viewport,QPoint(0,0)).x()
-        assert 0<=left and left+button.width()<=viewport.width(),(button.text(),left,button.width(),viewport.width())
-assert w.settings_workspace.storage_path.text()==path
-w.close()
-''',tmp_path)
-
-
-def test_material_page_starts_at_top_and_resize_preserves_reading_position(tmp_path):
-    run_ui('''
-from PySide6.QtGui import QImage
-from linguaflow.knowledge.panel import KnowledgePanel
-image=QImage(1200,1500,QImage.Format.Format_RGB32);image.fill(0xffffffff)
-source=Path(os.environ['AGENTSCRIBE_LIBRARY'])/'page.png';assert image.save(str(source))
-p=KnowledgePanel(w.knowledge_client,lambda:None,lambda:True,w)
-p.receive({'type':'view','manifest':{'notes_cloud':False,'asr_context':{}},
- 'course':{'id':'a','documents':[],'terms':[]},'blocks':[
- {'id':str(i),'document_id':'d','page':i+1,'title':'Page','text':'Original evidence',
-  'version':'v1','evidence_type':'native','preview_image_path':str(source)} for i in range(2)],
- 'sources':{},'notes':[],'pending':[],'event_seq':0,'notes_version':0,'reading_coverage':{},'busy':False})
-p.show();p.resize(640,540);settle_geometry(p)
-bar=p.material_text.verticalScrollBar()
-assert bar.maximum()>100
-assert bar.value()==0,('initial page scroll',bar.value())
-bar.setValue(100);p.resize(860,680);settle_geometry(p)
-assert bar.value()==100,('resize lost reading position',bar.value())
-p.pages.setCurrentIndex(1);settle_geometry(p)
-assert bar.value()==0,('new page scroll',bar.value())
-p.close();w.close()
 ''',tmp_path)

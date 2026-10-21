@@ -6,6 +6,46 @@ from linguaflow.core import Caption, Settings
 from linguaflow.library import Library
 
 
+def test_unchanged_exports_are_not_replaced_and_partial_exports_are_repaired(tmp_path, monkeypatch):
+    from pathlib import Path
+    library = Library(tmp_path)
+    item = library.create('inbox', {})
+    caption = Caption(1, 0, 1, 'saved', 'en', translation='译文')
+    library.save(item, [caption])
+    directory = library.directory(item['id'])
+    expected = {name: (directory / name).read_bytes() for name in ('定稿.srt', '定稿.txt')}
+    replaced = []
+    original = Path.replace
+    def track(path, target):
+        replaced.append(Path(target).name)
+        return original(path, target)
+    monkeypatch.setattr(Path, 'replace', track)
+    library.save(item, [caption, Caption(2, 1, 2, 'draft', 'en', final=False)])
+    assert replaced == ['session.json']
+    (directory / '定稿.srt').unlink()
+    (directory / '定稿.txt').write_bytes(b'incomplete prior export')
+    library.save(item, [caption])
+    assert all((directory / name).read_bytes() == content for name, content in expected.items())
+
+
+def test_export_comparison_does_not_require_read_permission_for_replacement(tmp_path, monkeypatch):
+    from pathlib import Path
+    library = Library(tmp_path)
+    item = library.create('inbox', {})
+    library.save(item, [Caption(1, 0, 1, 'old', 'en')])
+    original = Path.open
+    def protected(path, mode='r', *args, **kwargs):
+        if mode == 'rb' and path.suffix in ('.srt', '.txt'):
+            raise PermissionError('comparison is unavailable')
+        return original(path, mode, *args, **kwargs)
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, 'open', protected)
+        library.save(item, [Caption(1, 0, 1, 'new', 'en')])
+    directory = library.directory(item['id'])
+    assert 'new' in (directory / '定稿.srt').read_text(encoding='utf-8-sig')
+    assert (directory / '定稿.txt').read_text(encoding='utf-8-sig') == 'new'
+
+
 def test_visible_trash_and_legacy_entries_coexist_without_migration(tmp_path):
     library = Library(tmp_path)
     old = library.create('inbox', {}, name='旧录音')
@@ -70,6 +110,13 @@ def test_reopen_keeps_revisions_and_exports_only_final(tmp_path):
     library.save(item, [replace(final, source="corrected", revision=2)], "complete")
     _, updated = Library(tmp_path).load(item)
     assert len(updated) == 1 and updated[0].source == "corrected"
+    caption = Caption(1, 0, 1, 'correct source', 'en', translation='initial translation',
+                      translation_phase='initial', translation_source='old source')
+    library.save(item, [caption], state='incomplete')
+    loaded = Library(tmp_path).load(item)[1][0]
+    assert loaded.translation_source == 'old source' and loaded.translation_phase == 'initial'
+    for name in ('定稿.txt', '定稿.srt'):
+        assert '[初译] initial translation' in (library.directory(item['id']) / name).read_text(encoding='utf-8-sig')
 
 
 def test_default_recording_name_does_not_pass_chinese_through_locale_formatting(tmp_path, monkeypatch):
@@ -216,17 +263,6 @@ def test_permanent_delete_is_confined_to_trash(tmp_path):
     assert library.directory(retained["id"]).is_dir()
     assert not library.deleted()
 
-
-def test_initial_translation_roundtrip_and_exports_are_explicit(tmp_path):
-    library = Library(tmp_path)
-    item = library.create('inbox', {}, name='初译保留')
-    caption = Caption(1, 0, 1, 'correct source', 'en', translation='initial translation',
-                      translation_phase='initial', translation_source='old source')
-    library.save(item, [caption], state='incomplete')
-    loaded = library.load(item)[1][0]
-    assert loaded.translation_source == 'old source' and loaded.translation_phase == 'initial'
-    for name in ('定稿.txt', '定稿.srt'):
-        assert '[初译] initial translation' in (library.directory(item['id']) / name).read_text(encoding='utf-8-sig')
 
 
 def test_deferred_title_survives_save_reload_and_conflict_without_moving_audio(tmp_path):

@@ -1,5 +1,5 @@
 """Bulk deletion is confirmed, scoped to displayed trash entries, and preserves failures."""
-from test_beta_features import run_ui
+from ui_support import run_ui
 
 
 def test_delete_all_cancel_then_confirm_preserves_live_and_unknown_files(tmp_path):

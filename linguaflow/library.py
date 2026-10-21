@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
-from .core import Caption, export_srt, export_txt
+from .core import export_srt, export_txt
 from .recording_document import read_recording_document
 
 
@@ -17,6 +17,20 @@ def default_recording_name(now: datetime | None = None) -> str:
     """Keep Chinese literals outside locale-dependent strftime on Python 3.11."""
     now = datetime.now() if now is None else now
     return f'录音 {now.month:02d}月{now.day:02d}日 {now.hour:02d}时{now.minute:02d}分'
+
+
+def _export_matches(path, encoded):
+    # Comparison is an optional write-saving step, not a new read-permission
+    # requirement. An unreadable/missing export still follows atomic replacement.
+    try:
+        with path.open('rb') as stream:
+            view = memoryview(encoded)
+            for offset in range(0, len(view), 65536):
+                if stream.read(65536) != view[offset:offset + 65536]:
+                    return False
+            return not stream.read(1)
+    except (FileNotFoundError, PermissionError):
+        return False
 
 
 class Library:
@@ -203,16 +217,22 @@ class Library:
     def save(self, item, captions, state=None):
         directory = self.directory(item["id"])
         data = self._read(directory / "session.json")
-        data["captions"] = [asdict(c) for c in sorted(captions, key=lambda c: (c.start, c.id))]
+        ordered = sorted(captions, key=lambda c: (c.start, c.id))
+        data["captions"] = [asdict(c) for c in ordered]
         data["session"].update(state=state or data["session"]["state"],
                                name=data['session'].get('pending_name', directory.name))
         self._write(directory / "session.json", data)
-        final = [Caption(**c) for c in data["captions"] if c["final"] and c["source"]]
-        for filename, text in [("定稿.srt", export_srt(final)),
-                               ("定稿.txt", export_txt(final))]:
+        final = [c for c in ordered if c.final and c.source]
+        for filename, render in [("定稿.srt", export_srt), ("定稿.txt", export_txt)]:
             path = directory / filename
+            text = render(final)
+            # The JSON remains the durable snapshot. Check actual export bytes,
+            # so a previous partial failure or an external edit is repaired.
+            encoded = text.replace('\n', os.linesep).encode('utf-8-sig')
+            if _export_matches(path, encoded):
+                continue
             temporary = path.with_suffix(path.suffix + ".tmp")
-            temporary.write_text(text, encoding="utf-8-sig")
+            temporary.write_bytes(encoded)
             temporary.replace(path)
         item["state"] = data["session"]["state"]
 

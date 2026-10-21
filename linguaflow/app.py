@@ -2,7 +2,6 @@ import json
 import os
 import sys
 import time
-from bisect import bisect_left
 from dataclasses import asdict, replace
 from pathlib import Path
 
@@ -11,7 +10,6 @@ from PySide6.QtCore import (
     QPoint,
     QSettings,
     QSignalBlocker,
-    QSize,
     QStandardPaths,
     Qt,
     QTimer,
@@ -21,11 +19,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import (
     QAction,
     QColor,
-    QIcon,
     QPainter,
-    QPainterPath,
-    QPen,
-    QPixmap,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -33,7 +27,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QMainWindow,
     QMessageBox,
@@ -42,7 +35,6 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QStackedWidget,
-    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -50,7 +42,8 @@ from PySide6.QtWidgets import (
 from . import __version__
 from . import diagnostic_log as diag
 from .audio import list_devices
-from .caption_view import CaptionScrollArea, CaptionText
+from .caption_feed import CaptionCard as CaptionCard
+from .caption_feed import CaptionFeed
 from .core import LANGUAGES, Caption
 from .deleted_dialog import DeletedDialog
 from .knowledge.client import KnowledgeClient
@@ -72,22 +65,20 @@ from .native_updates import NativeUpdater
 from .notifications import FeedbackLabel, NotificationCenter
 from .onboarding import FirstRunDialog
 from .playback import PlaybackIndex
-from .playback_controls import PlaybackVolume
+from .playback_controller import PlaybackController
 from .preferences import PREFERENCES, read_audio_device, read_preferences, write_preferences
-from .qt_controls import ClickSlider as QSlider
 from .qt_controls import data_index
 from .qt_controls import text_label as label
+from .recording_controls import RecordingControls
 from .recording_save import RecordingSaver
 from .recording_state import RecordingState
 from .runtime_preparation import RuntimePreparation
 from .settings_binding import SettingsBinding
 from .subtitles_overlay import Overlay
+from .transcript import Transcript
 from .ui_backdrop import WallpaperBackdrop
 from .ui_components import (
     ActionMenu,
-    AudioLevelMeter,
-    FloatingIsland,
-    IslandButton,
     NameDialog,
     NavigationButton,
     RecordingTitle,
@@ -104,6 +95,7 @@ from .ui_theme import (
     theme_colors,
 )
 from .ui_tooltips import install_tooltips
+from .window_chrome import GlassTitleBar, WorkspaceFrame, line_icon
 from .window_platform import (
     configure_main_window,
     enable_native_resize,
@@ -111,7 +103,7 @@ from .window_platform import (
     start_edge_resize,
 )
 from .wlk_session import Session
-from .workspace_widgets import LanguagePopup, LibraryTree, RecordingHint, SettingsWorkspace, Switch
+from .workspace_widgets import LanguagePopup, LibraryTree, SettingsWorkspace, Switch
 
 
 def panel(title, subtitle=None):
@@ -126,282 +118,101 @@ def panel(title, subtitle=None):
     return frame, layout
 
 
-class WindowButton(QPushButton):
-    """Draw window controls without depending on symbol-font fallback."""
-    def __init__(self, host, kind):
-        super().__init__('')
-        self.host, self.kind = host, kind
-        self.setObjectName('windowClose' if kind == 'close' else 'windowControl')
-
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        c = theme_colors(QApplication.instance().property('appearance'))
-        p.setPen(QPen(QColor('#ffffff' if self.kind == 'close' and self.underMouse() else c['text']), 1.2))
-        x, y = self.width() // 2, self.height() // 2
-        if self.kind == 'close':
-            p.drawLine(x-4, y-4, x+4, y+4)
-            p.drawLine(x-4, y+4, x+4, y-4)
-        elif self.kind == 'minimize':
-            p.drawLine(x-5, y, x+5, y)
-        elif self.host.isMaximized():
-            p.drawRect(x-3, y-5, 8, 8)
-            p.fillRect(x-5, y-3, 8, 8, QColor(c['glass']))
-            p.drawRect(x-5, y-3, 8, 8)
-        else:
-            p.drawRect(x-4, y-4, 8, 8)
 
 
-class GlassTitleBar(QFrame):
-    def __init__(self, window):
-        super().__init__(window)
-        self.host = window
-        self.setObjectName("glassTopBar")
-        self.setFixedHeight(36)
-        bar = QHBoxLayout(self)
-        # macOS owns the traffic lights on the left; Windows owns our buttons on the right.
-        bar.setContentsMargins(96 if window.integrated_titlebar else 13, 0, 0, 0)
-        bar.setSpacing(8)
-        bar.addStretch()
-        minimize = WindowButton(window, 'minimize')
-        minimize.setToolTip("最小化")
-        minimize.setAccessibleName('最小化')
-        minimize.clicked.connect(window.showMinimized)
-        self.maximize = WindowButton(window, 'maximize')
-        self.maximize.setToolTip("最大化")
-        self.maximize.setAccessibleName('最大化或还原')
-        self.maximize.clicked.connect(self.toggle_maximized)
-        close = WindowButton(window, 'close')
-        close.setToolTip("关闭")
-        close.setAccessibleName('关闭')
-        close.clicked.connect(window.close)
-        bar.addWidget(minimize)
-        bar.addWidget(self.maximize)
-        bar.addWidget(close)
-        for button in (minimize, self.maximize, close):
-            button.setVisible(not window.integrated_titlebar)
-
-    def toggle_maximized(self):
-        if self.host.isMaximized():
-            self.host.showNormal()
-            self.maximize.setToolTip("最大化")
-        else:
-            self.host.showMaximized()
-            self.maximize.setToolTip("还原")
-        self.maximize.update()
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and self.host.windowHandle():
-            self.host.windowHandle().startSystemMove()
-            event.accept()
-            return
-        super().mousePressEvent(event)
-
-    def mouseDoubleClickEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.toggle_maximized()
-            event.accept()
-            return
-        super().mouseDoubleClickEvent(event)
 
 
-class WorkspaceFrame(QFrame):
-    """Fill and outline share one contour, including the lower content corners."""
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        radius = float(WORKSPACE_RADIUS)
-        path = QPainterPath()
-        path.moveTo(self.width() - .5, radius)
-        path.quadTo(self.width() - .5, .5, self.width() - radius, .5)
-        path.lineTo(radius, 0.5)
-        path.quadTo(0.5, 0.5, 0.5, radius)
-        path.lineTo(0.5, self.height()-radius)
-        path.quadTo(.5, self.height()-.5, radius, self.height()-.5)
-        path.lineTo(self.width()-10, self.height()-.5)
-        path.quadTo(self.width()-.5, self.height()-.5, self.width()-.5, self.height()-10)
-        path.closeSubpath()
-        colors = theme_colors(QApplication.instance().property('appearance'))
-        painter.fillPath(path, QColor(colors['surface']))
-        painter.setPen(QPen(QColor(colors['border']), 1))
-        painter.drawPath(path)
 
 
-def line_icon(kind, color="#bdbdbf"):
-    pixmap = QPixmap(80, 80)
-    pixmap.setDevicePixelRatio(4)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(QPen(QColor(color), 1.45))
-    if kind == "folder":
-        path = QPainterPath()
-        path.moveTo(3, 6)
-        path.lineTo(3, 4)
-        path.lineTo(8, 4)
-        path.lineTo(10, 6)
-        path.lineTo(17, 6)
-        path.lineTo(17, 16)
-        path.lineTo(3, 16)
-        path.closeSubpath()
-        painter.drawPath(path)
-        painter.drawLine(3, 8, 17, 8)
-    elif kind == "new":
-        painter.drawRoundedRect(3, 3, 14, 14, 3, 3)
-        painter.drawLine(6, 10, 14, 10)
-        painter.drawLine(10, 6, 10, 14)
-    elif kind == "settings":
-        for y, x in [(5, 7), (10, 13), (15, 8)]:
-            painter.drawLine(3, y, 17, y)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawEllipse(QPoint(x, y), 2, 2)
-    elif kind == 'chevron':
-        painter.drawLine(6, 8, 10, 12)
-        painter.drawLine(10, 12, 14, 8)
-    elif kind == 'refresh':
-        painter.drawArc(4, 4, 12, 12, 40*16, 280*16)
-        painter.drawLine(15, 3, 15, 7)
-        painter.drawLine(11, 7, 15, 7)
-    elif kind == 'download':
-        painter.drawLine(10, 3, 10, 13)
-        painter.drawLine(6, 9, 10, 13)
-        painter.drawLine(10, 13, 14, 9)
-        painter.drawLine(3, 15, 3, 17)
-        painter.drawLine(3, 17, 17, 17)
-        painter.drawLine(17, 17, 17, 15)
-    elif kind == 'check':
-        painter.drawLine(4, 10, 8, 14)
-        painter.drawLine(8, 14, 16, 6)
-    elif kind == 'system':
-        painter.drawRoundedRect(3, 3, 14, 10, 2, 2)
-        painter.drawLine(10, 13, 10, 17)
-        painter.drawLine(6, 17, 14, 17)
-    elif kind == 'input':
-        painter.drawRoundedRect(7, 2, 6, 10, 3, 3)
-        painter.drawArc(4, 5, 12, 10, 180*16, 180*16)
-        painter.drawLine(10, 15, 10, 18)
-        painter.drawLine(7, 18, 13, 18)
-    elif kind == 'trash':
-        painter.drawLine(3, 5, 17, 5)
-        painter.drawLine(7, 3, 13, 3)
-        painter.drawLine(5, 7, 6, 17)
-        painter.drawLine(6, 17, 14, 17)
-        painter.drawLine(14, 17, 15, 7)
-        painter.drawLine(8, 8, 8, 14)
-        painter.drawLine(12, 8, 12, 14)
-    elif kind == 'play':
-        path = QPainterPath()
-        path.moveTo(7, 4)
-        path.lineTo(16, 10)
-        path.lineTo(7, 16)
-        path.closeSubpath()
-        painter.setBrush(QColor(color))
-        painter.drawPath(path)
-    elif kind == 'pause':
-        painter.drawLine(7, 4, 7, 16)
-        painter.drawLine(13, 4, 13, 16)
-    elif kind == 'stop':
-        painter.setBrush(QColor(color))
-        painter.drawRoundedRect(5, 5, 10, 10, 1, 1)
-    elif kind == 'language':
-        painter.drawEllipse(3, 3, 14, 14)
-        painter.drawEllipse(7, 3, 6, 14)
-        painter.drawLine(3, 10, 17, 10)
-    elif kind == 'volume':
-        path = QPainterPath()
-        path.moveTo(3, 8)
-        path.lineTo(6, 8)
-        path.lineTo(10, 4)
-        path.lineTo(10, 16)
-        path.lineTo(6, 12)
-        path.lineTo(3, 12)
-        path.closeSubpath()
-        painter.drawPath(path)
-        painter.drawArc(10, 6, 6, 8, -65*16, 130*16)
-        painter.drawArc(9, 3, 10, 14, -65*16, 130*16)
-    else:
-        painter.drawRoundedRect(5, 3, 10, 14, 2, 2)
-        painter.drawLine(8, 7, 12, 7)
-        painter.drawLine(8, 10, 12, 10)
-    painter.end()
-    return QIcon(pixmap)
 
 
-class CaptionCard(QFrame):
-    def __init__(self, caption, translating, *, animate=False):
-        super().__init__()
-        self.setObjectName("captionRow")
-        self.interaction = ''
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 14, 4, 18)
-        layout.setSpacing(9)
-        self.meta = label("", "timestamp")
-        self.source = CaptionText()
-        self.target = CaptionText()
-        self.source.interactionChanged.connect(self.set_interaction)
-        self.target.interactionChanged.connect(self.set_interaction)
-        self.source.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.target.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.target.setObjectName("captionTranslation")
-        self.pending = label('', 'translationPending')
-        layout.addWidget(self.meta)
-        layout.addWidget(self.source)
-        layout.addWidget(self.target)
-        layout.addWidget(self.pending)
-        self.translating = translating
-        self.update_caption(caption, animate=animate)
-
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        if self.property('playing') or self.interaction:
-            colors = theme_colors(QApplication.instance().property('appearance'))
-            painter = QPainter(self)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            painter.setPen(Qt.PenStyle.NoPen)
-            if self.property('playing'):
-                painter.setBrush(QColor(colors['playback']))
-                painter.drawRoundedRect(self.rect().adjusted(0, 2, 0, -2), 9, 9)
-            if self.interaction:
-                painter.setPen(Qt.PenStyle.NoPen)
-                painter.setBrush(QColor(colors['selected']))
-                painter.drawRoundedRect(self.rect().adjusted(0, 2, 0, -2), 9, 9)
-
-    def set_interaction(self, state):
-        states = (self.source._interaction, self.target._interaction)
-        state = next((value for value in ('pressed', 'pending') if value in states), '')
-        if self.interaction != state:
-            self.interaction = state
-            self.update()
-
-    def update_caption(self, caption, *, animate=True):
-        self.source.set_caption_text(caption.source, animate=animate)
-        source_style = "font-size: 16px;"
-        name = "captionFinal" if caption.final else "captionDraft"
-        if self.source.objectName() != name:
-            self.source.setObjectName(name)
-            self.source.style().unpolish(self.source)
-            self.source.style().polish(self.source)
-        if self.source.styleSheet() != source_style:
-            self.source.setStyleSheet(source_style)
-        self.meta.setText(f"{int(caption.start) // 60:02}:{int(caption.start) % 60:02}" +
-                          (' · 已定稿' if caption.final else ' · 优化中'))
-        self.meta.setToolTip('原文已定稿' if caption.final else '原文正在优化，内容可能继续修订')
-        self.target.set_caption_text(caption.translation or ("翻译暂不可用" if caption.error else ""),
-                                     animate=animate)
-        self.target.setToolTip(caption.error or ('初译依据：' + caption.translation_source
-                               if caption.translation_phase == 'initial' else ''))
-        self.target.setVisible(bool(self.target.text()))
-        stale = bool(caption.translation and caption.translation_source
-                     and caption.translation_source != caption.source)
-        self.pending.setText(('译文更新失败' if caption.error else '原文已更新，正在更新译文…')
-                             if stale else '')
-        self.pending.setToolTip(caption.error)
-        self.pending.setVisible(self.translating and stale)
 
 
 class Window(QMainWindow):
+    @property
+    def library_rows(self):
+        return self.library_tree.rows
+
+    @property
+    def player(self):
+        return self.playback_controller.player
+
+    @player.setter
+    def player(self, value):
+        self.playback_controller.player = value
+
+    @property
+    def playback_stream(self):
+        return self.playback_controller.stream
+
+    @playback_stream.setter
+    def playback_stream(self, value):
+        self.playback_controller.stream = value
+
+    @property
+    def audio_output(self):
+        return self.playback_controller.audio_output
+
+    @audio_output.setter
+    def audio_output(self, value):
+        self.playback_controller.audio_output = value
+
+    @property
+    def playback_index(self):
+        return self.playback_controller.index
+
+    @playback_index.setter
+    def playback_index(self, value):
+        self.playback_controller.index = value
+
+    @property
+    def playback_duration_ms(self):
+        return self.playback_controller.duration_ms
+
+    @playback_duration_ms.setter
+    def playback_duration_ms(self, value):
+        self.playback_controller.duration_ms = value
+
+    @property
+    def cards(self):
+        return self.caption_feed.cards
+
+    @property
+    def caption_page_start(self):
+        return self.caption_feed.page_start
+
+    @caption_page_start.setter
+    def caption_page_start(self, value):
+        self.caption_feed.page_start = value
+
+    @property
+    def source_preview(self):
+        return self.caption_feed.preview
+
+    @source_preview.setter
+    def source_preview(self, value):
+        self.caption_feed.preview = value
+
+    @property
+    def source_preview_card(self):
+        return self.caption_feed.preview_card
+
+    @property
+    def playback_caption_id(self):
+        return self.caption_feed.playing_id
+
+    @playback_caption_id.setter
+    def playback_caption_id(self, value):
+        self.caption_feed.playing_id = value
+
+    @property
+    def captions(self):
+        return self.caption_feed.rows
+
+    @captions.setter
+    def captions(self, rows):
+        self.caption_feed.rows = Transcript(rows)
+
 
     def __init__(self, discover=True, library_root=None, prefs=None, library=None, runtime=None):
         super().__init__()
@@ -429,11 +240,17 @@ class Window(QMainWindow):
         self.recovery_snapshot = None
         self.phase_started = time.monotonic()
         self.pipeline_state = {"音频": "未开始", "识别": "未加载", "翻译": "未加载"}
-        self.captions = {}
-        self.cards = {}
+        self.caption_feed = CaptionFeed(self)
+        self.playback_controller = PlaybackController(self)
+        self.playback_controller.available_changed.connect(self.on_playback_available)
+        self.playback_controller.duration_changed.connect(self.playback_duration)
+        self.playback_controller.position_changed.connect(self.playback_position)
+        self.playback_controller.state_changed.connect(lambda state: (
+            diag.event('playback_state', state=state), self.update_playback_button()))
+        self.playback_controller.failed.connect(lambda error: self.show_warning('录音无法播放', error))
+        self.playback_controller.notice.connect(lambda text: self.notifications.post('playback', text, kind='attention'))
         self.caption_page_start = None
         self.source_preview = None
-        self.source_preview_card = None
         self.source_preview_sequence = 0
         self.closing = False
         self.asset_check = None
@@ -546,11 +363,6 @@ class Window(QMainWindow):
         folders_heading.addWidget(self.folder_button)
         sidebar_layout.addLayout(folders_heading)
         self.library_tree = LibraryTree()
-        self.library_tree.setHeaderHidden(True)
-        self.library_tree.setRootIsDecorated(False)
-        self.library_tree.setIndentation(0)
-        self.library_tree.setIconSize(QSize(18, 18))
-        self.library_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.library_tree.itemClicked.connect(diag.action('library.select', self.load_library_item))
         self.library_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.library_tree.customContextMenuRequested.connect(self.library_menu)
@@ -709,30 +521,13 @@ class Window(QMainWindow):
         content.installEventFilter(self)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(10)
-        self.scroll = CaptionScrollArea()
-        self.scroll.returnRequested.connect(self.return_to_caption_target)
+        self.scroll = self.caption_feed
+        self.scroll.activated.connect(self.play_caption)
         self.scroll.viewport().installEventFilter(self)
-        self.feed = QWidget()
-        self.feed.setObjectName("feed")
-        self.feed_layout = QVBoxLayout(self.feed)
-        self.feed_layout.setContentsMargins(12, 24, 12, 16)
-        self.feed_layout.setSpacing(4)
-        self.older_captions = QPushButton('查看更早的字幕')
-        self.newer_captions = QPushButton('查看较新的字幕')
-        self.older_captions.clicked.connect(lambda: self.change_caption_page(-1))
-        self.newer_captions.clicked.connect(lambda: self.change_caption_page(1))
-        for button in (self.older_captions, self.newer_captions):
-            button.setObjectName('quiet')
-            button.hide()
-            self.feed_layout.addWidget(button)
-        self.empty = RecordingHint(self.scroll.viewport())
-        self.empty.setObjectName("recordingHint")
-        self.empty.setText("")
-        self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty.setMinimumHeight(220)
-        self.empty.setStyleSheet("QLabel#recordingHint { font-size: 16px; }")
-        self.feed_layout.addStretch()
-        self.scroll.setWidget(self.feed)
+        self.feed = self.scroll.feed
+        self.feed_layout = self.scroll.feed_layout
+        self.older_captions, self.newer_captions = self.scroll.older, self.scroll.newer
+        self.empty = self.scroll.empty
         content_layout.addWidget(self.scroll, 1)
         self.reduce_motion = Switch('减少动态效果')
         self.reduce_motion.toggled.connect(lambda value: QApplication.instance().setProperty('reduceMotion', value))
@@ -759,42 +554,34 @@ class Window(QMainWindow):
         self.diagnostics.hide()
         diagnostics_button.toggled.connect(self.diagnostics.setVisible)
         content_layout.addWidget(self.diagnostics)
-        self.meter = AudioLevelMeter()
-        self.pipeline = label("音频：未开始   /   识别：未加载   /   翻译：未加载", "muted")
-        self.pipeline.hide()
-        self.meter.setRange(0, 100)
-        self.meter.setValue(0)
-        self.meter.setTextVisible(False)
-        self.meter.setToolTip('输入音量；暂停收音时归零')
-        self.volume_caption = label('输入音量', 'muted')
-        self.volume_caption.setWordWrap(False)
-        self.volume_caption.setStyleSheet('font-size: 11px;')
         self.pending_source_revision = None
-        footer = self.control_island = FloatingIsland(self.scroll.viewport())
-        footer_layout = QVBoxLayout(footer.content)
-        footer_layout.setContentsMargins(12, 8, 12, 8)
-        footer_layout.setSpacing(6)
-        self.input_controls = QWidget()
-        input_row = self.input_row = QGridLayout(self.input_controls)
-        input_row.setContentsMargins(0, 0, 0, 0)
-        input_row.setHorizontalSpacing(8)
-        input_row.setVerticalSpacing(0)
-        self.quick_device = QComboBox(island=True)
-        self.quick_device.setAccessibleName('音频来源')
-        self.quick_device.setPlaceholderText('选择系统音频或外部输入')
-        self.quick_device.setModel(self.device.model())
-        self.quick_device.setCurrentIndex(self.device.currentIndex())
-        self.quick_device.currentIndexChanged.connect(self.device.setCurrentIndex)
-        self.device.currentIndexChanged.connect(self.quick_device.setCurrentIndex)
-        self.quick_device.currentTextChanged.connect(self.quick_device.setToolTip)
-        input_row.addWidget(self.quick_device, 0, 0)
-        input_row.setColumnStretch(0, 0)
-        self.refresh_source = self.quick_device.refresh_button
-        self.refresh_source.setIcon(line_icon('refresh'))
-        self.refresh_source.setAccessibleName('刷新音频来源')
-        self.refresh_source.setObjectName('quiet')
-        self.refresh_source.setToolTip('刷新音频设备列表')
-        self.refresh_source.clicked.connect(lambda: (self.quick_device.hidePopup(), self.refresh_devices()))
+        self.control_island = RecordingControls(self.scroll.viewport())
+        for name in (
+            'meter',
+            'pipeline',
+            'volume_caption',
+            'input_controls',
+            'input_row',
+            'quick_device',
+            'refresh_source',
+            'transport',
+            'live_transport',
+            'live_row',
+            'state_caption',
+            'capture_time',
+            'transport_actions',
+            'start_button',
+            'stop_button',
+            'pause_button',
+            'playback',
+            'play_button',
+            'seek',
+            'play_time',
+            'playback_volume',
+            'quick_language',
+            'quick_folder',
+        ):
+            setattr(self, name, getattr(self.control_island, name))
         self.refresh_feedback = QTimer(self)
         self.refresh_feedback.setSingleShot(True)
         self.refresh_feedback.setInterval(1500)
@@ -805,108 +592,26 @@ class Window(QMainWindow):
         self.status.setMaximumHeight(36)
         self.status.hide()
         # Legacy callers use status; its presentation is exclusively global.
-        self.transport = QStackedWidget()
-        self.transport.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.live_transport = QWidget()
-        self.control_island.reveal_row = self.live_transport
-        live_row = self.live_row = QGridLayout(self.live_transport)
-        live_row.setContentsMargins(0, 0, 0, 0)
-        live_row.setHorizontalSpacing(8)
-        live_row.setVerticalSpacing(0)
-        self.state_caption = label('', 'recordingState')
-        self.state_caption.setStyleSheet('QLabel { font-size: 11px; font-weight: 600; }')
-        self.state_caption.setWordWrap(False)
-        self.capture_time = label('00:00:00', 'timestamp')
-        self.capture_time.setStyleSheet('QLabel { font-size: 11px; }')
-        self.capture_time.setWordWrap(False)
-        live_row.addWidget(self.state_caption, 0, 0)
-        live_row.addWidget(self.capture_time, 0, 1)
-        live_row.addWidget(self.volume_caption, 0, 2)
-        live_row.addWidget(self.meter, 0, 3)
-        live_row.setColumnStretch(3, 1)
-        self.transport.addWidget(self.live_transport)
-        footer_layout.addWidget(self.transport)
-        self.transport_actions = QWidget()
-        actions = QHBoxLayout(self.transport_actions)
-        actions.setContentsMargins(0, 0, 0, 0)
-        actions.setSpacing(8)
-        self.start_button = IslandButton("开始聆听", icon_only=True)
-        self.start_button.setObjectName("primary")
-        self.start_button.setToolTip('开始聆听')
+        self.quick_device.setModel(self.device.model())
+        self.quick_device.setCurrentIndex(self.device.currentIndex())
+        self.quick_device.currentIndexChanged.connect(self.device.setCurrentIndex)
+        self.device.currentIndexChanged.connect(self.quick_device.setCurrentIndex)
+        self.refresh_source.clicked.connect(lambda: (self.quick_device.hidePopup(), self.refresh_devices()))
         self.start_button.clicked.connect(diag.action('recording.start', self.start))
-        self.stop_button = IslandButton("结束", icon_only=True)
-        self.stop_button.setObjectName('primary')
-        self.stop_button.setAccessibleName('结束聆听并保存')
-        self.stop_button.setToolTip('结束聆听并保存录音与字幕')
-        self.stop_button.setEnabled(False)
-        self.stop_button.hide()
         self.stop_button.clicked.connect(diag.action('recording.stop', self.stop))
-        self.pause_button = IslandButton("暂停", icon_only=True)
-        self.pause_button.setObjectName('secondary')
-        self.pause_button.setToolTip("暂停收音；已有字幕继续处理，继续后接着录")
-        self.pause_button.setEnabled(False)
-        self.pause_button.hide()
         self.pause_button.clicked.connect(diag.action('recording.pause_resume', self.toggle_pause))
-        actions.addWidget(self.start_button)
-        actions.addWidget(self.pause_button)
-        actions.addWidget(self.stop_button)
-        self.playback = QFrame()
-        playback_layout = QHBoxLayout(self.playback)
-        playback_layout.setContentsMargins(0, 0, 0, 0)
-        playback_layout.setSpacing(12)
-        self.play_button = QPushButton()
-        self.play_button.setIcon(line_icon('play'))
-        self.play_button.setFixedSize(40, 40)
-        self.play_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.play_button.setAttribute(Qt.WidgetAttribute.WA_MacShowFocusRect, False)
-        self.play_button.setStyleSheet('QPushButton { min-width: 40px; max-width: 40px; min-height: 40px; max-height: 40px; border: none; padding: 0; }')
-        self.play_button.setAccessibleName('播放录音')
-        self.play_button.setToolTip('播放录音')
-        self.play_button.setObjectName("quiet")
         self.play_button.clicked.connect(diag.action('playback.toggle', self.toggle_playback))
-        playback_layout.addWidget(self.play_button)
-        self.seek = QSlider(Qt.Orientation.Horizontal)
-        self.seek.setAccessibleName('录音播放进度')
-        self.seek.setObjectName('playbackSeek')
-        self.seek.setMinimumWidth(80)
-        self.seek.setFixedHeight(24)
-        playback_layout.addWidget(self.seek, 1)
-        self.play_time = label("00:00 / 00:00", "timestamp")
-        self.play_time.setWordWrap(False)
         self.playback_duration_ms = 0
         self.seek.sliderMoved.connect(self.seek_playback)
-        self.play_time.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        playback_layout.addWidget(self.play_time)
-        self.playback.hide()
-        self.playback.setProperty('available', False)
-        self.player = None
-        self.playback_stream = None
-        self.transport.addWidget(self.playback)
-        self.playback_volume = PlaybackVolume(self.scroll.viewport())
         self.playback_volume.valueChanged.connect(self.set_playback_volume)
-        self.playback_volume.extentChanged.connect(lambda: self.control_island.placement.start(0))
-        self.control_island.companion = self.playback_volume
-        self.quick_language = IslandButton('输入与语言', icon_only=True)
-        self.quick_language.setObjectName('quiet')
-        self.quick_language.setToolTip('更改原文和目标语言')
         self.language_popup = LanguagePopup(self.source, self.target, self.translate, self)
         self.language_popup.finished.connect(self.save)
         self.quick_language.clicked.connect(lambda: self.language_popup.show_at(
             self.quick_language, next_session=self.recording_state.active))
-        input_row.addWidget(self.quick_language, 0, 1)
-        self.quick_folder = IslandButton('保存文件夹', icon_only=True)
-        self.quick_folder.setObjectName('quiet')
         self.quick_folder.clicked.connect(diag.action('recording.folder_select', self.choose_recording_folder))
-        input_row.addWidget(self.quick_folder, 0, 2)
-        input_row.addWidget(self.transport_actions, 0, 3)
-        footer_layout.addWidget(self.input_controls, 0, Qt.AlignmentFlag.AlignHCenter)
-        self.control_island.compactChanged.connect(self.arrange_input_controls)
         self.reduce_motion.toggled.connect(lambda: self.control_island.placement.start(0))
-        footer_layout.addWidget(self.pipeline)
-        self.pipeline.setStyleSheet('font-size: 11px;')
         self.control_island.heightChanged.connect(self.update_caption_insets)
         self.control_island.heightChanged.connect(self.scroll.set_overlay_height)
-        self.control_island.placement.start(0)
         self.update_transport()
         self.recording_pages = QStackedWidget()
         self.recording_pages.addWidget(content)
@@ -1611,37 +1316,11 @@ class Window(QMainWindow):
             raise SystemExit(0) from None
 
     def refresh_library(self):
-        expanded = {identifier: row.isExpanded() for identifier, row in getattr(self, "library_rows", {}).items()}
-        self.library_tree.clear()
-        self.library_rows = {}
-        folders = {}
-        for folder in self.library.index["folders"]:
-            row = QTreeWidgetItem([folder["name"]])
-            row.setData(0, Qt.ItemDataRole.UserRole, ("folder", folder["id"]))
-            row.setToolTip(0, "点击选中文件夹 · ＋ 新建录音 · 双击折叠/展开 · 右键更多操作")
-            parent = folders.get(folder.get("parent"))
-            if parent:
-                parent.addChild(row)
-            else:
-                self.library_tree.addTopLevelItem(row)
-            folders[folder["id"]] = row
-            self.library_rows[folder["id"]] = row
-            row.setExpanded(expanded.get(folder["id"], True))
-        for item in self.library.index["sessions"]:
-            parent = folders.get(item["folder"])
-            if parent is None:
-                continue
-            row = QTreeWidgetItem([item["name"]])
-            row.setToolTip(0, item["name"] + "\n右键可重命名、移动或删除")
-            row.setData(0, Qt.ItemDataRole.UserRole, ("session", item["id"]))
-            parent.addChild(row)
-            self.library_rows[item["id"]] = row
-            if self.current_item and item["id"] == self.current_item["id"]:
-                self.current_item = item
-                self.library_tree.setCurrentItem(row)
-                self.workspace_title.setText(item["name"])
-        if not self.current_item and self.folder_id in folders:
-            self.library_tree.setCurrentItem(folders[self.folder_id])
+        current = self.library_tree.populate(self.library.index,
+            current_id=self.current_item['id'] if self.current_item else None, folder_id=self.folder_id)
+        if current is not None:
+            self.current_item = current
+            self.workspace_title.setText(current['name'])
 
     def rescan_library(self):
         if not self.can_edit_library():
@@ -1747,15 +1426,11 @@ class Window(QMainWindow):
             self.recording_lock = None
 
     def release_playback(self):
-        if self.player:
-            self.player.stop()
-            self.player.setSource(QUrl())
-        self.close_playback_stream()
-        self.playback.setProperty('available', False)
-        self.playback_duration_ms = 0
-        self.seek.setRange(0, 0)
-        self.scroll.set_playback(False)
-        self.playback_position(0)
+        self.playback_controller.release()
+
+    def on_playback_available(self, available):
+        self.playback.setProperty('available', available)
+        self.scroll.set_playback(available)
         self.update_transport()
 
     def update_recording_hint(self):
@@ -2297,51 +1972,15 @@ class Window(QMainWindow):
             self.close()
 
     def prepare_playback(self):
-        if self.player:
-            self.player.stop()
-            self.player.setSource(QUrl())
-        self.close_playback_stream()
-        path = self.library.directory(self.current_item["id"]) / "录音.wav" if self.current_item else None
-        available = bool(path and path.exists() and path.stat().st_size > 44)
-        self.playback.setProperty('available', available)
-        self.playback_index = PlaybackIndex(self.captions.values())
-        self.scroll.set_playback(available)
-        self.update_transport()
-        if available:
-            from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
-            if self.player is None:
-                self.player = QMediaPlayer(self)
-                self.audio_output = QAudioOutput(self)
-                self.player.setAudioOutput(self.audio_output)
-                self.player.durationChanged.connect(self.playback_duration)
-                self.player.positionChanged.connect(self.playback_position)
-                self.player.playbackStateChanged.connect(lambda state: (
-                    diag.event('playback_state', state=state.name), self.update_playback_button()))
-                self.player.errorOccurred.connect(lambda *_: self.show_warning(
-                    '录音无法播放', self.player.errorString()))
-            from .playback_stream import PlaybackStream
-            try:
-                self.playback_stream = PlaybackStream(path, self.player,
-                    recover_recording=(self.recording_lock is None
-                                       and self.current_item['state'] in ('recording', 'incomplete')))
-            except (OSError, ValueError) as exc:
-                self.release_playback()
-                self.show_warning('录音无法播放', str(exc))
-                return
-            if self.playback_stream.recovered:
-                self.notifications.post('playback', '已恢复可读取的完整音频采样；原文件未修改，未落盘的尾部无法恢复。',
-                                        kind='attention')
+        path = self.library.directory(self.current_item['id']) / '录音.wav' if self.current_item else None
+        self.playback_controller.load(path, self.captions.values(), recover_recording=bool(
+            self.current_item and self.recording_lock is None and self.current_item['state'] in ('recording', 'incomplete')))
+        if self.playback_stream is not None:
             self.playback_volume.slider.setMaximum(300 if self.playback_stream.supports_gain else 100)
-            if not self.playback_stream.supports_gain:
-                self.notifications.post('playback', '该录音格式可正常回放，但暂不支持超过 100% 的放大。', kind='attention')
-            self.player.setSourceDevice(self.playback_stream, QUrl.fromLocalFile(str(path)))
             self.set_playback_volume(self.playback_volume.slider.value())
 
     def close_playback_stream(self):
-        if self.playback_stream is not None:
-            self.playback_stream.close()
-            self.playback_stream.deleteLater()
-            self.playback_stream = None
+        self.playback_controller.close_stream()
 
     def update_transport(self):
         active = self.recording_state.active
@@ -2429,16 +2068,7 @@ class Window(QMainWindow):
             self.meter.setValue(0)
 
     def arrange_input_controls(self, compact):
-        for widget in (self.quick_device, self.quick_language, self.quick_folder, self.transport_actions):
-            self.input_row.removeWidget(widget)
-        for column, widget in enumerate((self.quick_device, self.quick_language, self.quick_folder, self.transport_actions)):
-            self.input_row.addWidget(widget, 0, column)
-        self.input_row.setColumnStretch(0, 0)
-        self.input_row.setColumnStretch(1, 0)
-        self.live_row.removeWidget(self.volume_caption)
-        self.live_row.removeWidget(self.meter)
-        self.live_row.addWidget(self.volume_caption, 0, 2)
-        self.live_row.addWidget(self.meter, 0, 3)
+        self.control_island.arrange_input_controls(compact)
 
     @staticmethod
     def playback_clock(milliseconds):
@@ -2452,15 +2082,7 @@ class Window(QMainWindow):
         self.playback_position(self.seek.value())
 
     def set_playback_volume(self, value):
-        output = getattr(self, 'audio_output', None)
-        if output is not None:
-            output.setVolume(min(1., value / 100))
-        if self.playback_stream is not None:
-            gain = max(1., value/100)
-            previous = self.playback_stream.gain
-            self.playback_stream.set_gain(gain)
-            if gain != previous and self.player is not None:
-                self.player.setPosition(self.player.position())
+        self.playback_controller.set_volume(value)
 
     def update_playback_button(self):
         playing = self.player is not None and self.player.playbackState().name == 'PlayingState'
@@ -2507,12 +2129,7 @@ class Window(QMainWindow):
             self.player.play()
 
     def toggle_playback(self):
-        if self.player:
-            from PySide6.QtMultimedia import QMediaPlayer
-            if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
-                self.player.pause()
-            else:
-                self.player.play()
+        self.playback_controller.toggle()
 
     def restore(self):
         values = read_preferences(self.prefs)
@@ -2913,26 +2530,11 @@ class Window(QMainWindow):
             self.empty.setText('识别模型已就绪，正在处理已录音频…')
 
     def clear_captions(self):
-        self.clear_source_preview()
-        if self.source_preview_card is not None:
-            self.feed_layout.removeWidget(self.source_preview_card)
-            self.source_preview_card.deleteLater()
-            self.source_preview_card = None
+        self.caption_feed.clear()
         self.source_preview_sequence = 0
         self.save_generation += 1
         self.caption_version = 0
         self.playback_index = PlaybackIndex()
-        self.playback_caption_id = None
-        self.scroll.reset_follow()
-        for card in self.cards.values():
-            card.hide()
-            self.feed_layout.removeWidget(card)
-            card.deleteLater()
-        self.cards.clear()
-        self.captions.clear()
-        self.caption_page_start = None
-        self.update_caption_page_controls()
-        self.empty.show()
         self.overlay.source.setText("等待语音…")
         self.overlay.target.setText("")
 
@@ -3064,21 +2666,10 @@ class Window(QMainWindow):
         if sequence <= self.source_preview_sequence:
             return
         self.source_preview_sequence = sequence
-        self.source_preview = event
+        self.caption_feed.set_preview(event)
         self.save_source_preview()
         self.backup_action.setEnabled(True)
-        self.scroll.prepare_update()
-        caption = Caption(0, event['start'], event['end'], event['source'], event['language'], final=False)
-        if self.source_preview_card is None:
-            self.source_preview_card = CaptionCard(caption, False, animate=False)
-            self.feed_layout.insertWidget(self.feed_layout.indexOf(self.newer_captions), self.source_preview_card)
-        else:
-            self.source_preview_card.update_caption(caption, animate=False)
-        self.source_preview_card.setVisible(bool(caption.source))
-        self.apply_source_preview()
-        self.empty.setVisible(not caption.source and not event['keep_ids'])
         self.sync_overlay(animate=False)
-        self.scroll.content_changed()
 
     def save_source_preview(self):
         # The saver coalesces pending revisions off the UI thread. Do not wait
@@ -3089,28 +2680,11 @@ class Window(QMainWindow):
             self.queue_session_save()
 
     def apply_source_preview(self):
-        if self.source_preview is not None:
-            keep = set(self.source_preview['keep_ids'])
-            for identifier, card in self.cards.items():
-                card.setVisible(identifier in keep)
-            self.empty.setVisible(not self.source_preview['source'] and not any(i in keep for i in self.captions))
-            # New semantic cards can be inserted while a newer preview is shown.
-            if (self.source_preview_card is not None
-                    and self.feed_layout.indexOf(self.source_preview_card) != self.feed_layout.indexOf(self.newer_captions)-1):
-                self.feed_layout.removeWidget(self.source_preview_card)
-                self.feed_layout.insertWidget(self.feed_layout.indexOf(self.newer_captions), self.source_preview_card)
+        self.caption_feed.apply_preview()
 
     def clear_source_preview(self):
-        self.source_preview = None
-        if self.source_preview_card is not None:
-            self.source_preview_card.hide()
-        for card in self.cards.values():
-            card.source.finish_reveal()
-            card.target.finish_reveal()
-            card.show()
-        self.empty.setVisible(not self.captions)
+        self.caption_feed.clear_preview()
         self.sync_overlay(animate=False)
-        self.scroll.content_changed()
 
     def retain_source_preview(self):
         """Keep the newest recognized words if semantic processing did not finish."""
@@ -3140,111 +2714,39 @@ class Window(QMainWindow):
             self.caption_version += 1
             if self.knowledge_client.identifier == self.current_item['id']:
                 self.knowledge_client.observe(caption)
-        self.scroll.prepare_update()
-        if not caption.source:
-            self.captions.pop(caption.id, None)
-            card = self.cards.pop(caption.id, None)
-            if card:
-                self.scroll.discard_card(card)
-                self.feed_layout.removeWidget(card)
-                card.deleteLater()
-            self.render_caption_page()
-            self.empty.setVisible(not self.captions)
-            self.backup_action.setEnabled(bool(self.captions or self.source_preview))
-            self.export_button.setEnabled(any(c.final and c.source for c in self.captions.values()))
-            if self.current_item and not self.loading_saved:
-                self.autosave.start(800)
-            self.apply_source_preview()
-            self.sync_overlay(animate=not self.loading_saved)
-            self.scroll.content_changed()
-            return
-        self.empty.hide()
-        if (previous and previous.source == caption.source and previous.language == caption.language
-                and not caption.translation and (caption.ready or caption.final)):
+        if (caption.source and previous and previous.source == caption.source
+                and previous.language == caption.language and not caption.translation and (caption.ready or caption.final)):
             caption = replace(caption, translation=previous.translation,
                               translation_source=previous.translation_source,
                               translation_phase=previous.translation_phase)
-        self.captions[caption.id] = caption
-        if caption.id in self.cards:
-            self.cards[caption.id].update_caption(caption, animate=not self.loading_saved)
-        self.render_caption_page()
-        self.apply_source_preview()
+        self.caption_feed.set_context(translating=self.caption_translation,
+            active=self.recording_state.active, loading=self.loading_saved)
+        self.caption_feed.set_caption(caption)
         self.sync_overlay(animate=not self.loading_saved)
         self.export_button.setEnabled(any(c.final and c.source for c in self.captions.values()))
         self.backup_action.setEnabled(bool(self.captions or self.source_preview))
-        if self.current_item and not self.loading_saved and not self.autosave.isActive():
-            self.autosave.start(1500)
-        self.scroll.content_changed()
+        if self.current_item and not self.loading_saved:
+            if not caption.source:
+                self.autosave.start(800)
+            elif not self.autosave.isActive():
+                self.autosave.start(1500)
 
     def render_caption_page(self):
-        """Keep a bounded, navigable window over the complete transcript."""
-        identifiers = sorted(self.captions)
-        if (self.caption_page_start is None and len(self.cards) >= 200
-                and not self.scroll.following and not self.loading_saved):
-            self.caption_page_start = min(self.cards)
-        start = (max(0, len(identifiers)-200) if self.caption_page_start is None
-                 else min(bisect_left(identifiers, self.caption_page_start), max(0, len(identifiers)-200)))
-        visible = identifiers[start:start+200]
-        if self.caption_page_start is not None and visible:
-            self.caption_page_start = visible[0]
-        for identifier in self.cards.keys() - set(visible):
-            old = self.cards.pop(identifier)
-            # The scroll area must never retain a deleted card across pages.
-            self.scroll.discard_card(old)
-            old.hide()
-            self.feed_layout.removeWidget(old)
-            old.deleteLater()
-        for offset, identifier in enumerate(visible):
-            if identifier not in self.cards:
-                card = CaptionCard(self.captions[identifier], self.caption_translation,
-                                   animate=not self.loading_saved and self.caption_page_start is None)
-                for text in (card.source, card.target):
-                    text.set_playback_clickable(self.scroll.playback_mode and not self.recording_state.active)
-                    text.activated.connect(lambda identifier=identifier, widget=card: self.play_caption(identifier, widget))
-                card.setProperty('playing', self.playback_caption_id == identifier)
-                self.cards[identifier] = card
-                self.feed_layout.insertWidget(offset+1, card)
-                card.show()
-        self.update_caption_page_controls()
-        self.feed_layout.activate()
+        self.caption_feed.set_context(translating=self.caption_translation,
+            active=self.recording_state.active, loading=self.loading_saved)
+        self.caption_feed.render()
 
     def update_caption_page_controls(self):
-        identifiers = sorted(self.captions)
-        first, last = min(self.cards, default=0), max(self.cards, default=0)
-        self.older_captions.setVisible(bool(identifiers and first > identifiers[0]))
-        self.newer_captions.setVisible(bool(identifiers and last < identifiers[-1]))
-        target = self.playback_caption_id if self.scroll.playback_mode else (identifiers[-1] if identifiers else None)
-        self.scroll.set_outside_target(-1 if target is not None and target < first else
-                                       1 if target is not None and target > last else 0)
+        self.caption_feed.update_page_controls()
 
     def ensure_caption_card(self, identifier):
-        if identifier in self.captions and identifier not in self.cards:
-            identifiers = sorted(self.captions)
-            self.caption_page_start = identifiers[max(0, bisect_left(identifiers, identifier)-80)]
-            self.render_caption_page()
+        self.caption_feed.ensure_card(identifier)
 
     def change_caption_page(self, direction):
-        identifiers = sorted(self.captions)
-        if not identifiers:
-            return
-        start = bisect_left(identifiers, min(self.cards, default=identifiers[0]))
-        start = min(max(0, start+direction*180), max(0, len(identifiers)-200))
-        self.scroll.browse_history()
-        self.caption_page_start = identifiers[start]
-        self.render_caption_page()
-        self.apply_source_preview()
-        self.scroll.reveal_card(self.cards[identifiers[start]])
+        self.caption_feed.change_page(direction)
 
     def return_to_caption_target(self):
-        if self.scroll.playback_mode:
-            if self.playback_caption_id is not None:
-                self.ensure_caption_card(self.playback_caption_id)
-                self.scroll.follow_playback(self.cards.get(self.playback_caption_id), seek=True)
-        else:
-            self.caption_page_start = None
-            self.scroll.resume_latest()
-            self.render_caption_page()
-            self.apply_source_preview()
+        self.caption_feed.return_to_target()
 
     def toggle_overlay(self):
         if self.overlay.isVisible():
@@ -3255,15 +2757,18 @@ class Window(QMainWindow):
             self.overlay.raise_()
 
     def sync_overlay(self, *, animate=True):
-        captions = self.captions
-        if self.source_preview is not None:
-            captions = {key: value for key, value in captions.items() if key in self.source_preview['keep_ids']}
         if self.source_preview is not None and self.source_preview['source']:
             event = self.source_preview
             self.overlay.update_caption(Caption(0, event['start'], event['end'], event['source'],
                 event['language'], final=False), False, animate=False)
-        elif captions:
-            caption = max(captions.values(), key=lambda item: (item.start, item.id))
+            return
+        if self.source_preview is None:
+            captions = self.captions.values()
+        else:
+            keep = set(self.source_preview['keep_ids'])
+            captions = (value for key, value in self.captions.items() if key in keep)
+        caption = max(captions, key=lambda item: (item.start, item.id), default=None)
+        if caption is not None:
             self.overlay.update_caption(caption, self.caption_translation if self.recording_state.active
                                         else self.translate.isChecked(), animate=animate)
         else:

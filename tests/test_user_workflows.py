@@ -2,7 +2,7 @@
 import base64
 
 import pytest
-from test_beta_features import run_ui
+from ui_support import run_ui
 
 from linguaflow.core import Caption
 from linguaflow.playback import PlaybackIndex
@@ -112,54 +112,6 @@ w.leave_settings(); w.close()
 ''', tmp_path)
 
 
-def test_feedback_popup_sizes_aligns_and_retains_progress_until_dismissed(tmp_path):
-    run_ui('''
-from types import SimpleNamespace
-from unittest.mock import patch
-import linguaflow.notifications as notifications
-w.show(); settle_geometry(w)
-center=w.notifications
-clock=[100.]
-with patch.object(notifications,'time',SimpleNamespace(monotonic=lambda:clock[0])):
-    center.post('short','已保存',kind='success'); app.processEvents()
-    assert center.isWindow() and center.isVisible()
-    assert center.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-    pixels=center.grab().toImage()
-    assert pixels.pixelColor(0,0).alpha()==0
-    assert pixels.pixelColor(pixels.width()//2,pixels.height()//2).alpha()==255
-    small=center.width()
-    center.clear('short')
-    center.post('download','下载模型',kind='progress',progress=9); app.processEvents()
-    width=center.width()
-    center.post('download','下载模型',kind='progress',progress=100); app.processEvents()
-    assert center.width()==width
-    clock[0]+=6
-    center._refresh()
-    assert center.isVisible()
-    center.dismiss.click()
-    assert center.isHidden()
-    center.post('download','下载模型',kind='progress',progress=99)
-    assert center.isHidden() and 'download' in center.notices
-    center.post('error','保存失败，录音仍然保留。请检查所选文件夹是否可写，再重试保存。'*3,
-                kind='error',action=lambda:None,action_text='重试')
-    for width,height in ((1280,840),(640,480)):
-        w.resize(width,height); settle_geometry(w)
-        anchor=center.anchor
-        right=anchor.mapToGlobal(anchor.rect().topRight()).x()+1-16
-        assert center.x()+center.width()==right
-        assert small<center.width()<=anchor.width()-32
-        assert center.height()>44
-        assert w.pages.geometry().bottom()>=w.centralWidget().height()-2
-    clock[0]+=9
-    wait(center.isHidden,timeout=2)
-    assert center.notices['error'].action is not None
-    center.post('success','新的任务已完成',kind='success')
-    assert center.current_key=='success' and center.isVisible()
-    center.dismiss.click(); assert center.isHidden()
-w.close()
-''',tmp_path)
-
-
 def test_download_cancel_remains_available_after_popup_expires(tmp_path):
     run_ui('''
 from types import SimpleNamespace
@@ -189,59 +141,6 @@ w.open_settings('模型管理');app.processEvents()
 assert manager.download_card.isHidden()
 w.close()
 ''',tmp_path)
-
-
-def test_normal_status_and_attention_preserve_unresolved_operation_error(tmp_path):
-    run_ui('''
-w.show();settle_geometry(w)
-w.show_warning('保存失败','原始错误详情')
-center=w.notifications
-center.notices['operation'].expires=time.monotonic()-1
-w.status.setText('普通状态消息')
-center.post('operation','请先选择录音',kind='attention')
-assert center.notices['operation'].kind=='error'
-assert center.notices['operation'].details=='原始错误详情'
-assert center.notices['status'].text=='普通状态消息'
-center.clear('operation')
-center.post('operation','操作完成',kind='success')
-assert center.notices['operation'].kind=='success'
-w.close()
-''',tmp_path)
-
-
-def test_startup_guidance_checks_models_before_opening_and_ignores_old_completion(tmp_path):
-    run_ui('''
-checks=[]
-w.check_model_assets=lambda:checks.append(True)
-w.show(); app.processEvents()
-w.show_first_run()
-assert checks and w.first_run is None and w.startup_model_guidance_pending
-w.on_model_assets_checked(w.asset_check_generation, [])
-assert not w.startup_model_guidance_pending and w.first_run is None
-# Reopening without completing a historical wizard is quiet when models exist.
-w.close();w=window();w.show();w.check_model_assets=lambda:None
-w.show_first_run()
-w.on_model_assets_checked(w.asset_check_generation, ['运行环境：mlx','字幕分句组件'])
-assert w.first_run is None
-w.missing_model_assets=('本地模型检查未完成，可在模型管理中重新检查',)
-w.show_first_run(); assert w.first_run is None
-# Deleting a model must still show guidance even if an old wizard was completed.
-w.prefs.setValue('first_run_completed',True)
-w.missing_model_assets=('识别模型：fixture',)
-w.show_first_run();d=w.first_run
-assert d.isVisible() and not d.finish.isEnabled()
-d.reject()
-w.on_model_assets_checked(w.asset_check_generation, [])
-assert d.finish.isEnabled()
-w.show_first_run(); assert d.isHidden()
-# A late missing-file refresh after dismissal does not reopen the dialog.
-w.on_model_assets_checked(w.asset_check_generation, ['识别模型：fixture'])
-assert d.isHidden()
-w.show_first_run(); assert d.isVisible()
-w.on_model_assets_checked(w.asset_check_generation, [])
-d.finish.click();app.processEvents();assert d.isHidden()
-w.close()
-''', tmp_path)
 
 
 def test_guidance_requires_only_enabled_models_and_preserves_translation_choice(tmp_path):

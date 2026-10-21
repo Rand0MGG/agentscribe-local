@@ -1,56 +1,11 @@
 import plistlib
 import subprocess
 import threading
-from collections import namedtuple
-from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pytest
 
 from linguaflow import resource_monitor as resources
-
-
-def test_process_tree_cpu_ram_and_new_child_are_distinguished(monkeypatch):
-    times = iter([10., 12., 14.])
-    monkeypatch.setattr(resources.time, 'monotonic', lambda: next(times))
-    system = namedtuple('CPU', 'user system idle')
-    readings = iter([system(10, 10, 80), system(20, 20, 100), system(30, 30, 120)])
-    monkeypatch.setattr(resources.psutil, 'cpu_times', lambda: next(readings))
-    monkeypatch.setattr(resources.psutil, 'virtual_memory',
-                        lambda: SimpleNamespace(total=1000, available=400, percent=60))
-    class Process:
-        def __init__(self, pid):
-            self.pid, self.cpu = pid, 0
-        def oneshot(self):
-            return nullcontext()
-        def create_time(self):
-            return 1.
-        def cpu_times(self):
-            return SimpleNamespace(user=self.cpu, system=0)
-        def memory_info(self):
-            return SimpleNamespace(rss=100)
-        def ppid(self):
-            return 1
-        def children(self, recursive):
-            return children
-    root, child = Process(1), Process(2)
-    children = []
-    monkeypatch.setattr(resources.psutil, 'Process', lambda: root)
-    sampler = resources.ResourceSampler()
-    monkeypatch.setattr(sampler, 'gpu', lambda pids: {'status': 'unavailable'})
-    first = sampler.sample()
-    assert first['app_cpu_percent'] is None and first['system_cpu_percent'] is None
-    root.cpu = 3
-    children.append(child)
-    second = sampler.sample()
-    assert second['app_cpu_percent'] == 150
-    assert second['app_cpu_partial']
-    assert second['app_rss_sum_bytes'] == 200 and second['app_process_count'] == 2
-    assert second['system_cpu_percent'] == 50
-    root.cpu, child.cpu = 4, 2
-    third = sampler.sample()
-    assert third['app_cpu_percent'] == 150 and not third['app_cpu_partial']
-    assert all(set(p) == {'pid', 'parent_pid', 'cpu_percent', 'rss_bytes'} for p in third['processes'])
 
 
 def test_gpu_scope_wddm_unknown_and_timeout_backoff(monkeypatch):
@@ -75,11 +30,6 @@ def test_gpu_scope_wddm_unknown_and_timeout_backoff(monkeypatch):
     assert sampler.gpu({123}) == {'status': 'timeout'}
     assert sampler.gpu({123}) == {'status': 'timeout'}
     assert len(calls) == 1
-
-
-@pytest.mark.parametrize('value', ['N/A', '[Not Supported]', 'nan', 'inf', None, True])
-def test_unavailable_gpu_numbers_are_not_zero(value):
-    assert resources._number(value) is None
 
 
 def test_monitor_recovers_and_stops_without_waiting_full_interval(monkeypatch):

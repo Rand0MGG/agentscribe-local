@@ -1,10 +1,8 @@
 """Platform simulation verifies shared entry points; no native audio or real downloads."""
 import os
-import subprocess
-import sys
 
 import pytest
-from ui_support import assert_ui_process, finish_ui_code
+from ui_support import run_ui_process
 
 
 def test_mac_catalog_preserves_gpu_selection(tmp_path):
@@ -47,10 +45,8 @@ if sys.platform == 'darwin':
 assert w.session is None and not {'soundcard', 'sounddevice', 'pyaudio', 'PySide6.QtMultimedia'} & sys.modules.keys()
 w.close()
 '''
-    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=30,
-                            env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'AGENTSCRIBE_LIBRARY': str(tmp_path),
-                                 'FIXTURE_PLATFORM': 'darwin'})
-    assert_ui_process(result)
+    run_ui_process(code, timeout=30,
+                   env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'AGENTSCRIBE_LIBRARY': str(tmp_path), 'FIXTURE_PLATFORM': 'darwin'})
 
 
 @pytest.mark.parametrize('system', ['darwin', 'win32'])
@@ -92,10 +88,8 @@ for total, expected_max, expected_value in [(100, 1000, 500), (None, 0, None), (
 assert 'soundcard' not in sys.modules and 'PySide6.QtMultimedia' not in sys.modules
 w.close()
 '''
-    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=20,
-                            env={**os.environ, 'QT_QPA_PLATFORM':'offscreen', 'AGENTSCRIBE_LIBRARY':str(tmp_path),
-                                 'FIXTURE_PLATFORM':system})
-    assert_ui_process(result)
+    run_ui_process(code, timeout=20,
+                   env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'AGENTSCRIBE_LIBRARY': str(tmp_path), 'FIXTURE_PLATFORM': system})
 
 
 def test_prepare_preserves_partial_legacy_model_preferences(tmp_path):
@@ -122,6 +116,5 @@ actual = json.loads(commands[0][commands[0].index('--selection')+1])
 assert actual == expected and actual['translation_model'].endswith('custom.gguf')
 w.close()
 '''
-    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=20,
-                            env={**os.environ, 'QT_QPA_PLATFORM':'offscreen', 'AGENTSCRIBE_LIBRARY':str(tmp_path)})
-    assert_ui_process(result)
+    run_ui_process(code, timeout=20,
+                   env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'AGENTSCRIBE_LIBRARY': str(tmp_path)})

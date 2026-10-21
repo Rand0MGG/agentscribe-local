@@ -1,5 +1,5 @@
 """User-visible regressions for long transcripts and failed-save recovery."""
-from test_beta_features import run_ui
+from ui_support import run_ui
 
 
 def test_long_recording_search_pages_and_playback_load_history(tmp_path):

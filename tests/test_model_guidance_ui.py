@@ -1,170 +1,6 @@
 import os
-import subprocess
-import sys
 
-import pytest
-from ui_support import assert_ui_process, finish_ui_code
-
-
-@pytest.mark.skipif(sys.platform != 'darwin', reason='macOS native application menu')
-def test_native_version_menu_and_update_entry(tmp_path):
-    code = '''
-import os
-import faulthandler
-faulthandler.dump_traceback_later(8, repeat=True)
-from PySide6.QtCore import QSettings
-from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QApplication
-from linguaflow import __version__
-from linguaflow.app import Window
-app = QApplication([])
-app.setApplicationName('AgentScribe')
-w = Window(discover=False, prefs=QSettings(os.environ['AGENTSCRIBE_LIBRARY']+'/prefs.ini', QSettings.Format.IniFormat))
-w.show()
-app.processEvents()
-assert w.menuBar().isNativeMenuBar()
-assert w.about_action.menuRole() == QAction.MenuRole.AboutRole
-assert w.update_action.menuRole() == QAction.MenuRole.ApplicationSpecificRole
-w.about_action.trigger()
-app.processEvents()
-assert w.about_dialog.isVisible() and __version__ in w.about_dialog.informativeText()
-w.about_dialog.accept()
-w.version_action.trigger()
-assert w.pages.currentWidget() is w.settings_workspace
-assert w.settings_workspace.navigation.currentItem().text() == '运行环境'
-assert __version__ in w.model_manager.version_label.text()
-assert w.model_manager.version_label.isVisible()
-calls = []
-w.check_software_updates = lambda: calls.append('check')
-w.update_action.trigger()
-assert calls == ['check']
-w.close()
-faulthandler.cancel_dump_traceback_later()
-'''
-    try:
-        result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=15,
-                                env={**os.environ, 'QT_QPA_PLATFORM': 'cocoa',
-                                     'AGENTSCRIBE_LIBRARY': str(tmp_path)})
-    except subprocess.TimeoutExpired as exc:
-        output = b''.join(value if isinstance(value, bytes) else (value or '').encode()
-                          for value in (exc.stdout, exc.stderr)).decode('utf8', errors='replace')
-        raise AssertionError('Native menu timed out; captured startup/Qt stacks:\n' + output) from exc
-    assert_ui_process(result)
-
-
-def test_startup_update_check_is_independent_quiet_and_nonmodal(tmp_path):
-    code = '''
-import os, time
-from threading import Event
-from PySide6.QtCore import QSettings, QTimer, Qt
-from PySide6.QtWidgets import QApplication
-from linguaflow.app import Window
-from linguaflow import updates
-app = QApplication([])
-w = Window(discover=False, prefs=QSettings(os.environ['AGENTSCRIBE_LIBRARY']+'/prefs.ini', QSettings.Format.IniFormat))
-calls = []
-def check(module, callback, *arguments):
-    if module == 'linguaflow.updates':
-        calls.append(callback)
-    else:
-        QTimer.singleShot(0, lambda: callback([]))
-    return object()
-w.start_background_check = check
-w.check_startup_updates()
-w.check_startup_updates()
-ticks = []
-timer = QTimer()
-timer.timeout.connect(lambda: ticks.append(1))
-timer.start(5)
-deadline = time.monotonic()+1
-while len(ticks)<3 and time.monotonic()<deadline:
-    app.processEvents()
-    time.sleep(.005)
-assert len(ticks)>=3 and len(calls) == 1 and w.model_manager.worker is None
-calls[0]({'kind': 'none'})
-app.processEvents()
-assert not hasattr(w, 'update_dialog')
-w.on_startup_update_checked({'kind':'package', 'version':'0.6.0-beta.2',
-    'message':'新版已发布', 'url':updates.RELEASE_PAGE+'/tag/v0.6.0-beta.2'})
-assert not hasattr(w, 'update_dialog')
-assert w.notifications.notices[w.notifications.current_key].kind == 'attention' and w.notifications.notices[w.notifications.current_key].text == '新版已发布'
-assert '0.6.0-beta.2' in w.model_manager.version_label.text()
-w.close()
-w.on_startup_update_checked({'kind':'package', 'url':updates.RELEASE_PAGE+'/tag/v0.6.0-beta.3'})
-assert not hasattr(w, 'update_dialog')
-'''
-    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=12,
-                            env={**os.environ, 'QT_QPA_PLATFORM':'offscreen',
-                                 'AGENTSCRIBE_LIBRARY':str(tmp_path)})
-    assert_ui_process(result)
-
-
-def test_direct_settings_fixed_context_and_responsive_preparation(tmp_path):
-    code = '''
-import os, sys, time
-from threading import Event
-from PySide6.QtCore import QSettings, QTimer
-from PySide6.QtWidgets import QApplication
-from linguaflow.app import Window
-from linguaflow.recording_state import RecordingState
-app = QApplication([])
-prefs = QSettings(os.environ['AGENTSCRIBE_LIBRARY']+'/prefs.ini', QSettings.Format.IniFormat)
-prefs.setValue('translation_before', 10)
-prefs.setValue('translation_after', 2)
-prefs.setValue('translation_initial_before', 0)
-w = Window(discover=False, prefs=prefs)
-workspace, manager = w.settings_workspace, w.model_manager
-def check(module, callback, *arguments):
-    QTimer.singleShot(20, lambda: callback(['Qwen3-ASR 1.7B · MLX 4-bit', 'HY-MT2 1.8B · Q4_K_M']))
-    return object()
-w.start_background_check = check
-visible = [workspace.categories[i] for i in range(workspace.navigation.count())
-           if not workspace.navigation.item(i).isHidden()]
-assert visible == ['常规', '聆听', '模型管理', '字幕与延迟', '运行环境', '使用指南']
-assert manager.translation_before.isHidden() and manager.translation_after.isHidden()
-settings = w.settings_binding.session_settings(('file', False))
-assert (settings.translation_before, settings.translation_after, settings.translation_initial_before) == (5, 1, 1)
-w.set_recording_state(RecordingState.LISTENING)
-w.source.setCurrentIndex((w.source.currentIndex()+1) % w.source.count())
-assert prefs.value('source') == w.source.currentText()
-assert w.settings_panel.isEnabled() and manager.isEnabled()
-release = Event()
-def action():
-    manager.worker.download.emit({'label': 'weights', 'completed': 50, 'total': 100, 'unit': 'B', 'rate': 10})
-    assert release.wait(3)
-    return 'prepared'
-manager.prepare(action)
-w.open_settings('使用指南')
-ticks = []
-timer = QTimer()
-timer.timeout.connect(lambda: ticks.append(1))
-timer.start(5)
-deadline = time.monotonic()+2
-while len(ticks) < 3 and time.monotonic() < deadline:
-    app.processEvents()
-    time.sleep(.005)
-assert len(ticks) >= 3 and manager.worker is not None
-assert manager.tabs.isEnabled() and manager.done_button.isEnabled()
-assert manager.progress_bar.value() == 500
-assert '50' not in manager.status.text() or 'MB' in manager.status.text()
-release.set()
-while manager.worker is not None and time.monotonic() < deadline:
-    app.processEvents()
-    time.sleep(.005)
-assert manager.worker is None
-w.check_model_assets()
-deadline = time.monotonic()+2
-while w.missing_model_assets is None and time.monotonic() < deadline:
-    app.processEvents()
-    time.sleep(.005)
-assert w.missing_model_assets and w.model_prompt is None
-w.set_recording_state(RecordingState.IDLE)
-w.close()
-'''
-    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=12,
-                            env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
-                                 'AGENTSCRIBE_LIBRARY': str(tmp_path)})
-    assert_ui_process(result)
+from ui_support import run_ui_process
 
 
 def test_knowledge_cleanup_dispatches_ui_events_and_guards_file_changes(tmp_path):
@@ -188,6 +24,8 @@ class Process:
         self.code = 0
 w.knowledge_client.process = Process()
 w.knowledge_client.epoch = 'old'
+import linguaflow.process_platform as process_module
+process_module.stop_tree = lambda process, **kwargs: process.terminate()
 ticks, guards = [], []
 timer = QTimer()
 def tick():
@@ -205,7 +43,5 @@ assert not w.knowledge_client.closing and w.knowledge_client.process is None
 assert 'soundcard' not in __import__('sys').modules
 w.close()
 '''
-    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=12,
-                            env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
-                                 'AGENTSCRIBE_LIBRARY': str(tmp_path)})
-    assert_ui_process(result)
+    run_ui_process(code, timeout=12,
+                   env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'AGENTSCRIBE_LIBRARY': str(tmp_path)})

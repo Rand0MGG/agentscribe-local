@@ -4,8 +4,8 @@ from threading import Event
 
 import numpy as np
 import pytest
-from test_beta_features import run_ui
 from test_wlk_session import PROGRAM, execute
+from ui_support import run_ui
 
 
 @pytest.mark.parametrize('paused', [False, True])

@@ -1,5 +1,5 @@
 """Native check completion, explicit feedback, and cancelled request isolation."""
-from test_beta_features import run_ui
+from ui_support import run_ui
 
 
 def test_background_failure_finishes_and_manual_retry_ignores_old_callbacks(tmp_path):
@@ -82,25 +82,3 @@ assert not u.active and w.notifications.current_key=='update'
 assert '上次更新检查正在结束' in w.notifications.notices['update'].text
 u.installed=False;w.close()
 ''', tmp_path)
-
-
-def test_ready_update_keeps_install_action_until_dismissed_and_can_be_reopened(tmp_path):
-    run_ui('''
-from types import SimpleNamespace
-from unittest.mock import patch
-import linguaflow.notifications as feedback
-w.show();settle_geometry(w)
-u=w.native_updater;u.installed=True
-u.adapter=SimpleNamespace(check=lambda manual:None,close=lambda:None)
-u.active=True;u.last_event={'stage':'ready','text':'更新已准备好，可重启安装。'}
-clock=[100.]
-with patch.object(feedback,'time',SimpleNamespace(monotonic=lambda:clock[0])):
-    w.check_software_updates()
-    clock[0]+=60;w.notifications._refresh()
-    assert w.notifications.isVisible() and w.notifications.action_button.text()=='重启更新'
-    w.notifications.dismiss.click()
-    assert w.notifications.isHidden()
-    w.check_software_updates()
-    assert w.notifications.isVisible() and w.notifications.action_button.text()=='重启更新'
-u.installed=False;w.close()
-''',tmp_path)

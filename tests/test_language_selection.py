@@ -1,5 +1,5 @@
 """Language selectors share the same translation setting without changing active sessions."""
-from test_beta_features import run_ui
+from ui_support import run_ui
 
 
 def test_matching_languages_disable_translation_in_both_views(tmp_path):

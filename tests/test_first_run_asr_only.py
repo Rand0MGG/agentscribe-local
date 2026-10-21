@@ -1,5 +1,5 @@
 """Missing translation assets must not block recognition or lose user intent."""
-from test_beta_features import run_ui
+from ui_support import run_ui
 
 
 def test_translation_recovery_preserves_intent_for_next_recording(tmp_path):

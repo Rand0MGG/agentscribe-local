@@ -13,7 +13,7 @@ from threading import Lock, Thread
 
 from .core import WHISPER_TO_NLLB
 from .llama_assets import resolve_assets
-from .process_platform import spawn_options, stop_tree
+from .process_platform import close_process_transport, spawn_options, stop_tree
 from .translation_models import (
     batch_translation_prompt,
     batch_translation_schema,
@@ -145,10 +145,7 @@ class LlamaTranslator:
 
     def close(self):
         with self.lock:
-            if self.closed:
-                return
             self.closed = True
-            atexit.unregister(self.close)
             if self.process:
                 self.process.stdin.close()
                 try:
@@ -160,7 +157,12 @@ class LlamaTranslator:
                             self.process.wait(timeout=4)
                             break
                         except subprocess.TimeoutExpired:
+                            if force:
+                                raise
                             continue
-                if self.reader:
-                    self.reader.join(timeout=2)
-                self.process.stdout.close()
+                readers = [self.reader] if self.reader and self.reader.ident is not None else []
+                close_process_transport(self.process, readers, timeout=2,
+                    error='翻译日志读取线程未退出；已保留资源，请稍后重试关闭。')
+                self.process = None
+                self.reader = None
+            atexit.unregister(self.close)

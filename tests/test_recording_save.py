@@ -36,7 +36,10 @@ def test_serial_save_coalesces_revisions_freezes_input_and_keeps_qt_responsive(t
     last = replace(first, source='latest', revision=3)
     saver.submit(write, token, 3, item, [last], 'complete')
     saver.submit(write, token, 3, item, [last])  # Automatic save cannot erase completion state.
-    saver.submit(write, token, 2, item, [replace(first, source='late old request')])
+    def obsolete_rows():
+        raise AssertionError('An obsolete request must be rejected before snapshot copying')
+        yield first
+    saver.submit(write, token, 2, item, obsolete_rows())
     last.source = 'mutated after submit'
     QTimer.singleShot(10, lambda: ticks.append(True))
     QTimer.singleShot(20, release.set)

@@ -1,5 +1,9 @@
 """Bounded Qt waits for isolated UI tests; never access native audio."""
+import os
+import subprocess
+import sys
 import time
+from pathlib import Path
 from subprocess import CompletedProcess
 
 from PySide6.QtWidgets import QApplication
@@ -57,3 +61,39 @@ def settle_geometry(*widgets):
         return time.monotonic() - unchanged_since >= .08
 
     wait_until(settled, timeout=2)
+
+
+def run_ui(code, tmp_path):
+    prefix = '''
+import os, time
+from pathlib import Path
+from PySide6.QtCore import QObject, QSettings, Qt, Signal
+from PySide6.QtWidgets import QApplication
+import linguaflow.app as module
+app=QApplication([])
+path=Path(os.environ['AGENTSCRIBE_LIBRARY'])/'prefs.ini'
+def window():
+    return module.Window(discover=False,prefs=QSettings(str(path),QSettings.Format.IniFormat))
+from ui_support import close_window, settle_geometry, wait_until as wait
+w=window()
+'''
+    run_ui_process(prefix + code, tmp_path)
+
+
+def run_ui_process(code, tmp_path=None, *, timeout=35, env=None):
+    """Run a Qt journey with bounded shutdown and one shared diagnostic policy."""
+    bootstrap = f'import sys; sys.path.insert(0, {str(Path(__file__).resolve().parent)!r})\n'
+    environment = {**os.environ, 'QT_QPA_PLATFORM': os.environ.get('AGENTSCRIBE_UI_PLATFORM', 'offscreen'),
+                   **(env or {}), 'PYTHONIOENCODING': 'utf-8'}
+    if tmp_path is not None:
+        environment['AGENTSCRIBE_LIBRARY'] = str(tmp_path)
+    try:
+        result = subprocess.run([sys.executable, '-c', bootstrap + finish_ui_code(code)],
+                                capture_output=True, text=True, encoding='utf-8', errors='backslashreplace',
+                                timeout=timeout, env=environment)
+    except subprocess.TimeoutExpired as exc:
+        output = b'\n'.join(value if isinstance(value, bytes) else (value or '').encode('utf-8')
+                            for value in (exc.stdout, exc.stderr))
+        raise AssertionError(f'Qt child timed out after {timeout} seconds:\n'
+                             + output.decode('utf-8', errors='replace')) from exc
+    assert_ui_process(result)

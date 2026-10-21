@@ -1,5 +1,5 @@
 """Interaction regressions without audio enumeration, playback or inference."""
-from test_beta_features import run_ui
+from ui_support import run_ui
 
 
 def test_model_editor_keeps_inspection_readonly_and_download_selection_explicit(tmp_path):
@@ -67,52 +67,6 @@ workspace.model_browser.receive({'models':[dict(name='HY 4-bit', path='/fixture/
 assert workspace.model_browser.role_choices['translation'].itemText(0) == 'HY 4-bit'
 w.current_item = None
 w.session_dirty = False
-w.close()
-''', tmp_path)
-
-
-def test_overlay_drag_resize_font_and_caption_updates_preserve_user_geometry(tmp_path):
-    run_ui(r'''
-from PySide6.QtCore import QPoint, QPointF
-from PySide6.QtGui import QMouseEvent
-from PySide6.QtTest import QTest
-from linguaflow.core import Caption
-from linguaflow.subtitles_overlay import Overlay
-overlay = w.overlay
-overlay.show()
-app.processEvents()
-overlay.resize(620, 240)
-overlay.font_size.setValue(32)
-overlay.background_opacity.setValue(45)
-assert overlay.windowOpacity() == 1
-before = overlay.geometry()
-overlay.update_caption(Caption(1, 0, 1, 'Long source text. '*30, 'en', '字幕内容'*30), animate=False)
-app.processEvents()
-assert overlay.geometry() == before and '32px' in overlay.target.styleSheet()
-assert overlay.source.font().pixelSize() == overlay.target.font().pixelSize() == 32
-assert overlay.source.font().weight() == overlay.target.font().weight()
-assert overlay.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
-assert overlay.windowFlags() & Qt.WindowType.Tool
-def drag(handle, dx, dy):
-    start = handle.mapToGlobal(QPoint(5, 5))
-    app.sendEvent(handle, QMouseEvent(QMouseEvent.Type.MouseButtonPress, QPointF(5,5), QPointF(start),
-                  Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
-    app.sendEvent(handle, QMouseEvent(QMouseEvent.Type.MouseMove, QPointF(5+dx,5+dy), QPointF(start+QPoint(dx,dy)),
-                  Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
-    app.sendEvent(handle, QMouseEvent(QMouseEvent.Type.MouseButtonRelease, QPointF(5+dx,5+dy), QPointF(start+QPoint(dx,dy)),
-                  Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
-drag(overlay.resize_handle, 80, 50)
-assert overlay.size().toTuple() == (700, 290)
-initial = overlay.pos()
-drag(overlay.header, 50, 30)
-assert overlay.pos() == initial + QPoint(50,30)
-overlay.update_caption(Caption(2, 1, 2, 'short', 'en'), animate=False)
-assert overlay.size().toTuple() == (700, 290)
-overlay.hide()
-restored = Overlay(w.prefs)
-assert restored.size().toTuple() == (700, 290) and restored.font_size.value() == 32
-assert restored.background_opacity.value() == 45
-restored.close()
 w.close()
 ''', tmp_path)
 

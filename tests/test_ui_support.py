@@ -4,7 +4,7 @@ import subprocess
 import sys
 
 import pytest
-from ui_support import assert_ui_process
+from ui_support import assert_ui_process, run_ui_process
 
 
 @pytest.mark.parametrize('message,drawing_error', [
@@ -28,8 +28,11 @@ def test_qt_warnings_reject_drawing_errors_but_allow_platform_hints(message, dra
         assert_ui_process(result)
 
 
-def test_failed_ui_process_remains_a_failure():
-    result = subprocess.run([sys.executable, '-c', 'raise SystemExit(7)'],
-                            capture_output=True, text=True, timeout=10)
-    with pytest.raises(AssertionError, match='Qt child exited 7'):
-        assert_ui_process(result)
+@pytest.mark.parametrize('code, reason', [
+    ("print('中文失败详情', flush=True); raise SystemExit(7)", 'Qt child exited 7'),
+    ("import time; print('中文失败详情', flush=True); time.sleep(30)", 'Qt child timed out'),
+])
+def test_failed_ui_process_remains_a_failure(code, reason):
+    with pytest.raises(AssertionError, match=reason) as error:
+        run_ui_process(code, timeout=2)
+    assert '中文失败详情' in str(error.value)

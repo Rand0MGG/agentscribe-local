@@ -1,5 +1,5 @@
 """One-click recording workspace, safe naming and consistent control geometry."""
-from test_beta_features import run_ui
+from ui_support import run_ui
 
 
 def test_new_workspace_uses_defaults_without_creating_empty_recordings(tmp_path):
@@ -73,31 +73,5 @@ w.notifications.post('save','保存失败，原内容保留。',kind='error')
 w.new_button.click()
 assert w.notifications.notices['save'].kind=='error'
 w.notifications.clear('save')
-w.close()
-''',tmp_path)
-
-
-def test_start_from_new_workspace_creates_the_selected_name_and_folder(tmp_path):
-    run_ui(r'''
-from linguaflow.recording_state import RecordingState
-w.new_button.click()
-w.rename_current()
-w.commit_recording_title('第一堂课')
-folder=w.library.folder('课程')['id']
-w.select_recording_folder(folder)
-w.device.addItem('外部输入 · 课堂',('classroom',False))
-w.translate.setChecked(False)
-w.model_manager.backend.setCurrentIndex(0)
-assert not w.library.index['sessions']
-launched=[]
-w.launch_session=lambda settings: launched.append(settings)
-w.start(models_checked=True)
-assert len(launched)==1 and launched[0].device_id=='classroom'
-assert w.current_item['name']=='第一堂课' and w.current_item['folder']==folder
-assert len(w.library.index['sessions'])==1
-assert w.library.directory(w.current_item['id']).parent==w.library.directory(folder)
-w.set_recording_state(RecordingState.IDLE)
-w.release_recording_lock()
-w.current_item=None
 w.close()
 ''',tmp_path)

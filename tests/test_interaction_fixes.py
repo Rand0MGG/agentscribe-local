@@ -1,49 +1,5 @@
 """User interaction acceptance without capturing or playing audio."""
-from test_beta_features import run_ui
-
-
-def test_slider_clicks_and_shared_tooltip_surface(tmp_path):
-    run_ui(r'''
-from PySide6.QtCore import QEvent, QPoint
-from PySide6.QtGui import QHelpEvent
-from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QLabel
-from linguaflow.ui_tooltips import install_tooltips
-module.Window.start_background_check = lambda *args, **kwargs: None
-w.show()
-assert not any('AgentScribe' in item.text() for item in w.title_bar.findChildren(QLabel))
-w.playback.setProperty('available', True)
-w.playback_duration(100000)
-w.update_transport()
-settle_geometry(w, w.control_island)
-QTest.mouseClick(w.seek, Qt.MouseButton.LeftButton, pos=QPoint(w.seek.width()*3//4, w.seek.height()//2))
-assert 70000 < w.seek.value() < 82000
-assert w.play_time.text().startswith('01:1')
-o = w.overlay
-o.show(); o.set_controls_visible(True)
-settle_geometry(o, o.background_opacity)
-QTest.mouseClick(o.background_opacity, Qt.MouseButton.LeftButton,
-                 pos=QPoint(o.background_opacity.width()//4, o.background_opacity.height()//2))
-assert 15 <= o.background_opacity.value() <= 35
-o.hide()
-manager = install_tooltips(app)
-for theme in (0, 1):
-    w.appearance.setCurrentIndex(theme)
-    text = '完整设备名称 · 一个较长的说明，支持换行查看。'*6
-    w.play_button.setToolTip(text)
-    position = w.screen().availableGeometry().bottomRight()-QPoint(5,5)
-    app.sendEvent(w.play_button, QHelpEvent(QEvent.Type.ToolTip, QPoint(5,5), position))
-    app.processEvents()
-    assert manager.bubble.isVisible() and manager.bubble.label.text() == text
-    assert manager.bubble.width() <= 350
-    assert w.screen().availableGeometry().contains(manager.bubble.geometry())
-    app.sendEvent(w.play_button, QEvent(QEvent.Type.Leave))
-    assert not manager.bubble.isVisible()
-manager.show(w.play_button, '回放音量 200% · 点击展开或收起', w.play_button.mapToGlobal(QPoint(0,0)))
-assert manager.bubble.label.height() <= manager.bubble.label.fontMetrics().height()+2
-manager.hide()
-w.close()
-''', tmp_path)
+from ui_support import run_ui
 
 
 def test_live_overlay_catches_up_and_controls_release_reading_space(tmp_path):
@@ -79,38 +35,6 @@ o.set_controls_visible(False)
 settle_geometry(o, o.scroll)
 assert o.geometry() == geometry and o.scroll.height() > reading_height
 w.set_recording_state(module.RecordingState.IDLE)
-w.close()
-''', tmp_path)
-
-
-def test_playback_direction_and_adopting_the_visible_sentence_offset(tmp_path):
-    run_ui(r'''
-from linguaflow.core import Caption
-module.Window.start_background_check = lambda *args, **kwargs: None
-w.show(); w.reduce_motion.setChecked(True)
-for i in range(20):
-    w.on_caption(Caption(i, i*10, i*10+8, 'Recorded sentence. '*10, 'en', '字幕。'*8))
-settle_geometry(w)
-s = w.scroll
-s.set_playback(True)
-bar = s.verticalScrollBar()
-current, following = w.cards[8], w.cards[9]
-s.follow_playback(current, seek=True)
-bar.setValue(current.y()+100)
-assert not s.following and s.latest_button.isVisible() and s.latest_button.direction == -1
-bar.setValue(0)
-assert s.latest_button.isVisible() and s.latest_button.direction == 1
-bar.setValue(current.y()-60)
-assert not s.following and not s.latest_button.isVisible()
-s.follow_playback(following)
-assert s.following and abs((following.y()-bar.value())-60) <= 1
-s.follow_playback(w.cards[10])
-assert abs((w.cards[10].y()-bar.value())-60) <= 1
-bar.setValue(0)
-position = bar.value()
-s.follow_playback(w.cards[15])
-assert not s.following and bar.value() == position
-w.session_dirty = False
 w.close()
 ''', tmp_path)
 

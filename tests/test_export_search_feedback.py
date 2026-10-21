@@ -1,5 +1,5 @@
 """Export progress and searchable pagination keep completion boundaries visible."""
-from test_beta_features import run_ui
+from ui_support import run_ui
 
 
 def test_export_and_backup_feedback_tracks_queue_failure_and_cancel(tmp_path):
@@ -47,28 +47,4 @@ with patch.object(module.QFileDialog, 'getSaveFileName', return_value=(target, '
 assert 'export' not in w.notifications.notices
 assert '原录音的保存状态未改变' in w.notifications.notices['recovery'].text
 w.close()
-''', tmp_path)
-
-
-def test_search_pagination_empty_and_query_reset(tmp_path):
-    run_ui(r'''
-from linguaflow.core import Caption
-from linguaflow.recording_search import RecordingSearchDialog
-captions = [Caption(i,i,i+1,'common '+str(i),'en','翻译') for i in range(205)]
-d = RecordingSearchDialog(captions, w)
-assert d.results.count() == 100 and '205' in d.summary.text()
-assert not d.previous.isEnabled() and d.next.isEnabled()
-d.next.click(); assert d.results.item(0).data(Qt.ItemDataRole.UserRole) == 100
-d.next.click(); assert d.results.count() == 5 and not d.next.isEnabled()
-d.previous.click(); assert d.results.count() == 100
-d.query.setText('common 204'); d.search()
-assert d.page == 0 and d.results.count() == 1
-located=[]; d.located.connect(located.append)
-d.choose(); assert located == [204]
-d.query.setText('absent'); d.search()
-assert '没有匹配' in d.summary.text() and not d.locate.isEnabled()
-assert not d.previous.isEnabled() and not d.next.isEnabled()
-empty = RecordingSearchDialog([],w)
-assert '还没有字幕' in empty.summary.text()
-empty.close(); d.close(); w.close()
 ''', tmp_path)

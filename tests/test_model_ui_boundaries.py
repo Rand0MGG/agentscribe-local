@@ -1,9 +1,7 @@
 """Inventory is usable without a manager's controls; export owns an immutable snapshot."""
 import os
-import subprocess
-import sys
 
-from ui_support import assert_ui_process, finish_ui_code
+from ui_support import run_ui_process
 
 
 def test_inventory_interfaces_and_background_export(tmp_path):
@@ -74,6 +72,5 @@ w.export()
 assert not w.export_saver.busy
 w.close()
 '''
-    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=30,
-                            env={**os.environ, 'TEST_ROOT': str(tmp_path), 'QT_QPA_PLATFORM': 'offscreen'})
-    assert_ui_process(result)
+    run_ui_process(code, timeout=30,
+                   env={**os.environ, 'TEST_ROOT': str(tmp_path), 'QT_QPA_PLATFORM': 'offscreen'})

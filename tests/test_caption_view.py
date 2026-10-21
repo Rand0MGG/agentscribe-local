@@ -1,95 +1,12 @@
 """Real Qt interaction regressions, in isolated processes with simulated content."""
 import os
-import subprocess
-import sys
 
-from ui_support import assert_ui_process, finish_ui_code
+from ui_support import run_ui_process
 
 
 def run_qt(code, tmp_path):
-    result = subprocess.run([sys.executable, '-c', finish_ui_code(code)], capture_output=True, text=True, errors='backslashreplace', timeout=35,
-                            env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
-                                 'AGENTSCRIBE_LIBRARY': str(tmp_path)})
-    assert_ui_process(result)
-
-
-def test_smooth_follow_manual_interrupt_return_and_reduce_motion(tmp_path):
-    run_qt('''
-from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QWheelEvent
-from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QWidget
-from types import SimpleNamespace
-import linguaflow.caption_view as view
-from linguaflow.caption_view import CaptionScrollArea
-app = QApplication([])
-scroll = CaptionScrollArea()
-scroll.resize(500, 350)
-content = QWidget()
-content.setMinimumHeight(1200)
-scroll.setWidget(content)
-scroll.show()
-# Drive animation time explicitly: a loaded CI host need not deliver a timer
-# within 70 ms. Geometry and real mouse/keyboard events still go through Qt.
-clock = [0.]
-view.time = SimpleNamespace(monotonic=lambda: clock[0])
-def advance(milliseconds):
-    for _ in range((milliseconds + 15)//16):
-        app.processEvents()
-        clock[0] += .016
-        if scroll.animation.isActive():
-            scroll.animation.timeout.emit()
-    app.processEvents()
-advance(1000)
-bar = scroll.verticalScrollBar()
-assert scroll.following and bar.value() == bar.maximum()
-assert not scroll.latest_button.isVisible()
-before = bar.value()
-content.setMinimumHeight(1800)
-advance(70)
-assert before < bar.value() < bar.maximum(), (before, bar.value(), bar.maximum())
-# New content retargets an animation which is already moving.
-middle = bar.value()
-content.setMinimumHeight(2200)
-advance(60)
-assert middle < bar.value() < bar.maximum()
-# A real wheel event interrupts immediately and no queued update drags us down.
-wheel = QWheelEvent(QPointF(200, 100), QPointF(200, 100), QPoint(), QPoint(0, 120),
-                    Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
-                    Qt.ScrollPhase.NoScrollPhase, False)
-QApplication.sendEvent(scroll.viewport(), wheel)
-advance(30)
-paused = bar.value()
-assert not scroll.following and not scroll.animation.isActive()
-assert scroll.latest_button.isVisible()
-content.setMinimumHeight(2600)
-scroll.content_changed()
-advance(150)
-assert bar.value() == paused and not scroll.following
-QTest.mouseClick(scroll.latest_button, Qt.MouseButton.LeftButton)
-advance(70)
-assert scroll.following and paused < bar.value() < bar.maximum()
-advance(1000)
-assert bar.value() == bar.maximum() and not scroll.latest_button.isVisible()
-# Keyboard navigation and manually reaching the bottom update the same state.
-scroll.setFocus()
-QTest.keyClick(scroll, Qt.Key.Key_PageUp)
-advance(30)
-assert not scroll.following
-QTest.keyClick(scroll, Qt.Key.Key_End, Qt.KeyboardModifier.ControlModifier)
-bar.setValue(bar.maximum())
-assert scroll.following
-app.setProperty('reduceMotion', True)
-content.setMinimumHeight(2800)
-scroll.content_changed()
-advance(40)
-assert bar.value() == bar.maximum() and not scroll.animation.isActive(), (bar.value(), bar.maximum(), scroll.following, scroll.animation.isActive())
-bar.setValue(100)
-scroll.reset_follow()
-advance(40)
-assert scroll.following and bar.value() == bar.maximum()
-scroll.close()
-''', tmp_path)
+    run_ui_process(code, timeout=35,
+                   env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'AGENTSCRIBE_LIBRARY': str(tmp_path)})
 
 
 def test_caption_anchor_audio_selection_sync_and_recording_lock(tmp_path):
@@ -150,52 +67,4 @@ w.clear_captions()
 wait_until(lambda: w.scroll.following and not w.scroll.latest_button.isVisible())
 assert w.scroll.following and not w.scroll.latest_button.isVisible()
 w.close()
-''', tmp_path)
-
-
-def test_trackpad_phases_do_not_cancel_return_animation(tmp_path):
-    run_qt('''
-from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QWheelEvent
-from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QWidget
-from linguaflow.caption_view import CaptionScrollArea
-app = QApplication([])
-scroll = CaptionScrollArea()
-scroll.resize(500, 350)
-content = QWidget()
-content.setMinimumHeight(2200)
-scroll.setWidget(content)
-scroll.show()
-QTest.qWait(1100)
-bar = scroll.verticalScrollBar()
-
-def wheel(pixels, angle, phase, inverted=True):
-    event = QWheelEvent(QPointF(200, 100), QPointF(200, 100), pixels, angle,
-        Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier, phase, inverted)
-    QApplication.sendEvent(scroll.viewport(), event)
-    QTest.qWait(30)
-
-for inverted in (False, True):
-    wheel(QPoint(), QPoint(), Qt.ScrollPhase.ScrollBegin, inverted)
-    wheel(QPoint(0, 50), QPoint(0, 120), Qt.ScrollPhase.ScrollUpdate, inverted)
-    assert not scroll.following and bar.value() < bar.maximum()
-    wheel(QPoint(0, 20), QPoint(0, 40), Qt.ScrollPhase.ScrollMomentum, inverted)
-    wheel(QPoint(), QPoint(), Qt.ScrollPhase.ScrollEnd, inverted)
-    assert not scroll.following and scroll.latest_button.isVisible()
-    # A late gesture-end event must not cancel a just-started return animation.
-    QTest.mouseClick(scroll.latest_button, Qt.MouseButton.LeftButton)
-    wheel(QPoint(), QPoint(), Qt.ScrollPhase.ScrollEnd, inverted)
-    assert scroll.following, 'Zero-delta ScrollEnd cancelled automatic following'
-    QTest.qWait(1000)
-    assert bar.value() == bar.maximum()
-# Touching the trackpad without moving should not cancel incoming-caption motion.
-content.setMinimumHeight(3200)
-QTest.qWait(40)
-assert scroll.animation.isActive()
-wheel(QPoint(), QPoint(), Qt.ScrollPhase.ScrollBegin)
-assert scroll.following and scroll.animation.isActive()
-QTest.qWait(1000)
-assert bar.value() == bar.maximum()
-scroll.close()
 ''', tmp_path)

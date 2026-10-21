@@ -1,4 +1,4 @@
-"""Platform operations for a parent-owned local inference process."""
+"""Shared ownership and platform operations for local background processes."""
 import errno
 import os
 import select
@@ -119,6 +119,58 @@ def hold_installation_mutex(*, installed):
 def spawn_options():
     return ({'creationflags': subprocess.CREATE_NO_WINDOW} if sys.platform == 'win32'
             else {'start_new_session': True})
+
+
+def start_worker(python, module, *, env, cwd, **options):
+    """Return (process, job) only after spawn; release ownership on spawn failure.
+
+    Callers serialize start/stop and retain both resources until cleanup succeeds.
+    The bootstrap joins the Windows job before importing the target module.
+    """
+    job = WindowsWorkerJob() if sys.platform == 'win32' else None
+    try:
+        process = subprocess.Popen(
+            [str(python), '-u', '-m', 'linguaflow.process_platform', module],
+            env=job.environment(env) if job is not None else env, cwd=cwd,
+            **spawn_options(), **options)
+    except BaseException:
+        if job is not None:
+            job.close()
+        raise
+    return process, job
+
+
+def stop_worker(process, job, threads, *, timeout=3, kill_timeout=2, force=False):
+    """Reap the owned tree before joining IO; failure leaves resources with caller."""
+    if job is not None:
+        job.close()  # Descendants remain owned even after the launcher exits.
+    if process is None:
+        return
+    if sys.platform != 'win32' and (process.poll() is None or any(t.is_alive() for t in threads)):
+        stop_tree(process, force=True)
+    if process.poll() is None:
+        stop_tree(process, force=force)
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            stop_tree(process, force=True)
+            process.wait(timeout=kill_timeout)
+
+
+def close_process_transport(process, threads, *, timeout, error):
+    """Join IO before closing buffered pipes; an iterator may discover late readers.
+
+    Iterate lazily: startup may register its diagnostics reader while being joined.
+    A timeout never releases ownership or closes a stream still used by a thread.
+    """
+    joined = []
+    for thread in threads:
+        thread.join(timeout=timeout)
+        joined.append(thread)
+    if any(thread.is_alive() for thread in joined):
+        raise RuntimeError(error)
+    if process is not None:
+        close_process_pipes(process)
 
 
 def close_process_pipes(process):

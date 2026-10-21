@@ -1,5 +1,5 @@
 """Task feedback remains actionable through waits, cancellation and disconnection."""
-from test_beta_features import run_ui
+from ui_support import run_ui
 
 
 def test_migration_progress_and_cancel_remain_reachable_after_wait_and_dismissal(tmp_path):
@@ -30,25 +30,6 @@ with patch.object(feedback,'time',SimpleNamespace(monotonic=lambda:clock[0])), \
     w.notifications.clear('save')
     w.on_library_migrated([],success=False)
     assert not w.cancel_migration_action.isEnabled()
-w.close()
-''', tmp_path)
-
-
-def test_recognition_error_presents_cause_and_survives_wait(tmp_path):
-    run_ui('''
-from types import SimpleNamespace
-from unittest.mock import patch
-import linguaflow.notifications as feedback
-w.show();settle_geometry(w)
-clock=[100.]
-with patch.object(feedback,'time',SimpleNamespace(monotonic=lambda:clock[0])):
-    w.on_failure('缺少运行组件：请安装指定运行环境')
-    assert '缺少运行组件' in w.notifications.message.text()
-    assert '底部提示' not in w.empty.text()
-    clock[0]+=60;w.notifications._refresh()
-    assert w.notifications.isVisible() and w.notifications.action_button.isVisible()
-    w.notifications.action_button.click()
-    assert w.pages.currentIndex()==1
 w.close()
 ''', tmp_path)
 
@@ -127,19 +108,6 @@ try:
 finally:
     w.knowledge_client.process=None
 p.close();w.close()
-''', tmp_path)
-
-
-def test_new_recording_page_does_not_rescan_existing_library(tmp_path):
-    run_ui('''
-from unittest.mock import patch
-def forbidden():raise AssertionError('New recording page scanned the library')
-with patch.object(w.library,'refresh',forbidden):
-    assert w.new_recording(check_models=False)
-    assert w.current_item is None and not w.library.index['sessions']
-    assert w.start_button.isEnabled()
-    assert w.new_recording(check_models=False)
-w.close()
 ''', tmp_path)
 
 

@@ -9,6 +9,15 @@ def line(text, start=0, end=1):
     return {"text": text, "start": start, "end": end}
 
 
+def test_span_lookup_preserves_exact_edges_gaps_and_language():
+    mapper = CaptionMapper('en', predictor=lambda text: [2, 4])
+    events = mapper.update(dict(revision_text='甲。乙。丙。', stable_end=6,
+        revision_spans=[(0, 2, 0., 1., 'zh'), (2, 2, 1., 3., 'en'),
+                        (2, 4, 3., 5., 'ja'), (4, 6, 7., 9., 'zh')]), done=True)
+    assert [(c.source, c.start, c.end, c.language) for c in events] == [
+        ('甲。', 0., 1., 'zh'), ('乙。', 1., 5., 'ja'), ('丙。', 5., 9., 'zh')]
+
+
 def test_unchanged_context_and_tail_reuse_segmentation_but_readiness_advances():
     calls, clock = [], [0.]
 

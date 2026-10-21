@@ -4,6 +4,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from threading import Lock, Thread
 from types import SimpleNamespace
 
 import pytest
@@ -14,6 +15,44 @@ from linguaflow.core import Settings
 from linguaflow.llama_translation import LlamaTranslator
 from linguaflow.translation_context import TranslationContext
 from linguaflow.translation_models import HY_MODEL
+
+
+def test_close_retains_inherited_stdout_until_reader_can_exit(tmp_path):
+    from linguaflow.process_platform import spawn_options
+    release = tmp_path / 'release-child'
+    child = (
+        'import time; from pathlib import Path; '
+        f'p=Path({str(release)!r}); deadline=time.monotonic()+10\n'
+        'while not p.exists() and time.monotonic()<deadline: time.sleep(.01)\n'
+    )
+    parent = ('import subprocess,sys; subprocess.Popen([sys.executable,"-c",'
+              + repr(child) + '],stdin=subprocess.DEVNULL,'
+              'creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))')
+    process = subprocess.Popen([sys.executable, '-c', parent], stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, **spawn_options())
+    translator = LlamaTranslator.__new__(LlamaTranslator)
+    translator.process, translator.lock, translator.closed = process, Lock(), False
+    translator.recent, translator.device_id = [], 'none'
+    reader = translator.reader = Thread(target=translator.read_logs, daemon=True)
+    reader.start()
+    try:
+        process.wait(timeout=5)
+        started = time.monotonic()
+        with pytest.raises(RuntimeError, match='读取线程未退出'):
+            translator.close()
+        assert time.monotonic() - started < 4
+        assert translator.process is process and translator.reader is reader
+        assert not process.stdout.closed and reader.is_alive()
+        release.touch()
+        reader.join(5)
+        assert not reader.is_alive()
+        translator.close()
+        translator.close()
+        assert process.stdout.closed and process.stdin.closed and translator.process is None
+    finally:
+        release.touch()
+        reader.join(12)
+        translator.close()
 
 
 def test_metal_factory_does_not_import_torch_or_fall_back(monkeypatch):

@@ -1,6 +1,6 @@
 """Context boundaries, mutable presentation rows and separately committed text."""
 import time
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections import OrderedDict
 from dataclasses import replace
 from difflib import SequenceMatcher
@@ -158,9 +158,10 @@ class CaptionMapper:
             stable_end = max(stable_end, max(closed_ends))
 
         def at(pos):
-            for lo, hi, start, end, _language in spans:
-                if pos <= hi:
-                    return start + max(0, pos - lo) / max(1, hi - lo) * (end - start)
+            index = bisect_left(spans, pos, key=lambda row: row[1])
+            if index < len(spans):
+                lo, hi, start, end, _language = spans[index]
+                return start + max(0, pos - lo) / max(1, hi - lo) * (end - start)
             return spans[-1][3] if spans else 0.
 
         # An actual upstream correction reopens affected rows instead of losing it.
@@ -253,7 +254,8 @@ class CaptionMapper:
                          and now - since >= self.lookahead)
             ready = bool(old and old.ready) or sat_ready or (stable and (
                 reason != '等待后文' or now - since >= self.lookahead))
-            language = next((row[4] for row in spans if row[1] > start), self.language)
+            span_index = bisect_right(spans, start, key=lambda row: row[1])
+            language = spans[span_index][4] if span_index < len(spans) else self.language
             raw = text[start:end]
             visible_start = start + len(raw) - len(raw.lstrip())
             visible_end = end - len(raw) + len(raw.rstrip())

@@ -1,5 +1,5 @@
 """An empty library remains usable without losing recently deleted recordings."""
-from test_beta_features import run_ui
+from ui_support import run_ui
 
 
 def test_new_workspace_recreates_default_folder_after_last_folder_is_deleted(tmp_path):
@@ -34,25 +34,13 @@ assert [item['token'] for item in w.library.deleted()]==[token]
 w.library.restore_deleted(token)
 assert len(w.library.index['folders'])==2
 assert w.library.directory(original['id']).name=='我的录音 (2)'
-w.close()
-''',tmp_path)
-
-
-def test_new_workspace_uses_existing_folder_when_selection_is_stale(tmp_path):
-    run_ui(r'''
 old=w.library.index['folders'][0]
-remaining=w.library.folder('现有课程')
+remaining=next(f for f in w.library.index['folders'] if f['id']!=old['id'])
 w.library.trash(old)
 w.folder_id=old['id']
 assert w.new_recording()
 assert w.folder_id==remaining['id']
 assert len(w.library.index['folders'])==1 and not w.library.index['sessions']
-w.close()
-''',tmp_path)
-
-
-def test_empty_folder_picker_creates_and_selects_default_without_a_recording(tmp_path):
-    run_ui(r'''
 from PySide6.QtCore import QTimer
 from linguaflow.ui_components import ActionMenu
 w.show();settle_geometry(w)
@@ -71,6 +59,8 @@ assert w.library.directory(w.folder_id).name=='我的录音'
 assert len(w.library.index['folders'])==1 and not w.library.index['sessions']
 w.close()
 ''',tmp_path)
+
+
 
 
 def test_default_folder_write_failure_reports_error_without_resetting_view(tmp_path):

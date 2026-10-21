@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from PySide6.QtCore import QEventLoop, QObject, Qt, QTimer, Signal, Slot
 
-from ..process_platform import close_process_pipes, spawn_options, stop_tree
+from ..process_platform import close_process_transport, start_worker, stop_worker
 from ..runtime_paths import knowledge_python, python_environment, resource_root
 
 
@@ -22,6 +22,7 @@ class KnowledgeClient(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.process = None
+        self.worker_job = None
         self.epoch = ''
         self.identifier = ''
         self.pending = deque()
@@ -30,8 +31,6 @@ class KnowledgeClient(QObject):
         self.closing = False
         self.close_job = None
         self.close_error = ''
-        self.retiring_process = None
-        self.retiring_threads = []
         self.disconnected = False
         self._received.connect(self._deliver, Qt.ConnectionType.QueuedConnection)
         self._closed.connect(self._finish_close, Qt.ConnectionType.QueuedConnection)
@@ -61,9 +60,10 @@ class KnowledgeClient(QObject):
         epoch = self.epoch = uuid4().hex
         self.disconnected = False
         self.identifier = item['id']
-        self.process = subprocess.Popen([str(knowledge_python()), '-m', 'linguaflow.knowledge.worker'],
+        self.process, self.worker_job = start_worker(
+            knowledge_python(), 'linguaflow.knowledge.worker',
             cwd=resource_root(), env=python_environment(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, text=True, encoding='utf-8', bufsize=1, **spawn_options())
+            stderr=subprocess.DEVNULL, text=True, encoding='utf-8', bufsize=1)
         process = self.process
         def read():
             try:
@@ -93,8 +93,13 @@ class KnowledgeClient(QObject):
                 self._received.emit(epoch, {'type': 'disconnected',
                     'message': '课程后台连接已中断，请重新连接；未保存的术语仍保留。', 'busy': False})
         self.threads = [Thread(target=read, daemon=True), Thread(target=write, daemon=True)]
-        for thread in self.threads:
-            thread.start()
+        try:
+            for thread in self.threads:
+                thread.start()
+        except RuntimeError:
+            self.threads = [thread for thread in self.threads if thread.ident is not None]
+            self.close()
+            raise
         self.send('open', root=str(library.root), identifier=item['id'], folder_id=item['folder'], epoch=epoch,
                   live=None if captions is None else [asdict(caption) for caption in captions])
 
@@ -128,36 +133,26 @@ class KnowledgeClient(QObject):
             return False
         process = self.process
         threads = self.threads
+        job = self.worker_job
         with self.condition:
             self.epoch = self.identifier = ''
             self.pending.clear()
             self.condition.notify_all()
-        if process is None and not threads:
+        if process is None and not threads and job is None:
             return True
-        self.process, self.threads = None, []
-        self.retiring_process, self.retiring_threads = process, threads
+        # Keep one resource owner throughout cleanup, including failures/retries.
+        self.disconnected = True
         self.closing, self.close_error = True, ''
         self.closing_changed.emit(True)
         def reap():
             error = ''
             try:
-                if process is not None and process.poll() is None:
-                    process.terminate()
-                    try:
-                        process.wait(timeout=2)
-                    except subprocess.TimeoutExpired:
-                        stop_tree(process, force=True)
-                        process.wait(timeout=5)
-                for thread in threads:
-                    thread.join(timeout=1)
+                stop_worker(process, job, threads, timeout=2, kill_timeout=5, force=True)
+                close_process_transport(process, threads, timeout=1,
+                    error='课程通信线程未退出，已保留资源，请稍后重试关闭。')
             except Exception as exc:
                 error = f'课程后台清理失败：{exc}'
             finally:
-                try:
-                    if process is not None:
-                        close_process_pipes(process)
-                except Exception as exc:
-                    error = error or f'课程后台管道清理失败：{exc}'
                 self._closed.emit(error)
         self.close_job = Thread(target=reap, daemon=True)
         loop, timer = QEventLoop(), QTimer()
@@ -169,8 +164,6 @@ class KnowledgeClient(QObject):
             try:
                 self.close_job.start()
             except RuntimeError as exc:
-                self.process, self.threads = process, threads
-                self.retiring_process, self.retiring_threads = None, []
                 self.close_job, self.closing = None, False
                 self.close_error = f'无法启动课程清理任务：{exc}'
                 self.closing_changed.emit(False)
@@ -186,9 +179,9 @@ class KnowledgeClient(QObject):
         self.close_job.join()
         self.close_job = None
         self.closing, self.close_error = False, error
-        if error and self.retiring_process is not None and self.retiring_process.poll() is None:
-            self.process, self.threads = self.retiring_process, self.retiring_threads
-        self.retiring_process, self.retiring_threads = None, []
+        if not error:
+            self.process, self.threads = None, []
+            self.worker_job = None
         self.closing_changed.emit(False)
         if error:
             self.changed.emit({'type': 'error', 'message': error, 'busy': False})
