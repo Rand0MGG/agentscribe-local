@@ -128,7 +128,7 @@ if os.environ.get('AGENTSCRIBE_SCREENSHOTS'):
     w.grab().save(str(output/'empty-recording.png'))
 w.session=QObject(w)
 w.set_recording_state(RecordingState.LISTENING);w.on_ready()
-assert '处理已录音频' in w.empty.text()
+assert w.empty.text() == '正在聆听…'
 if os.environ.get('AGENTSCRIBE_SCREENSHOTS'):
     settle_geometry(w,w.control_island)
     w.grab().save(str(output/'listening.png'))

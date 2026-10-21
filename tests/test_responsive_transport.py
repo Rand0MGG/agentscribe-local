@@ -72,23 +72,45 @@ w.start()
 assert w.session is not None
 assert w.recording_state is module.RecordingState.STARTING
 assert '连接音频来源' in w.empty.text()
+assert 'session' not in w.notifications.notices
 w.on_source_changed(0)
 assert w.recording_state is module.RecordingState.LISTENING
-assert '已开始录音，正在加载识别模型' in w.empty.text()
+assert w.empty.text() == '录音已开始'
+assert w.state_caption.text() == '录音中'
+assert w.notifications.notices['model-loading'].text == '正在加载模型'
+assert not w.volume_caption.isHidden() and not w.meter.isHidden()
+w.on_level(.25)
+assert w.meter.value() > 0
+assert w.overlay.source.text() == '录音已开始'
 assert w.pause_button.isEnabled() and w.capture_time.text()=='00:00:02'
-assert '已开始录音' in w.notifications.notices['session'].text
+for name in ('识别', '翻译'):
+    w.on_stage(name, '加载中')
+w.on_status('model loading detail')
+assert not any(key == 'session' or key.startswith('pipeline-') for key in w.notifications.notices)
+# Readiness ends the quiet hint, without a new toast or a waiting-for-results message.
+w.session.model_ready.set();w.on_ready()
+assert w.empty.text() == w.overlay.source.text() == '正在聆听…'
+assert 'model-loading' not in w.notifications.notices and 'session' not in w.notifications.notices
+# A missing input warning must survive model readiness.
+w.on_stage('音频','输入持续为零')
+w.on_ready()
+assert '没有收到声音' in w.empty.text()
+w.on_stage('音频','已收到声音')
+assert w.empty.text() == '正在聆听…'
+w.session.model_ready.clear()
 w.toggle_pause();w.on_paused(True)
 w.toggle_pause();w.on_paused(False)
-assert '正在加载识别模型' in w.empty.text()
+assert w.empty.text() == '录音已开始' and 'model-loading' in w.notifications.notices
 w.toggle_pause();w.on_paused(True)
 w.session.model_ready.set();w.on_ready()
 assert w.recording_state is module.RecordingState.PAUSED
 assert w.empty.text()=='已暂停收音'
 w.toggle_pause();w.on_paused(False)
 w.on_stage('识别','正在追赶识别 · 延后 12.0s')
-assert '追赶识别' in w.state_caption.text()
+assert w.state_caption.text() == '录音中'
 w.on_stage('识别','实时识别 · 待确认 1.0s')
-assert '实时识别' in w.state_caption.text()
+assert w.state_caption.text() == '录音中'
+assert 'model-loading' not in w.notifications.notices
 w.stop();wait(lambda:w.session is None)
 # Conversely, a warm model may be ready before the first captured block.
 w.start()
@@ -97,7 +119,11 @@ assert w.recording_state is module.RecordingState.STARTING
 assert '连接音频来源' in w.empty.text() and '已开始录音' not in w.empty.text()
 w.on_source_changed(0)
 assert w.recording_state is module.RecordingState.LISTENING
-assert '处理已录音频' in w.empty.text()
+assert w.empty.text() == '正在聆听…'
+w.on_stage('翻译','失败 · 原文保留')
+assert w.notifications.notices['pipeline-翻译'].kind == 'error'
+w.on_failure('模型加载失败')
+assert 'model-loading' not in w.notifications.notices and w.notifications.notices['session'].kind == 'error'
 w.stop();wait(lambda:w.session is None)
 w.close()
 ''',tmp_path)

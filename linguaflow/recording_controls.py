@@ -61,7 +61,7 @@ class RecordingControls(FloatingIsland):
         live_row.setHorizontalSpacing(8)
         live_row.setVerticalSpacing(0)
         self.state_caption = label('', 'recordingState')
-        self.state_caption.setStyleSheet('QLabel { font-size: 11px; font-weight: 600; }')
+        self.state_caption.setStyleSheet('QLabel { font-size: 11px; font-weight: 400; }')
         self.state_caption.setWordWrap(False)
         self.capture_time = label('00:00:00', 'timestamp')
         self.capture_time.setStyleSheet('QLabel { font-size: 11px; }')

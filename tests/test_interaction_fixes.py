@@ -93,12 +93,17 @@ class State(Enum):
     StoppedState = 0
     PlayingState = 1
 class Output(QObject):
+    fail_init = True
+    def __init__(self, parent):
+        if self.fail_init:
+            raise RuntimeError('fixture output initialization failure')
+        super().__init__(parent)
     def setVolume(self, value):
         assert 0 <= value <= 1
         self.volume = value
 class Player(QObject):
-    durationChanged = Signal(int)
-    positionChanged = Signal(int)
+    durationChanged = Signal('qlonglong')
+    positionChanged = Signal('qlonglong')
     playbackStateChanged = Signal(object)
     errorOccurred = Signal(object, str)
     PlaybackState = State
@@ -121,8 +126,30 @@ with wave.open(str(path), 'wb') as writer:
     writer.writeframes(b'\xe8\x03'*16000)
 original = path.read_bytes()
 w.prepare_playback()
+assert w.player is None and w.audio_output is None
+assert not w.playback.property('available') and w.playback_stream is None
+assert 'fixture output initialization failure' in w.notifications.notices['operation'].details
+Output.fail_init = False
+w.prepare_playback()
 stream = w.playback_stream
 assert w.player.device is stream and stream.supports_gain
+w.player.durationChanged.emit(19700)
+w.player.positionChanged.emit(5000)
+assert w.seek.maximum() == 19700 and w.seek.value() == 5000
+assert w.play_time.text() == '00:05 / 00:19'
+w.toggle_playback()
+assert w.player.playbackState() == State.PlayingState
+w.toggle_playback()
+assert w.player.playbackState() == State.StoppedState
+# Opening again reuses the fully wired player and resets the old timeline.
+player = w.player
+w.prepare_playback()
+assert w.player is player and not stream.isOpen()
+assert w.seek.maximum() == 0 and w.play_time.text() == '00:00 / 00:00'
+stream = w.playback_stream
+w.player.durationChanged.emit(9200)
+w.player.positionChanged.emit(3000)
+assert w.play_time.text() == '00:03 / 00:09'
 w.playback_volume.slider.setValue(250)
 assert stream.gain == 2.5 and w.audio_output.volume == 1
 assert stream.seek(stream.data_start) and bytes(stream.read(2)) == b'\xc4\x09'

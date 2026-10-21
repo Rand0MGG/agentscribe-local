@@ -6,8 +6,8 @@ from .playback import PlaybackIndex
 
 class PlaybackController(QObject):
     available_changed = Signal(bool)
-    duration_changed = Signal(int)
-    position_changed = Signal(int)
+    duration_changed = Signal('qlonglong')
+    position_changed = Signal('qlonglong')
     state_changed = Signal(str)
     failed = Signal(str)
     notice = Signal(str)
@@ -35,10 +35,7 @@ class PlaybackController(QObject):
         self.position_changed.emit(0)
 
     def load(self, path, captions, *, recover_recording=False):
-        if self.player:
-            self.player.stop()
-            self.player.setSource(QUrl())
-        self.close_stream()
+        self.release()
         self.index = PlaybackIndex(captions)
         available = bool(path and path.exists() and path.stat().st_size > 44)
         self.available_changed.emit(available)
@@ -48,25 +45,37 @@ class PlaybackController(QObject):
         from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 
         from .playback_stream import PlaybackStream
-        if self.player is None:
-            self.player = QMediaPlayer(self)
-            self.audio_output = QAudioOutput(self)
-            self.player.setAudioOutput(self.audio_output)
-            self.player.durationChanged.connect(self.duration_changed)
-            self.player.positionChanged.connect(self.position_changed)
-            self.player.playbackStateChanged.connect(lambda state: self.state_changed.emit(state.name))
-            self.player.errorOccurred.connect(lambda *_: self.failed.emit(self.player.errorString()))
         try:
+            if self.player is None:
+                self._create_player(QMediaPlayer, QAudioOutput)
             self.stream = PlaybackStream(path, self.player, recover_recording=recover_recording)
-        except (OSError, ValueError) as exc:
+            self.player.setSourceDevice(self.stream, QUrl.fromLocalFile(str(path)))
+        except (OSError, ValueError, RuntimeError) as exc:
             self.release()
-            self.failed.emit(str(exc))
+            self.failed.emit(f'无法加载录音，请重新打开后重试：{exc}')
             return
         if self.stream.recovered:
             self.notice.emit('已恢复可读取的完整音频采样；原文件未修改，未落盘的尾部无法恢复。')
         if not self.stream.supports_gain:
             self.notice.emit('该录音格式可正常回放，但暂不支持超过 100% 的放大。')
-        self.player.setSourceDevice(self.stream, QUrl.fromLocalFile(str(path)))
+
+    def _create_player(self, player_type, output_type):
+        player = output = None
+        try:
+            player = player_type(self)
+            output = output_type(self)
+            player.setAudioOutput(output)
+            player.durationChanged.connect(self.duration_changed)
+            player.positionChanged.connect(self.position_changed)
+            player.playbackStateChanged.connect(lambda state: self.state_changed.emit(state.name))
+            player.errorOccurred.connect(lambda *_: self.failed.emit(player.errorString()))
+        except Exception:
+            if player is not None:
+                player.deleteLater()
+            if output is not None:
+                output.deleteLater()
+            raise
+        self.player, self.audio_output = player, output
 
     def set_volume(self, value):
         if self.audio_output is not None:

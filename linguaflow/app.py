@@ -2051,9 +2051,8 @@ class Window(QMainWindow):
             if self.session.model_ready.is_set():
                 self.on_ready()
             else:
-                self.state_caption.setText('录音中 · 加载模型')
                 self.on_status('已开始录音，正在加载识别模型。')
-                self.empty.setText('已开始录音，正在加载识别模型。\n音频已保存，模型就绪后处理积压。')
+                self.empty.setText(self.capture_wait_text())
         if revision == self.pending_source_revision:
             self.pending_source_revision = None
             self.update_volume_caption()
@@ -2325,7 +2324,7 @@ class Window(QMainWindow):
         self.on_stage("会话", "启动中")
         self.diagnostics.clear()
         self.on_status("正在启动录音，同时加载识别模型。")
-        self.empty.setText("正在连接音频来源…\n识别模型同时加载。")
+        self.empty.setText("正在连接音频来源…")
         if self.beta_features.isChecked() and settings.backend in ('qwen3-streaming', 'qwen3-mlx'):
             try:
                 context = session_context(self.library, self.current_item['id'])
@@ -2376,7 +2375,8 @@ class Window(QMainWindow):
             diag.event('recording_state', state=state.name,
                        recording_id=self.current_item['id'] if self.current_item else None)
         self.recording_state = state
-        self.state_caption.setText(state.value)
+        self.state_caption.setText('录音中' if state is RecordingState.LISTENING else state.value)
+        self.update_capture_feedback()
         if state is RecordingState.STARTING:
             self.capture_time.setText('00:00:00')
         if state is not RecordingState.LISTENING:
@@ -2431,11 +2431,6 @@ class Window(QMainWindow):
 
     def on_stage(self, name, state):
         self.pipeline_state[name] = state
-        if name == '识别' and self.recording_state is RecordingState.LISTENING:
-            if state.startswith('正在追赶'):
-                self.state_caption.setText('录音中 · 追赶识别')
-            elif state.startswith('实时识别'):
-                self.state_caption.setText('录音中 · 实时识别')
         self.pipeline.setText(
             "   /   ".join(f"{name}：{value}" for name, value in self.pipeline_state.items())
         )
@@ -2443,10 +2438,7 @@ class Window(QMainWindow):
         if self.last_error:
             self.notifications.clear('pipeline-' + name)
             return
-        if any(word in state for word in ('加载中', '准备中')):
-            self.notifications.post('pipeline-' + name, name + '模型正在加载' if name != '音频' else '正在连接音频来源',
-                                    kind='progress')
-        elif any(word in state for word in ('失败', '错误')):
+        if any(word in state for word in ('失败', '错误')):
             self.notifications.post('pipeline-' + name, name + '未就绪，请检查设置后重试。', kind='error', details=state)
         else:
             self.notifications.clear('pipeline-' + name)
@@ -2457,9 +2449,27 @@ class Window(QMainWindow):
                 self.empty.setText(self.capture_wait_text())
 
     def capture_wait_text(self):
+        state = self.recording_state
+        if state is RecordingState.IDLE:
+            return '等待语音…'
+        if state is RecordingState.STARTING:
+            return '正在连接音频来源…'
+        if state is not RecordingState.LISTENING:
+            return state.value
         ready = getattr(self.session, 'model_ready', None)
-        return ('已开始录音，正在加载识别模型。\n音频已保存，模型就绪后处理积压。'
+        return ('录音已开始'
                 if ready is not None and not ready.is_set() else '正在聆听…')
+
+    def update_capture_feedback(self):
+        ready = getattr(self.session, 'model_ready', None)
+        loading = (self.recording_state.active
+            and self.recording_state is not RecordingState.STOPPING
+            and not self.last_error and ready is not None and not ready.is_set())
+        if loading:
+            self.notifications.post('model-loading', '正在加载模型', kind='progress')
+        else:
+            self.notifications.clear('model-loading')
+        self.sync_overlay(animate=False)
 
     def on_status(self, message):
         self.diagnostics.appendPlainText(time.strftime("%H:%M:%S") + "  " + message)
@@ -2472,13 +2482,8 @@ class Window(QMainWindow):
         self.phase_started = time.monotonic()
         if not self.save_error:
             self.status.setToolTip(message)
-        if self.recording_state is RecordingState.STARTING:
-            self.notifications.post('session', '正在连接音频来源，识别模型同时加载', kind='progress')
-        elif (self.recording_state is RecordingState.LISTENING and self.session is not None
-              and getattr(self.session, 'model_ready', None) is not None
-              and not self.session.model_ready.is_set()):
-            self.notifications.post('session', '已开始录音，正在加载识别模型', kind='progress')
-        elif self.recording_state is RecordingState.STOPPING:
+        self.update_capture_feedback()
+        if self.recording_state is RecordingState.STOPPING:
             self.notifications.post('session', '正在收尾并保存录音', kind='progress')
         elif self.recording_state in (RecordingState.PAUSING, RecordingState.RESUMING):
             self.notifications.post('session', '正在暂停收音' if self.recording_state is RecordingState.PAUSING else
@@ -2519,15 +2524,11 @@ class Window(QMainWindow):
         if self.recording_state not in (RecordingState.STARTING, RecordingState.LISTENING,
                                        RecordingState.PAUSED, RecordingState.PAUSING, RecordingState.RESUMING):
             return
-        if self.recording_state is RecordingState.STARTING:
-            self.notifications.post('session', '识别模型已就绪，正在连接音频来源。', kind='progress')
-            self.empty.setText('识别模型已就绪，正在连接音频来源…')
-            return
-        self.notifications.post('session', '识别模型已就绪，正在处理已录音频。', kind='success')
-        self.state_caption.setText(self.recording_state.value)
-        self.on_status('识别模型已就绪，正在追赶已录音频；录音按当前状态继续。')
+        self.update_capture_feedback()
+        self.on_status('识别模型已就绪，录音按当前状态继续。')
         if self.recording_state in (RecordingState.STARTING, RecordingState.LISTENING):
-            self.empty.setText('识别模型已就绪，正在处理已录音频…')
+            if not self.pipeline_state.get('音频', '').startswith('输入持续为零'):
+                self.empty.setText(self.capture_wait_text())
 
     def clear_captions(self):
         self.caption_feed.clear()
@@ -2573,6 +2574,7 @@ class Window(QMainWindow):
 
     def on_failure(self, message):
         self.last_error = message
+        self.notifications.clear('model-loading')
         for key in list(self.notifications.notices):
             if key.startswith('pipeline-'):
                 self.notifications.clear(key)
@@ -2772,7 +2774,7 @@ class Window(QMainWindow):
             self.overlay.update_caption(caption, self.caption_translation if self.recording_state.active
                                         else self.translate.isChecked(), animate=animate)
         else:
-            self.overlay.source.setText('正在聆听，等待识别结果…' if self.recording_state.active else '等待语音…')
+            self.overlay.source.setText(self.capture_wait_text())
             self.overlay.target.setText('')
             self.overlay.target.hide()
 

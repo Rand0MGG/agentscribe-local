@@ -7,11 +7,12 @@ import time
 from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
+from threading import Event
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from PySide6.QtCore import QSettings, Qt, QTimer
+from PySide6.QtCore import QObject, QSettings, Qt, QTimer
 from PySide6.QtWidgets import QApplication, QDialog, QPushButton, QVBoxLayout
 
 from linguaflow.app import Window
@@ -23,6 +24,26 @@ from linguaflow.recording_state import RecordingState
 from scripts.preview_components import button
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class SimulatedRecording(QObject):
+    """Presentation-only session; no devices, models or background work."""
+    def __init__(self, window):
+        super().__init__(window)
+        self.window = window
+        self.model_ready = Event()
+        self.recorded_seconds = 3
+
+    def pause(self):
+        QTimer.singleShot(0, lambda: self.window.on_paused(True))
+        return True
+
+    def resume(self):
+        QTimer.singleShot(0, lambda: self.window.on_paused(False))
+        return True
+
+    def stop(self):
+        self.window.on_finished()
 
 
 class SimulatedPreparation:
@@ -97,6 +118,9 @@ def preview_window(root):
             yield w, scenario
         finally:
             from scripts.probe_package import close_window
+            if w.session is not None:
+                w.session.deleteLater()
+                w.session = None
             w.set_recording_state(RecordingState.IDLE)
             w.current_item = None
             w.session_dirty = False
@@ -112,16 +136,28 @@ def controls(w, scenario):
                            ('运行环境：点击检查 / 修复看进度', '运行环境'),
                            ('常规：主题、开关和窄布局', '常规')]:
         layout.addWidget(button(name, lambda checked=False, category=category: w.open_settings(category)))
-    def state(recording=False, playback=False):
+    def state(recording=False, playback=False, loading=False):
         w.leave_settings()
+        if w.session is not None:
+            w.session.deleteLater()
+            w.session = None
+        if recording:
+            w.clear_captions()
+            w.session = SimulatedRecording(w)
+            if not loading:
+                w.session.model_ready.set()
         w.set_recording_state(RecordingState.LISTENING if recording else RecordingState.IDLE)
+        if recording:
+            w.empty.setText(w.capture_wait_text())
+            w.update_activity()
         w.playback.setProperty('available', playback)
         w.scroll.set_playback(playback)
         if playback:
             w.playback_duration(60000)
             w.playback_position(15000)
         w.update_transport()
-    layout.addWidget(button('小岛 → 示例录音', lambda: state(recording=True)))
+    layout.addWidget(button('小岛 → 录音中，模型加载', lambda: state(recording=True, loading=True)))
+    layout.addWidget(button('小岛 → 正在聆听，尚无首句', lambda: state(recording=True)))
     layout.addWidget(button('小岛 → 回放进度条', lambda: state(playback=True)))
     layout.addWidget(button('回到待录音小岛', lambda: state()))
     layout.addWidget(button('浅色 / 深色', lambda: w.appearance.setCurrentIndex(1-w.appearance.currentIndex())))
