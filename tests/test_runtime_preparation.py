@@ -646,20 +646,34 @@ def test_cleanup_does_not_initialize_unused_cuda(monkeypatch):
 def test_platform_spawn_keeps_utf8_and_hides_windows_console(monkeypatch,windows):
     import linguaflow.process_platform as platform
     flags=[]
+    jobs=[]
+    class Job:
+        def __init__(self):
+            jobs.append('created')
+        def environment(self, env):
+            return {**env, 'test_job': 'owned'}
+        def close(self):
+            jobs.append('closed')
     def spawn(command,**kwargs):
         flags.append(kwargs)
         return SimpleNamespace(stdout=io.StringIO('{"type":"runtime_ready"}\n'),stderr=io.StringIO(),
                                stdin=io.StringIO(),poll=lambda:0)
     monkeypatch.setattr(platform.sys,'platform','win32' if windows else 'darwin')
+    monkeypatch.setattr(platform,'WindowsWorkerJob',Job)
     monkeypatch.setattr(preparation.subprocess,'CREATE_NO_WINDOW',123,raising=False)
     monkeypatch.setattr(preparation.subprocess,'Popen',spawn)
     worker=preparation.PreparedWorker(Path(sys.executable))
-    assert worker.ready.wait(2) and worker.error is None
-    worker.close()
+    try:
+        assert worker.ready.wait(2) and worker.error is None
+    finally:
+        worker.close()
     if windows:
+        assert jobs==['created','closed']
+        assert flags[0]['env']['test_job']=='owned'
         assert flags[0]['creationflags']==123
         assert 'start_new_session' not in flags[0]
     else:
+        assert not jobs and 'test_job' not in flags[0]['env']
         assert flags[0]['start_new_session'] is True
         assert 'creationflags' not in flags[0]
     assert flags[0]['encoding']=='utf-8'
