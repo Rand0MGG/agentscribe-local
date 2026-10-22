@@ -29,6 +29,7 @@ def run():
     return manifest, events
 
 
+@pytest.mark.p2
 def test_chat_keeps_spoken_repetitions_repairs_fillers_and_not_grammar(tmp_path):
     path = tmp_path/'sample.cha'
     path.write_text('@Media:\tsample, video\n@Comment:\tBatchalign, ASR Engine rev\n'
@@ -42,6 +43,7 @@ def test_chat_keeps_spoken_repetitions_repairs_fillers_and_not_grammar(tmp_path)
     assert row['review']['status'] == 'pending'
 
 
+@pytest.mark.p2
 def test_chat_does_not_replace_spoken_word_with_editorial_correction():
     text, issues = chat_text('pezzle [: pretzel] &+s &-uh &=laughs xxx .')
     assert text == 'pezzle uh xxx'
@@ -50,12 +52,14 @@ def test_chat_does_not_replace_spoken_word_with_editorial_correction():
     assert any('pretzel' in issue for issue in issues)
 
 
+@pytest.mark.p2
 def test_normalization_is_symmetric_and_preserves_contractions_and_repetition():
     assert words("I, I don’t know twenty_one.") == ['i', 'i', "don't", 'know', 'twenty', 'one']
     assert words('2') != words('two')  # No semantic guesses or reference-driven rewriting.
     assert words('um umbrella', exclude_fillers=True) == ['umbrella']
 
 
+@pytest.mark.p2
 @pytest.mark.parametrize('expected,actual,s,d,i', [
     ('a b c', 'a x c', 1, 0, 0), ('a b c', 'a c', 0, 1, 0),
     ('a b', 'a b c', 0, 0, 1), ('we we go', 'we go', 0, 1, 0),
@@ -71,6 +75,7 @@ def test_exact_edit_counts_and_traceback(expected, actual, s, d, i):
     assert counts['ratio'] == ((s+d+i)/len(ref) if ref else None)
 
 
+@pytest.mark.p2
 def test_final_state_revisions_tombstones_and_real_repetition():
     events = [caption('wrong draft', final=False), caption('we we agree', revision=2),
               caption('duplicate draft', ident=2, final=False), caption('', ident=2, revision=2)]
@@ -80,11 +85,13 @@ def test_final_state_revisions_tombstones_and_real_repetition():
     assert metrics['retractions'] == 1 and metrics['non_append_revisions'] == 1
 
 
+@pytest.mark.p2
 def test_same_text_in_distinct_captions_is_not_deduplicated():
     rows, _, _ = final_captions([caption('yes'), caption('yes', ident=2)])
     assert len(rows) == 2
 
 
+@pytest.mark.p2
 def test_unreviewed_reference_never_gets_wer_even_if_identical():
     ref = reference()
     ref['review']['full_audio_listened'] = False
@@ -95,6 +102,7 @@ def test_unreviewed_reference_never_gets_wer_even_if_identical():
     assert result['status'] == 'unverified_reference_comparison_only'
 
 
+@pytest.mark.p2
 def test_review_attestation_allows_wer_but_text_or_time_edits_revoke_it():
     manifest, events = run()
     assert score(reference(), manifest, events)[0]['wer'] == 0
@@ -104,12 +112,14 @@ def test_review_attestation_allows_wer_but_text_or_time_edits_revoke_it():
         assert score(ref, manifest, events)[0]['wer'] is None
 
 
+@pytest.mark.p2
 def test_unintelligible_reference_cannot_be_certified():
     ref = reference()
     ref['utterances'][0]['text'] = ref['utterances'][0]['review']['reviewed_text'] = 'xxx'
     assert any('unresolved_speech' in issue for issue in review_problems(ref))
 
 
+@pytest.mark.p2
 def test_missing_timestamp_keeps_all_words_but_prevents_certified_score():
     ref = reference()
     ref['utterances'][0]['start_ms'] = None
@@ -120,6 +130,7 @@ def test_missing_timestamp_keeps_all_words_but_prevents_certified_score():
     assert not result['invalid_reasons']  # A reference defect is not a runtime failure.
 
 
+@pytest.mark.p2
 @pytest.mark.parametrize('defect', ['partial_audio', 'incomplete', 'missing_end', 'hash', 'speed', 'leak', 'draft', 'revision'])
 def test_invalid_run_is_not_scored(defect):
     manifest, events = run()
@@ -144,12 +155,14 @@ def test_invalid_run_is_not_scored(defect):
     assert result['wer'] is None and result['comparison'] is None and ops == []
 
 
+@pytest.mark.p2
 def test_empty_hypothesis_is_full_deletion_not_a_crash():
     manifest, events = run()
     result, _ = score(reference(), manifest, events[1:])
     assert result['wer'] == 1 and result['comparison']['delete'] == 3
 
 
+@pytest.mark.p2
 @pytest.mark.parametrize('defect', ['unfinished', 'events_tampered', 'settings_tampered'])
 def test_cli_rejects_incomplete_or_changed_run_files(tmp_path, defect):
     from linguaflow.evaluation import file_hash
@@ -174,6 +187,7 @@ def test_cli_rejects_incomplete_or_changed_run_files(tmp_path, defect):
     assert not (tmp_path/'score'/'score.json').exists()
 
 
+@pytest.mark.p2
 def test_empty_review_requires_explicit_non_speech_attestation():
     ref = reference()
     row = ref['utterances'][0]

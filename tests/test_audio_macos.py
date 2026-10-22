@@ -79,6 +79,7 @@ def fixture_native(monkeypatch, *, chunks=(), content_error=None, start_error=No
     return stop, stream, removed, config, output, calls
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('rate, frames', [(16000, 1600), (48000, 4800)])
 def test_native_audio_aggregates_irregular_chunks_and_closes(monkeypatch, rate, frames):
     stop, stream, removed, config, output, _ = fixture_native(
@@ -102,6 +103,7 @@ def test_native_audio_aggregates_irregular_chunks_and_closes(monkeypatch, rate, 
     assert len(blocks) == 2
 
 
+@pytest.mark.p0
 def test_cancelled_start_stops_a_late_native_stream(monkeypatch):
     stop, stream, removed, _, output, _ = fixture_native(monkeypatch, cancel_start=True)
     blocks = []
@@ -112,6 +114,7 @@ def test_cancelled_start_stops_a_late_native_stream(monkeypatch):
     assert stream.stops == 1 and removed == [0, 1] and not blocks
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('paused', [False, True])
 def test_system_audio_source_switch_uses_shared_session_and_saves_pcm(monkeypatch, tmp_path, paused):
     import wave
@@ -164,6 +167,7 @@ def test_system_audio_source_switch_uses_shared_session_and_saves_pcm(monkeypatc
     assert np.all(pcm[1600:] == int(.5 * 32767))
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('failure', ['permission', 'start', 'output', 'callback', 'overflow', 'stop'])
 def test_failures_are_reported_and_owned_outputs_are_released(monkeypatch, failure):
     chunks = [RuntimeError('callback failed')] if failure == 'callback' else [np.ones(4800)]
@@ -181,6 +185,7 @@ def test_failures_are_reported_and_owned_outputs_are_released(monkeypatch, failu
     assert stream.stops == (0 if failure in ('permission', 'output') else 1)
 
 
+@pytest.mark.p0
 def test_cancelled_capture_does_not_load_native_bridge(monkeypatch):
     monkeypatch.setattr(mac, '_native', lambda: pytest.fail('native bridge must remain unloaded'))
     stop = Event()
@@ -188,6 +193,7 @@ def test_cancelled_capture_does_not_load_native_bridge(monkeypatch):
     mac.capture_system_audio(Settings('macos:system-audio'), stop, lambda block: pytest.fail('late PCM'))
 
 
+@pytest.mark.p0
 def test_cancelled_permission_discovery_does_not_create_a_stream(monkeypatch):
     stop, stream, removed, _, _, _ = fixture_native(monkeypatch)
     native = mac._native()
@@ -197,6 +203,7 @@ def test_cancelled_permission_discovery_does_not_create_a_stream(monkeypatch):
     assert stream.started_callback is None and not removed
 
 
+@pytest.mark.p1
 def test_permission_wait_has_a_deadline(monkeypatch):
     ticks = iter([0., 31.])
     monkeypatch.setattr(mac.time, 'monotonic', lambda: next(ticks))
@@ -217,6 +224,7 @@ def decoder_fixture(samples):
         CMBlockBufferCopyDataBytes=lambda buffer, offset, length, dest: (0, data)), description
 
 
+@pytest.mark.p1
 def test_pcm_decode_copies_samples_before_native_buffer_release():
     cm, _ = decoder_fixture(np.array([.25, -.5, 0.]))
     samples = mac._audio_samples(cm, 'sample')
@@ -225,6 +233,7 @@ def test_pcm_decode_copies_samples_before_native_buffer_release():
     assert mac._audio_samples(cm, 'sample') is None
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('index, value', [(0, 44100), (6, 2), (7, 16), (2, 0), (2, 3), (1, 0), (5, 8)])
 def test_unexpected_pcm_format_is_rejected(index, value):
     cm, fmt = decoder_fixture(np.zeros(3))
@@ -233,6 +242,7 @@ def test_unexpected_pcm_format_is_rejected(index, value):
         mac._audio_samples(cm, 'sample')
 
 
+@pytest.mark.p1
 def test_truncated_and_nonfinite_pcm_are_rejected():
     cm, _ = decoder_fixture(np.zeros(3))
     cm.CMBlockBufferGetDataLength = lambda buffer: 8

@@ -8,6 +8,7 @@ import pytest
 from linguaflow import llama_assets, llama_install, model_inventory
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('reference', [
     'hf://owner/repo/../model.gguf', 'hf://owner/repo/a/../../model.gguf',
     'hf://../repo/model.gguf', 'hf://owner/repo/model.bin',
@@ -19,6 +20,7 @@ def test_invalid_hub_file_reference_is_rejected(reference):
         llama_assets.hub_gguf(reference)
 
 
+@pytest.mark.p2
 def test_downloaded_gguf_is_offline_resolvable_listed_and_deletable(monkeypatch, tmp_path):
     monkeypatch.setattr(llama_install, 'hub_progress', nullcontext)
     monkeypatch.setattr(llama_assets, 'model_directory', lambda name: tmp_path / name)
@@ -45,6 +47,7 @@ def test_downloaded_gguf_is_offline_resolvable_listed_and_deletable(monkeypatch,
     assert not resolved.exists() and cached.exists()
 
 
+@pytest.mark.p1
 def test_invalid_gguf_never_publishes_ready_file(monkeypatch, tmp_path):
     monkeypatch.setattr(llama_install, 'hub_progress', nullcontext)
     monkeypatch.setattr(llama_assets, 'model_directory', lambda name: tmp_path / name)
@@ -57,6 +60,7 @@ def test_invalid_gguf_never_publishes_ready_file(monkeypatch, tmp_path):
     assert not llama_assets.weights_path(reference).exists()
 
 
+@pytest.mark.p1
 def test_preparation_repairs_only_confirmed_invalid_cached_header(monkeypatch, tmp_path):
     monkeypatch.setattr(llama_install, 'hub_progress', nullcontext)
     monkeypatch.setattr(llama_assets, 'model_directory', lambda name: tmp_path / name)

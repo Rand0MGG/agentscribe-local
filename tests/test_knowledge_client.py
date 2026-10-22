@@ -6,6 +6,7 @@ import sys
 import pytest
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('launcher_exits', [False, True])
 def test_close_reaps_descendant_holding_transport(tmp_path, launcher_exits):
     child = tmp_path / 'course_worker.py'
@@ -70,6 +71,7 @@ finally:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+@pytest.mark.p1
 def test_failed_cleanup_retains_threads_and_allows_retry():
     code = '''
 from threading import Thread, Event

@@ -1,11 +1,14 @@
 from dataclasses import replace
 
+import pytest
+
 from linguaflow.core import Caption, translation_status
 from linguaflow.qwen_revisions import RevisionStore
 from linguaflow.translation_context import ContextPlanner
 from linguaflow.wlk_captions import CaptionMapper
 
 
+@pytest.mark.p1
 def test_submitted_project_change_requests_new_initial_translation_then_final():
     clock = [0.]
     mapper = CaptionMapper('zh', predictor=lambda text: [], lookahead=1, clock=lambda: clock[0])
@@ -41,6 +44,7 @@ def test_submitted_project_change_requests_new_initial_translation_then_final():
     assert mapper.previous[first_id].final
 
 
+@pytest.mark.p1
 def test_submitted_rows_merge_and_request_updated_initial_translation():
     boundaries = [[6]]
     mapper = CaptionMapper('en', predictor=lambda text: boundaries[0])
@@ -64,6 +68,7 @@ def test_submitted_rows_merge_and_request_updated_initial_translation():
     assert ''.join(c.source.replace(' ', '') for c in mapper.previous.values()) == 'Helloworldagain!'
 
 
+@pytest.mark.p1
 def test_acoustic_end_inside_sentence_is_not_a_text_boundary():
     mapper = CaptionMapper('zh', predictor=lambda text: [])
     mapper.update({'revision_text': '我们今天讨论这个方案的预算是9000',
@@ -72,6 +77,7 @@ def test_acoustic_end_inside_sentence_is_not_a_text_boundary():
     assert all(c.asr_final and not c.boundary_final and not c.final for c in mapper.previous.values())
 
 
+@pytest.mark.p1
 def test_asr_completed_tail_waits_for_sat_context_and_rejoins_continuation():
     mapper = CaptionMapper('en', predictor=lambda text: [])
     first = mapper.update({'lines': [{'text': 'The budget for this plan', 'start': 0, 'end': 2}],
@@ -88,6 +94,7 @@ def test_asr_completed_tail_waits_for_sat_context_and_rejoins_continuation():
     assert len(final) == 1 and final[0].id == first.id and final[0].final
 
 
+@pytest.mark.p1
 def test_merging_rows_does_not_steal_following_caption_id():
     cuts = [[6, 12]]
     mapper = CaptionMapper('en', predictor=lambda text: cuts[0])
@@ -100,6 +107,7 @@ def test_merging_rows_does_not_steal_following_caption_id():
     assert any(c.id == first[1].id and not c.source for c in events)
 
 
+@pytest.mark.p1
 def test_closed_utterance_cannot_close_sat_tail_without_context_or_stop():
     store = RevisionStore('test')
     mapper = CaptionMapper('en', predictor=lambda text: [])
@@ -119,6 +127,7 @@ def test_closed_utterance_cannot_close_sat_tail_without_context_or_stop():
     assert mapper.previous[1].source == 'Last sentence. New draft' and not mapper.previous[1].final
 
 
+@pytest.mark.p1
 def test_timestamp_endpoint_does_not_finalize_later_speech():
     mapper = CaptionMapper('en', predictor=lambda text: [])
     mapper.update({'lines': [
@@ -128,6 +137,7 @@ def test_timestamp_endpoint_does_not_finalize_later_speech():
     assert mapper.previous[1].source == 'Ended. Continuing' and not mapper.previous[1].boundary_final
 
 
+@pytest.mark.p1
 def test_initial_translation_is_marked_stale_and_final_errors_are_not_complete():
     c = Caption(1, 0, 1, 'new', 'en', final=False, ready=True, translation='old translated',
                 translation_source='old', translation_phase='initial')
@@ -137,6 +147,7 @@ def test_initial_translation_is_marked_stale_and_final_errors_are_not_complete()
     assert translation_status(replace(c, final=True, translation_phase='final')) == '译文已定稿'
 
 
+@pytest.mark.p1
 def test_closed_timestamp_groups_tokens_into_one_utterance():
     mapper = CaptionMapper('en', predictor=lambda text: [])
     mapper.update({'lines': [{'text': 'Hello world.', 'tokens': [

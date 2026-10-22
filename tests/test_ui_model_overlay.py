@@ -1,7 +1,9 @@
 """Interaction regressions without audio enumeration, playback or inference."""
+import pytest
 from ui_support import run_ui
 
 
+@pytest.mark.p2
 def test_model_editor_keeps_inspection_readonly_and_download_selection_explicit(tmp_path):
     run_ui(r'''
 from linguaflow.llama_assets import HY_GGUF
@@ -71,6 +73,7 @@ w.close()
 ''', tmp_path)
 
 
+@pytest.mark.p2
 def test_catalog_downloads_models_readonly_and_bundle_selects_only_explicitly(tmp_path):
     run_ui(r'''
 from types import SimpleNamespace

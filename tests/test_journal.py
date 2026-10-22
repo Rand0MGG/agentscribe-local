@@ -4,6 +4,7 @@ import pytest
 from linguaflow.journal import AudioJournal
 
 
+@pytest.mark.p1
 def test_consumed_chunks_release_disk_and_preserve_absolute_pause_positions(monkeypatch):
     import tempfile
 
@@ -40,6 +41,7 @@ def test_consumed_chunks_release_disk_and_preserve_absolute_pause_positions(monk
     assert all(stream.closed for stream in streams)
 
 
+@pytest.mark.p1
 def test_live_draining_reuses_one_empty_file_and_keeps_pause_clock(monkeypatch):
     import tempfile
 
@@ -69,6 +71,7 @@ def test_live_draining_reuses_one_empty_file_and_keeps_pause_clock(monkeypatch):
     assert streams[0].closed
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize("rate", [16000, 48000])
 def test_journal_preserves_quiet_samples_and_backlog(rate):
     journal = AudioJournal(rate)
@@ -84,6 +87,7 @@ def test_journal_preserves_quiet_samples_and_backlog(rate):
         journal.close()
 
 
+@pytest.mark.p1
 def test_pause_markers_stay_between_audio_segments_even_with_backlog():
     journal = AudioJournal()
     try:

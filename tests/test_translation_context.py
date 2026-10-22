@@ -10,6 +10,7 @@ from linguaflow.translation_queue import TranslationQueue
 from linguaflow.translation_service import publish_translation_result, run_translations
 
 
+@pytest.mark.p1
 def test_fixed_defaults_use_available_neighbours_in_both_phases_without_waiting():
     planner = ContextPlanner()
     rows = [Caption(i, i, i+1, f'source {i}', 'en') for i in range(8)]
@@ -25,6 +26,7 @@ def test_fixed_defaults_use_available_neighbours_in_both_phases_without_waiting(
     assert planner.get(7) == TranslationContext(('source 6',))
 
 
+@pytest.mark.p1
 def test_neighbours_do_not_retranslate_final_rows_and_corrections_do():
     planner = ContextPlanner(1, 1)
     rows = [Caption(i, i, i+1, f'source {i}', 'en') for i in range(4)]
@@ -41,6 +43,7 @@ def test_neighbours_do_not_retranslate_final_rows_and_corrections_do():
     assert planner.get(1) is None
 
 
+@pytest.mark.p1
 def test_submitted_revisions_replace_initial_snapshot_and_final_context_is_frozen():
     planner = ContextPlanner(3, 1)
     first = Caption(1, 0, 1, 'project', 'en', final=False, ready=True)
@@ -60,6 +63,7 @@ def test_submitted_revisions_replace_initial_snapshot_and_final_context_is_froze
     assert planner.get(1).after == ()
 
 
+@pytest.mark.p1
 def test_drafts_excluded_and_context_bounded():
     planner = ContextPlanner(3, 1)
     rows = [Caption(i, i, i+1, str(i)*1000, 'en') for i in range(6)]
@@ -79,6 +83,7 @@ def test_drafts_excluded_and_context_bounded():
     assert disabled.get(4) == TranslationContext()
 
 
+@pytest.mark.p1
 def test_initial_inflight_is_superseded_and_queued_revisions_coalesce():
     async def exercise():
         queue, planner, lock = TranslationQueue(), ContextPlanner(), asyncio.Lock()
@@ -133,6 +138,7 @@ def test_initial_inflight_is_superseded_and_queued_revisions_coalesce():
     asyncio.run(exercise())
 
 
+@pytest.mark.p1
 def test_final_replaces_queued_initial_and_unchanged_result_reuses_cache():
     async def exercise(replace_queued):
         queue, planner, lock = TranslationQueue(), ContextPlanner(0, 0), asyncio.Lock()
@@ -164,6 +170,7 @@ def test_final_replaces_queued_initial_and_unchanged_result_reuses_cache():
     asyncio.run(exercise(False))
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('delete', [False, True])
 def test_finalization_or_deletion_discards_late_initial(delete):
     async def exercise():
@@ -204,6 +211,7 @@ def test_finalization_or_deletion_discards_late_initial(delete):
     asyncio.run(exercise())
 
 
+@pytest.mark.p1
 def test_empty_final_translation_keeps_initial_and_marks_failure():
     async def exercise():
         queue, planner, lock = TranslationQueue(), ContextPlanner(), asyncio.Lock()

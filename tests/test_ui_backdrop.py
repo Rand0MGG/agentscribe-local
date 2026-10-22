@@ -1,9 +1,11 @@
 """Background material is bounded, responsive, and independent of native audio."""
 import os
 
+import pytest
 from ui_support import run_ui_process
 
 
+@pytest.mark.p1
 def test_close_during_wallpaper_render_waits_without_blocking_qt(tmp_path):
     code = r'''
 import os, time

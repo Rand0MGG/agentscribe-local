@@ -34,6 +34,7 @@ def runtime(load=None, version='1.30.0'):
     return SimpleNamespace(__version__=version, SessionOptions=Options, InferenceSession=create)
 
 
+@pytest.mark.p1
 def test_preparation_preserves_original_and_reuses_complete_graph(source):
     original = {p.name: p.read_bytes() for p in source.iterdir()}
     directory = cache.prepare_cpu_model(source, runtime())
@@ -45,6 +46,7 @@ def test_preparation_preserves_original_and_reuses_complete_graph(source):
     assert cache.cached_cpu_model(source, '1.30.0') is None
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('damage', ['truncated', 'marker', 'config', 'missing'])
 def test_incomplete_cache_is_ignored_and_repaired(source, damage):
     directory = cache.prepare_cpu_model(source, runtime())
@@ -61,6 +63,7 @@ def test_incomplete_cache_is_ignored_and_repaired(source, damage):
     assert cache.cached_cpu_model(source, '1.30.0') == directory
 
 
+@pytest.mark.p1
 def test_conversion_failure_does_not_publish_or_modify_source(source):
     def fail(_):
         raise OSError('disk full')
@@ -71,6 +74,7 @@ def test_conversion_failure_does_not_publish_or_modify_source(source):
     assert not list((source.parent / '.work/cache/sat-ort').glob('prepare-*'))
 
 
+@pytest.mark.p1
 def test_explicit_preparation_repairs_same_size_corruption(source):
     directory = cache.prepare_cpu_model(source, runtime())
     path = directory / 'model_optimized.onnx'
@@ -81,6 +85,7 @@ def test_explicit_preparation_repairs_same_size_corruption(source):
     assert path.read_bytes() == original
 
 
+@pytest.mark.p1
 def test_changed_weights_during_preparation_are_not_published(source):
     def change(path):
         Path(path).write_bytes(b'new weights')
@@ -89,6 +94,7 @@ def test_changed_weights_during_preparation_are_not_published(source):
     assert cache.cached_cpu_model(source, '1.30.0') is None
 
 
+@pytest.mark.p1
 def test_interrupted_publish_leaves_no_complete_cache(source, monkeypatch):
     replace = cache.os.replace
     def interrupt(old, new):
@@ -102,6 +108,7 @@ def test_interrupted_publish_leaves_no_complete_cache(source, monkeypatch):
     assert not list((source.parent / '.work/cache/sat-ort').glob('prepare-*'))
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('version', ['1.28.0', 'unknown'])
 def test_old_runtimes_do_not_read_or_prepare(tmp_path, version):
     model = tmp_path / 'missing'
@@ -111,6 +118,7 @@ def test_old_runtimes_do_not_read_or_prepare(tmp_path, version):
     assert not model.exists()
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize(('system', 'version'), [('win32', '1.29.0'), ('darwin', '1.30.0')])
 def test_supported_runtimes_share_preparation_and_cache_selection(source, monkeypatch, system, version):
     monkeypatch.setattr(sys, 'platform', system)
@@ -119,6 +127,7 @@ def test_supported_runtimes_share_preparation_and_cache_selection(source, monkey
     assert cache.cached_cpu_model(source, '1.28.0') is None
 
 
+@pytest.mark.p1
 def test_cache_is_specific_to_machine(source, monkeypatch):
     directory = cache.prepare_cpu_model(source, runtime())
     assert json.loads((directory / 'cache.json').read_text())['identity']['machine'] == 'arm64'
@@ -126,6 +135,7 @@ def test_cache_is_specific_to_machine(source, monkeypatch):
     assert cache.cached_cpu_model(source, '1.30.0') is None
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('prepared', [False, True])
 def test_semantic_adapter_maps_only_prepared_graphs(source, monkeypatch, prepared):
     import linguaflow.semantic_model as semantic

@@ -14,6 +14,7 @@ from linguaflow.runtime_paths import llama_server
 from scripts.install_llama import unpack
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('system,machine,device,count', [
     ('darwin', 'arm64', 'metal', 1), ('darwin', 'arm64', 'cpu', 1),
     ('win32', 'AMD64', 'cpu', 1), ('win32', 'AMD64', 'cuda', 3), ('win32', 'AMD64', 'vulkan', 2),
@@ -31,6 +32,7 @@ def test_pinned_install_plan_and_binary_location(monkeypatch, system, machine, d
         assert path.name == 'llama-server' and archives[0][0].endswith('.tar.gz')
 
 
+@pytest.mark.p1
 def test_unsupported_platform_is_rejected(monkeypatch):
     monkeypatch.setattr(sys, 'platform', 'darwin')
     monkeypatch.setattr(llama_assets.platform, 'machine', lambda: 'x86_64')
@@ -38,6 +40,7 @@ def test_unsupported_platform_is_rejected(monkeypatch):
         llama_assets.runtime_archives('metal')
 
 
+@pytest.mark.p0
 def test_installer_accepts_flat_and_nested_zip_and_rejects_escape(tmp_path):
     for prefix in ('', 'release/'):
         archive = tmp_path/('nested.zip' if prefix else 'flat.zip')
@@ -54,6 +57,7 @@ def test_installer_accepts_flat_and_nested_zip_and_rejects_escape(tmp_path):
     assert not (tmp_path/'escape').exists()
 
 
+@pytest.mark.p0
 def test_windows_spawn_and_cleanup_target_only_owned_tree(monkeypatch):
     monkeypatch.setattr(sys, 'platform', 'win32')
     monkeypatch.setattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000, raising=False)
@@ -65,6 +69,7 @@ def test_windows_spawn_and_cleanup_target_only_owned_tree(monkeypatch):
     assert seen[0][1]['timeout'] == 5
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('force', [False, True])
 @pytest.mark.parametrize('system,exited', [('darwin', True), ('darwin', False), ('linux', True)])
 def test_group_cleanup_permission_error_requires_reaped_mac_child(monkeypatch, force, system, exited):
@@ -89,6 +94,7 @@ def test_group_cleanup_permission_error_requires_reaped_mac_child(monkeypatch, f
     assert waits == ([.1] if system == 'darwin' and not exited else [])
 
 
+@pytest.mark.p1
 def test_mac_group_cleanup_confirms_child_in_exit_transition(monkeypatch):
     monkeypatch.setattr(sys, 'platform', 'darwin')
     def kill_group(*args):
@@ -101,6 +107,7 @@ def test_mac_group_cleanup_confirms_child_in_exit_transition(monkeypatch):
     assert waits == [.1]
 
 
+@pytest.mark.p1
 def test_group_cleanup_signals_descendants_even_when_parent_exited(monkeypatch):
     monkeypatch.setattr(sys, 'platform', 'darwin')
     seen = []
@@ -109,6 +116,7 @@ def test_group_cleanup_signals_descendants_even_when_parent_exited(monkeypatch):
     assert seen == [(12345, signal.SIGTERM)]
 
 
+@pytest.mark.p1
 @pytest.mark.skipif(sys.platform != 'darwin', reason='Darwin zombie process-group regression')
 @pytest.mark.parametrize('exit_code', [0, 7])
 def test_mac_cleanup_reaps_exited_process_group(exit_code):
@@ -127,6 +135,7 @@ def test_mac_cleanup_reaps_exited_process_group(exit_code):
         process.stdout.close()
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('state,expected', [('connected',False), ('broken',True), ('data',False)])
 def test_windows_parent_pipe_detection_does_not_use_select(monkeypatch, state, expected):
     monkeypatch.setattr(sys, 'platform', 'win32')

@@ -1,9 +1,11 @@
 """Inventory is usable without a manager's controls; export owns an immutable snapshot."""
 import os
 
+import pytest
 from ui_support import run_ui_process
 
 
+@pytest.mark.p2
 def test_inventory_interfaces_and_background_export(tmp_path):
     code = r'''
 from pathlib import Path

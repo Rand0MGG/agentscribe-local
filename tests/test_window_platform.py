@@ -7,6 +7,7 @@ from PySide6.QtCore import QPoint, QSize
 from linguaflow import window_platform as platform
 
 
+@pytest.mark.p2
 @pytest.mark.parametrize('system,offscreen,maximized,expected', [
     ('win32', False, False, True), ('win32', True, False, False),
     ('win32', False, True, False), ('darwin', False, False, False),
@@ -22,6 +23,7 @@ def test_system_resize_is_only_requested_for_windows(monkeypatch, system, offscr
         assert not platform.enable_native_resize(0)
 
 
+@pytest.mark.p2
 def test_overlay_behavior_preserves_flags_without_conflicting_space_policies():
     from linguaflow.ui_macos import overlay_behavior
     # MoveToActiveSpace, FullScreenPrimary/None, Primary/Auxiliary conflict with overlay behavior.
@@ -31,6 +33,7 @@ def test_overlay_behavior_preserves_flags_without_conflicting_space_policies():
     assert not platform.configure_overlay(0)  # Offscreen must not call AppKit.
 
 
+@pytest.mark.p2
 def test_restored_overlay_is_reachable_after_display_removal():
     from PySide6.QtCore import QRect
     primary = QRect(0, 0, 1440, 900)

@@ -8,6 +8,7 @@ import pytest
 from linguaflow import resource_monitor as resources
 
 
+@pytest.mark.p2
 def test_gpu_scope_wddm_unknown_and_timeout_backoff(monkeypatch):
     sampler = resources.ResourceSampler()
     sampler.macos_gpu = False
@@ -32,6 +33,7 @@ def test_gpu_scope_wddm_unknown_and_timeout_backoff(monkeypatch):
     assert len(calls) == 1
 
 
+@pytest.mark.p1
 def test_monitor_recovers_and_stops_without_waiting_full_interval(monkeypatch):
     events, sampled = [], threading.Event()
     class Sampler:
@@ -54,6 +56,7 @@ def test_monitor_recovers_and_stops_without_waiting_full_interval(monkeypatch):
     assert 'resource_sample' in events
 
 
+@pytest.mark.p0
 def test_mac_gpu_extracts_only_utilization_without_raw_registry_data(monkeypatch):
     sampler = resources.ResourceSampler()
     sampler.macos_gpu = True
@@ -78,6 +81,7 @@ def test_mac_gpu_extracts_only_utilization_without_raw_registry_data(monkeypatch
     assert 'PRIVATE' not in str(result)
 
 
+@pytest.mark.p2
 @pytest.mark.parametrize('payload, status', [
     (plistlib.dumps([]), 'counters_unavailable'),
     (plistlib.dumps([{'PerformanceStatistics': {'Device Utilization %': True}}]), 'counters_unavailable'),
@@ -100,6 +104,7 @@ def test_mac_missing_invalid_counters_back_off_without_false_zero(monkeypatch, p
     assert len(calls) == 1
 
 
+@pytest.mark.p2
 def test_mac_timeout_is_bounded_and_cpu_ram_sample_survives(monkeypatch):
     sampler = resources.ResourceSampler()
     sampler.macos_gpu = True

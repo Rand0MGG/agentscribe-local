@@ -69,6 +69,7 @@ print(json.dumps({'type':'done'}), flush=True)
 '''
 
 
+@pytest.mark.p1
 def test_captured_pcm_drains_to_wav_and_correlates_with_capture_log(monkeypatch, tmp_path):
     import json
 
@@ -105,6 +106,7 @@ def test_captured_pcm_drains_to_wav_and_correlates_with_capture_log(monkeypatch,
 
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('stop_while_loading', [False, True])
 def test_capture_precedes_runtime_and_loading_backlog_drains_in_order(monkeypatch, tmp_path, stop_while_loading):
     import hashlib
@@ -156,6 +158,7 @@ def test_capture_precedes_runtime_and_loading_backlog_drains_in_order(monkeypatc
     assert sessions[0].recorded_seconds==2
 
 
+@pytest.mark.p1
 def test_source_previews_are_forwarded_independently_of_semantic_captions(monkeypatch, tmp_path):
     program = '''
 import sys,json
@@ -176,6 +179,7 @@ print(json.dumps({'type':'done'}),flush=True)
     assert previews[1] == dict(sequence=1, done=True)
 
 
+@pytest.mark.p1
 def test_stop_before_ready_does_not_open_audio(monkeypatch, tmp_path):
     opened = []
     captions, failures = execute(monkeypatch, tmp_path, PROGRAM,
@@ -184,6 +188,7 @@ def test_stop_before_ready_does_not_open_audio(monkeypatch, tmp_path):
     assert not captions  # Cancelling before startup must not create a session.
 
 
+@pytest.mark.p1
 def test_crashed_worker_reports_failure_without_hanging(monkeypatch, tmp_path):
     program = "import sys; sys.stdin.readline(); sys.exit(7)"
     opened = []
@@ -191,6 +196,7 @@ def test_crashed_worker_reports_failure_without_hanging(monkeypatch, tmp_path):
     assert opened and failures and "7" in failures[0]
 
 
+@pytest.mark.p1
 def test_capture_exception_terminates_waiting_worker(monkeypatch, tmp_path):
     def broken(*args):
         raise RuntimeError("device disconnected")
@@ -198,6 +204,7 @@ def test_capture_exception_terminates_waiting_worker(monkeypatch, tmp_path):
     assert any("device disconnected" in error for error in failures)
 
 
+@pytest.mark.p1
 def test_unresponsive_startup_is_terminated(monkeypatch, tmp_path):
     monkeypatch.setattr(Session, "startup_idle_timeout", .1)
     opened = []
@@ -208,6 +215,7 @@ def test_unresponsive_startup_is_terminated(monkeypatch, tmp_path):
     assert any("启动长时间没有进展" in error for error in failures)
 
 
+@pytest.mark.p1
 def test_stop_cancels_model_loading_without_waiting(monkeypatch, tmp_path):
     opened = []
     _, failures = execute(monkeypatch, tmp_path,
@@ -216,6 +224,7 @@ def test_stop_cancels_model_loading_without_waiting(monkeypatch, tmp_path):
     assert opened and not failures
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('user_stop', [False, True])
 def test_stalled_stop_has_total_deadline_preserves_recording_and_caption(monkeypatch, tmp_path, user_stop):
     import wave
@@ -258,6 +267,7 @@ for line in sys.stdin:
         assert recording.getnframes() == 1600
 
 
+@pytest.mark.p1
 def test_cancelled_worker_does_not_leave_mlx_helper_pipes_open(monkeypatch, tmp_path):
     if sys.platform != 'darwin':
         __import__('pytest').skip('MLX helper is Mac-only')
@@ -274,6 +284,7 @@ time.sleep(30)
     assert any('长时间没有进展' in error for error in failures)
 
 
+@pytest.mark.p1
 def test_model_load_error_preserves_audio_already_captured(monkeypatch, tmp_path):
     program = '''
 import json, sys, time
@@ -293,6 +304,7 @@ time.sleep(30)
         assert reader.readframes(1600)==(np.full(1600,.25,dtype=np.float32)*32767).astype('<i2').tobytes()
 
 
+@pytest.mark.p1
 def test_pause_closes_capture_drains_audio_and_resumes_same_recording(monkeypatch, tmp_path):
     import wave
     from threading import Event
@@ -341,6 +353,7 @@ def test_pause_closes_capture_drains_audio_and_resumes_same_recording(monkeypatc
     assert np.all(audio[1600:] == int(.2 * 32767))
 
 
+@pytest.mark.p1
 def test_stop_while_paused_wakes_capture_and_finishes(monkeypatch, tmp_path):
     from threading import Event
     captured = Event()
@@ -365,6 +378,7 @@ def test_stop_while_paused_wakes_capture_and_finishes(monkeypatch, tmp_path):
     assert captions[-1].source == '3200'
 
 
+@pytest.mark.p1
 def test_reconnect_failure_after_pause_finishes_without_losing_saved_audio(monkeypatch, tmp_path):
     import wave
     from threading import Event
@@ -394,6 +408,7 @@ def test_reconnect_failure_after_pause_finishes_without_losing_saved_audio(monke
         assert wav.getnframes() == 1600
 
 
+@pytest.mark.p1
 def test_model_inference_error_stops_capture_and_preserves_caption(monkeypatch, tmp_path):
     program = '''
 import json, sys, time

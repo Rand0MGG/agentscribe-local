@@ -13,6 +13,7 @@ def release(version, target='windows-x64', *, prerelease=False):
                 'digest': 'sha256:' + 'a' * 64, 'browser_download_url': RELEASE_PAGE + '/download/v' + version + '/' + name}]}
 
 
+@pytest.mark.p2
 @pytest.mark.parametrize('target', ['windows-x64', 'macos-arm64'])
 def test_other_platform_latest_does_not_skip_applicable_release(target):
     other = 'macos-arm64' if target == 'windows-x64' else 'windows-x64'
@@ -20,6 +21,7 @@ def test_other_platform_latest_does_not_skip_applicable_release(target):
     assert result['version'] == '0.6.0' and result['kind'] == 'package'
 
 
+@pytest.mark.p2
 def test_stable_does_not_enter_beta_and_beta_can_graduate_to_stable():
     releases = [release('0.8.0-beta.2', prerelease=True), release('0.7.0')]
     assert select_update(releases, '0.5.0', target='windows-x64', installed=True)['version'] == '0.7.0'
@@ -27,6 +29,7 @@ def test_stable_does_not_enter_beta_and_beta_can_graduate_to_stable():
     assert select_update([release('0.8.0')], '0.8.0-beta.2', target='windows-x64', installed=True)['version'] == '0.8.0'
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('damage', ['digest', 'state', 'size', 'url', 'draft'])
 def test_invalid_or_unpublished_asset_never_counts_as_an_update(damage):
     item = deepcopy(release('0.6.0'))
@@ -38,6 +41,7 @@ def test_invalid_or_unpublished_asset_never_counts_as_an_update(damage):
     assert select_update([item], '0.5.0', target='windows-x64', installed=True)['kind'] == 'none'
 
 
+@pytest.mark.p2
 def test_source_only_release_is_distinguished_from_installable_update():
     item = release('0.6.0')
     item['assets'] = []
@@ -46,6 +50,7 @@ def test_source_only_release_is_distinguished_from_installable_update():
     assert installed['kind'] == 'none' and '尚无' in installed['message']
 
 
+@pytest.mark.p2
 def test_semantic_versions_and_no_downgrade():
     assert version_key('0.10.0') > version_key('0.9.9')
     assert select_update([release('0.4.0')], target='windows-x64', installed=True)['kind'] == 'none'
@@ -53,6 +58,7 @@ def test_semantic_versions_and_no_downgrade():
         version_key('latest')
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('failure, message', [(403, '限制请求'), (429, '限制请求'), (500, '不可用'), (None, '确认网络')])
 def test_network_errors_return_short_results_without_tracebacks(monkeypatch, failure, message):
     import urllib.error
@@ -69,6 +75,7 @@ def test_network_errors_return_short_results_without_tracebacks(monkeypatch, fai
     assert 'Traceback' not in result['message'] and 'secret' not in result['message']
 
 
+@pytest.mark.p3
 @pytest.mark.parametrize('installed', [True, False])
 def test_no_new_release_explicitly_reports_current_version(installed):
     result = select_update([release('0.6.0-beta.2')], '0.6.0-beta.2',

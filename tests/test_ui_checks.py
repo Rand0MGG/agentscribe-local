@@ -3,9 +3,11 @@ import os
 import subprocess
 import sys
 
+import pytest
 from ui_support import assert_ui_process
 
 
+@pytest.mark.p1
 def test_isolated_checks_deliver_on_qt_thread_and_reap_failure_timeout(tmp_path):
     code = '''
 import sys,time

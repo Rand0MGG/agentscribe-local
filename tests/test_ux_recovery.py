@@ -1,7 +1,9 @@
 """User-visible regressions for long transcripts and failed-save recovery."""
+import pytest
 from ui_support import run_ui
 
 
+@pytest.mark.p2
 def test_long_recording_search_pages_and_playback_load_history(tmp_path):
     run_ui('''
 from linguaflow.core import Caption
@@ -40,6 +42,7 @@ w.close()
 ''',tmp_path)
 
 
+@pytest.mark.p0
 def test_failed_save_keeps_real_lock_and_releases_only_after_retry(tmp_path):
     run_ui('''
 from linguaflow.core import Caption
@@ -68,6 +71,7 @@ w.close()
 ''',tmp_path)
 
 
+@pytest.mark.p1
 def test_save_error_does_not_expire_and_dismissal_keeps_recovery_actions(tmp_path):
     run_ui('''
 from types import SimpleNamespace
@@ -89,6 +93,7 @@ w.close()
 ''',tmp_path)
 
 
+@pytest.mark.p1
 def test_draft_backup_preserves_text_without_claiming_main_save_success(tmp_path):
     run_ui('''
 from unittest.mock import patch
@@ -112,6 +117,7 @@ w.close()
 ''',tmp_path)
 
 
+@pytest.mark.p2
 def test_actionable_warning_shows_reason_without_opening_diagnostics(tmp_path):
     run_ui('''
 w.show();w.show_warning('无法创建文件夹','名称最多 64 个字符。')
@@ -122,6 +128,7 @@ w.close()
 ''',tmp_path)
 
 
+@pytest.mark.p0
 def test_course_drafts_remain_bound_to_their_course_with_real_worker(tmp_path):
     run_ui('''
 from linguaflow.knowledge.materials import course_for_folder
@@ -155,6 +162,7 @@ w.close()
 ''',tmp_path)
 
 
+@pytest.mark.p0
 def test_course_draft_survives_navigation_failure_and_exit_cancel(tmp_path):
     run_ui('''
 from unittest.mock import patch
@@ -187,6 +195,7 @@ w.close()
 ''',tmp_path)
 
 
+@pytest.mark.p0
 def test_active_term_editor_commits_before_recording_navigation(tmp_path):
     run_ui('''
 from PySide6.QtWidgets import QLineEdit
@@ -214,6 +223,7 @@ with patch.object(module.QMessageBox,'question',return_value=module.QMessageBox.
 ''',tmp_path)
 
 
+@pytest.mark.p2
 def test_history_stays_readable_during_live_updates_and_deleted_rows_refill(tmp_path):
     run_ui('''
 from dataclasses import replace
@@ -238,6 +248,7 @@ w.close()
 ''',tmp_path)
 
 
+@pytest.mark.p0
 def test_backup_cancel_failure_and_explicit_close_preserve_original(tmp_path):
     run_ui('''
 from unittest.mock import patch
@@ -306,6 +317,7 @@ w.close()
 ''',tmp_path)
 
 
+@pytest.mark.p0
 def test_old_terms_acknowledgement_does_not_clear_new_edits(tmp_path):
     run_ui('''
 from PySide6.QtCore import QObject,Signal
@@ -332,6 +344,7 @@ p.close();w.close()
 ''',tmp_path)
 
 
+@pytest.mark.p1
 def test_queued_backups_to_different_files_are_all_written(tmp_path):
     run_ui('''
 from threading import Event
@@ -362,6 +375,7 @@ w.close()
 ''',tmp_path)
 
 
+@pytest.mark.p2
 def test_cross_page_variable_heights(tmp_path):
     run_ui('''
 from linguaflow.core import Caption

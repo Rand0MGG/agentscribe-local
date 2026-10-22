@@ -10,6 +10,7 @@ import pytest
 from linguaflow.playback_stream import PlaybackStream, amplify
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('cut', [0, 1, 7])
 def test_interrupted_recording_recovers_physical_frames_without_modifying_original(tmp_path, cut):
     path = tmp_path/'录音.wav'
@@ -39,6 +40,7 @@ def test_interrupted_recording_recovers_physical_frames_without_modifying_origin
     assert path.read_bytes() == original
 
 
+@pytest.mark.p2
 def test_live_recording_cannot_be_recovered_and_generic_wav_tail_is_not_audio(tmp_path):
     from linguaflow.library_access import acquire_recording_lock
     path = tmp_path/'录音.wav'
@@ -60,6 +62,7 @@ def test_live_recording_cannot_be_recovered_and_generic_wav_tail_is_not_audio(tm
         stream.close()
 
 
+@pytest.mark.p0
 def test_gain_stream_preserves_headers_original_and_random_byte_seeks(tmp_path):
     path = tmp_path/'课堂录音.wav'
     samples = np.array([-20000, -1200, 0, 1400, 20000]*400, dtype='<i2')
@@ -88,6 +91,7 @@ def test_gain_stream_preserves_headers_original_and_random_byte_seeks(tmp_path):
     assert list(tmp_path.iterdir()) == [path]
 
 
+@pytest.mark.p2
 @pytest.mark.parametrize('bits', [8, 16, 24, 32])
 def test_pcm_gain_saturates_instead_of_wrapping(bits):
     if bits == 24:
@@ -102,6 +106,7 @@ def test_pcm_gain_saturates_instead_of_wrapping(bits):
         assert out.tolist() == [limits.min, centre-3, centre, centre+3, limits.max]
 
 
+@pytest.mark.p2
 def test_float_gain_is_finite_and_read_chunks_are_bounded(tmp_path):
     samples = np.array([-.2, .2, -2, 2, np.nan, np.inf], dtype='<f4')
     out = np.frombuffer(amplify(samples.tobytes(), 3, 32, 3), dtype='<f4')
@@ -120,6 +125,7 @@ def test_float_gain_is_finite_and_read_chunks_are_bounded(tmp_path):
         stream.close()
 
 
+@pytest.mark.p2
 def test_unknown_encoding_is_readonly_passthrough_without_fake_boost(tmp_path):
     path = tmp_path/'unsupported.wav'
     path.write_bytes(b'not a WAV')

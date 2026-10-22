@@ -6,6 +6,7 @@ from linguaflow.core import Caption, Settings
 from linguaflow.library import Library
 
 
+@pytest.mark.p1
 def test_unchanged_exports_are_not_replaced_and_partial_exports_are_repaired(tmp_path, monkeypatch):
     from pathlib import Path
     library = Library(tmp_path)
@@ -28,6 +29,7 @@ def test_unchanged_exports_are_not_replaced_and_partial_exports_are_repaired(tmp
     assert all((directory / name).read_bytes() == content for name, content in expected.items())
 
 
+@pytest.mark.p1
 def test_export_comparison_does_not_require_read_permission_for_replacement(tmp_path, monkeypatch):
     from pathlib import Path
     library = Library(tmp_path)
@@ -46,6 +48,7 @@ def test_export_comparison_does_not_require_read_permission_for_replacement(tmp_
     assert (directory / '定稿.txt').read_text(encoding='utf-8-sig') == 'new'
 
 
+@pytest.mark.p2
 def test_visible_trash_and_legacy_entries_coexist_without_migration(tmp_path):
     library = Library(tmp_path)
     old = library.create('inbox', {}, name='旧录音')
@@ -65,6 +68,7 @@ def test_visible_trash_and_legacy_entries_coexist_without_migration(tmp_path):
     assert not library.deleted()
 
 
+@pytest.mark.p0
 def test_trash_reserves_name_and_protects_existing_foreign_directory(tmp_path):
     library = Library(tmp_path)
     with pytest.raises(ValueError, match='垃圾桶'):
@@ -81,6 +85,7 @@ def test_trash_reserves_name_and_protects_existing_foreign_directory(tmp_path):
     assert any(item['name'] == '垃圾桶' for item in library.index['folders'])
 
 
+@pytest.mark.p0
 def test_duplicate_trash_token_never_restores_or_purges_wrong_entry(tmp_path):
     import shutil
     library = Library(tmp_path)
@@ -94,6 +99,7 @@ def test_duplicate_trash_token_never_restores_or_purges_wrong_entry(tmp_path):
     assert duplicate.exists() and (tmp_path / '垃圾桶' / token).exists()
 
 
+@pytest.mark.p1
 def test_reopen_keeps_revisions_and_exports_only_final(tmp_path):
     library = Library(tmp_path)
     folder = library.folder("课程")
@@ -119,6 +125,7 @@ def test_reopen_keeps_revisions_and_exports_only_final(tmp_path):
         assert '[初译] initial translation' in (library.directory(item['id']) / name).read_text(encoding='utf-8-sig')
 
 
+@pytest.mark.p1
 def test_default_recording_name_does_not_pass_chinese_through_locale_formatting(tmp_path, monkeypatch):
     from datetime import datetime
 
@@ -138,6 +145,7 @@ def test_default_recording_name_does_not_pass_chinese_through_locale_formatting(
     assert library.create('inbox', {})['name'] == '录音 10月03日 09时07分'
 
 
+@pytest.mark.p0
 def test_failed_atomic_save_keeps_original(tmp_path, monkeypatch):
     library = Library(tmp_path)
     item = library.create("inbox", {})
@@ -156,11 +164,13 @@ def test_failed_atomic_save_keeps_original(tmp_path, monkeypatch):
     assert library.load(item)[1][0].source == "saved"
 
 
+@pytest.mark.p0
 def test_session_path_cannot_escape_library(tmp_path):
     with pytest.raises(ValueError):
         Library(tmp_path).directory("../other")
 
 
+@pytest.mark.p2
 def test_readable_folders_external_rename_and_move(tmp_path):
     library = Library(tmp_path)
     folder = library.folder("课堂")
@@ -179,6 +189,7 @@ def test_readable_folders_external_rename_and_move(tmp_path):
     assert not (tmp_path / "library.json").exists()
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize("name", ["", "..", ".hidden", "CON", "con.txt", "a/b", "a\\b", "a:", "test."])
 def test_invalid_names_are_rejected_without_creating_files(tmp_path, name):
     library = Library(tmp_path)
@@ -188,6 +199,7 @@ def test_invalid_names_are_rejected_without_creating_files(tmp_path, name):
     assert list((tmp_path / "我的录音").iterdir()) == before
 
 
+@pytest.mark.p0
 def test_duplicates_and_restore_do_not_overwrite(tmp_path):
     library = Library(tmp_path)
     first = library.create("inbox", {}, name="录音")
@@ -205,6 +217,7 @@ def test_duplicates_and_restore_do_not_overwrite(tmp_path):
     assert library.deleted() == []
 
 
+@pytest.mark.p0
 def test_folder_delete_restore_and_self_move(tmp_path):
     library = Library(tmp_path)
     folder = library.index["folders"][0]
@@ -220,6 +233,7 @@ def test_folder_delete_restore_and_self_move(tmp_path):
     assert len(restarted.index["sessions"]) == 1
 
 
+@pytest.mark.p0
 def test_legacy_migration_is_repeatable_and_keeps_originals(tmp_path):
     import json
     from uuid import uuid4
@@ -243,6 +257,7 @@ def test_legacy_migration_is_repeatable_and_keeps_originals(tmp_path):
     assert library.load(library.index["sessions"][0])[1][0].source == "retained"
 
 
+@pytest.mark.p0
 def test_begin_never_overwrites_existing_recording(tmp_path):
     library = Library(tmp_path)
     item = library.create("inbox", {}, name="已有录音")
@@ -252,6 +267,7 @@ def test_begin_never_overwrites_existing_recording(tmp_path):
     assert (library.directory(item["id"]) / "录音.wav").read_bytes() == b"important"
 
 
+@pytest.mark.p0
 def test_permanent_delete_is_confined_to_trash(tmp_path):
     library = Library(tmp_path)
     retained = library.create("inbox", {}, name="保留")
@@ -265,6 +281,7 @@ def test_permanent_delete_is_confined_to_trash(tmp_path):
 
 
 
+@pytest.mark.p0
 def test_deferred_title_survives_save_reload_and_conflict_without_moving_audio(tmp_path):
     library = Library(tmp_path)
     item = library.create('inbox', {}, name='原始路径')

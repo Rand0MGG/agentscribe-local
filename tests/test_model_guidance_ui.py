@@ -1,8 +1,10 @@
 import os
 
+import pytest
 from ui_support import run_ui_process
 
 
+@pytest.mark.p0
 def test_knowledge_cleanup_dispatches_ui_events_and_guards_file_changes(tmp_path):
     code = '''
 import os

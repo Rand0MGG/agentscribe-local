@@ -1,12 +1,15 @@
 from dataclasses import asdict
 from types import SimpleNamespace
 
+import pytest
+
 from linguaflow.core import export_srt
 from linguaflow.qwen_revisions import RevisionStore, install_revision_bridge
 from linguaflow.revision_audit import audit
 from linguaflow.wlk_captions import CaptionMapper
 
 
+@pytest.mark.p1
 def test_complete_revisions_reopen_shorten_clear_and_preserve_repetition():
     events = []
     store = RevisionStore('test', events.append)
@@ -25,6 +28,7 @@ def test_complete_revisions_reopen_shorten_clear_and_preserve_repetition():
     assert audit(events, False)['status'] == 'incomplete_or_unavailable'
 
 
+@pytest.mark.p1
 def test_old_versions_and_other_sessions_are_rejected():
     store = RevisionStore('test')
     store.update(0, 0, 1, 'New.', 4, True)
@@ -47,6 +51,7 @@ class FakeOnline:
         self.streamer = SimpleNamespace(append_mel_chunk=lambda event: event)
 
 
+@pytest.mark.p1
 def test_bridge_captures_before_loss_and_survives_reset_and_rollover():
     online = FakeOnline()
     class Normalizer:
@@ -75,6 +80,7 @@ def test_bridge_captures_before_loss_and_survives_reset_and_rollover():
     assert len(records) == n
 
 
+@pytest.mark.p2
 def test_audit_exposes_punctuation_loss_with_interval_and_caption_locations():
     store = RevisionStore('s')
     store.update(0, 0, 1, 'Yes yes!', 8, True)
@@ -87,6 +93,7 @@ def test_audit_exposes_punctuation_loss_with_interval_and_caption_locations():
     assert result['caption_locations'][0]['id'] == 1
 
 
+@pytest.mark.p1
 def test_unchanged_prefix_keeps_order_when_hypothesis_grows():
     store = RevisionStore('s')
     store.update(0, 0, 10, 'First sentence.', 15)

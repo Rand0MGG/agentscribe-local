@@ -17,6 +17,7 @@ from linguaflow.translation_context import TranslationContext
 from linguaflow.translation_models import HY_MODEL
 
 
+@pytest.mark.p1
 def test_close_retains_inherited_stdout_until_reader_can_exit(tmp_path):
     from linguaflow.process_platform import spawn_options
     release = tmp_path / 'release-child'
@@ -55,6 +56,7 @@ def test_close_retains_inherited_stdout_until_reader_can_exit(tmp_path):
         translator.close()
 
 
+@pytest.mark.p1
 def test_metal_factory_does_not_import_torch_or_fall_back(monkeypatch):
     import linguaflow.llama_translation as module
     seen = []
@@ -67,6 +69,7 @@ def test_metal_factory_does_not_import_torch_or_fall_back(monkeypatch):
     assert seen == ['metal']
 
 
+@pytest.mark.p1
 def test_missing_or_wrong_assets_are_rejected_without_download(tmp_path, monkeypatch):
     monkeypatch.setattr(llama_assets, 'runtime_archives', lambda _: [])
     monkeypatch.setattr(llama_assets, 'llama_server', lambda _: tmp_path/'llama-server')
@@ -83,6 +86,7 @@ def test_missing_or_wrong_assets_are_rejected_without_download(tmp_path, monkeyp
         llama_assets.resolve_assets(Settings('test'))
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('finish, content, valid', [('stop', '  译文  ', True), ('length', '半句', False), ('stop', '', False)])
 def test_translation_preserves_context_and_rejects_incomplete_output(finish, content, valid):
     translator = LlamaTranslator.__new__(LlamaTranslator)
@@ -106,6 +110,7 @@ def test_translation_preserves_context_and_rejects_incomplete_output(finish, con
             translator.translate('The crane moved.', 'en', TranslationContext(('We watched birds.',)))
 
 
+@pytest.mark.p1
 def test_startup_requires_actual_full_gpu_offload_and_closes_failed_helper(monkeypatch):
     import linguaflow.llama_translation as module
     monkeypatch.setattr(module, 'resolve_assets', lambda _: (Path('fake'), Path('fake.gguf')))
@@ -127,6 +132,7 @@ def test_startup_requires_actual_full_gpu_offload_and_closes_failed_helper(monke
 
 
 # Cache flags are shared; keep the CPU and GPU startup branches.
+@pytest.mark.p1
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])
 def test_server_disables_historical_prompt_cache_for_long_sessions(monkeypatch, device):
     import linguaflow.llama_translation as module
@@ -159,6 +165,7 @@ def test_server_disables_historical_prompt_cache_for_long_sessions(monkeypatch, 
         translator.close()
 
 
+@pytest.mark.p0
 @pytest.mark.skipif(sys.platform == 'win32', reason='Metal supervisor is used on macOS')
 @pytest.mark.parametrize('end', ['eof', 'terminate', 'child_exit'])
 def test_supervisor_stops_only_owned_child_when_parent_pipe_closes(end):
@@ -198,6 +205,7 @@ def test_supervisor_stops_only_owned_child_when_parent_pipe_closes(end):
         supervisor.stderr.close()
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('engine,device,expected', [(None, 'metal', 'llama'), (None, 'cpu', 'pytorch'),
                                                    ('llama', 'cpu', 'llama'), ('pytorch', 'cuda', 'pytorch')])
 def test_engine_selection_is_independent_of_device(engine, device, expected):
@@ -205,6 +213,7 @@ def test_engine_selection_is_independent_of_device(engine, device, expected):
     assert translation_engine(Settings('test', translation_engine=engine, translation_device=device)) == expected
 
 
+@pytest.mark.p1
 def test_custom_gguf_and_shared_generation_settings(tmp_path, monkeypatch):
     from linguaflow.translation_models import HY_GENERATION, llama_generation
     weights = tmp_path/'custom-f16.gguf'
@@ -222,6 +231,7 @@ def test_custom_gguf_and_shared_generation_settings(tmp_path, monkeypatch):
         key:HY_GENERATION[key] for key in ('temperature', 'top_p', 'top_k')}
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('device,log,accepted', [
     ('metal', 'using device MTL0 (Apple M2)\noffloaded 33/33 layers to GPU\n', True),
     ('cuda', 'using device CUDA0 (NVIDIA)\noffloaded 33/33 layers to GPU\n', True),

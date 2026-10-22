@@ -3,9 +3,11 @@ import os
 import subprocess
 import sys
 
+import pytest
 from ui_support import assert_ui_process
 
 
+@pytest.mark.p1
 def test_real_preview_navigation_and_task_recovery(tmp_path):
     code = r'''
 import os
@@ -74,6 +76,7 @@ print('actual workflow regressions passed')
     assert_ui_process(result)
 
 
+@pytest.mark.p1
 def test_preparation_cancel_feedback_survives_late_progress(tmp_path):
     code = r'''
 import os

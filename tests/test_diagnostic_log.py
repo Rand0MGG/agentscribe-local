@@ -31,6 +31,7 @@ def read_rows(path):
     return [json.loads(s) for s in path.read_text(encoding='utf-8').splitlines()]
 
 
+@pytest.mark.p0
 def test_rotation_retention_and_private_exception(logs):
     logs.mkdir()
     stale = logs / 'support-desktop-20000101T000000-999999999-12345678.jsonl'
@@ -57,6 +58,7 @@ def test_rotation_retention_and_private_exception(logs):
     assert row['exceptions'][0]['frames'][-1]['function'] == 'test_rotation_retention_and_private_exception'
 
 
+@pytest.mark.p1
 def test_log_write_failure_does_not_break_application(logs, monkeypatch):
     diag.start_logging('test')
     def fail(*args):
@@ -67,12 +69,14 @@ def test_log_write_failure_does_not_break_application(logs, monkeypatch):
     assert '写入失败' in diag.log_error()
 
 
+@pytest.mark.p2
 def test_log_creation_failure_visible_without_throwing(logs):
     logs.write_text('not a directory', encoding='utf-8')
     assert diag.start_logging('test') is None
     assert '无法创建' in diag.log_error()
 
 
+@pytest.mark.p0
 def test_decode_trace_retains_real_progress_across_overlap(logs):
     path = diag.start_logging('test')
     sent = []
@@ -101,6 +105,7 @@ def test_decode_trace_retains_real_progress_across_overlap(logs):
     assert 'private recognized text' not in path.read_text(encoding='utf-8')
 
 
+@pytest.mark.p0
 def test_failed_decode_has_start_and_failure_without_text(logs):
     path = diag.start_logging('test')
     def decode(audio):
@@ -115,6 +120,7 @@ def test_failed_decode_has_start_and_failure_without_text(logs):
     assert 'private audio-derived text' not in path.read_text(encoding='utf-8')
 
 
+@pytest.mark.p0
 def test_independent_process_files_and_uncaught_hook(logs):
     program = '''
 from linguaflow import diagnostic_log as d
@@ -137,6 +143,7 @@ raise RuntimeError('CUDA out of memory; PRIVATE_TRANSCRIPT')
         assert 'PRIVATE_TRANSCRIPT' not in path.read_text(encoding='utf-8')
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('failed', [False, True])
 def test_worker_exit_releases_diagnostic_output(logs, monkeypatch, failed):
     from linguaflow import wlk_worker
@@ -166,6 +173,7 @@ def test_worker_exit_releases_diagnostic_output(logs, monkeypatch, failed):
     assert any(r['event'] == 'worker_exception' for r in rows) == failed
 
 
+@pytest.mark.p1
 def test_slow_disk_is_bounded_and_recovers_without_blocking_producer(logs, monkeypatch):
     path = diag.start_logging('test')
     assert diag.flush()
@@ -195,6 +203,7 @@ def test_slow_disk_is_bounded_and_recovers_without_blocking_producer(logs, monke
     assert json.loads(path.read_text(encoding='utf-8').splitlines()[-1])['event'] == 'process_log_close'
 
 
+@pytest.mark.p0
 def test_invalid_metadata_sink_and_console_never_break_logging(logs, monkeypatch):
     path = diag.start_logging('test')
     class Private:
@@ -216,6 +225,7 @@ def test_invalid_metadata_sink_and_console_never_break_logging(logs, monkeypatch
     assert 'PRIVATE' not in path.read_text(encoding='utf-8')
 
 
+@pytest.mark.p0
 def test_actions_correlate_results_without_arguments_and_progress_is_coalesced(logs):
     path = diag.start_logging('test')
     def callback():
@@ -234,6 +244,7 @@ def test_actions_correlate_results_without_arguments_and_progress_is_coalesced(l
     assert rows[-1]['session'] is None and rows[-1]['operation'] is None
 
 
+@pytest.mark.p0
 def test_retention_preserves_live_and_unrelated_files(logs, monkeypatch):
     logs.mkdir()
     live = logs / f'support-desktop-20000101T000000-{os.getpid()}-12345678.jsonl'
@@ -245,6 +256,7 @@ def test_retention_preserves_live_and_unrelated_files(logs, monkeypatch):
     assert live.exists() and unrelated.exists()
 
 
+@pytest.mark.p1
 def test_worker_logging_does_not_require_desktop_psutil(logs, monkeypatch):
     monkeypatch.setitem(sys.modules, 'psutil', None)
     path = diag.start_logging('worker')
@@ -252,6 +264,7 @@ def test_worker_logging_does_not_require_desktop_psutil(logs, monkeypatch):
     assert read_rows(path)[-1]['event'] == 'worker_ready'
 
 
+@pytest.mark.p2
 def test_directory_budget_removes_oldest_inactive_logs(logs):
     logs.mkdir()
     paths = [logs / f'support-desktop-20261020T000000-999999999-{index:08x}.jsonl'
@@ -264,6 +277,7 @@ def test_directory_budget_removes_oldest_inactive_logs(logs):
     assert not paths[0].exists() and paths[1].exists()
 
 
+@pytest.mark.p1
 def test_default_budget_readable_severity_and_idle_shutdown(logs):
     path = diag.start_logging('test')
     assert diag._handler.maxBytes == 8 * 1024 * 1024

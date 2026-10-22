@@ -1,7 +1,9 @@
 """Preparation failures identify the failing step without opening a details pane."""
+import pytest
 from ui_support import run_ui
 
 
+@pytest.mark.p1
 def test_failed_preparation_shows_stage_and_reason_and_success_clears_error(tmp_path):
     run_ui(r'''
 w.show();settle_geometry(w)
@@ -28,6 +30,7 @@ w.close()
 ''',tmp_path)
 
 
+@pytest.mark.p2
 def test_cancelled_preparation_is_not_reported_as_failure(tmp_path):
     run_ui('''
 manager=w.model_manager
@@ -42,6 +45,7 @@ w.close()
 ''',tmp_path)
 
 
+@pytest.mark.p1
 def test_failed_model_check_does_not_claim_missing_models_or_start_recording(tmp_path):
     run_ui('''
 callbacks=[]
@@ -66,6 +70,7 @@ w.close()
 ''',tmp_path)
 
 
+@pytest.mark.p1
 def test_failed_recheck_revalidates_old_missing_result_before_download_guidance(tmp_path):
     run_ui('''
 callbacks=[]
@@ -81,6 +86,7 @@ w.close()
 ''',tmp_path)
 
 
+@pytest.mark.p1
 def test_model_check_failure_reason_and_retry_preserve_existing_assets(tmp_path):
     run_ui('''
 callbacks=[]

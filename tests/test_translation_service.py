@@ -9,6 +9,7 @@ from linguaflow.translation_queue import TranslationQueue
 from linguaflow.translation_service import publish_translation_result, run_translations
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('cancel', [False, True])
 def test_owned_translator_is_closed_on_stop_and_cancel(cancel):
     async def exercise():
@@ -35,6 +36,7 @@ def test_owned_translator_is_closed_on_stop_and_cancel(cancel):
     asyncio.run(exercise())
 
 
+@pytest.mark.p1
 def test_cancel_during_model_load_closes_late_created_translator():
     async def exercise():
         queue, started, release, closed = TranslationQueue(), Event(), Event(), Event()
@@ -60,6 +62,7 @@ def test_cancel_during_model_load_closes_late_created_translator():
     asyncio.run(exercise())
 
 
+@pytest.mark.p1
 def test_revision_during_inference_drops_old_translation_and_drains_queue():
     async def exercise():
         first = Caption(1, 0, 1, 'old', 'en', final=False, ready=True)
@@ -104,6 +107,7 @@ def test_revision_during_inference_drops_old_translation_and_drains_queue():
     asyncio.run(exercise())
 
 
+@pytest.mark.p1
 def test_load_failure_preserves_source_and_reports_each_caption():
     async def exercise():
         queue, lock = TranslationQueue(), asyncio.Lock()
@@ -126,6 +130,7 @@ def test_load_failure_preserves_source_and_reports_each_caption():
     asyncio.run(exercise())
 
 
+@pytest.mark.p1
 def test_publication_uses_latest_metadata_and_releases_lock_on_error():
     async def exercise():
         requested = Caption(1, 0, 1, 'text', 'en', translation='译文')

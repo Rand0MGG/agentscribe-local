@@ -1,7 +1,9 @@
 """One-click recording workspace, safe naming and consistent control geometry."""
+import pytest
 from ui_support import run_ui
 
 
+@pytest.mark.p0
 def test_new_workspace_uses_defaults_without_creating_empty_recordings(tmp_path):
     run_ui(r'''
 from PySide6.QtTest import QTest

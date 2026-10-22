@@ -40,6 +40,7 @@ class ScriptedModel(BaseChatModel):
         return len(text.encode('utf-8'))
 
 
+@pytest.mark.p0
 def test_budget_before_dispatch_and_missing_usage():
     budget = RequestBudget()
     with pytest.raises(ValueError):
@@ -56,6 +57,7 @@ def test_budget_before_dispatch_and_missing_usage():
         budget.reserve('13th', ['hi'])
 
 
+@pytest.mark.p0
 def test_real_harness_scoped_tool_roundtrip():
     model = ScriptedModel(responses=[
         AIMessage(content='', tool_calls=[{'name': 'read_transcript_spans', 'args': {'ids': ['caption:1']}, 'id': 'read'}]),
@@ -71,6 +73,7 @@ def test_real_harness_scoped_tool_roundtrip():
     assert service.budget.calls == 2 and service.budget.tokens == 160
 
 
+@pytest.mark.p2
 def test_structured_response_and_bad_reference_rejected():
     from linguaflow.knowledge.schemas import DocumentBlock
     model = ScriptedModel(responses=[AIMessage(content=json.dumps({'terms': [{'canonical': 'invented',
@@ -80,6 +83,7 @@ def test_structured_response_and_bad_reference_rejected():
         asyncio.run(DeepSeekService(model=model).extract_terms([DocumentBlock('doc:1', 'doc', 1, '', 'real term', '1')]))
 
 
+@pytest.mark.p0
 def test_hallucinated_file_tool_cannot_execute():
     import asyncio
     model = ScriptedModel(responses=[AIMessage(content='', tool_calls=[
@@ -89,6 +93,7 @@ def test_hallucinated_file_tool_cannot_execute():
         asyncio.run(run_agent(DeepSeekService(model=model), job, answer=True))
 
 
+@pytest.mark.p2
 def test_actual_deepseek_sdk_payload_usage_and_client_cleanup(monkeypatch):
     import asyncio
 
@@ -128,6 +133,7 @@ def test_actual_deepseek_sdk_payload_usage_and_client_cleanup(monkeypatch):
     assert captured[0]['response_format'] == {'type': 'json_object'}
 
 
+@pytest.mark.p0
 def test_harness_rechecks_consent_before_each_model_turn():
     import asyncio
     model = ScriptedModel(responses=[
@@ -148,6 +154,7 @@ def test_harness_rechecks_consent_before_each_model_turn():
     assert len(model.responses) == 1
 
 
+@pytest.mark.p2
 def test_incremental_long_note_batch_fits_actual_model_input_budget(tmp_path):
     import asyncio
 

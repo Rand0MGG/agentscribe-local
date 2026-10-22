@@ -19,6 +19,7 @@ def weights(path, model_type='qwen3_asr'):
     (path / 'config.json').write_text(json.dumps(dict(model_type=model_type, quantization={'bits': 4})))
 
 
+@pytest.mark.p2
 def test_inventory_reuses_managed_hub_and_whisper_without_model_imports(monkeypatch, tmp_path):
     managed, hub, whisper = fixture_models(monkeypatch, tmp_path)
     qwen = managed / 'Qwen3-ASR-1.7B-4bit'
@@ -41,6 +42,7 @@ def test_inventory_reuses_managed_hub_and_whisper_without_model_imports(monkeypa
     assert not repo.exists() and whisper.exists()
 
 
+@pytest.mark.p0
 def test_delete_rejects_custom_paths_and_unknown_ids(monkeypatch, tmp_path):
     fixture_models(monkeypatch, tmp_path)
     custom = tmp_path / 'my models'
@@ -53,6 +55,7 @@ def test_delete_rejects_custom_paths_and_unknown_ids(monkeypatch, tmp_path):
     assert (custom / 'model.safetensors').exists()
 
 
+@pytest.mark.p0
 def test_delete_rejects_real_directory_links(monkeypatch, tmp_path):
     from filesystem_support import directory_symlink
     managed, _, _ = fixture_models(monkeypatch, tmp_path)
@@ -67,6 +70,7 @@ def test_delete_rejects_real_directory_links(monkeypatch, tmp_path):
     assert (custom / 'model.safetensors').exists()
 
 
+@pytest.mark.p2
 def test_forced_aligner_is_auxiliary_not_selectable_as_asr(monkeypatch, tmp_path):
     _, hub, _ = fixture_models(monkeypatch, tmp_path)
     snapshot = hub / 'models--Qwen--Qwen3-ForcedAligner-0.6B' / 'snapshots' / 'abc'
@@ -76,6 +80,7 @@ def test_forced_aligner_is_auxiliary_not_selectable_as_asr(monkeypatch, tmp_path
     assert entry['deletable']
 
 
+@pytest.mark.p1
 def test_custom_qwen_format_wins_over_saved_whisper_backend(monkeypatch, tmp_path):
     fixture_models(monkeypatch, tmp_path)
     custom = tmp_path / 'custom'

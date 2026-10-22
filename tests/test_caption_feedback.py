@@ -1,7 +1,9 @@
 """Visible feedback stays immediate while single-click safety stays intact."""
+import pytest
 from ui_support import run_ui
 
 
+@pytest.mark.p1
 def test_tooltip_destroyed_before_application_stops_receiving_events(tmp_path):
     run_ui(r'''
 from PySide6.QtCore import QCoreApplication, QEvent, QPoint

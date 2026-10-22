@@ -1,7 +1,9 @@
 """Manage unrelated recordings and rename the live title without moving its writer."""
+import pytest
 from ui_support import run_ui
 
 
+@pytest.mark.p1
 def test_library_thread_start_failure_reports_and_allows_retry_and_close(tmp_path):
     run_ui(r'''
 import linguaflow.library_loading as loading
@@ -26,6 +28,7 @@ assert len(warnings)==1
 ''', tmp_path)
 
 
+@pytest.mark.p0
 def test_live_title_and_unrelated_operations_preserve_capture_path(tmp_path):
     run_ui(r'''
 from PySide6.QtCore import QObject, QPoint
@@ -112,6 +115,7 @@ w.close()
 ''',tmp_path)
 
 
+@pytest.mark.p2
 def test_saved_empty_recording_is_distinct_from_live_listening_and_pause(tmp_path):
     run_ui(r'''
 from PySide6.QtCore import QObject

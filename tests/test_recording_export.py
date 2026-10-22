@@ -15,6 +15,7 @@ def captions():
             Caption(5, 7, 8, 'Final', 'en', '最终', translation_phase='final')]
 
 
+@pytest.mark.p2
 def test_text_and_markdown_preserve_finality_translation_and_literal_text():
     assert srt_time(3599.9996) == "01:00:00,000"
     assert export_srt([Caption(7, 1.25, 2.75, "Hello", "en", "你好")]) == (
@@ -32,12 +33,21 @@ def test_text_and_markdown_preserve_finality_translation_and_literal_text():
     assert '\\`code\\`' in export_md(source)
 
 
+@pytest.mark.p2
 @pytest.mark.parametrize('suffix', FORMATS)
-def test_all_formats_write_unicode_and_keep_existing_target_on_publish_failure(tmp_path, monkeypatch, suffix):
+def test_all_formats_write_unicode(tmp_path, suffix):
     target = tmp_path / ('中文录音.' + suffix)
     item = dict(path=str(target), format=suffix)
     write_export(item, captions())
     assert '你好' in target.read_text(encoding='utf-8-sig')
+
+
+@pytest.mark.p0
+@pytest.mark.parametrize('suffix', FORMATS)
+def test_publish_failure_preserves_existing_export_and_cleans_temp(tmp_path, monkeypatch, suffix):
+    target = tmp_path / ('中文录音.' + suffix)
+    target.write_bytes(b'existing user export')
+    item = dict(path=str(target), format=suffix)
     before = target.read_bytes()
     def fail(*args):
         raise OSError('disk full')
@@ -48,13 +58,15 @@ def test_all_formats_write_unicode_and_keep_existing_target_on_publish_failure(t
     assert list(tmp_path.iterdir()) == [target]
 
 
+@pytest.mark.p2
 def test_extension_matches_content_and_missing_suffix_uses_selected_format():
     assert export_target('字幕', FORMATS['md'][0]) == (Path('字幕.md'), 'md')
     assert export_target('字幕.TXT', FORMATS['md'][0]) == (Path('字幕.TXT'), 'txt')
     assert export_target('字幕.other', FORMATS['txt'][0]) == (Path('字幕.other.txt'), 'txt')
 
 
-def test_recovery_includes_drafts_stale_translations_and_atomic_failure(tmp_path, monkeypatch):
+@pytest.mark.p1
+def test_recovery_includes_drafts_and_stale_translations(tmp_path):
     from linguaflow.recording_export import write_recovery
     target = tmp_path / '全部文字.txt'
     source = captions()
@@ -64,6 +76,13 @@ def test_recovery_includes_drafts_stale_translations_and_atomic_failure(tmp_path
     text = target.read_text(encoding='utf-8-sig')
     assert all(c.source in text for c in source)
     assert '草稿原文' in text and '旧译文' in text and '过期译文' in text and '不包含音频' in text
+
+
+@pytest.mark.p0
+def test_recovery_publish_failure_preserves_existing_file_and_cleans_temp(tmp_path, monkeypatch):
+    from linguaflow.recording_export import write_recovery
+    target = tmp_path / '全部文字.txt'
+    target.write_bytes(b'existing recovery text')
     before = target.read_bytes()
     def fail(*args):
         raise OSError('disk full')

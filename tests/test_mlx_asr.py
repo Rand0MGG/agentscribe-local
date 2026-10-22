@@ -27,6 +27,7 @@ def client_with_process(process):
     return client
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('broken_pipe', [True, False])
 def test_exited_client_closes_every_pipe_even_when_stdin_flush_fails(broken_pipe):
     error = BrokenPipeError(errno.EPIPE, 'Broken pipe') if broken_pipe else OSError(errno.EIO, 'I/O failure')
@@ -56,6 +57,7 @@ def test_exited_client_closes_every_pipe_even_when_stdin_flush_fails(broken_pipe
                 pass
 
 
+@pytest.mark.p1
 def test_bounded_windows_preserve_every_sample_and_flush_once():
     decoded = []
     def decode(audio):
@@ -73,12 +75,14 @@ def test_bounded_windows_preserve_every_sample_and_flush_once():
     assert online.finish()[0] == []
 
 
+@pytest.mark.p1
 def test_cut_uses_quiet_region_near_boundary():
     audio = np.ones(17 * 16000, np.float32)
     audio[12*16000:12*16000+1600] = 0
     assert choose_cut(audio, 12) == 12*16000
 
 
+@pytest.mark.p1
 def test_client_model_failure_closes_process_and_pipes(monkeypatch):
     import linguaflow.mlx_asr as module
     calls = []
@@ -94,6 +98,7 @@ def test_client_model_failure_closes_process_and_pipes(monkeypatch):
     assert process.stdin.closed and process.stdout.closed
 
 
+@pytest.mark.p1
 def test_client_close_escalates_only_when_helper_ignores_stop():
     calls = []
     killed = False
@@ -115,6 +120,7 @@ def test_client_close_escalates_only_when_helper_ignores_stop():
     assert process.stdin.closed and process.stdout.closed
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('read_input', [False, True])
 def test_stalled_request_times_out_during_write_or_read_and_reaps_child(read_input):
     code = 'import sys,time\n' + ('sys.stdin.readline()\n' if read_input else '') + 'time.sleep(30)'
@@ -133,6 +139,7 @@ def test_stalled_request_times_out_during_write_or_read_and_reaps_child(read_inp
         client.close()
 
 
+@pytest.mark.p1
 def test_startup_timeout_closes_child_and_reports_loading_failure(monkeypatch):
     import linguaflow.mlx_asr as module
     process = subprocess.Popen([sys.executable, '-u', '-c', 'import time; time.sleep(30)'],
@@ -147,6 +154,7 @@ def test_startup_timeout_closes_child_and_reports_loading_failure(monkeypatch):
     assert process.stdin.closed and process.stdout.closed
 
 
+@pytest.mark.p1
 def test_close_interrupts_pending_response_without_waiting_for_request_deadline():
     process = subprocess.Popen([sys.executable, '-u', '-c',
                                'import sys,time; sys.stdin.readline(); time.sleep(30)'],
@@ -197,6 +205,7 @@ def fake_runtime(monkeypatch, available=True):
     return state
 
 
+@pytest.mark.p1
 def test_worker_rejects_cpu_without_loading_model(monkeypatch):
     from linguaflow.mlx_asr_worker import serve
     fake_runtime(monkeypatch, available=False)
@@ -204,6 +213,7 @@ def test_worker_rejects_cpu_without_loading_model(monkeypatch):
         serve(lambda: pytest.fail('must not read model settings'), lambda _: None)
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('bits', [4, 8])
 def test_worker_pcm_contract_and_quantization_validation(monkeypatch, tmp_path, bits):
     from linguaflow.mlx_asr_worker import serve
@@ -222,6 +232,7 @@ def test_worker_pcm_contract_and_quantization_validation(monkeypatch, tmp_path, 
     assert state['calls'][0][1]['language'] == 'English'
 
 
+@pytest.mark.p0
 def test_mac_profile_roundtrip_and_backend_switch_do_not_open_audio(tmp_path):
     code = '''
 import os,sys
@@ -255,6 +266,7 @@ w.close()
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('seconds', [18, 35, 46])
 def test_worker_accepts_configured_long_window_and_rejects_unbounded_pcm(monkeypatch, tmp_path, seconds):
     from linguaflow.mlx_asr_worker import serve

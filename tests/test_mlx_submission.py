@@ -2,6 +2,7 @@
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from linguaflow.mlx_asr import choose_cut
 from linguaflow.qwen_accurate import QwenAccurateOnline
@@ -16,6 +17,7 @@ def online(decode, window=12):
                              transcript_type=SimpleNamespace)
 
 
+@pytest.mark.p1
 def test_short_pause_retains_pcm_and_later_speech_corrects_original_phrase():
     calls = []
     def decode(audio):
@@ -41,6 +43,7 @@ def test_short_pause_retains_pcm_and_later_speech_corrects_original_phrase():
     assert asr.finish()[0] == []
 
 
+@pytest.mark.p1
 def test_long_pause_starts_new_window_and_preserves_token_delivery_and_clock():
     asr = online(lambda audio: 'first phrase' if audio[0] == 1 else 'next phrase')
     asr.insert_audio_chunk(np.ones(16000), 1)
@@ -56,6 +59,7 @@ def test_long_pause_starts_new_window_and_preserves_token_delivery_and_clock():
     assert asr.finish()[0] == []
 
 
+@pytest.mark.p1
 def test_eof_during_trailing_silence_does_not_extend_word_timestamps():
     asr = online(lambda audio: 'Last sentence.')
     asr.insert_audio_chunk(np.ones(16000), 1)
@@ -66,6 +70,7 @@ def test_eof_during_trailing_silence_does_not_extend_word_timestamps():
     assert asr.finish()[0] == []
 
 
+@pytest.mark.p1
 def test_backlog_at_vad_endpoint_keeps_every_sample_and_decode_bounded():
     calls = []
     asr = online(lambda audio: calls.append(audio.copy()) or 'classroom phrase')
@@ -88,6 +93,7 @@ def test_backlog_at_vad_endpoint_keeps_every_sample_and_decode_bounded():
     assert final[0].start == 55 and final[-1].end == 56
 
 
+@pytest.mark.p1
 def test_mlx_uses_requested_window_and_retains_short_pauses(monkeypatch):
     import linguaflow.mlx_asr as module
     monkeypatch.setattr(module, 'MLXClient', lambda *args, **kwargs: SimpleNamespace(
@@ -100,6 +106,7 @@ def test_mlx_uses_requested_window_and_retains_short_pauses(monkeypatch):
     assert asr.update_seconds == .5
 
 
+@pytest.mark.p1
 def test_capacity_rollover_does_not_close_or_shrink_the_asr_interval():
     asr = online(lambda audio: 'First sentence. Extra.' if len(audio) > 8 * 16000
                  else 'First sentence.', window=8)
@@ -123,6 +130,7 @@ def test_capacity_rollover_does_not_close_or_shrink_the_asr_interval():
     assert store.rows[0]['end'] == 13
 
 
+@pytest.mark.p1
 def test_short_vad_pause_uses_existing_store_without_publishing_closed_source():
     asr = online(lambda audio: 'The value is five.' if len(audio) == 16000 else 'The value is six.')
     events = []
@@ -150,6 +158,7 @@ def test_short_vad_pause_uses_existing_store_without_publishing_closed_source():
     assert events[-1]['data']['closed']
 
 
+@pytest.mark.p1
 def test_silent_pcm_closes_utterance_through_shared_strategy_without_caption_timer():
     asr = online(lambda audio: 'Last sentence.')
     store = install_revision_bridge(asr)
@@ -174,6 +183,7 @@ def test_silent_pcm_closes_utterance_through_shared_strategy_without_caption_tim
     assert asr.finish()[0] == []
 
 
+@pytest.mark.p1
 def test_capture_resumption_does_not_finalize_an_old_short_pause():
     asr = online(lambda audio: 'A phrase.')
     store = install_revision_bridge(asr)
@@ -186,6 +196,7 @@ def test_capture_resumption_does_not_finalize_an_old_short_pause():
     assert not store.rows[0]['closed'] and len(asr.audio_buffer)
 
 
+@pytest.mark.p1
 def test_wall_clock_without_new_silent_pcm_never_closes_utterance():
     asr = online(lambda audio: 'A phrase.')
     store = install_revision_bridge(asr)
@@ -196,6 +207,7 @@ def test_wall_clock_without_new_silent_pcm_never_closes_utterance():
     assert not store.rows[0]['closed']
 
 
+@pytest.mark.p1
 def test_explicit_pause_drains_source_using_existing_completion_state():
     asr = online(lambda audio: 'A phrase.')
     store = install_revision_bridge(asr)
@@ -205,6 +217,7 @@ def test_explicit_pause_drains_source_using_existing_completion_state():
     assert store.rows[0]['closed'] and not len(asr.audio_buffer)
 
 
+@pytest.mark.p1
 def test_explicit_pause_waits_for_already_accepted_pcm_in_queue():
     asr = online(lambda audio: 'A complete phrase.')
     store = install_revision_bridge(asr)
@@ -219,6 +232,7 @@ def test_explicit_pause_waits_for_already_accepted_pcm_in_queue():
     assert asr.start_silence()[0] and store.rows[0]['closed']
 
 
+@pytest.mark.p1
 def test_empty_explicit_pause_does_not_close_future_speech():
     asr = online(lambda audio: 'A phrase.')
     store = install_revision_bridge(asr)
@@ -228,6 +242,7 @@ def test_empty_explicit_pause_does_not_close_future_speech():
     assert asr.start_silence()[0] == [] and not store.rows[0]['closed']
 
 
+@pytest.mark.p1
 def test_shared_sat_policy_rejoins_punctuated_fragments_while_asr_remains_open():
     mapper = CaptionMapper('en', predictor=lambda text: [])
     first = mapper.update({'revision_text': 'I.', 'stable_end': 2,
@@ -239,6 +254,7 @@ def test_shared_sat_policy_rejoins_punctuated_fragments_while_asr_remains_open()
     assert changed.id == first.id and changed.source == continued and not changed.final
 
 
+@pytest.mark.p1
 def test_shared_submission_retranslates_corrected_source_then_finalizes():
     clock = [0.]
     asr = online(lambda audio: 'The value is five.' if len(audio) == 16000 else 'The value is six.')

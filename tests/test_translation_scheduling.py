@@ -12,6 +12,7 @@ from linguaflow.core import Caption, Settings
 from linguaflow.translation_models import HY_MODEL
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('busy', ['inference', 'backlog'])
 def test_worker_publishes_translation_before_recognition_becomes_idle(monkeypatch, busy):
     _, online, _ = stub_worker(monkeypatch)
@@ -103,6 +104,7 @@ def test_worker_publishes_translation_before_recognition_becomes_idle(monkeypatc
     asyncio.run(exercise())
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('backend', ['qwen3-streaming', 'qwen3-mlx'])
 def test_worker_translates_stable_sentences_while_asr_prefix_is_frozen(monkeypatch, backend):
     from linguaflow import mlx_asr, qwen_accurate, semantic_model

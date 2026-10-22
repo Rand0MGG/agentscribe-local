@@ -1,9 +1,11 @@
 """Shared settings display; isolated preferences, mocked updates, no audio."""
 import os
 
+import pytest
 from ui_support import run_ui_process
 
 
+@pytest.mark.p2
 def test_update_settings_and_inline_storage_path(tmp_path):
     code = '''
 import os
@@ -57,6 +59,7 @@ close_window(w, app)
                    env=environment)
 
 
+@pytest.mark.p1
 def test_slow_update_check_does_not_block_local_recording_and_save(tmp_path):
     from ui_support import run_ui
     run_ui('''

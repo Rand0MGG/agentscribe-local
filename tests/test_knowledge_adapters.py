@@ -13,6 +13,7 @@ from linguaflow.knowledge.schemas import Term
 from linguaflow.qwen_accurate import build_official_online
 
 
+@pytest.mark.p1
 def test_same_context_reaches_pytorch_transcribe_and_mlx_generate(monkeypatch, tmp_path):
     context = context_text(compile_context([Term('gradient descent', approved=True)]).to_dict())
     calls = []
@@ -42,11 +43,13 @@ def test_same_context_reaches_pytorch_transcribe_and_mlx_generate(monkeypatch, t
     assert calls[-1]['system_prompt'] == context and 'context' not in calls[-1]
 
 
+@pytest.mark.p1
 def test_context_is_rejected_before_loading_pytorch():
     with pytest.raises(ValueError, match='超长'):
         build_official_online('none', 'cpu', 'en', 1, 30, context='x' * 513)
 
 
+@pytest.mark.p1
 def test_pytorch_and_mlx_adapters_share_revision_finalization_and_translation_policy(monkeypatch):
     import asyncio
 

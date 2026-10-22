@@ -1,9 +1,11 @@
 """User-visible regressions in an isolated Qt process, with no audio discovery."""
 import os
 
+import pytest
 from ui_support import run_ui_process
 
 
+@pytest.mark.p1
 def test_recording_actions_prompt_for_models_without_automatic_downloads(tmp_path):
     code = r"""
 import os

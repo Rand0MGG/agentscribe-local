@@ -14,6 +14,7 @@
 | 诊断日志目录、隐私与问题反馈 | [WORKSPACE：诊断日志](WORKSPACE.md#诊断日志与问题反馈) |
 | 诊断事件与延迟口径 | [ARCHITECTURE：诊断日志](ARCHITECTURE.md#诊断日志) |
 | 如何选择和运行测试 | [TESTING](TESTING.md)；[AMI](testing/AMI_BENCHMARK.md)、[评分](testing/SCORING_SYSTEM.md) 是复用协议 |
+| 测试漏检、重复前置与精简候选 | [2026-10-23 测试代码审查](testing/TEST_CODE_REVIEW_20261023.md)，区分确认问题、受控反例与待验证候选 |
 | 当前优先级、未完成与已完成 | [ROADMAP](ROADMAP.md) |
 | 哪些已有证据、证据的适用范围 | [VALIDATION](VALIDATION.md) |
 | 构建、签名、发布和升级 | [RELEASING](RELEASING.md) |

@@ -41,6 +41,7 @@ def seed(store, text='讲述', identifier=1):
     return caption
 
 
+@pytest.mark.p2
 def test_source_aba_versions_and_stale_receipt(recording):
     _, _, store = recording
     first = seed(store)
@@ -57,6 +58,7 @@ def test_source_aba_versions_and_stale_receipt(recording):
     assert store.view()['notes'] == []
 
 
+@pytest.mark.p2
 def test_append_does_not_invalidate_batch_but_still_needs_rechecking(recording):
     _, _, store = recording
     first = seed(store)
@@ -75,6 +77,7 @@ def test_append_does_not_invalidate_batch_but_still_needs_rechecking(recording):
     assert not store.publish(newer, patch(second.source, 'caption:2'))
 
 
+@pytest.mark.p2
 def test_retraction_and_reopening_are_not_committable(recording):
     _, _, store = recording
     first = seed(store)
@@ -92,6 +95,7 @@ def test_retraction_and_reopening_are_not_committable(recording):
     assert store.make_job() is None
 
 
+@pytest.mark.p0
 def test_atomic_patch_user_edit_and_epoch_guards(recording):
     library, item, store = recording
     first = seed(store)
@@ -117,6 +121,7 @@ def test_atomic_patch_user_edit_and_epoch_guards(recording):
         store.publish(new_job, patch(second.source, 'caption:2'))
 
 
+@pytest.mark.p2
 def test_current_unsaved_view_is_seeded_when_opened_mid_recording(recording):
     _, _, store = recording
     first = seed(store)
@@ -126,6 +131,7 @@ def test_current_unsaved_view_is_seeded_when_opened_mid_recording(recording):
     assert store.view()['sources']['caption:1']['deleted']
 
 
+@pytest.mark.p1
 def test_context_review_bounds_and_checksum():
     terms = [Term('unapproved'), Term(' Gradient ', approved=True), Term('gradient', approved=True),
              *(Term('术语' + str(i) * 20, approved=True) for i in range(80))]
@@ -153,6 +159,7 @@ def pptx(path):
                             f'<a:p><a:r><a:t>{text}</a:t></a:r></a:p><p:pic/></p:sld>')
 
 
+@pytest.mark.p0
 def test_import_order_cache_tampering_and_course_move(recording, tmp_path):
     library, item, _ = recording
     path = tmp_path / '课件.pptx'
@@ -178,6 +185,7 @@ def test_import_order_cache_tampering_and_course_move(recording, tmp_path):
         read_blocks(library, path2, course2)
 
 
+@pytest.mark.p2
 def test_legacy_material_layout_remains_readable_and_can_be_reimported(recording, tmp_path):
     import shutil
 
@@ -198,6 +206,7 @@ def test_legacy_material_layout_remains_readable_and_can_be_reimported(recording
     assert read_blocks(library, path, course) == expected
 
 
+@pytest.mark.p0
 def test_course_purge_blocks_external_references(recording, tmp_path):
     library, item, _ = recording
     original_folder = next(row for row in library.index['folders'] if row['id'] == item['folder'])
@@ -215,6 +224,7 @@ def test_course_purge_blocks_external_references(recording, tmp_path):
     assert locate_course(library, course['id'])[1]['id'] == course['id']
 
 
+@pytest.mark.p0
 def test_zip_paths_and_symlinks_are_rejected(tmp_path):
     path = tmp_path / 'bad.pptx'
     with ZipFile(path, 'w') as archive:
@@ -223,6 +233,7 @@ def test_zip_paths_and_symlinks_are_rejected(tmp_path):
         extract_material(path)
 
 
+@pytest.mark.p2
 def test_pdf_page_extraction(tmp_path):
     pytest.importorskip('pypdf')
     from pypdf import PdfWriter
@@ -241,6 +252,7 @@ def test_pdf_page_extraction(tmp_path):
     assert result['blocks'][0]['page'] == 1 and result['blocks'][0]['text'] == 'gradient descent'
 
 
+@pytest.mark.p0
 def test_corrupt_consent_cannot_enable_cloud(recording):
     library, item, _ = recording
     manifest = read_manifest(library, item['id'])
@@ -257,6 +269,7 @@ def test_corrupt_consent_cannot_enable_cloud(recording):
         course_for_folder(library, item['folder'])
 
 
+@pytest.mark.p0
 def test_new_owner_fences_all_writes_from_old_worker(recording):
     library, item, old = recording
     new = KnowledgeStore(library.root, library.directory(item['id']), item['id'])
@@ -265,6 +278,7 @@ def test_new_owner_fences_all_writes_from_old_worker(recording):
     assert new.view()['sources'] == {}
 
 
+@pytest.mark.p2
 def test_material_only_claim_cannot_be_labeled_as_teacher_speech(recording):
     _, _, store = recording
     seed(store, 'gradient descent')
@@ -275,6 +289,7 @@ def test_material_only_claim_cannot_be_labeled_as_teacher_speech(recording):
     assert not store.view()['notes']
 
 
+@pytest.mark.p2
 def test_answer_rejects_new_evidence_even_if_old_citation_unchanged(recording):
     _, _, store = recording
     seed(store)
@@ -285,6 +300,7 @@ def test_answer_rejects_new_evidence_even_if_old_citation_unchanged(recording):
         store.validate_job(job, require_latest=True)
 
 
+@pytest.mark.p2
 def test_external_saved_mismatch_and_time_change_do_not_reuse_eligibility(recording):
     _, _, store = recording
     first = seed(store)
@@ -315,6 +331,7 @@ def long_notes(store):
     return caption
 
 
+@pytest.mark.p0
 def test_delete_cannot_remove_valid_note_not_supplied_to_this_batch(recording):
     _, _, store = recording
     captions = [Caption(index, index, index+1, word, 'en')
@@ -338,6 +355,7 @@ def test_delete_cannot_remove_valid_note_not_supplied_to_this_batch(recording):
     assert store.view() == before
 
 
+@pytest.mark.p2
 def test_incremental_batches_keep_new_evidence_for_all_deferred_notes(recording):
     from linguaflow.knowledge.schemas import MAX_NOTE_PAYLOAD_BYTES, job_payload_bytes
     _, _, store = recording
@@ -361,6 +379,7 @@ def test_incremental_batches_keep_new_evidence_for_all_deferred_notes(recording)
     assert all(row['status'] == 'valid' and not row['pending_sources'] for row in store.view()['notes'])
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('damage', ['corrupt', 'missing'])
 def test_reimport_repairs_original_without_reparsing_valid_cache(recording, tmp_path, monkeypatch, damage):
     import linguaflow.knowledge.materials as module
@@ -382,6 +401,7 @@ def test_reimport_repairs_original_without_reparsing_valid_cache(recording, tmp_
     assert [row.text for row in read_blocks(library, path, course)] == ['梯度下降', 'gradient descent']
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('state', ['draft', 'recording', 'complete', 'incomplete'])
 def test_draft_refreshes_shared_glossary_but_started_recording_keeps_snapshot(recording, state):
     library, item, _ = recording
@@ -398,6 +418,7 @@ def test_draft_refreshes_shared_glossary_but_started_recording_keeps_snapshot(re
         assert current == read_manifest(library, item['id'])['asr_context'] == json.loads(json.dumps(previous))
 
 
+@pytest.mark.p1
 def test_moved_draft_refreshes_its_bound_course_not_destination_glossary(recording):
     library, item, _ = recording
     path, course = course_for_folder(library, item['folder'], create=True)

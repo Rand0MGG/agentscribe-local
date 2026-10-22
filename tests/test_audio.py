@@ -9,6 +9,7 @@ from linguaflow.audio import capture
 from linguaflow.core import Settings
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize("rate, frames", [(16000, 1600), (48000, 4800)])
 @pytest.mark.parametrize("platform", ["darwin", "win32"])
 def test_stereo_capture_downmixes_resamples_and_stops(monkeypatch, rate, frames, platform):
@@ -49,12 +50,14 @@ def test_stereo_capture_downmixes_resamples_and_stops(monkeypatch, rate, frames,
     assert float(blocks[0][20:-20].mean()) == pytest.approx(0.3, abs=0.001)
 
 
+@pytest.mark.p1
 def test_disconnected_device_is_reported(monkeypatch):
     monkeypatch.setitem(sys.modules, "soundcard", SimpleNamespace(all_microphones=lambda **kw: []))
     with pytest.raises(RuntimeError, match="断开"):
         capture(Settings("gone"), Event(), lambda block: None)
 
 
+@pytest.mark.p0
 def test_cancelled_capture_never_imports_audio(monkeypatch):
     monkeypatch.setitem(sys.modules, 'soundcard', None)
     stop = Event()
@@ -62,6 +65,7 @@ def test_cancelled_capture_never_imports_audio(monkeypatch):
     capture(Settings('test'), stop, lambda block: pytest.fail('unexpected audio'))
 
 
+@pytest.mark.p1
 def test_mac_rejects_windows_loopback_before_importing_audio(monkeypatch):
     monkeypatch.setattr(sys, 'platform', 'darwin')
     monkeypatch.setitem(sys.modules, 'soundcard', None)
@@ -69,6 +73,7 @@ def test_mac_rejects_windows_loopback_before_importing_audio(monkeypatch):
         capture(Settings('test', loopback=True), Event(), lambda block: None)
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('platform, loopback', [('darwin', False), ('win32', True)])
 def test_device_discovery_uses_platform_loopback_policy(monkeypatch, platform, loopback):
     import linguaflow.audio as audio
@@ -90,6 +95,7 @@ def test_device_discovery_uses_platform_loopback_policy(monkeypatch, platform, l
     assert device.name == ('系统音频 · fixture' if loopback else '外部输入 · fixture')
 
 
+@pytest.mark.p1
 def test_mac_native_system_audio_routes_without_soundcard(monkeypatch):
     import linguaflow.audio as audio
     import linguaflow.audio_macos as mac
@@ -102,6 +108,7 @@ def test_mac_native_system_audio_routes_without_soundcard(monkeypatch):
     assert calls == [(settings, stop, callback)]
 
 
+@pytest.mark.p2
 def test_old_mac_does_not_advertise_unavailable_native_audio(monkeypatch):
     import linguaflow.audio as audio
     monkeypatch.setattr(sys, 'platform', 'darwin')

@@ -67,6 +67,7 @@ def signed_fixture(folder, target, version="0.8.0-beta.1"):
     return publisher, entry, release, manifest, artifact, signature, configuration
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize("target", ["macos-arm64", "windows-x64"])
 def test_native_signed_appcast_matches_platform_and_channel(tmp_path, target):
     module, entry, *_ = signed_fixture(tmp_path, target)
@@ -81,6 +82,7 @@ def test_native_signed_appcast_matches_platform_and_channel(tmp_path, target):
     assert target in enclosure.get("url")
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize("problem", ["draft", "unaccepted", "dirty", "tampered", "signature", "source"])
 def test_unverified_assets_never_enter_feed(tmp_path, problem):
     m, _, release, manifest, artifact, signature, config = signed_fixture(tmp_path, "macos-arm64")
@@ -100,6 +102,7 @@ def test_unverified_assets_never_enter_feed(tmp_path, problem):
         m.feed_entry(release, manifest, artifact, signature, config)
 
 
+@pytest.mark.p2
 def test_full_site_snapshot_preserves_other_platform_and_rejects_downgrade(tmp_path):
     module, mac, *_ = signed_fixture(tmp_path / "mac", "macos-arm64", "0.8.0")
     _, windows, *_ = signed_fixture(tmp_path / "win", "windows-x64", "0.7.1")
@@ -124,6 +127,7 @@ def test_full_site_snapshot_preserves_other_platform_and_rejects_downgrade(tmp_p
         module.merge_snapshot(tmp_path / "missing", tmp_path / "empty", mac)
 
 
+@pytest.mark.p2
 @pytest.mark.parametrize('beta_version,first', [('0.9.1-beta.1', '0.9.2'), ('0.10.0-beta.1', '0.10.0-beta.1')])
 def test_beta_clients_also_receive_stable_without_leaking_beta_to_stable(tmp_path, beta_version, first):
     module, stable, *_ = signed_fixture(tmp_path / 'stable', 'macos-arm64', '0.9.2')
@@ -141,6 +145,7 @@ def test_beta_clients_also_receive_stable_without_leaking_beta_to_stable(tmp_pat
     assert set(versions('beta.xml')) == {'0.9.2', beta_version}
 
 
+@pytest.mark.p0
 def test_snapshot_rejects_unsafe_paths(tmp_path):
     import io
     import zipfile
@@ -176,6 +181,7 @@ class NativeLibrary:
         return self.functions[name]
 
 
+@pytest.mark.p1
 def test_winsparkle_callbacks_read_only_shared_event_from_native_thread(monkeypatch, tmp_path):
     from linguaflow import native_updates as module
 
@@ -209,6 +215,7 @@ def test_winsparkle_callbacks_read_only_shared_event_from_native_thread(monkeypa
     assert library.calls[-1][0] == "win_sparkle_cleanup"
 
 
+@pytest.mark.p1
 def test_sparkle_retains_callback_and_dispatches_native_messages(monkeypatch, tmp_path):
     from linguaflow import native_updates as module
 
@@ -227,6 +234,7 @@ def test_sparkle_retains_callback_and_dispatches_native_messages(monkeypatch, tm
     assert library.calls[-1][0] == "ASUpdaterStop"
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('format_bytes', [32, 64])
 def test_release_signer_checks_identity_and_exact_sealed_bytes(tmp_path, monkeypatch, format_bytes):
     signer = script('sign_update_artifact')
@@ -250,6 +258,7 @@ def test_release_signer_checks_identity_and_exact_sealed_bytes(tmp_path, monkeyp
         signer.sign(artifact, sealed, 'macos-arm64', encoded)
 
 
+@pytest.mark.p0
 def test_windows_payload_sealer_rejects_unlisted_and_changed_files(tmp_path, monkeypatch):
     builder = script('build_windows_installer')
     files = ['AgentScribe.exe', 'AgentScribeRecovery.dll', 'python/python.exe', 'requirements-runtime.txt',
@@ -272,6 +281,7 @@ def test_windows_payload_sealer_rejects_unlisted_and_changed_files(tmp_path, mon
         builder.validate_payload(tmp_path)
 
 
+@pytest.mark.p2
 def test_native_progress_is_bounded_and_terminal_events_are_immediate():
     from linguaflow.native_updates import UpdateEventRelay
     received, clock = [], [1.0]

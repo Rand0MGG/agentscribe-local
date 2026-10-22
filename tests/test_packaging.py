@@ -24,6 +24,7 @@ def tracked_source(root):
     subprocess.run(['git', '-C', str(root), 'add', '.'], check=True)
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('destination', ['Contents/Resources/linguaflow', 'AgentScribe/linguaflow'])
 def test_both_builds_copy_only_tracked_declared_application_inputs(tmp_path, destination):
     root = tmp_path / 'source'
@@ -38,6 +39,7 @@ def test_both_builds_copy_only_tracked_declared_application_inputs(tmp_path, des
                for name, sha in inventory.items())
 
 
+@pytest.mark.p1
 def test_copy_rejects_undeclared_tracked_resource_and_missing_code(tmp_path):
     tracked_source(tmp_path)
     extra = tmp_path / 'linguaflow/local.json'
@@ -68,6 +70,7 @@ def installation(root):
     return previous, obsolete
 
 
+@pytest.mark.p0
 def test_upgrade_removes_only_unchanged_manifested_program_files(tmp_path):
     previous, obsolete = installation(tmp_path)
     old = json.loads(previous.read_text())
@@ -87,6 +90,7 @@ def test_upgrade_removes_only_unchanged_manifested_program_files(tmp_path):
     assert cleanup.cleanup(tmp_path, previous) == []
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('change', ['old', 'new'])
 def test_changed_program_files_stop_cleanup_and_preserve_retry_manifest(tmp_path, change):
     previous, obsolete = installation(tmp_path)
@@ -96,6 +100,7 @@ def test_changed_program_files_stop_cleanup_and_preserve_retry_manifest(tmp_path
     assert obsolete.exists() and previous.exists()
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('name', ['../outside.py', 'C:/outside.py', '/outside.py',
                                  'linguaflow/a/../other.py', 'linguaflow/other.py:stream',
                                  'linguaflow/other.py.', 'linguaflow\\other.py'])
@@ -109,6 +114,7 @@ def test_invalid_old_inventory_cannot_delete_program_or_external_data(tmp_path, 
     assert obsolete.exists() and previous.exists()
 
 
+@pytest.mark.p1
 def test_windows_case_alias_is_not_an_obsolete_file(tmp_path):
     previous, obsolete = installation(tmp_path)
     manifest = json.loads(previous.read_text())
@@ -118,6 +124,7 @@ def test_windows_case_alias_is_not_an_obsolete_file(tmp_path):
     assert not obsolete.exists() and (tmp_path / 'linguaflow/current.py').exists()
 
 
+@pytest.mark.p0
 def test_cleanup_rejects_directory_mapping_and_external_manifest(tmp_path, monkeypatch):
     previous, obsolete = installation(tmp_path)
     with pytest.raises(ValueError, match='必须位于'):
@@ -128,6 +135,7 @@ def test_cleanup_rejects_directory_mapping_and_external_manifest(tmp_path, monke
     assert previous.exists() and obsolete.exists()
 
 
+@pytest.mark.p1
 def test_cleanup_io_failure_keeps_inventory_and_can_retry(tmp_path, monkeypatch):
     previous, obsolete = installation(tmp_path)
     original = Path.unlink
@@ -143,6 +151,7 @@ def test_cleanup_io_failure_keeps_inventory_and_can_retry(tmp_path, monkeypatch)
     assert cleanup.cleanup(tmp_path, previous) == ['linguaflow/obsolete.py']
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('failure', [None, 'launcher', 'full', 'attach'])
 def test_mac_final_image_probe_detaches_after_probe_failure(tmp_path, monkeypatch, failure):
     calls = []
@@ -167,6 +176,7 @@ def test_mac_final_image_probe_detaches_after_probe_failure(tmp_path, monkeypatc
     assert (calls[-1] == 'detach') == (failure != 'attach')
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('mac', [False, True])
 @pytest.mark.parametrize('failure', [None, 'audio', 'process'])
 def test_shared_probe_isolates_both_platforms_and_rejects_guard_failures(tmp_path, monkeypatch, mac, failure):
@@ -193,6 +203,7 @@ def test_shared_probe_isolates_both_platforms_and_rejects_guard_failures(tmp_pat
         assert probe_package.run_probe(app).is_dir()
 
 
+@pytest.mark.p0
 def test_inside_probe_installs_guard_when_launcher_replaces_pythonpath(tmp_path):
     # -I models a launcher that does not import an inherited sitecustomize.
     # Check the guard's presence without attempting any audio backend import.
@@ -211,6 +222,7 @@ module.main()
                    check=True, timeout=15)
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('failure', [False, True])
 def test_windows_sealer_probes_final_updater_payload_before_compilation(tmp_path, monkeypatch, failure):
     builder = build_windows_installer
@@ -257,6 +269,7 @@ def test_windows_sealer_probes_final_updater_payload_before_compilation(tmp_path
         assert calls == ['launcher', 'full', 'compiler']
 
 
+@pytest.mark.p0
 def test_actual_windows_builder_excludes_ignored_file_from_clean_source_payload(tmp_path, monkeypatch):
     spec = importlib.util.spec_from_file_location('audit_build_windows', ROOT / 'scripts/build_windows.py')
     builder = importlib.util.module_from_spec(spec)
@@ -327,6 +340,7 @@ def test_actual_windows_builder_excludes_ignored_file_from_clean_source_payload(
     assert not (payload / 'Licenses/Qt-PySide/unrelated-local.txt').exists()
 
 
+@pytest.mark.p0
 def test_declared_licenses_exclude_unlisted_files(tmp_path):
     source, target = tmp_path / 'downloads', tmp_path / 'payload'
     source.mkdir()
@@ -339,6 +353,7 @@ def test_declared_licenses_exclude_unlisted_files(tmp_path):
     assert {p.name for p in target.iterdir()} == {'license.txt'}
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('change', ['corrupt', 'symlink', 'escape'])
 def test_licenses_reject_corruption_and_mappings(tmp_path, change):
     source, target = tmp_path / 'downloads', tmp_path / 'payload'
@@ -365,6 +380,7 @@ def test_licenses_reject_corruption_and_mappings(tmp_path, change):
     assert not target.exists()
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('warning', ['QProcess: Destroyed while process is still running.',
                                     'QThread: Destroyed while thread is still running'])
 def test_package_probe_rejects_success_exit_with_lifecycle_warning(tmp_path, monkeypatch, warning):
@@ -379,6 +395,7 @@ def test_package_probe_rejects_success_exit_with_lifecycle_warning(tmp_path, mon
         probe_package.run_probe(tmp_path / 'AgentScribe.app')
 
 
+@pytest.mark.p1
 def test_package_window_waits_for_accepted_close_and_owned_processes():
     from PySide6.QtCore import QProcess
     state = {'steps': 0}
@@ -391,6 +408,7 @@ def test_package_window_waits_for_accepted_close_and_owned_processes():
     assert state['steps'] == 3
 
 
+@pytest.mark.p1
 def test_package_window_timeout_is_failure():
     window = SimpleNamespace(close=lambda: None, isVisible=lambda: True,
                              background_checks=set(), findChildren=lambda _: [])
@@ -398,6 +416,7 @@ def test_package_window_timeout_is_failure():
         probe_package.close_window(window, SimpleNamespace(processEvents=lambda: None), timeout=0)
 
 
+@pytest.mark.p1
 def test_dependency_test_trimming_keeps_helpers_datasets_and_licenses(tmp_path):
     for name in ('numpy/tests/test_fixture.py', 'scipy/linalg/tests/test_fixture.py',
                  'scipy/_lib/_testutils.py', 'scipy/datasets/sample.dat', 'numpy/LICENSE.txt',

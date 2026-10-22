@@ -2,10 +2,13 @@ import json
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 from linguaflow import model_cache
 from linguaflow.translation_models import HY_MODEL
 
 
+@pytest.mark.p1
 def test_hy_incomplete_template_triggers_download_including_jinja(tmp_path, monkeypatch):
     monkeypatch.setattr(model_cache, 'model_directory', lambda name: tmp_path / 'models' / name)
     cache = tmp_path / 'cached'
@@ -32,6 +35,7 @@ def test_hy_incomplete_template_triggers_download_including_jinja(tmp_path, monk
     assert not downloads
 
 
+@pytest.mark.p1
 def test_builtin_hy_choice_reuses_complete_project_local_package(tmp_path, monkeypatch):
     monkeypatch.setattr(model_cache, 'model_directory', lambda name: tmp_path / 'models' / name)
     bundle = tmp_path / 'models' / 'Hy-MT2-1.8B'

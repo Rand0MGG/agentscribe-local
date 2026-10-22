@@ -36,6 +36,7 @@ def history(tmp_path, monkeypatch, *, rollback=set()):
     return base, values
 
 
+@pytest.mark.p0
 def test_repeated_environments_retain_only_active_and_recent_rollback(tmp_path, monkeypatch):
     base, values = history(tmp_path, monkeypatch)
     recording = tmp_path / '录音/lecture.wav'
@@ -48,6 +49,7 @@ def test_repeated_environments_retain_only_active_and_recent_rollback(tmp_path, 
     assert recording.read_bytes() == b'user recording'
 
 
+@pytest.mark.p1
 def test_saved_package_rollback_keeps_older_compatible_environment(tmp_path, monkeypatch):
     base, values = history(tmp_path, monkeypatch, rollback={'fixed==1'})
     assert runtime.clean_environments('wlk') == 2
@@ -69,6 +71,7 @@ def test_saved_package_rollback_keeps_older_compatible_environment(tmp_path, mon
     assert runtime_paths.active_directory(base, tmp_path / 'missing', python=True) == base / values[0]['slot']
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('change', ['extra-recording', 'modified', 'unknown', 'live', 'empty', 'inspection-failed'])
 def test_environment_cleanup_preserves_user_changes_and_unconfirmed_ownership(tmp_path, monkeypatch, change):
     base, values = history(tmp_path, monkeypatch)
@@ -91,6 +94,7 @@ def test_environment_cleanup_preserves_user_changes_and_unconfirmed_ownership(tm
     assert protected.exists()
 
 
+@pytest.mark.p0
 def test_environment_pointer_publication_failure_prevents_any_deletion(tmp_path, monkeypatch):
     base, values = history(tmp_path, monkeypatch)
     def fail(*args):
@@ -108,6 +112,7 @@ def component(base, number):
     return directory
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('change', ['extra', 'modified', 'unknown', 'live', 'junction'])
 def test_component_pruning_preserves_rollback_and_unowned_data(tmp_path, monkeypatch, change):
     base = tmp_path / 'components/fixture'
@@ -130,6 +135,7 @@ def test_component_pruning_preserves_rollback_and_unowned_data(tmp_path, monkeyp
     assert slots[-1].exists() and slots[-2].exists()
 
 
+@pytest.mark.p0
 def test_component_external_directory_link_preserves_target(tmp_path, monkeypatch):
     from filesystem_support import directory_symlink
     base = tmp_path / 'components/fixture'
@@ -144,6 +150,7 @@ def test_component_external_directory_link_preserves_target(tmp_path, monkeypatc
     assert (external / 'user.wav').read_bytes() == b'user data' and old.exists()
 
 
+@pytest.mark.p0
 def test_changed_runtime_with_python_cache_preserves_added_data(tmp_path):
     directory = component(tmp_path, 1)
     (directory / '__pycache__').mkdir()
@@ -153,6 +160,7 @@ def test_changed_runtime_with_python_cache_preserves_added_data(tmp_path):
     assert not cleanup.removable(directory, 'fixture', 'unrelated fixture process')
 
 
+@pytest.mark.p0
 def test_retained_package_requirements_and_mapping_fail_closed(tmp_path, monkeypatch):
     resources = tmp_path / 'installed/AgentScribe.app/Contents/Resources'
     resources.mkdir(parents=True)
@@ -168,6 +176,7 @@ def test_retained_package_requirements_and_mapping_fail_closed(tmp_path, monkeyp
     assert cleanup.retained_requirements('wlk') is None
 
 
+@pytest.mark.p2
 @pytest.mark.parametrize('system', ['darwin', 'win32'])
 def test_repeated_document_install_is_bounded_and_failure_preserves_current(tmp_path, monkeypatch, system):
     from linguaflow import document_install as installer
@@ -201,6 +210,7 @@ def test_repeated_document_install_is_bounded_and_failure_preserves_current(tmp_
     assert len([path for path in base.iterdir() if (path / 'runtime.bin').exists()]) == 2
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('system,device', [('darwin', 'metal'), ('win32', 'cuda')])
 def test_repeated_llama_repair_is_bounded_and_preserves_unknown_files(tmp_path, monkeypatch, system, device):
     import zipfile
@@ -232,6 +242,7 @@ def test_repeated_llama_repair_is_bounded_and_preserves_unknown_files(tmp_path, 
     assert (unknown / 'user-model.gguf').read_bytes() == b'user data'
 
 
+@pytest.mark.p0
 def test_windows_311_reparse_mapping_is_rejected_without_path_junction_api(tmp_path, monkeypatch):
     import stat
     from types import SimpleNamespace
@@ -249,6 +260,7 @@ def test_windows_311_reparse_mapping_is_rejected_without_path_junction_api(tmp_p
     assert cleanup.mapped(directory)
 
 
+@pytest.mark.p0
 def test_missing_component_rollback_record_prevents_pruning(tmp_path, monkeypatch):
     base = tmp_path / 'component'
     old, active = component(base, 1), component(base, 2)
@@ -257,6 +269,7 @@ def test_missing_component_rollback_record_prevents_pruning(tmp_path, monkeypatc
     assert cleanup.clean_component(base, 'fixture') == 0 and old.exists()
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('kind', ['python', 'document', 'llama'])
 def test_slot_collision_never_adopts_or_overwrites_existing_user_files(tmp_path, monkeypatch, kind):
     from types import SimpleNamespace

@@ -55,6 +55,7 @@ def fixture(tmp_path, native):
     return directory, state, user
 
 
+@pytest.mark.p0
 def test_native_creation_stamp_cannot_stop_unrelated_process(native):
     implementation = recovery.NativeRecovery(native)
     child = subprocess.Popen([sys.executable, '-c', 'import time;time.sleep(30)'])
@@ -72,6 +73,7 @@ def test_native_creation_stamp_cannot_stop_unrelated_process(native):
         child.wait()
 
 
+@pytest.mark.p1
 def test_owned_crash_restores_old_package_and_retains_failed_candidate(tmp_path, native):
     directory, state, user = fixture(tmp_path, native)
     recovery.write_json(directory / 'startup.json', dict(pid=2**30, stamp=5, version='0.8.0'))
@@ -82,6 +84,7 @@ def test_owned_crash_restores_old_package_and_retains_failed_candidate(tmp_path,
     assert not (directory.parent / 'pending.json').exists()
 
 
+@pytest.mark.p1
 def test_healthy_bootstrap_preserves_new_and_backup(tmp_path, native):
     directory, state, _ = fixture(tmp_path, native)
     record = dict(pid=os.getpid(), stamp=recovery.NativeRecovery(native).stamp(os.getpid()), version='0.8.0')
@@ -92,6 +95,7 @@ def test_healthy_bootstrap_preserves_new_and_backup(tmp_path, native):
     assert Path(state['backup']).exists()
 
 
+@pytest.mark.p0
 def test_missing_ownership_does_not_replace_a_potentially_running_app(tmp_path, native):
     directory, state, _ = fixture(tmp_path, native)
     assert recovery.watch(directory, startup_timeout=0, relaunch=False) == 'manual-recovery'
@@ -99,6 +103,7 @@ def test_missing_ownership_does_not_replace_a_potentially_running_app(tmp_path, 
     assert Path(state['backup']).exists()
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('marker', ['cancelled', 'unchanged.json'])
 def test_cancel_or_unchanged_old_relaunch_never_swaps(tmp_path, native, marker):
     directory, state, _ = fixture(tmp_path, native)
@@ -107,6 +112,7 @@ def test_cancel_or_unchanged_old_relaunch_never_swaps(tmp_path, native, marker):
     assert not Path(state['failed']).exists()
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('change', ['content', 'external-link', 'path'])
 def test_corrupt_backup_or_state_refuses_restore(tmp_path, native, change):
     directory, state, user = fixture(tmp_path, native)
@@ -127,6 +133,7 @@ def test_corrupt_backup_or_state_refuses_restore(tmp_path, native, change):
     assert (user / 'session').read_bytes() == b'unchanged audio fixture'
 
 
+@pytest.mark.p0
 def test_failed_prepare_clears_only_its_own_pending(monkeypatch, tmp_path):
     transaction = recovery.UpdateRecovery(tmp_path, 'macos-arm64', '0.7.0')
     directory = tmp_path / uuid4().hex
@@ -139,6 +146,7 @@ def test_failed_prepare_clears_only_its_own_pending(monkeypatch, tmp_path):
     assert not (tmp_path / 'pending.json').exists()
 
 
+@pytest.mark.p3
 def test_restored_bootstrap_feedback_is_taken_once(tmp_path, native, monkeypatch):
     import linguaflow
     from linguaflow import runtime_paths
@@ -152,6 +160,7 @@ def test_restored_bootstrap_feedback_is_taken_once(tmp_path, native, monkeypatch
     assert recovery.take_recovery_notice() is None
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('status', ['healthy', 'manual-recovery'])
 def test_previous_backup_retirement_keeps_failed_evidence(tmp_path, native, status):
     directory, state, user = fixture(tmp_path, native)

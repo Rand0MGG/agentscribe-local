@@ -1,4 +1,8 @@
 """Real download progress and cleanup across settings navigation, without audio."""
+import pytest
+
+
+@pytest.mark.p1
 def test_streamed_http_download_progress_stays_live_across_settings(tmp_path):
     from ui_support import run_ui
     run_ui(r'''

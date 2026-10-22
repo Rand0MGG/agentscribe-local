@@ -63,6 +63,7 @@ def translator_fixture(engine, output):
     return translator, prompts, generated
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('engine', ['pytorch', 'llama'])
 # Initial requests use 0/1 neighbours regardless of the final-history setting.
 # Final requests retain disabled, partial-window and maximum-window boundaries.
@@ -116,6 +117,7 @@ def test_long_history_model_requests_only_include_selected_neighbours(engine, be
     asyncio.run(exercise())
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('context', [TranslationContext(tuple('row' for _ in range(11))),
                                      TranslationContext((), ('row', 'row', 'row')),
                                      TranslationContext(('x' * 601,)),
@@ -131,6 +133,7 @@ def test_model_boundary_rejects_oversized_background_before_tokenization_or_gene
     assert prompts == generated == []
 
 
+@pytest.mark.p1
 def test_direct_prompt_and_budget_helpers_cannot_bypass_the_background_limit():
     context = TranslationContext(tuple(f'History {i}' for i in range(500)))
     row = Caption(1, 0, 1, 'Complete current source.', 'en')
@@ -143,6 +146,7 @@ def test_direct_prompt_and_budget_helpers_cannot_bypass_the_background_limit():
                                context, lambda p: 1, 8192)
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('engine', ['pytorch', 'llama'])
 def test_rejected_full_history_keeps_existing_translation_and_releases_the_queue(engine):
     async def exercise():

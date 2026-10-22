@@ -5,6 +5,7 @@ import pytest
 from linguaflow.capture_control import CaptureControl
 
 
+@pytest.mark.p1
 def test_pause_at_source_handoff_registers_wait_or_cancels_new_segment():
     unlocked, proceed, paused = Event(), Event(), Event()
 
@@ -59,6 +60,7 @@ def test_pause_at_source_handoff_registers_wait_or_cancels_new_segment():
         thread.join(3)
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('action', ['pause', 'stop', 'restart'])
 def test_control_returns_while_admitted_write_is_blocked(action):
     control = CaptureControl()
@@ -88,6 +90,7 @@ def test_control_returns_while_admitted_write_is_blocked(action):
     assert results == ['written', True]
 
 
+@pytest.mark.p1
 def test_stop_does_not_wait_for_pause_journal_callback():
     control = CaptureControl()
     control.next_segment(lambda: None, lambda: None)
@@ -114,6 +117,7 @@ def test_stop_does_not_wait_for_pause_journal_callback():
     assert result == [None]
 
 
+@pytest.mark.p1
 def test_source_restart_rejects_old_blocks_without_pausing_or_reopening_after_stop():
     control = CaptureControl()
     old = control.next_segment(lambda: None, lambda: None)
@@ -129,6 +133,7 @@ def test_source_restart_rejects_old_blocks_without_pausing_or_reopening_after_st
     assert control.next_segment(lambda: None, lambda: None) is None
 
 
+@pytest.mark.p1
 def test_pause_excludes_late_blocks_and_waits_for_device_release_before_resume():
     control = CaptureControl()
     paused, resumed = Event(), []
@@ -151,6 +156,7 @@ def test_pause_excludes_late_blocks_and_waits_for_device_release_before_resume()
         thread.join(2)
 
 
+@pytest.mark.p1
 def test_stopping_paused_capture_wakes_waiter_without_reopening():
     control = CaptureControl()
     control.next_segment(lambda: None, lambda: None)

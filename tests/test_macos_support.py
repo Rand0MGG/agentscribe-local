@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 
+@pytest.mark.p2
 def test_windows_web_session_guard_does_not_load_macos_frameworks(monkeypatch):
     import ctypes
 
@@ -19,6 +20,7 @@ def test_windows_web_session_guard_does_not_load_macos_frameworks(monkeypatch):
     assert window_session_available()
 
 
+@pytest.mark.p2
 @pytest.mark.parametrize('session', [None, 12345])
 def test_quartz_probe_does_not_register_an_application_and_releases_session(monkeypatch, session):
     import ctypes
@@ -38,6 +40,7 @@ def test_quartz_probe_does_not_register_an_application_and_releases_session(monk
     assert released == ([session] if session else [])
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('target, suffix, index', [
     ('macos-arm64', '', None), ('windows-x64', '+cu128', 'cu128'),
 ])
@@ -70,6 +73,7 @@ def test_runtime_install_plan_is_platform_specific(monkeypatch, tmp_path, target
         assert '--index-url' not in torch
 
 
+@pytest.mark.p1
 def test_mac_intel_or_rosetta_rejected_before_environment_creation(monkeypatch):
     path = Path(__file__).resolve().parents[1] / 'scripts' / 'install_runtime.py'
     spec = importlib.util.spec_from_file_location('install_runtime', path)
@@ -83,6 +87,7 @@ def test_mac_intel_or_rosetta_rejected_before_environment_creation(monkeypatch):
         installer.main()
 
 
+@pytest.mark.p0
 def test_mac_settings_restore_without_audio_initialization(tmp_path):
     code = '''
 import os, sys, json

@@ -90,6 +90,7 @@ def setup_course(tmp_path, count=3):
     return library, item, document
 
 
+@pytest.mark.p2
 @pytest.mark.parametrize('action', ['complete', 'cancel', 'revoke', 'source_change'])
 def test_all_pages_resume_and_no_false_completion(monkeypatch, tmp_path, action):
     import linguaflow.knowledge.worker as module
@@ -148,6 +149,7 @@ def test_all_pages_resume_and_no_false_completion(monkeypatch, tmp_path, action)
     asyncio.run(scenario())
 
 
+@pytest.mark.p2
 @pytest.mark.parametrize('count', [8, 16])
 def test_cached_course_reread_bounds_image_io_and_does_not_rewrite_sources(monkeypatch, tmp_path, count):
     import time
@@ -188,6 +190,7 @@ def test_cached_course_reread_bounds_image_io_and_does_not_rewrite_sources(monke
     assert not writes and not views
 
 
+@pytest.mark.p2
 def test_task_file_checks_refresh_changed_files_and_new_reading_entries(tmp_path):
     from linguaflow.knowledge.files import FileChecks, read_json
     path = tmp_path / 'readings/page-0001.json'
@@ -204,6 +207,7 @@ def test_task_file_checks_refresh_changed_files_and_new_reading_entries(tmp_path
     assert checks.unchanged()
 
 
+@pytest.mark.p0
 def test_legacy_text_consent_does_not_authorize_page_images(tmp_path):
     library, item, _ = setup_course(tmp_path)
     path, course = course_for_folder(library, item['folder'])
@@ -221,6 +225,7 @@ def test_legacy_text_consent_does_not_authorize_page_images(tmp_path):
     asyncio.run(scenario())
 
 
+@pytest.mark.p2
 def test_visual_cache_is_separate_and_corruption_revokes_coverage(tmp_path):
     library, item, document = setup_course(tmp_path)
     path, course = course_for_folder(library, item['folder'])
@@ -241,6 +246,7 @@ def test_visual_cache_is_separate_and_corruption_revokes_coverage(tmp_path):
         page_images(library, material_cache(library, path, document), document['id'], 3)
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('truncated', [False, True])
 def test_real_sdk_image_payload_budget_and_consent(monkeypatch, tmp_path, truncated):
     pytest.importorskip('langchain_deepseek')
@@ -298,6 +304,7 @@ def test_real_sdk_image_payload_budget_and_consent(monkeypatch, tmp_path, trunca
     assert api.request_size(['data:image/png;base64,' + 'a'*18000])[0] > 16000
 
 
+@pytest.mark.p2
 def test_long_visual_reading_is_retrieved_with_full_image_without_rewriting_evidence(tmp_path):
     from linguaflow.core import Caption
     from linguaflow.knowledge.materials import course_for_folder, read_blocks
@@ -335,6 +342,7 @@ def test_long_visual_reading_is_retrieved_with_full_image_without_rewriting_evid
     assert revised.notes and 'triangle relationships' in revised.sources['block:' + native[1].id + ':visual']['text']
 
 
+@pytest.mark.p2
 def test_harness_can_recheck_original_page_as_user_image(tmp_path):
     pytest.importorskip('deepagents')
     from langchain_core.messages import AIMessage, HumanMessage
@@ -371,6 +379,7 @@ def test_harness_can_recheck_original_page_as_user_image(tmp_path):
     assert all(not isinstance(message.content, list) for message in requests[1] if message.type == 'tool')
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('revoke', [False, True])
 def test_actual_sdk_harness_page_tool_and_revoked_image_consent(monkeypatch, tmp_path, revoke):
     pytest.importorskip('deepagents')
@@ -424,6 +433,7 @@ def test_actual_sdk_harness_page_tool_and_revoked_image_consent(monkeypatch, tmp
     asyncio.run(scenario())
 
 
+@pytest.mark.p2
 def test_renderer_cancellation_awaits_disposal(monkeypatch, tmp_path):
     import shutil
 
@@ -493,6 +503,7 @@ export async function createConverter() {
     asyncio.run(scenario())
 
 
+@pytest.mark.p2
 @pytest.mark.parametrize('suffix', ['.pdf', '.pptx'])
 def test_real_offline_renderer_includes_every_page(tmp_path, suffix):
     from linguaflow.runtime_paths import document_renderer

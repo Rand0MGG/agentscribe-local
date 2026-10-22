@@ -18,6 +18,7 @@ def model_with_split(split):
     return model
 
 
+@pytest.mark.p1
 def test_sat_offsets_preserve_whitespace_and_pending_tail():
     def split(text, **kwargs):
         assert kwargs == dict(threshold=.5, strip_whitespace=False, split_on_input_newlines=False)
@@ -29,6 +30,7 @@ def test_sat_offsets_preserve_whitespace_and_pending_tail():
     assert model.boundaries('Hello world.') == []
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize(('original', 'expected'), [
     ('Hello,world! Next;sentence?', 'Hello world Next sentence'),
     ('中文。中文，继续！', '中文中文继续'),
@@ -48,6 +50,7 @@ def test_predictor_copy_preserves_words_case_and_structured_text(original, expec
     assert owners == sorted(set(owners))
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize(('original', 'pieces', 'expected'), [
     ('Hello,world!', ['Hello', ' world'], ['Hello,', 'world!']),
     ('第一句。第二句！', ['第一句', '第二句'], ['第一句。', '第二句！']),
@@ -67,6 +70,7 @@ def test_cleaned_boundaries_map_back_without_losing_punctuation(original, pieces
     assert [s.strip() for s in slices] == expected
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('text', ['', '。！？', '  …  '])
 def test_empty_predictor_copy_does_not_call_inference(text):
     def unexpected(*args, **kwargs):
@@ -74,6 +78,7 @@ def test_empty_predictor_copy_does_not_call_inference(text):
     assert model_with_split(unexpected).boundaries(text) == []
 
 
+@pytest.mark.p1
 def test_caption_translation_and_recording_keep_original_text(tmp_path):
     original = "We can sample such. Data points. Next, don't change 0.01!"
     def split(text, **kwargs):
@@ -94,6 +99,7 @@ def test_caption_translation_and_recording_keep_original_text(tmp_path):
     assert [c.source for c in restored] == expected
 
 
+@pytest.mark.p1
 def test_sat_rejects_changed_text_and_reports_inference_failure():
     model = model_with_split(lambda text, **kwargs: ['changed'])
     with pytest.raises(ValueError, match='改变了输入文本'):
@@ -105,6 +111,7 @@ def test_sat_rejects_changed_text_and_reports_inference_failure():
         model.boundaries('original')
 
 
+@pytest.mark.p1
 def test_worker_requires_sat_before_accepting_audio(monkeypatch):
     from test_shared_qwen_worker import stub_worker
 

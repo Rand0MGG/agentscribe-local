@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('required', [False, True])
 def test_required_integration_job_rejects_skipped_tests(tmp_path, required):
     (tmp_path / 'conftest.py').write_text(Path(__file__).with_name('conftest.py').read_text(encoding='utf8'),

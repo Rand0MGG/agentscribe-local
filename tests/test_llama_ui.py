@@ -4,6 +4,7 @@ import pytest
 from ui_support import run_ui_process
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('system', ['darwin', 'win32'])
 def test_engine_model_selection_roundtrip_and_platform_guard(tmp_path, system):
     code = r'''
@@ -88,6 +89,7 @@ w.close()
                    env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'AGENTSCRIBE_LIBRARY': str(tmp_path), 'FIXTURE_PLATFORM': system})
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('system', ['darwin', 'win32'])
 def test_background_validation_uses_only_active_translation_model(tmp_path, system):
     code = r"""

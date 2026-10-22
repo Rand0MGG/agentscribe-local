@@ -2,6 +2,7 @@
 from dataclasses import replace
 from threading import Event, get_ident
 
+import pytest
 from PySide6.QtCore import QCoreApplication, QTimer
 
 from linguaflow.core import Caption
@@ -9,6 +10,7 @@ from linguaflow.library import Library
 from linguaflow.recording_save import RecordingSaver
 
 
+@pytest.mark.p1
 def test_serial_save_coalesces_revisions_freezes_input_and_keeps_qt_responsive(tmp_path):
     app = QCoreApplication.instance() or QCoreApplication([])
     library = Library(tmp_path)
@@ -56,6 +58,7 @@ def test_serial_save_coalesces_revisions_freezes_input_and_keeps_qt_responsive(t
     assert item['state'] == 'draft'  # Only the UI result handler updates its live item.
 
 
+@pytest.mark.p0
 def test_save_failure_reports_error_retains_original_and_allows_explicit_retry(tmp_path):
     app = QCoreApplication.instance() or QCoreApplication([])
     library = Library(tmp_path)
@@ -78,6 +81,7 @@ def test_save_failure_reports_error_retains_original_and_allows_explicit_retry(t
     app.processEvents()
 
 
+@pytest.mark.p1
 def test_timeout_retains_job_and_ignores_older_revision_of_active_save(tmp_path):
     app = QCoreApplication.instance() or QCoreApplication([])
     saver, release, results = RecordingSaver(), Event(), []
@@ -100,6 +104,7 @@ def test_timeout_retains_job_and_ignores_older_revision_of_active_save(tmp_path)
     assert len(results) == 1 and results[0][0].revision == 3
 
 
+@pytest.mark.p1
 def test_rapid_saves_leave_no_writer_alive_when_idle(tmp_path):
     app = QCoreApplication.instance() or QCoreApplication([])
     saver, threads, results = RecordingSaver(), [], []
@@ -121,6 +126,7 @@ def test_rapid_saves_leave_no_writer_alive_when_idle(tmp_path):
     app.processEvents()
 
 
+@pytest.mark.p1
 def test_writer_start_failure_reports_unsaved_snapshot_and_allows_retry(tmp_path, monkeypatch):
     from linguaflow.recording_save import _SaveJob
 

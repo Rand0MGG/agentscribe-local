@@ -1,7 +1,9 @@
 """Native check completion, explicit feedback, and cancelled request isolation."""
+import pytest
 from ui_support import run_ui
 
 
+@pytest.mark.p2
 def test_background_failure_finishes_and_manual_retry_ignores_old_callbacks(tmp_path):
     run_ui('''
 from types import SimpleNamespace
@@ -31,6 +33,7 @@ u.installed=False;w.close()
 ''', tmp_path)
 
 
+@pytest.mark.p2
 def test_manual_click_promotes_active_background_check_without_duplicate_request(tmp_path):
     run_ui('''
 from types import SimpleNamespace
@@ -51,6 +54,7 @@ u.installed=False;w.close()
 ''', tmp_path)
 
 
+@pytest.mark.p0
 def test_cancelled_update_cannot_reappear_or_install_and_new_check_has_feedback(tmp_path):
     run_ui('''
 from types import SimpleNamespace
@@ -72,6 +76,7 @@ u.installed=False;w.close()
 ''', tmp_path)
 
 
+@pytest.mark.p2
 def test_native_busy_rejection_is_visible_and_does_not_latch_check(tmp_path):
     run_ui('''
 from types import SimpleNamespace

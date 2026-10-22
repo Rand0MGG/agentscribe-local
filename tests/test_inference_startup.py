@@ -7,6 +7,7 @@ import pytest
 from linguaflow.inference_startup import load_components
 
 
+@pytest.mark.p1
 def test_both_loaders_overlap_and_no_component_is_exposed_early():
     recognition_entered, semantic_entered, release = Event(), Event(), Event()
     main_thread, delivered = get_ident(), []
@@ -41,6 +42,7 @@ def test_both_loaders_overlap_and_no_component_is_exposed_early():
     asyncio.run(exercise())
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('failure', ['semantic', 'cancel', 'session'])
 def test_failed_or_cancelled_startup_closes_resources_and_joins_loader(failure):
     entered, released, exited = Event(), Event(), Event()
@@ -82,6 +84,7 @@ def test_failed_or_cancelled_startup_closes_resources_and_joins_loader(failure):
     asyncio.run(exercise())
 
 
+@pytest.mark.p1
 def test_cancelled_startup_rejects_and_closes_late_resources():
     entered, released, exited = Event(), Event(), Event()
     closed = []
@@ -115,6 +118,7 @@ def test_cancelled_startup_rejects_and_closes_late_resources():
     asyncio.run(exercise())
 
 
+@pytest.mark.p1
 def test_startup_preflight_uses_settings_and_does_not_resolve_missing_language(monkeypatch):
     from linguaflow.core import Settings
     from linguaflow.inference_startup import start_problem
@@ -125,6 +129,7 @@ def test_startup_preflight_uses_settings_and_does_not_resolve_missing_language(m
     assert settings.source is None
 
 
+@pytest.mark.p1
 def test_startup_preflight_keeps_mlx_validation_and_translation_toggle(monkeypatch, tmp_path):
     from linguaflow.core import Settings
     from linguaflow.inference_startup import start_problem

@@ -7,6 +7,7 @@ import pytest
 from linguaflow.knowledge.rendering import run_renderer
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('exit_code', [0, 7])
 def test_renderer_exit_reports_status_without_document_content(tmp_path, caplog, exit_code):
     helper = tmp_path / 'helper.py'
@@ -23,6 +24,7 @@ def test_renderer_exit_reports_status_without_document_content(tmp_path, caplog,
     assert str(helper) not in caplog.text
 
 
+@pytest.mark.p2
 def test_renderer_cancellation_waits_for_real_helper_exit(tmp_path):
     helper = tmp_path / 'helper.py'
     started, stopped = tmp_path / 'started', tmp_path / 'stopped'

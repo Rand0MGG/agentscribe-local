@@ -8,6 +8,7 @@ import pytest
 from linguaflow.model_cache import has_weights, resolve_translation
 
 
+@pytest.mark.p1
 def test_cached_weights_reused_without_network(tmp_path, monkeypatch):
     (tmp_path / "pytorch_model.bin").write_bytes(b'weights')
     (tmp_path / "config.json").write_text('{}')
@@ -23,6 +24,7 @@ def test_cached_weights_reused_without_network(tmp_path, monkeypatch):
     assert resolve_translation("facebook/test", lambda s: None) == str(tmp_path)
 
 
+@pytest.mark.p1
 def test_sharded_model_requires_all_shards(tmp_path):
     (tmp_path / "model.safetensors.index.json").write_text(
         json.dumps({"weight_map": {"a": "one.safetensors", "b": "two.safetensors"}})
@@ -33,6 +35,7 @@ def test_sharded_model_requires_all_shards(tmp_path):
     assert has_weights(tmp_path)
 
 
+@pytest.mark.p1
 def test_download_selects_one_weight_format(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr('linguaflow.download_progress.hub_progress', lambda: nullcontext())
@@ -55,6 +58,7 @@ def test_download_selects_one_weight_format(monkeypatch, tmp_path):
     assert "*.bin" not in calls[-1]["allow_patterns"]
 
 
+@pytest.mark.p1
 def test_incomplete_qwen_is_rejected_before_listening(tmp_path):
     from linguaflow.model_cache import resolve_qwen_cached
     (tmp_path / "model-00001-of-00002.safetensors").write_bytes(b"partial")
@@ -62,6 +66,7 @@ def test_incomplete_qwen_is_rejected_before_listening(tmp_path):
         resolve_qwen_cached(str(tmp_path))
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('index', ['{bad json', '{"weight_map":{}}',
                                 '{"weight_map":{"a":"../outside.safetensors"}}'])
 def test_invalid_shard_index_never_claims_readiness(tmp_path, index):
@@ -70,6 +75,7 @@ def test_invalid_shard_index_never_claims_readiness(tmp_path, index):
     assert not has_weights(tmp_path)
 
 
+@pytest.mark.p1
 def test_zero_byte_weight_and_hidden_listening_download_are_rejected(tmp_path, monkeypatch):
     (tmp_path / 'model.safetensors').touch()
     assert not has_weights(tmp_path)
@@ -81,6 +87,7 @@ def test_zero_byte_weight_and_hidden_listening_download_are_rejected(tmp_path, m
         resolve_translation('example/model', lambda _: None)
 
 
+@pytest.mark.p1
 def test_whisper_uses_existing_xdg_cache_without_importing_runtime(tmp_path, monkeypatch):
     from linguaflow.model_cache import resolve_whisper_cached
     monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path))
@@ -94,6 +101,7 @@ def test_whisper_uses_existing_xdg_cache_without_importing_runtime(tmp_path, mon
         resolve_whisper_cached('large')
 
 
+@pytest.mark.p1
 def test_whisper_does_not_resolve_remote_names_or_incomplete_directories(tmp_path):
     from linguaflow.model_cache import resolve_whisper_cached
     with pytest.raises(ValueError, match='开始聆听不会下载模型'):
@@ -103,6 +111,7 @@ def test_whisper_does_not_resolve_remote_names_or_incomplete_directories(tmp_pat
         resolve_whisper_cached(str(tmp_path))
 
 
+@pytest.mark.p1
 def test_whisper_preparation_keeps_old_checkpoint_on_failed_download(tmp_path, monkeypatch):
     import hashlib
     import io
@@ -126,6 +135,7 @@ def test_whisper_preparation_keeps_old_checkpoint_on_failed_download(tmp_path, m
     assert wlk_prepare.prepare('tiny') == str(target.resolve())
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('config', [
     {'model_type': 'qwen3_forced_aligner', 'quantization': {'bits': 4}},
     {'model_type': 'qwen3_asr', 'quantization': {'bits': 4},

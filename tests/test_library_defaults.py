@@ -1,7 +1,9 @@
 """An empty library remains usable without losing recently deleted recordings."""
+import pytest
 from ui_support import run_ui
 
 
+@pytest.mark.p1
 def test_new_workspace_recreates_default_folder_after_last_folder_is_deleted(tmp_path):
     run_ui(r'''
 from linguaflow.ui_components import ActionMenu
@@ -63,6 +65,7 @@ w.close()
 
 
 
+@pytest.mark.p1
 def test_default_folder_write_failure_reports_error_without_resetting_view(tmp_path):
     run_ui(r'''
 original=w.library.index['folders'][0]

@@ -12,6 +12,7 @@ def document():
             'settings': {'translate': True}, 'captions': [asdict(Caption(1, 0, 1, 'source', 'en'))]}
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('mutation', [
     lambda d: d.pop('captions'),
     lambda d: d.update(settings=None),
@@ -31,6 +32,7 @@ def test_invalid_document_raises_recoverable_error(mutation):
         read_recording_document(data)
 
 
+@pytest.mark.p1
 def test_valid_document_roundtrip_does_not_modify_input():
     data = document()
     original = deepcopy(data)

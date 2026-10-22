@@ -9,6 +9,7 @@ import pytest
 from scripts import test_no_audio as runner
 
 
+@pytest.mark.p2
 @pytest.mark.parametrize('arguments', [[], ['--basetemp', 'explicit'], ['--basetemp=explicit']])
 def test_default_and_explicit_paths_are_preserved_without_host_shortening(monkeypatch, tmp_path,
                                                                         arguments):
@@ -31,6 +32,7 @@ def test_default_and_explicit_paths_are_preserved_without_host_shortening(monkey
     assert all(not path.exists() for path in owned)
 
 
+@pytest.mark.p0
 def test_audio_guard_rejects_successful_suite_with_blocked_import(monkeypatch, tmp_path):
     monkeypatch.setattr(runner, '__file__', str(tmp_path / 'scripts' / 'test_no_audio.py'))
     monkeypatch.setattr(runner, 'sys', SimpleNamespace(executable=sys.executable, argv=['runner']))

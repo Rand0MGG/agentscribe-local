@@ -9,6 +9,7 @@ from linguaflow.translation_context import TranslationContext
 from linguaflow.translation_models import HY_MODEL, is_hy_model, translation_prompt
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize(('tokens', 'decoded', 'error'), [
     ([7] * 256, 'partial', '长度上限'),
     ([7] * 255 + [2], 'complete', None),
@@ -50,6 +51,7 @@ def test_nllb_accepts_only_complete_nonempty_translation(tokens, decoded, error)
         assert translator.translate('Full original source.', 'en') == decoded
 
 
+@pytest.mark.p1
 def test_model_family_uses_local_config_not_folder_name(tmp_path):
     assert is_hy_model(HY_MODEL)
     assert not is_hy_model('facebook/nllb-200-distilled-600M')
@@ -60,6 +62,7 @@ def test_model_family_uses_local_config_not_folder_name(tmp_path):
     assert is_hy_model(str(path))
 
 
+@pytest.mark.p1
 def test_prompt_separates_neighbours_and_uses_language_names():
     context = TranslationContext(('A suitcase.',), ('It held books.',))
     prompt = translation_prompt('It was heavy.', 'zho_Hans', context)
@@ -72,6 +75,7 @@ def test_prompt_separates_neighbours_and_uses_language_names():
         translation_prompt('Hello', 'invalid')
 
 
+@pytest.mark.p1
 def test_hy_removes_segment_ids_and_decodes_only_generated_tokens():
     class Inputs(dict):
         def to(self, device):

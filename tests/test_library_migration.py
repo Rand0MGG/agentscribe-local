@@ -20,6 +20,7 @@ def populated(root):
     return library, item, token
 
 
+@pytest.mark.p0
 def test_copy_verification_commit_cleanup_and_trash_materials(tmp_path):
     source, item, token = populated(tmp_path / 'old')
     original = source.directory(item['id']) / '录音.wav'
@@ -36,6 +37,7 @@ def test_copy_verification_commit_cleanup_and_trash_materials(tmp_path):
     copied.restore_deleted(token)
 
 
+@pytest.mark.p0
 def test_retry_completed_copy_before_preference_commit(tmp_path):
     source, item, _ = populated(tmp_path / 'old')
     copied, _ = migrate_library(source, tmp_path / 'new')
@@ -44,6 +46,7 @@ def test_retry_completed_copy_before_preference_commit(tmp_path):
     assert verified
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('change', ['missing', 'invalid', 'changed'])
 def test_retry_checks_generated_folder_identity_before_committing(tmp_path, change):
     source = Library(tmp_path / 'old')
@@ -69,6 +72,7 @@ def test_retry_checks_generated_folder_identity_before_committing(tmp_path, chan
     assert (copied.root / '.agentscribe-migration.json').is_file()
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('addition', ['file', 'directory', 'recording'])
 def test_retry_rejects_source_entries_added_after_copy(tmp_path, addition):
     source, item, _ = populated(tmp_path / 'old')
@@ -85,6 +89,7 @@ def test_retry_rejects_source_entries_added_after_copy(tmp_path, addition):
     assert copied.load(item)[1][0].source == 'original'
 
 
+@pytest.mark.p0
 def test_addition_during_copy_prevents_publication(tmp_path):
     source, item, _ = populated(tmp_path / 'old')
     target = tmp_path / 'new'
@@ -97,6 +102,7 @@ def test_addition_during_copy_prevents_publication(tmp_path):
     assert (source.root / '新增资料.txt').is_file()
 
 
+@pytest.mark.p0
 def test_legacy_journal_cannot_prove_complete_directory_copy(tmp_path):
     import json
     source, _, _ = populated(tmp_path / 'old')
@@ -109,6 +115,7 @@ def test_legacy_journal_cannot_prove_complete_directory_copy(tmp_path):
         migrate_library(source, copied.root)
 
 
+@pytest.mark.p0
 def test_cancel_halfway_leaves_originals_and_empty_destination(tmp_path):
     source, item, _ = populated(tmp_path / 'old')
     cancelled = [False]
@@ -120,6 +127,7 @@ def test_cancel_halfway_leaves_originals_and_empty_destination(tmp_path):
     assert not list((tmp_path / 'new').iterdir())
 
 
+@pytest.mark.p0
 def test_collision_never_overwrites_and_nested_location_rejected(tmp_path):
     source, _, _ = populated(tmp_path / 'old')
     destination = tmp_path / 'new'
@@ -133,6 +141,7 @@ def test_collision_never_overwrites_and_nested_location_rejected(tmp_path):
         migrate_library(source, source.root / 'nested')
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('changed_side', ['source', 'destination'])
 def test_cleanup_retains_original_when_either_verified_copy_changes(tmp_path, changed_side):
     source, item, _ = populated(tmp_path / 'old')
@@ -145,6 +154,7 @@ def test_cleanup_retains_original_when_either_verified_copy_changes(tmp_path, ch
     assert original.exists()
 
 
+@pytest.mark.p0
 def test_external_links_rejected_and_implicit_folder_identity_preserved(tmp_path):
     source, _, _ = populated(tmp_path / 'old')
     extra = source.root / '手动建的文件夹'
@@ -165,6 +175,7 @@ def test_external_links_rejected_and_implicit_folder_identity_preserved(tmp_path
     assert outside.read_text() == 'external'
 
 
+@pytest.mark.p0
 def test_destination_changes_during_copy_never_overwritten(tmp_path):
     source, _, _ = populated(tmp_path / 'old')
     target = tmp_path / 'new'
@@ -176,6 +187,7 @@ def test_destination_changes_during_copy_never_overwritten(tmp_path):
     assert len(list(target.iterdir())) == 1
 
 
+@pytest.mark.p0
 def test_volume_without_hardlinks_uses_exclusive_verified_copy(tmp_path, monkeypatch):
     import errno
     import os

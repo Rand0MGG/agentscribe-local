@@ -1,8 +1,10 @@
 import os
 
+import pytest
 from ui_support import run_ui_process
 
 
+@pytest.mark.p1
 def test_main_prepares_runtime_after_show_and_closes_on_quit():
     code = """
 from PySide6.QtCore import QTimer
@@ -48,6 +50,7 @@ assert (1500, 'check_startup_updates') in timers
                    env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen'})
 
 
+@pytest.mark.p1
 def test_background_autosave_keeps_new_revisions_dirty_and_rejects_other_recording_results(tmp_path):
     code = """
 import os
@@ -98,6 +101,7 @@ w.close()
                    env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'AGENTSCRIBE_LIBRARY': str(tmp_path)})
 
 
+@pytest.mark.p1
 def test_finish_does_not_dispose_signal_sender_while_background_save_is_pending(tmp_path):
     code = """
 import os
@@ -157,9 +161,10 @@ w.close()
                    env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'AGENTSCRIBE_LIBRARY': str(tmp_path)})
 
 
-def test_failed_retranslation_preserves_text_and_corrupt_recording_is_rejected(tmp_path):
+@pytest.mark.p1
+def test_failed_retranslation_preserves_text_and_retry_completes_recording(tmp_path):
     code = """
-import os, json
+import os
 from dataclasses import replace
 from types import SimpleNamespace
 from PySide6.QtCore import QSettings
@@ -199,6 +204,26 @@ w.session = SimpleNamespace(deleteLater=lambda: None)
 w.on_finished()
 app.processEvents()
 assert w.library.load(w.current_item)[0]['session']['state'] == 'complete'
+w.close()
+"""
+    run_ui_process(code, timeout=20,
+                   env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'AGENTSCRIBE_LIBRARY': str(tmp_path)})
+
+
+@pytest.mark.p0
+def test_corrupt_recording_open_preserves_file_and_current_view(tmp_path):
+    code = """
+import os, json
+from types import SimpleNamespace
+from PySide6.QtCore import QSettings
+from PySide6.QtWidgets import QApplication
+from linguaflow.app import Window
+from linguaflow.core import Caption
+app = QApplication([])
+w = Window(discover=False, prefs=QSettings(os.environ['AGENTSCRIBE_LIBRARY']+'/prefs.ini', QSettings.Format.IniFormat))
+assert w.new_recording(name='corrupt recording')
+w.on_caption(Caption(1, 0, 1, 'source', 'en', translation='updated'))
+assert w.persist_session('complete')
 path = w.library.directory(w.current_item['id'])/'session.json'
 data = json.loads(path.read_text(encoding='utf8'))
 data.pop('captions')
@@ -217,6 +242,7 @@ w.close()
                    env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'AGENTSCRIBE_LIBRARY': str(tmp_path)})
 
 
+@pytest.mark.p0
 def test_preferences_roundtrip_and_recording_guards(tmp_path):
     code = """
 import os
@@ -283,6 +309,7 @@ w.close()
                    env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'AGENTSCRIBE_LIBRARY': str(tmp_path)})
 
 
+@pytest.mark.p1
 def test_start_validation_and_new_workspace_do_not_launch(tmp_path):
     code = """
 import os
@@ -323,6 +350,7 @@ w.close()
                    env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'AGENTSCRIBE_LIBRARY': str(tmp_path)})
 
 
+@pytest.mark.p1
 def test_fatal_error_survives_late_status_and_finish(tmp_path):
     # QWidget needs QApplication, whereas the engine suite uses QCoreApplication.
     code = """
@@ -370,6 +398,7 @@ w.close()
                    env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'AGENTSCRIBE_LIBRARY': str(tmp_path)})
 
 
+@pytest.mark.p1
 def test_library_navigation_preserves_session_and_draft(tmp_path):
     code = """
 import os
@@ -406,6 +435,7 @@ w.close()
                    env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'AGENTSCRIBE_LIBRARY': str(tmp_path)})
 
 
+@pytest.mark.p1
 def test_named_recording_start_finish_and_settings_routes(tmp_path):
     code = """
 import os

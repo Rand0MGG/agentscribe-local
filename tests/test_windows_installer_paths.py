@@ -11,6 +11,7 @@ from linguaflow.knowledge.files import file_path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.mark.p1
 @pytest.mark.skipif(sys.platform != 'win32', reason='Native Windows installer compiler')
 def test_real_inno_compiler_preserves_long_license_source_paths(tmp_path):
     item = json.loads((ROOT / 'packaging/windows/inno.json').read_text(encoding='utf-8'))

@@ -1,10 +1,13 @@
 """Incremental planner preserves context snapshots through historical edits."""
 from dataclasses import replace
 
+import pytest
+
 from linguaflow.core import Caption
 from linguaflow.translation_context import ContextPlanner, TranslationContext
 
 
+@pytest.mark.p1
 def test_out_of_order_deltas_use_all_neighbours_and_removal_updates_adjacency():
     planner = ContextPlanner(2, 1)
     rows = [Caption(i, i, i + 1, f'row {i}', 'en') for i in range(5)]
@@ -22,6 +25,7 @@ def test_out_of_order_deltas_use_all_neighbours_and_removal_updates_adjacency():
     assert planner.get(2) == TranslationContext(('row 0',), ('row 3',))
 
 
+@pytest.mark.p1
 def test_reopened_historical_row_rejects_old_final_and_finalizes_with_current_background():
     planner = ContextPlanner()
     rows = [Caption(i, i, i + 1, f'row {i}', 'en') for i in range(500)]
@@ -39,6 +43,7 @@ def test_reopened_historical_row_rejects_old_final_and_finalizes_with_current_ba
     assert planner.get(3) == TranslationContext(('row 0', 'row 1', 'row 2'), ('row 4',))
 
 
+@pytest.mark.p1
 def test_position_change_updates_stable_index_without_retranslating_unchanged_source():
     planner = ContextPlanner(2, 1)
     rows = [Caption(i, i, i + 1, f'row {i}', 'en') for i in range(3)]
@@ -54,6 +59,7 @@ def test_position_change_updates_stable_index_without_retranslating_unchanged_so
     assert planner.adjacent(jobs[0], jobs[1])
 
 
+@pytest.mark.p1
 def test_full_snapshot_compatibility_removes_unsubmitted_rows_and_freezes_mutable_input():
     planner = ContextPlanner()
     row = Caption(1, 0, 1, 'draft', 'en', final=False)

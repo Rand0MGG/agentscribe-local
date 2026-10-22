@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('inherited', [None, '1'])
 def test_mlx_worker_does_not_force_offline(monkeypatch, inherited):
     from linguaflow import mlx_asr_worker

@@ -1,7 +1,9 @@
 """Real desktop navigation, responsive reads and theme/path regressions, without audio."""
+import pytest
 from ui_support import run_ui
 
 
+@pytest.mark.p1
 def test_library_click_keeps_event_loop_responsive_and_failed_load_keeps_view(tmp_path):
     run_ui('''
 from threading import Event
@@ -39,6 +41,7 @@ w.close()
 ''',tmp_path)
 
 
+@pytest.mark.p1
 def test_close_during_library_read_waits_without_applying_late_result(tmp_path):
     run_ui('''
 from threading import Event

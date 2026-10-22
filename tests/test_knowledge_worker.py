@@ -12,6 +12,7 @@ from linguaflow.knowledge.worker import KnowledgeWorker
 from linguaflow.library import Library
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('operation', ['revision', 'cancel', 'permission', 'move', 'external_edit'])
 def test_inflight_cloud_result_obeys_source_consent_and_lifecycle(monkeypatch, tmp_path, operation):
     import linguaflow.knowledge.worker as module
@@ -59,6 +60,7 @@ def test_inflight_cloud_result_obeys_source_consent_and_lifecycle(monkeypatch, t
     asyncio.run(scenario())
 
 
+@pytest.mark.p2
 def test_course_unavailable_keeps_notes_editable_and_can_reassociate(tmp_path):
     library = Library(tmp_path / 'library')
     item = library.create(library.index['folders'][0]['id'], {}, '录音')
@@ -80,6 +82,7 @@ def test_course_unavailable_keeps_notes_editable_and_can_reassociate(tmp_path):
     asyncio.run(scenario())
 
 
+@pytest.mark.p2
 @pytest.mark.parametrize('pipe_encoding', ['utf-8', 'cp1252'])
 def test_continuous_caption_messages_do_not_starve_automatic_notes(tmp_path, pipe_encoding):
     import json
@@ -164,6 +167,7 @@ asyncio.run(worker.serve())
         process.stderr.close()
 
 
+@pytest.mark.p0
 def test_material_corruption_before_task_starts_prevents_any_model_request(monkeypatch, tmp_path):
     from test_knowledge import pptx
     from test_knowledge_visual import fake_pages, reading
@@ -197,6 +201,7 @@ def test_material_corruption_before_task_starts_prevents_any_model_request(monke
     asyncio.run(scenario())
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('change', ['live', 'saved', 'unrelated'])
 def test_every_model_turn_revalidates_frozen_sources(monkeypatch, tmp_path, change):
     import linguaflow.knowledge.worker as module
@@ -249,6 +254,7 @@ def test_every_model_turn_revalidates_frozen_sources(monkeypatch, tmp_path, chan
     asyncio.run(scenario())
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('action', ['cancel', 'failure'])
 def test_local_preview_failure_or_cancel_preserves_original_and_old_pages(monkeypatch, tmp_path, action):
     from test_knowledge_visual import fake_pages, setup_course
@@ -290,6 +296,7 @@ def test_local_preview_failure_or_cancel_preserves_original_and_old_pages(monkey
     asyncio.run(scenario())
 
 
+@pytest.mark.p0
 def test_model_turn_checks_reuse_unchanged_materials_but_detect_changed_original(monkeypatch, tmp_path):
     from pathlib import Path
 
@@ -349,6 +356,7 @@ def test_model_turn_checks_reuse_unchanged_materials_but_detect_changed_original
     asyncio.run(scenario())
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('operation', ['notes', 'organize', 'question', 'extract'])
 def test_permission_revoked_before_dispatch_prevents_service_creation(monkeypatch, tmp_path, operation):
     import linguaflow.knowledge.worker as module
@@ -374,6 +382,7 @@ def test_permission_revoked_before_dispatch_prevents_service_creation(monkeypatc
     asyncio.run(scenario())
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('revoke', [False, True])
 def test_post_class_organize_batches_all_long_notes_with_one_shared_budget(monkeypatch, tmp_path, revoke):
     pytest.importorskip('deepagents')
@@ -427,6 +436,7 @@ def test_post_class_organize_batches_all_long_notes_with_one_shared_budget(monke
     asyncio.run(scenario())
 
 
+@pytest.mark.p0
 def test_late_terms_save_cannot_write_into_another_course(tmp_path):
     from linguaflow.knowledge.materials import course_for_folder
     library = Library(tmp_path / 'library')

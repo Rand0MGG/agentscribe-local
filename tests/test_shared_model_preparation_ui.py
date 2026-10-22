@@ -5,6 +5,7 @@ import pytest
 from ui_support import run_ui_process
 
 
+@pytest.mark.p1
 def test_mac_catalog_preserves_gpu_selection(tmp_path):
     code = r'''
 import os, sys
@@ -49,6 +50,7 @@ w.close()
                    env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'AGENTSCRIBE_LIBRARY': str(tmp_path), 'FIXTURE_PLATFORM': 'darwin'})
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('system', ['darwin', 'win32'])
 def test_empty_inventory_prepares_selected_models_and_shared_progress(tmp_path, system):
     code = r'''
@@ -92,6 +94,7 @@ w.close()
                    env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'AGENTSCRIBE_LIBRARY': str(tmp_path), 'FIXTURE_PLATFORM': system})
 
 
+@pytest.mark.p1
 def test_prepare_preserves_partial_legacy_model_preferences(tmp_path):
     code = r'''
 import os, json

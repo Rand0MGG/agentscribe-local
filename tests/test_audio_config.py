@@ -3,6 +3,7 @@ import pytest
 from linguaflow.audio_processing.config import AudioConfig, automatic_audio_config
 
 
+@pytest.mark.p1
 def test_reject_invalid_audio_settings():
     for data in [{"peak_db": float("nan")}, {"peak_db": 1}, {"limiter": "false"},
                  {"output_db": None}, {"output_db": True}, []]:
@@ -10,6 +11,7 @@ def test_reject_invalid_audio_settings():
             AudioConfig.from_dict(data)
 
 
+@pytest.mark.p1
 def test_automatic_audio_sessions_have_independent_configs():
     first = automatic_audio_config()
     first['output_db'] = 10
@@ -19,6 +21,7 @@ def test_automatic_audio_sessions_have_independent_configs():
     assert 'deepfilter' not in second
 
 
+@pytest.mark.p2
 def test_silence_and_invalid_input_are_distinguished():
     import numpy as np
 

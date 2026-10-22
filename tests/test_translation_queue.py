@@ -1,9 +1,12 @@
 from dataclasses import replace
 
+import pytest
+
 from linguaflow.core import Caption
 from linguaflow.translation_queue import translation_is_current
 
 
+@pytest.mark.p1
 def test_inflight_result_cannot_overwrite_new_version_even_if_text_returns():
     old = Caption(1, 0, 1, 'original', 'en', revision=1, ready=True)
     assert translation_is_current(old, old)

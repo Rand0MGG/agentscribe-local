@@ -19,6 +19,7 @@ from linguaflow.process_platform import spawn_options
 from linguaflow.runtime_paths import document_renderer
 
 
+@pytest.mark.p2
 def test_native_web_text_belongs_to_its_visible_tile(tmp_path):
     source = tmp_path / 'positioned.html'
     source.write_text('''<html><body style="margin:0;width:2300px;height:3200px">
@@ -38,6 +39,7 @@ def test_native_web_text_belongs_to_its_visible_tile(tmp_path):
     assert all('Hidden marker' not in block.text and 'Script marker' not in block.text for block in blocks)
 
 
+@pytest.mark.p2
 def test_native_text_survives_multiple_vertical_tiles(tmp_path):
     source = tmp_path / 'long.txt'
     source.write_text('Opening sentence 😀\n' + 'A real source line.\n'*240 + 'Final source marker', encoding='utf-8')
@@ -52,6 +54,7 @@ def test_native_text_survives_multiple_vertical_tiles(tmp_path):
     assert sum(block.text.count('A real source line.') for block in blocks) == 240
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('suffix', ['.pdf', '.pptx'])
 def test_worker_prepares_native_pages_without_cloud_consent(monkeypatch, samples, tmp_path, suffix):
     import linguaflow.knowledge.worker as module
@@ -100,6 +103,7 @@ def test_worker_prepares_native_pages_without_cloud_consent(monkeypatch, samples
     asyncio.run(scenario())
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('suffix', ['.png', '.html', '.docx'])
 def test_deep_library_import_keeps_complete_pages_and_originals(samples, tmp_path, suffix):
     if suffix in OFFICE_SUFFIXES:
@@ -198,6 +202,7 @@ def samples(tmp_path_factory):
     return directory
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('suffix', [suffix for suffix in IMPORT_SUFFIXES if suffix not in ('.pdf', '.pptx')])
 def test_real_offline_import_preserves_whole_pages_and_sources(samples, tmp_path, suffix):
     if suffix in OFFICE_SUFFIXES:
@@ -247,6 +252,7 @@ def test_real_offline_import_preserves_whole_pages_and_sources(samples, tmp_path
             read_blocks(library, course_path, course)
 
 
+@pytest.mark.p0
 def test_scoped_resource_packing_rejects_missing_remote_and_parent_paths(tmp_path):
     source = tmp_path / 'course.html'
     source.write_text('course', encoding='utf-8')
@@ -258,6 +264,7 @@ def test_scoped_resource_packing_rejects_missing_remote_and_parent_paths(tmp_pat
     assert css_dependencies("a{background:url('a b.png')} @import \"theme.css\";") == ['a b.png', 'theme.css']
 
 
+@pytest.mark.p2
 def test_denied_mac_window_session_fails_before_chromium_initialization(monkeypatch, tmp_path):
     from linguaflow.knowledge import render_web
     monkeypatch.setattr(render_web, 'window_session_available', lambda: False)
@@ -271,6 +278,7 @@ def test_denied_mac_window_session_fails_before_chromium_initialization(monkeypa
     assert source.read_text(encoding='utf-8') == '<h1>Preserved course</h1>'
 
 
+@pytest.mark.p2
 def test_missing_optional_renderer_keeps_image_and_text_fixtures(monkeypatch, tmp_path_factory, tmp_path):
     import sys
     module = sys.modules[__name__]
@@ -285,6 +293,7 @@ def test_missing_optional_renderer_keeps_image_and_text_fixtures(monkeypatch, tm
     assert (directory / 'topic.html').is_file() and (directory / 'topic.md').is_file()
 
 
+@pytest.mark.p0
 def test_import_is_cancellable_and_never_publishes_partial_course(monkeypatch, tmp_path):
     import linguaflow.knowledge.materials as module
     library = Library(tmp_path / 'library')
@@ -309,6 +318,7 @@ def test_import_is_cancellable_and_never_publishes_partial_course(monkeypatch, t
     asyncio.run(scenario())
 
 
+@pytest.mark.p0
 def test_reimport_versions_resources_and_rolls_back_failed_publication(monkeypatch, samples, tmp_path):
     import linguaflow.knowledge.materials as module
     source = tmp_path / 'course.md'
@@ -345,6 +355,7 @@ def test_reimport_versions_resources_and_rolls_back_failed_publication(monkeypat
     assert not list((path.parent / 'materials').glob('.import-*'))
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('phase', ['copy', 'before', 'after'])
 def test_killed_reimport_publishes_only_complete_versions(tmp_path, phase):
     source = tmp_path / 'course.html'
@@ -396,6 +407,7 @@ asyncio.run(m.import_document(library, folder, Path(sys.argv[4])))
     assert old_page.is_file()
 
 
+@pytest.mark.p2
 @pytest.mark.parametrize('position', ['fixed', 'sticky'])
 def test_scrolling_headers_preserve_middle_and_last_corner_evidence(tmp_path, position):
     from PySide6.QtGui import QImage
@@ -426,6 +438,7 @@ def test_scrolling_headers_preserve_middle_and_last_corner_evidence(tmp_path, po
         page_images(library, base, document['id'], 6)
 
 
+@pytest.mark.p2
 def test_new_format_worker_previews_and_dispatches_every_actual_page(monkeypatch, samples, tmp_path):
     from types import SimpleNamespace
 

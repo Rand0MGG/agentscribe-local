@@ -30,6 +30,7 @@ def controlled_process(monkeypatch, reply):
     return process, entered, release
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('outcome', ['success', 'error', 'cancel'])
 def test_shared_startup_owns_blocked_mlx_handshake_and_closes_it(monkeypatch, outcome):
     reply = ({'type': 'error', 'text': 'bad weights'} if outcome == 'error' else
@@ -69,6 +70,7 @@ def test_shared_startup_owns_blocked_mlx_handshake_and_closes_it(monkeypatch, ou
     assert process.poll() is not None and process.stdin.closed and process.stdout.closed
 
 
+@pytest.mark.p1
 def test_adapter_loads_once_and_closes_on_construction_failure(monkeypatch):
     calls = []
     client = SimpleNamespace(decode=lambda _: 'text', close=lambda: calls.append('close'))

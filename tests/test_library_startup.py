@@ -6,6 +6,7 @@ import pytest
 from linguaflow.library_startup import LibrarySelectionCancelled, open_library
 
 
+@pytest.mark.p1
 def test_default_install_location_retry_and_migration_are_ui_independent(tmp_path):
     saved, attempts, migrations = {}, [], []
     store = SimpleNamespace(value=lambda key: saved.get(key), setValue=saved.__setitem__)
@@ -28,6 +29,7 @@ def test_default_install_location_retry_and_migration_are_ui_independent(tmp_pat
     assert saved == {'library_directory': str(target)} and migrations == [legacy]
 
 
+@pytest.mark.p0
 def test_explicit_root_never_prompts_or_imports_other_libraries(tmp_path):
     store = SimpleNamespace(value=lambda _: None)
 
@@ -49,6 +51,7 @@ def test_explicit_root_never_prompts_or_imports_other_libraries(tmp_path):
                      migration_failed=no_prompt, factory=fail)
 
 
+@pytest.mark.p1
 def test_saved_or_explicit_library_does_not_probe_unreadable_old_folder(tmp_path, monkeypatch):
     old = tmp_path / '录音'
     old.mkdir()
@@ -65,6 +68,7 @@ def test_saved_or_explicit_library_does_not_probe_unreadable_old_folder(tmp_path
         assert paths == [chosen]
 
 
+@pytest.mark.p1
 def test_unreadable_old_folder_prompts_instead_of_opening_empty_library(tmp_path, monkeypatch):
     old = tmp_path / '录音'
     old.mkdir()

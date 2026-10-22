@@ -8,6 +8,7 @@ from linguaflow import qwen_accurate
 from linguaflow.qwen_revisions import install_revision_bridge
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('first_text', ['', 'Initial words'])
 def test_slow_decode_does_not_hold_following_speech_until_stop(monkeypatch, first_text):
     clock = [0.]
@@ -34,6 +35,7 @@ def test_slow_decode_does_not_hold_following_speech_until_stop(monkeypatch, firs
     assert calls == [8000, 200000]  # stopping must not trigger the missing decode
 
 
+@pytest.mark.p1
 def test_new_utterance_not_delayed_by_previous_slow_decode(monkeypatch):
     clock = [0.]
     monkeypatch.setattr(qwen_accurate, 'time', SimpleNamespace(perf_counter=lambda: clock[0]))

@@ -21,6 +21,7 @@ def snapshot(text, stable=None):
             'revision_spans': [], 'closed_ends': []}
 
 
+@pytest.mark.p1
 def test_agreement_requires_distinct_audio_and_each_new_word_ages_independently():
     agreement = StablePrefix(holdback=0)
     assert agreement.observe('old words', 1) == 0
@@ -33,6 +34,7 @@ def test_agreement_requires_distinct_audio_and_each_new_word_ages_independently(
     assert agreement.observe('corrected words newly spoken', 10) == 0
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('previous,current,expected,result', [
     ('We use soft mass for this vector', 'softmax for this vector and then normalize', 7,
      'We use softmax for this vector and then normalize'),
@@ -46,6 +48,7 @@ def test_overlap_revises_tail_without_repeating_matching_words(previous, current
     assert anchored and merged == result and start <= len(merged)
 
 
+@pytest.mark.p1
 def test_capacity_one_decode_never_confirms_punctuated_fragment():
     asr = QwenAccurateOnline(lambda audio: 'So we want to.', choose_cut, 'en', window_seconds=8,
                             pause_context_seconds=3, token_type=SimpleNamespace,
@@ -61,6 +64,7 @@ def test_capacity_one_decode_never_confirms_punctuated_fragment():
     assert not row.asr_final and not row.boundary_final and not row.final
 
 
+@pytest.mark.p1
 def test_overlapping_windows_correct_old_words_and_keep_one_revision_interval():
     phrases = iter(['We use soft mass for this vector',
                     'softmax for this vector and then normalize'])
@@ -77,6 +81,7 @@ def test_overlapping_windows_correct_old_words_and_keep_one_revision_interval():
     assert asr.finish()[0] and store.rows[0]['closed']
 
 
+@pytest.mark.p1
 def test_sat_observations_cannot_close_before_asr_confirmation_or_on_heartbeats():
     prefix = 'So we want to go through the derivation.'
     mapper = CaptionMapper('en', predictor=lambda text: [len(prefix)] if text.startswith(prefix) else [])
@@ -94,6 +99,7 @@ def test_sat_observations_cannot_close_before_asr_confirmation_or_on_heartbeats(
     assert not mapper.previous[2].final
 
 
+@pytest.mark.p1
 def test_punctuation_does_not_protect_closed_fragment_from_new_sat_segmentation():
     cuts = [[len('So we want to.')]]
     mapper = CaptionMapper('en', predictor=lambda text: cuts[0])
@@ -105,6 +111,7 @@ def test_punctuation_does_not_protect_closed_fragment_from_new_sat_segmentation(
     assert not changed.boundary_final and not changed.final
 
 
+@pytest.mark.p1
 def test_boundary_only_version_change_requests_new_hy_and_rejects_old_result():
     async def exercise():
         row = Caption(1, 0, 1, 'Same words', 'en', ready=True, final=False,
@@ -124,6 +131,7 @@ def test_boundary_only_version_change_requests_new_hy_and_rejects_old_result():
     asyncio.run(exercise())
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('asr,boundary', [(False, False), (False, True), (True, False)])
 def test_final_translation_requires_both_current_states_even_with_legacy_final_flag(asr, boundary):
     async def exercise():
@@ -141,6 +149,7 @@ def test_final_translation_requires_both_current_states_even_with_legacy_final_f
     asyncio.run(exercise())
 
 
+@pytest.mark.p1
 def test_queue_merges_latest_splits_and_removes_obsolete_spans_without_join_leak():
     async def exercise():
         queue = TranslationQueue()
@@ -167,12 +176,14 @@ def test_queue_merges_latest_splits_and_removes_obsolete_spans_without_join_leak
     asyncio.run(exercise())
 
 
+@pytest.mark.p1
 def test_old_saved_caption_without_new_states_keeps_its_final_status():
     row = Caption(**{k: v for k, v in asdict(Caption(1, 0, 1, 'saved', 'en')).items()
                      if k not in ('asr_final', 'boundary_final', 'segmentation_revision')})
     assert source_is_final(row)
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('backend', ['pytorch', 'mlx'])
 def test_both_model_adapters_use_identical_online_policy(monkeypatch, backend):
     import sys
@@ -208,12 +219,14 @@ def test_both_model_adapters_use_identical_online_policy(monkeypatch, backend):
     assert store.rows[0]['closed']
 
 
+@pytest.mark.p1
 def test_stop_cannot_claim_sat_closure_when_asr_did_not_confirm_text():
     mapper = CaptionMapper('en', predictor=lambda text: [])
     row = mapper.update(snapshot('unconfirmed words', stable=0), done=True)[0]
     assert not row.asr_final and not row.boundary_final and not row.final
 
 
+@pytest.mark.p1
 def test_copied_prefix_after_one_backlog_decode_is_not_new_asr_agreement():
     phrases = iter(['zero one two three four five six seven eight nine ten eleven',
                     'three four five six seven eight nine ten eleven twelve',
@@ -232,6 +245,7 @@ def test_copied_prefix_after_one_backlog_decode_is_not_new_asr_agreement():
     assert store.rows[0]['stable_end'] == 0 and not store.rows[0]['closed']
 
 
+@pytest.mark.p1
 def test_frozen_asr_prefix_does_not_block_initial_translation_of_a_stable_sat_sentence():
     from linguaflow.translation_service import run_translations
 
@@ -269,6 +283,7 @@ def test_frozen_asr_prefix_does_not_block_initial_translation_of_a_stable_sat_se
     asyncio.run(exercise())
 
 
+@pytest.mark.p1
 def test_sat_priority_defers_new_hy_until_latest_source_update_finishes():
     from threading import Event
 
@@ -307,6 +322,7 @@ def test_sat_priority_defers_new_hy_until_latest_source_update_finishes():
     asyncio.run(exercise())
 
 
+@pytest.mark.p1
 def test_withdrawn_asr_confirmation_reopens_fixed_sat_boundary_without_text_change():
     prefix = 'First sentence.'
     mapper = CaptionMapper('en', predictor=lambda text: [len(prefix)] if text.startswith(prefix) else [])
@@ -319,6 +335,7 @@ def test_withdrawn_asr_confirmation_reopens_fixed_sat_boundary_without_text_chan
     assert not reopened.asr_final and not reopened.boundary_final and not reopened.final
 
 
+@pytest.mark.p1
 def test_new_internal_boundary_at_old_tail_end_invalidates_same_text_translation():
     clock = [0.]
     prefix = 'First sentence.'

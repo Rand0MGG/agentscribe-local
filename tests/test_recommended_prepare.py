@@ -6,6 +6,7 @@ from linguaflow import runtime_install  # Import OS libraries before platform si
 from linguaflow.model_options import recommended_selection
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('system', ['darwin', 'win32'])
 @pytest.mark.parametrize('cached', [False, True])
 def test_preparation_reuses_models_and_keeps_segmentation(monkeypatch, tmp_path, system, cached):
@@ -32,6 +33,7 @@ def test_preparation_reuses_models_and_keeps_segmentation(monkeypatch, tmp_path,
     assert calls[-1] == ('translation', 'fixture.gguf')
 
 
+@pytest.mark.p1
 def test_windows_whisper_and_pytorch_use_shared_preparation(monkeypatch, tmp_path):
     monkeypatch.setattr('sys.platform', 'win32')
     selection = recommended_selection()
@@ -48,6 +50,7 @@ def test_windows_whisper_and_pytorch_use_shared_preparation(monkeypatch, tmp_pat
     assert calls[2] == ('translation', selection['translation_model'])
 
 
+@pytest.mark.p1
 def test_segmentation_failure_stops_translation_and_success(monkeypatch):
     monkeypatch.setattr('linguaflow.runtime_install.maintain', lambda _: None)
     monkeypatch.setattr(worker, 'resolve_asr', lambda _: 'fixture')
@@ -59,6 +62,7 @@ def test_segmentation_failure_stops_translation_and_success(monkeypatch):
         worker.main(dict(backend='qwen3-streaming', asr_model='fixture', translation_engine='llama'))
 
 
+@pytest.mark.p1
 def test_incompatible_backend_fails_before_installing(monkeypatch):
     monkeypatch.setattr('sys.platform', 'win32')
     monkeypatch.setattr('linguaflow.runtime_install.check_installation', lambda: 'windows-x64')
@@ -67,6 +71,7 @@ def test_incompatible_backend_fails_before_installing(monkeypatch):
         worker.main(recommended_selection('darwin'))
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('only', ['asr', 'translation'])
 def test_single_role_preparation_propagates_scope_and_skips_other_weights(monkeypatch, tmp_path, only):
     calls = []
@@ -81,6 +86,7 @@ def test_single_role_preparation_propagates_scope_and_skips_other_weights(monkey
     assert calls == [('maintain', {'only': only}), (only, {})]
 
 
+@pytest.mark.p1
 def test_asr_only_asset_check_does_not_require_translation(monkeypatch, tmp_path):
     python = tmp_path / 'python'
     python.touch()

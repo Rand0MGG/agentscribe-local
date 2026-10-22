@@ -14,6 +14,7 @@ class Response(io.BytesIO):
         self.headers = {'Content-Length': str(len(body)), **(headers or {})}
 
 
+@pytest.mark.p1
 def test_interrupted_component_resumes_then_is_reused(tmp_path, monkeypatch):
     monkeypatch.setattr(llama_install, 'cache_root', lambda: tmp_path)
     body = b'A'*1024**2 + b'B'*1234
@@ -44,6 +45,7 @@ def test_interrupted_component_resumes_then_is_reused(tmp_path, monkeypatch):
     assert len(requests)==2
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('honor_range', [True,False])
 def test_archive_range_handling_never_appends_a_full_response(tmp_path, monkeypatch, honor_range):
     monkeypatch.setattr(llama_install,'cache_root',lambda:tmp_path)
@@ -59,6 +61,7 @@ def test_archive_range_handling_never_appends_a_full_response(tmp_path, monkeypa
     assert result.read_bytes()==body
 
 
+@pytest.mark.p1
 def test_mismatched_resume_range_preserves_partial_and_never_publishes(tmp_path,monkeypatch):
     monkeypatch.setattr(llama_install,'cache_root',lambda:tmp_path)
     partial=tmp_path/'fixture.zip.part'

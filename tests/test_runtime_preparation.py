@@ -21,6 +21,7 @@ from linguaflow.core import Settings
 from linguaflow.wlk_session import Session
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('entry', ['close', 'release', 'async_close'])
 def test_pool_retains_failed_cleanup_for_explicit_retry(monkeypatch, entry):
     tasks = []
@@ -54,6 +55,7 @@ def test_pool_retains_failed_cleanup_for_explicit_retry(monkeypatch, entry):
         atexit.unregister(runtime.close)
 
 
+@pytest.mark.p1
 def test_async_pool_close_is_joined_by_synchronous_retry():
     entered, finish = Event(), Event()
     class Worker:
@@ -77,6 +79,7 @@ def test_async_pool_close_is_joined_by_synchronous_retry():
         runtime.close()
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('platform,returncode,ignored', [('win32', 0, True), ('win32', None, False),
                                                        ('darwin', 0, False)])
 def test_einval_flush_is_ignored_only_for_exited_windows_child(monkeypatch, platform, returncode, ignored):
@@ -114,6 +117,7 @@ for line in sys.stdin:
 '''
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('system', ['win32', 'darwin'])
 def test_worker_spawn_failure_releases_platform_ownership(monkeypatch, system):
     import linguaflow.process_platform as platform
@@ -144,6 +148,7 @@ def test_worker_spawn_failure_releases_platform_ownership(monkeypatch, system):
         assert options['start_new_session'] and 'test_job' not in options['env']
 
 
+@pytest.mark.p1
 def test_exited_posix_leader_still_reaps_group_while_transport_is_active(monkeypatch):
     import linguaflow.process_platform as platform
     monkeypatch.setattr(sys, 'platform', 'darwin')
@@ -178,6 +183,7 @@ def pool(monkeypatch, tmp_path, program=PROGRAM):
     return runtime, calls
 
 
+@pytest.mark.p1
 def test_new_environment_is_used_after_current_session_release(monkeypatch, tmp_path):
     runtime, calls = pool(monkeypatch, tmp_path)
     active = runtime.acquire(Event())
@@ -215,6 +221,7 @@ def execute(runtime, source, count):
     return session, captions, failures
 
 
+@pytest.mark.p1
 def test_successful_sessions_reuse_process_with_fresh_language_and_audio(monkeypatch, tmp_path):
     runtime, calls=pool(monkeypatch, tmp_path)
     try:
@@ -237,6 +244,7 @@ def test_successful_sessions_reuse_process_with_fresh_language_and_audio(monkeyp
     assert all(p.closed for p in (worker.process.stdin,worker.process.stdout,worker.process.stderr))
 
 
+@pytest.mark.p1
 def test_second_lease_is_rejected_without_disrupting_first(monkeypatch,tmp_path):
     runtime,_=pool(monkeypatch,tmp_path)
     try:
@@ -251,6 +259,7 @@ def test_second_lease_is_rejected_without_disrupting_first(monkeypatch,tmp_path)
         runtime.close()
 
 
+@pytest.mark.p1
 def test_crashed_worker_descendants_and_pipe_readers_are_reaped(monkeypatch, tmp_path):
     import psutil
 
@@ -305,6 +314,7 @@ sys.stdin.readline()
         runtime.close()
 
 
+@pytest.mark.p1
 @pytest.mark.skipif(sys.platform != 'win32', reason='Windows Job Object lifetime')
 def test_owner_exit_reaps_worker_job_without_python_cleanup(tmp_path):
     import psutil
@@ -365,6 +375,7 @@ os._exit(0)
         close_process_pipes(process)
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('broken_pipe', [True, False])
 def test_exited_worker_closes_all_pipes_when_stdin_flush_fails(broken_pipe):
     import errno
@@ -397,6 +408,7 @@ def test_exited_worker_closes_all_pipes_when_stdin_flush_fails(broken_pipe):
     worker.close()  # Cleanup is repeatable after an expected or unexpected pipe failure.
 
 
+@pytest.mark.p1
 def test_pipe_cleanup_preserves_output_error_and_closes_remaining_streams():
     from linguaflow.process_platform import close_process_pipes
     error = BrokenPipeError('unexpected output failure')
@@ -412,6 +424,7 @@ def test_pipe_cleanup_preserves_output_error_and_closes_remaining_streams():
     close_process_pipes(process)
 
 
+@pytest.mark.p1
 def test_reader_timeout_keeps_pipes_owned_and_retry_can_complete(monkeypatch):
     monkeypatch.setattr(sys, 'platform', 'win32')
     worker = object.__new__(preparation.PreparedWorker)
@@ -430,6 +443,7 @@ def test_reader_timeout_keeps_pipes_owned_and_retry_can_complete(monkeypatch):
     assert all(p.closed for p in (worker.process.stdin, worker.process.stdout, worker.process.stderr))
 
 
+@pytest.mark.p1
 def test_shutdown_collects_diagnostics_created_during_startup_join(monkeypatch):
     monkeypatch.setattr(sys, 'platform', 'win32')
     worker = object.__new__(preparation.PreparedWorker)
@@ -449,6 +463,7 @@ def test_shutdown_collects_diagnostics_created_during_startup_join(monkeypatch):
     assert all(p.closed for p in (worker.process.stdin, worker.process.stdout, worker.process.stderr))
 
 
+@pytest.mark.p1
 def test_cancel_before_session_start_keeps_capture_closed_and_pool_owned(monkeypatch,tmp_path):
     runtime,_=pool(monkeypatch,tmp_path,'import time; time.sleep(30)')
     worker=runtime.worker
@@ -467,6 +482,7 @@ def test_cancel_before_session_start_keeps_capture_closed_and_pool_owned(monkeyp
     assert worker.process.poll() is not None and not worker.reader.is_alive()
 
 
+@pytest.mark.p1
 def test_preparation_timeout_reaps_owned_process(monkeypatch,tmp_path):
     monkeypatch.setattr(preparation.PreparedWorker,'timeout',.1)
     runtime,_=pool(monkeypatch,tmp_path,'import time; time.sleep(30)')
@@ -479,6 +495,7 @@ def test_preparation_timeout_reaps_owned_process(monkeypatch,tmp_path):
         runtime.close()
 
 
+@pytest.mark.p1
 def test_idle_preparation_timeout_is_bounded_without_a_session(monkeypatch,tmp_path):
     monkeypatch.setattr(preparation.PreparedWorker,'timeout',.1)
     runtime,_=pool(monkeypatch,tmp_path,'import time; time.sleep(30)')
@@ -491,6 +508,7 @@ def test_idle_preparation_timeout_is_bounded_without_a_session(monkeypatch,tmp_p
         runtime.close()
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('woken', [False, True])
 def test_timeout_cleanup_after_wait_keeps_the_failure_reason(woken):
     # The watchdog may close between Event.wait timing out and the state check.
@@ -507,6 +525,7 @@ def test_timeout_cleanup_after_wait_keeps_the_failure_reason(woken):
     assert caught.value.__cause__ is worker.error
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('completed', ['cancelled', 'ready'])
 def test_watchdog_does_not_overwrite_completion_at_timeout(completed):
     worker=object.__new__(preparation.PreparedWorker)
@@ -521,6 +540,7 @@ def test_watchdog_does_not_overwrite_completion_at_timeout(completed):
     assert worker.error is None
 
 
+@pytest.mark.p1
 def test_missing_dependency_is_reported_and_next_attempt_is_fresh(monkeypatch,tmp_path):
     runtime,calls=pool(monkeypatch,tmp_path,"import json; print(json.dumps({'type':'error','text':'missing library'}),flush=True)")
     try:
@@ -533,6 +553,7 @@ def test_missing_dependency_is_reported_and_next_attempt_is_fresh(monkeypatch,tm
         runtime.close()
 
 
+@pytest.mark.p1
 def test_crashed_session_is_not_reused(monkeypatch,tmp_path):
     runtime,_=pool(monkeypatch,tmp_path,PROGRAM.split('for line in sys.stdin:')[0]+'sys.stdin.readline();sys.exit(7)')
     try:
@@ -542,6 +563,7 @@ def test_crashed_session_is_not_reused(monkeypatch,tmp_path):
         runtime.close()
 
 
+@pytest.mark.p1
 def test_missing_runtime_does_not_spawn(monkeypatch,tmp_path):
     monkeypatch.setattr(preparation,'runtime_python',lambda:tmp_path/'missing')
     runtime=preparation.RuntimePreparation()
@@ -553,6 +575,7 @@ def test_missing_runtime_does_not_spawn(monkeypatch,tmp_path):
         runtime.close()
 
 
+@pytest.mark.p1
 def test_idle_expiry_releases_imports_and_active_lease_is_protected(monkeypatch,tmp_path):
     monkeypatch.setattr(preparation.RuntimePreparation,'idle_timeout',.1)
     runtime,calls=pool(monkeypatch,tmp_path)
@@ -572,6 +595,7 @@ def test_idle_expiry_releases_imports_and_active_lease_is_protected(monkeypatch,
         runtime.close()
 
 
+@pytest.mark.p2
 def test_preparation_imports_only_runtime_without_constructing_models(monkeypatch):
     import importlib
 
@@ -582,6 +606,7 @@ def test_preparation_imports_only_runtime_without_constructing_models(monkeypatc
     assert calls==['onnxruntime','wtpsplit','torch','whisperlivekit']
 
 
+@pytest.mark.p1
 def test_models_are_released_before_accepting_next_settings(monkeypatch):
     import linguaflow.wlk_worker as worker
     calls=[]
@@ -601,6 +626,7 @@ def test_models_are_released_before_accepting_next_settings(monkeypatch):
         'runtime_ready','done','runtime_ready','done','runtime_ready']
 
 
+@pytest.mark.p2
 def test_cleanup_does_not_initialize_unused_cuda(monkeypatch):
     import gc
 
@@ -615,6 +641,7 @@ def test_cleanup_does_not_initialize_unused_cuda(monkeypatch):
     assert calls==['reset','gc']
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('windows',[False,True])
 def test_platform_spawn_keeps_utf8_and_hides_windows_console(monkeypatch,windows):
     import linguaflow.process_platform as platform
@@ -639,6 +666,7 @@ def test_platform_spawn_keeps_utf8_and_hides_windows_console(monkeypatch,windows
     assert flags[0]['env']['PYTHONIOENCODING']=='utf-8'
 
 
+@pytest.mark.p1
 def test_preparation_preserves_network_and_resets_each_sessions_trace(monkeypatch):
     import linguaflow.wlk_worker as worker
     seen=[]

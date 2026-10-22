@@ -8,6 +8,7 @@ from test_wlk_session import PROGRAM, execute
 from ui_support import run_ui
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('paused', [False, True])
 def test_switch_preserves_recording_clock_and_model_snapshot(monkeypatch, tmp_path, paused):
     captured, released = Event(), Event()
@@ -61,6 +62,7 @@ def test_switch_preserves_recording_clock_and_model_snapshot(monkeypatch, tmp_pa
     assert np.all(pcm[1600:] == int(.2 * 32767))
 
 
+@pytest.mark.p1
 def test_failed_source_switch_retains_previous_pcm(monkeypatch, tmp_path):
     captured = Event()
     requested, calls, sessions = [], [], []
@@ -88,6 +90,7 @@ def test_failed_source_switch_retains_previous_pcm(monkeypatch, tmp_path):
         assert recording.getnframes() == 1600
 
 
+@pytest.mark.p1
 def test_source_category_feedback_meter_and_live_selector(tmp_path):
     run_ui(r'''
 from types import SimpleNamespace

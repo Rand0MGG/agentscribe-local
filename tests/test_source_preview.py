@@ -17,6 +17,7 @@ def snapshot(text):
         revision_spans=[(i, i+1, i/10, (i+1)/10, 'en') for i in range(len(text))])
 
 
+@pytest.mark.p1
 def test_preview_preserves_prefix_reopens_last_row_and_withdraws_corrections():
     mapper = CaptionMapper('en', predictor=lambda text: [i+1 for i, char in enumerate(text) if char == '.'])
     preview = SourcePreview('en')
@@ -37,6 +38,7 @@ def test_preview_preserves_prefix_reopens_last_row_and_withdraws_corrections():
     assert event['source'] == '' and event['keep_ids'] == []
 
 
+@pytest.mark.p1
 def test_whisper_preview_includes_mutable_tail_without_semantic_prediction():
     value = dict(lines=[dict(text='First sentence.', start=0, end=1, detected_language='en')],
                  buffer_transcription='Still speaking', draft_span=dict(start=1, end=2))
@@ -46,6 +48,7 @@ def test_whisper_preview_includes_mutable_tail_without_semantic_prediction():
     assert event['start'] == 0 and event['end'] == 2
 
 
+@pytest.mark.p1
 def test_slow_empty_qwen_then_mixed_source_visible_before_stop_and_hy_ready(monkeypatch):
     from types import SimpleNamespace
 
@@ -108,6 +111,7 @@ def test_slow_empty_qwen_then_mixed_source_visible_before_stop_and_hy_ready(monk
     asyncio.run(exercise())
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('backend', ['qwen3-streaming', 'qwen3-mlx'])
 def test_worker_emits_newest_preview_while_semantics_is_blocked(monkeypatch, backend):
     from linguaflow import mlx_asr, qwen_accurate, semantic_model, wlk_worker
@@ -165,6 +169,7 @@ def test_worker_emits_newest_preview_while_semantics_is_blocked(monkeypatch, bac
     asyncio.run(exercise())
 
 
+@pytest.mark.p1
 def test_pending_preview_rebases_when_older_segmentation_changes_the_prefix():
     mapper = CaptionMapper('en', predictor=lambda text: [i+1 for i, c in enumerate(text) if c=='.'])
     preview = SourcePreview('en')
@@ -182,6 +187,7 @@ def test_pending_preview_rebases_when_older_segmentation_changes_the_prefix():
     assert rebased['keep_ids'] == [] and rebased['source'] == 'First. Second continues.'
 
 
+@pytest.mark.p1
 def test_ui_newer_preview_survives_old_semantics_and_reconciles_without_duplicates(tmp_path):
     run_ui(r'''
 from PySide6.QtCore import QObject, Signal
@@ -223,6 +229,7 @@ w.close()
 ''', tmp_path)
 
 
+@pytest.mark.p1
 def test_unfinished_preview_is_saved_as_draft_with_existing_translations(tmp_path):
     run_ui(r'''
 from PySide6.QtCore import QObject
@@ -247,6 +254,7 @@ w.close()
 ''', tmp_path)
 
 
+@pytest.mark.p1
 def test_preview_autosaves_before_semantics_and_completed_rows_replace_draft(tmp_path):
     run_ui(r'''
 from PySide6.QtCore import QObject
@@ -280,6 +288,7 @@ w.close()
 ''', tmp_path)
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('cancel_session', [False, True])
 def test_stop_or_cancel_joins_inflight_semantics_before_finalization(monkeypatch, cancel_session):
     from linguaflow import wlk_captions, wlk_worker
@@ -345,6 +354,7 @@ def test_stop_or_cancel_joins_inflight_semantics_before_finalization(monkeypatch
     asyncio.run(exercise())
 
 
+@pytest.mark.p1
 def test_abrupt_process_exit_recovers_preview_and_partial_audio_without_cleanup(tmp_path):
     run_ui(r'''
 import wave

@@ -89,6 +89,7 @@ configure_vad_float32(SimpleNamespace(vac=None))
 '''
 
 
+@pytest.mark.p1
 def test_vad_during_half_precision_model_loading():
     python = runtime_python()
     if not python.is_file():

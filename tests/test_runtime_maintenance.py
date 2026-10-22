@@ -18,6 +18,7 @@ def slot(base, name, previous=None):
     return directory
 
 
+@pytest.mark.p0
 def test_cleanup_keeps_active_rollback_live_and_custom(monkeypatch, tmp_path):
     monkeypatch.setattr(runtime, 'runtime_root', lambda: tmp_path)
     base = tmp_path / 'python' / 'wlk'
@@ -39,6 +40,7 @@ def test_cleanup_keeps_active_rollback_live_and_custom(monkeypatch, tmp_path):
     assert all(path.exists() for path in (active, previous, live, custom, external / 'weights'))
 
 
+@pytest.mark.p0
 def test_cleanup_preserves_real_directory_link_and_external_files(monkeypatch, tmp_path):
     from filesystem_support import directory_symlink
     monkeypatch.setattr(runtime, 'runtime_root', lambda: tmp_path)
@@ -56,6 +58,7 @@ def test_cleanup_preserves_real_directory_link_and_external_files(monkeypatch, t
     assert link.is_symlink() and (external / 'weights').read_text() == 'keep'
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('failure', ['pointer', 'empty', 'process'])
 def test_cleanup_fails_closed(monkeypatch, tmp_path, failure):
     monkeypatch.setattr(runtime, 'runtime_root', lambda: tmp_path)
@@ -71,6 +74,7 @@ def test_cleanup_fails_closed(monkeypatch, tmp_path, failure):
     assert active.exists() and unused.exists()
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('target,kinds', [('macos-arm64', ['wlk', 'mlx']), ('windows-x64', ['wlk'])])
 def test_maintenance_reuses_healthy_and_repairs_failed(monkeypatch, tmp_path, target, kinds):
     monkeypatch.setattr('sys.platform', 'darwin' if target == 'macos-arm64' else 'win32')
@@ -97,6 +101,7 @@ def test_maintenance_reuses_healthy_and_repairs_failed(monkeypatch, tmp_path, ta
     assert translation_checks == (['metal'] if target == 'macos-arm64' else ['cuda'])
 
 
+@pytest.mark.p1
 def test_failed_repair_never_cleans_previous_environment(monkeypatch, tmp_path):
     monkeypatch.setattr(runtime, 'check_installation', lambda: 'macos-arm64')
     monkeypatch.setattr(runtime, 'runtime_environment', lambda kind: tmp_path / 'missing')
@@ -108,6 +113,7 @@ def test_failed_repair_never_cleans_previous_environment(monkeypatch, tmp_path):
         runtime.maintain()
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('system,device', [('darwin', 'metal'), ('win32', 'cuda')])
 @pytest.mark.parametrize('broken', [False, True])
 def test_llama_runtime_is_reused_or_repaired_without_model_download(monkeypatch, tmp_path, system, device, broken):
@@ -127,6 +133,7 @@ def test_llama_runtime_is_reused_or_repaired_without_model_download(monkeypatch,
     assert installs == ([(device, None)] if broken else [])
 
 
+@pytest.mark.p2
 def test_whisper_selection_does_not_prepare_unneeded_mlx(monkeypatch, tmp_path):
     monkeypatch.setattr(runtime, 'check_installation', lambda: 'macos-arm64')
     monkeypatch.setattr(runtime, 'runtime_root', lambda: tmp_path)
@@ -137,6 +144,7 @@ def test_whisper_selection_does_not_prepare_unneeded_mlx(monkeypatch, tmp_path):
     assert checks == ['wlk']
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('system,device', [('darwin', 'metal'), ('win32', 'cuda')])
 @pytest.mark.parametrize('fails', [False, True])
 def test_llama_repair_publishes_only_a_startable_binary(monkeypatch, tmp_path, system, device, fails):
@@ -177,6 +185,7 @@ def test_llama_repair_publishes_only_a_startable_binary(monkeypatch, tmp_path, s
         assert new != 'old' and (base/new/name).is_file()
 
 
+@pytest.mark.p2
 @pytest.mark.parametrize('only,engine,expected', [
     ('asr', 'llama', ['wlk', 'mlx']),
     ('translation', 'llama', ['llama']),

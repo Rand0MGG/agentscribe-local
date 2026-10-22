@@ -1,7 +1,9 @@
 """Export progress and searchable pagination keep completion boundaries visible."""
+import pytest
 from ui_support import run_ui
 
 
+@pytest.mark.p1
 def test_export_and_backup_feedback_tracks_queue_failure_and_cancel(tmp_path):
     run_ui(r'''
 from threading import Event

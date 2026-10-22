@@ -3,6 +3,8 @@ import ast
 from importlib.util import resolve_name
 from pathlib import Path
 
+import pytest
+
 
 def dependencies():
     root = Path(__file__).resolve().parents[1] / 'linguaflow'
@@ -35,6 +37,7 @@ def reachable(graph, module):
     return visited
 
 
+@pytest.mark.p2
 def test_domain_and_storage_have_no_transitive_qt_or_model_dependency():
     graph, external = dependencies()
     domain = ('core', 'preferences', 'recording_state', 'capture_control', 'recording_document', 'library', 'library_startup', 'runtime_paths', 'runtime_preparation', 'inference_startup', 'model_options',
@@ -50,6 +53,7 @@ def test_domain_and_storage_have_no_transitive_qt_or_model_dependency():
             assert not external[dependency] & forbidden, (module, dependency, external[dependency] & forbidden)
 
 
+@pytest.mark.p2
 def test_runtime_does_not_depend_on_desktop_and_package_has_no_import_cycles():
     graph, _ = dependencies()
     desktop = {'linguaflow.' + name for name in ('app', 'management', 'workspace_widgets',
@@ -61,6 +65,7 @@ def test_runtime_does_not_depend_on_desktop_and_package_has_no_import_cycles():
             assert module not in reachable(graph, dependency), f'Import cycle: {module} -> {dependency}'
 
 
+@pytest.mark.p2
 def test_knowledge_sdk_and_worker_cannot_enter_realtime_or_desktop_transport():
     graph, external = dependencies()
     cloud = {'linguaflow.knowledge.' + name for name in ('api', 'harness', 'worker', 'storage')}

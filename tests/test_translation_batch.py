@@ -22,6 +22,7 @@ from linguaflow.translation_service import (
 )
 
 
+@pytest.mark.p1
 def test_small_initial_context_and_large_final_context_only_use_final_source():
     planner = ContextPlanner()
     history = [Caption(i, i, i + 1, f'Context {i}.', 'en') for i in range(12)]
@@ -39,6 +40,7 @@ def test_small_initial_context_and_large_final_context_only_use_final_source():
     assert 'Unfinished neighbour.' not in planner.get(13).before
 
 
+@pytest.mark.p1
 def test_batch_queue_preserves_deferred_head_updates_and_stop_count():
     async def exercise():
         queue = TranslationQueue()
@@ -65,6 +67,7 @@ def test_batch_queue_preserves_deferred_head_updates_and_stop_count():
     asyncio.run(exercise())
 
 
+@pytest.mark.p1
 def test_batch_bounds_and_phase_language_or_gap_keep_separate_requests():
     async def exercise():
         planner, queue = ContextPlanner(), TranslationQueue()
@@ -88,6 +91,7 @@ def test_batch_bounds_and_phase_language_or_gap_keep_separate_requests():
     asyncio.run(exercise())
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('final', [False, True])
 def test_adjacent_requests_share_one_context_without_losing_subtitle_alignment(final):
     async def exercise():
@@ -127,6 +131,7 @@ def test_adjacent_requests_share_one_context_without_losing_subtitle_alignment(f
     asyncio.run(exercise())
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('failure', ['inference', 'publisher', 'cancel'])
 def test_batch_failure_or_cancel_releases_all_taken_tasks(failure):
     async def exercise():
@@ -177,6 +182,7 @@ def test_batch_failure_or_cancel_releases_all_taken_tasks(failure):
     asyncio.run(exercise())
 
 
+@pytest.mark.p1
 def test_source_change_during_batch_requeues_valid_members_and_rejects_all_old_results():
     async def exercise():
         planner, queue, lock = ContextPlanner(), TranslationQueue(), asyncio.Lock()
@@ -220,6 +226,7 @@ def test_source_change_during_batch_requeues_valid_members_and_rejects_all_old_r
     asyncio.run(exercise())
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('output', ['{}', '{"1":"one"}', '{"1":"one","2":""}',
                                     '{"1":"one","2":"two","3":"extra"}',
                                     '{"1":"one","1":"again","2":"two"}', 'not JSON'])
@@ -229,6 +236,7 @@ def test_batch_parser_rejects_missing_extra_duplicate_or_empty_segments(output):
         parse_batch_translation(output, rows)
 
 
+@pytest.mark.p1
 def test_budget_removes_only_background_and_never_truncates_source():
     context = TranslationContext(('Old context', 'Recent context'), ('Following context',))
     prompt, trimmed = fit_translation_prompt(lambda c: '|'.join((*c.before, 'COMPLETE SOURCE', *c.after)),
@@ -238,6 +246,7 @@ def test_budget_removes_only_background_and_never_truncates_source():
         fit_translation_prompt(lambda c: 'COMPLETE SOURCE', context, len, 2)
 
 
+@pytest.mark.p1
 def test_llama_batch_uses_one_schema_constrained_generation_after_budget_checks():
     translator = LlamaTranslator.__new__(LlamaTranslator)
     translator.closed, translator.target, translator.source = False, 'zho_Hans', 'eng_Latn'

@@ -23,6 +23,7 @@ def portable(tmp_path):
     return root, executable
 
 
+@pytest.mark.p1
 def test_independent_base_survives_app_replacement(tmp_path):
     source, executable = portable(tmp_path)
     python, identity = prepare_base(source, tmp_path / '用户数据/runtime/base-python', executable)
@@ -34,6 +35,7 @@ def test_independent_base_survives_app_replacement(tmp_path):
     assert (tmp_path / '用户数据/runtime/base-python' / identity / 'Lib/os.py').is_file()
 
 
+@pytest.mark.p1
 def test_corrupt_base_is_repaired_in_a_new_slot_without_deleting_old_data(tmp_path):
     source, executable = portable(tmp_path)
     directory = tmp_path / 'runtime/base-python'
@@ -46,6 +48,7 @@ def test_corrupt_base_is_repaired_in_a_new_slot_without_deleting_old_data(tmp_pa
     assert python.read_bytes() == b'corrupt'
 
 
+@pytest.mark.p1
 def test_interrupted_copy_does_not_publish_and_can_resume(tmp_path, monkeypatch):
     source, executable = portable(tmp_path)
     directory = tmp_path / 'runtime/base-python'
@@ -65,6 +68,7 @@ def test_interrupted_copy_does_not_publish_and_can_resume(tmp_path, monkeypatch)
     assert python.is_file() and len(list(directory.rglob('base.json'))) == 1
 
 
+@pytest.mark.p1
 def test_app_rollback_selects_prior_compatible_environment(tmp_path, monkeypatch):
     resources, runtime = tmp_path / 'app', tmp_path / 'runtime'
     resources.mkdir()
@@ -95,6 +99,7 @@ def test_app_rollback_selects_prior_compatible_environment(tmp_path, monkeypatch
         runtime_paths.runtime_python()
 
 
+@pytest.mark.p0
 def test_previous_chain_cannot_escape_runtime(tmp_path, monkeypatch):
     resources = tmp_path / 'app'
     resources.mkdir()
@@ -108,6 +113,7 @@ def test_previous_chain_cannot_escape_runtime(tmp_path, monkeypatch):
         runtime_paths.active_directory(base, Path('unused'), python=True)
 
 
+@pytest.mark.p1
 def test_corrupt_previous_record_reports_repair_instead_of_crashing(tmp_path, monkeypatch):
     resources = tmp_path / 'app'
     resources.mkdir()

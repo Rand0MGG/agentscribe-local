@@ -5,6 +5,7 @@ import pytest
 from linguaflow.runtime_compat import configure_vad_pause
 
 
+@pytest.mark.p1
 def test_ui_pause_reaches_the_detector_not_just_caption_metadata():
     detector = SimpleNamespace(min_silence_samples=1600)
     processor = SimpleNamespace(vac=detector, sample_rate=16000)

@@ -9,6 +9,7 @@ from linguaflow.playback import PlaybackIndex
 from linguaflow.update_config import bundle_version, update_identity
 
 
+@pytest.mark.p2
 def test_exports_to_same_path_survive_recording_revision_reset(tmp_path):
     run_ui('''
 from threading import Event
@@ -44,23 +45,32 @@ w.close()
 ''', tmp_path)
 
 
+@pytest.mark.p2
 def test_playback_boundaries_silence_and_order():
     index = PlaybackIndex([Caption(2, 8, 10, 'second', 'en'), Caption(1, 1, 4, 'first', 'en')])
     assert [index.at(t) for t in (0, 1, 3.9, 4, 7, 8, 10)] == [None, 1, 1, None, None, 2, None]
 
 
+@pytest.mark.p2
 @pytest.mark.parametrize('target', ['macos-arm64', 'windows-x64'])
-def test_update_identity_platform_channel_and_trust(target):
+def test_update_identity_platform_and_channel(target):
     config = {'feed_base': 'https://example.org/updates',
               'targets': {target: {'public_key': base64.b64encode(bytes(32)).decode()}}}
     assert update_identity(config, target, '0.7.0')['feed_url'] == f'https://example.org/updates/{target}/stable.xml'
     assert update_identity(config, target, '0.8.0-beta.2')['channel'] == 'beta'
     assert bundle_version('0.8.0-beta.2') == '0.8.0b2'
-    config['targets'][target]['public_key'] = ''
+
+
+@pytest.mark.p0
+@pytest.mark.parametrize('target', ['macos-arm64', 'windows-x64'])
+def test_update_identity_rejects_missing_trust_key(target):
+    config = {'feed_base': 'https://example.org/updates',
+              'targets': {target: {'public_key': ''}}}
     with pytest.raises(ValueError, match='公钥'):
         update_identity(config, target, '0.7.0')
 
 
+@pytest.mark.p2
 def test_repeated_update_checks_do_not_interrupt_download_or_clear_install_gate(tmp_path):
     run_ui('''
 from types import SimpleNamespace
@@ -78,13 +88,11 @@ w.close()
 ''',tmp_path)
 
 
-def test_feedback_never_moves_workspace_and_errors_survive_success_and_navigation(tmp_path):
+@pytest.mark.p1
+def test_save_error_recovery_survives_success_and_navigation(tmp_path):
     run_ui('''
 w.show(); settle_geometry(w)
 center = w.notifications
-assert w.centralWidget().layout().indexOf(center) == -1
-assert w.pages.geometry().bottom() >= w.centralWidget().height()-2
-before = (w.scroll.geometry(), w.control_island.geometry(), w.size())
 retried=[]
 center.post('save', '录音保存失败。', kind='error', action=lambda: retried.append(True), action_text='重试')
 center.action_button.click()
@@ -93,18 +101,27 @@ center.post('download', '正在下载模型', kind='progress', progress=37)
 center.post('selection', '模型选择已保存。', kind='success')
 settle_geometry(w)
 assert center.current_key == 'save'
-assert before == (w.scroll.geometry(), w.control_island.geometry(), w.size())
 w.open_settings('常规'); app.processEvents()
 assert center.isVisibleTo(w) and center.current_key == 'save'
 center.clear('save')
 assert center.current_key == 'download' and center.progress.value() == 37
+w.leave_settings(); w.close()
+''', tmp_path)
+
+
+@pytest.mark.p2
+def test_notification_progress_and_priority(tmp_path):
+    run_ui('''
+w.show(); settle_geometry(w)
+center = w.notifications
+center.post('download', '正在下载模型', kind='progress', progress=37)
+assert center.progress.value() == 37
 assert '37%' in center.message.text()
 center.post('download', '正在下载模型', kind='progress', progress=None)
 assert center.progress.minimum() == center.progress.maximum() == 0
 center.clear('download')
 center.clear('selection')
 assert center.isHidden()
-assert before == (w.scroll.geometry(), w.control_island.geometry(), w.size())
 center.post('old','旧消息',kind='info')
 center.post('new','需要处理',kind='attention')
 assert center.current_key=='new'
@@ -112,6 +129,27 @@ w.leave_settings(); w.close()
 ''', tmp_path)
 
 
+@pytest.mark.p3
+def test_notifications_do_not_move_workspace(tmp_path):
+    run_ui('''
+w.show(); settle_geometry(w)
+center = w.notifications
+assert w.centralWidget().layout().indexOf(center) == -1
+assert w.pages.geometry().bottom() >= w.centralWidget().height()-2
+before = (w.scroll.geometry(), w.control_island.geometry(), w.size())
+center.post('save', '录音保存失败。', kind='error')
+center.post('download', '正在下载模型', kind='progress', progress=37)
+center.post('selection', '模型选择已保存。', kind='success')
+settle_geometry(w)
+assert before == (w.scroll.geometry(), w.control_island.geometry(), w.size())
+center.clear('save'); center.clear('download'); center.clear('selection')
+settle_geometry(w)
+assert before == (w.scroll.geometry(), w.control_island.geometry(), w.size())
+w.close()
+''', tmp_path)
+
+
+@pytest.mark.p1
 def test_download_cancel_remains_available_after_popup_expires(tmp_path):
     run_ui('''
 from types import SimpleNamespace
@@ -143,6 +181,7 @@ w.close()
 ''',tmp_path)
 
 
+@pytest.mark.p1
 def test_guidance_requires_only_enabled_models_and_preserves_translation_choice(tmp_path):
     run_ui('''
 w.check_model_assets=lambda:None
@@ -176,6 +215,7 @@ w.close()
 ''',tmp_path)
 
 
+@pytest.mark.p2
 def test_playback_highlight_manual_interrupt_return_and_seek(tmp_path):
     run_ui('''
 from linguaflow.core import Caption
@@ -210,6 +250,7 @@ w.session_dirty=False; w.close()
 ''', tmp_path)
 
 
+@pytest.mark.p1
 def test_close_waits_for_active_session_and_failed_save_retains_recording(tmp_path):
     run_ui('''
 from linguaflow.core import Caption
@@ -238,6 +279,7 @@ w.close()
 ''', tmp_path)
 
 
+@pytest.mark.p0
 def test_update_never_stops_recording_and_release_is_background_and_fenced(tmp_path):
     run_ui('''
 from threading import Event
@@ -271,6 +313,7 @@ w.native_updater.installing=False; w.runtime=None; w.close()
 ''', tmp_path)
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('final_state', ['complete', 'incomplete'])
 def test_library_operation_retries_failed_final_state(tmp_path, final_state):
     run_ui('''
@@ -299,6 +342,7 @@ assert captions[0].source=='keep caption'
 '''.replace('FINAL_STATE', repr(final_state)), tmp_path)
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('event', ['cancel', 'cancelled', 'error'])
 def test_update_abandonment_waits_for_runtime_shutdown_and_recovers(tmp_path, event):
     run_ui('''
@@ -339,6 +383,7 @@ assert all(observations),observations
 '''.replace('EVENT', repr(event)), tmp_path)
 
 
+@pytest.mark.p1
 def test_older_auto_save_cannot_clear_pending_final_state(tmp_path):
     run_ui('''
 from dataclasses import replace
@@ -378,6 +423,7 @@ assert saved[0]['session']['state']=='complete' and saved[1][0].source=='latest'
 ''', tmp_path)
 
 
+@pytest.mark.p2
 def test_search_locates_saved_source_and_translation_without_starting_playback(tmp_path):
     run_ui('''
 from linguaflow.core import Caption
@@ -395,6 +441,7 @@ w.persist_session();w.close()
 ''',tmp_path)
 
 
+@pytest.mark.p0
 def test_library_migration_waits_for_session_and_commits_verified_recordings(tmp_path):
     run_ui('''
 from pathlib import Path

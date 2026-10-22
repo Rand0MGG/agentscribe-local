@@ -17,6 +17,7 @@ class Store:
         self.values[key] = value
 
 
+@pytest.mark.p1
 def test_legacy_defaults_and_corrupt_values():
     values = read_preferences(Store(backend='qwen-stream', draft_seconds='bad', offline=True,
                                     audio_processing=json.dumps({'deepfilter': True, 'output_db': 10})))
@@ -31,6 +32,7 @@ def test_legacy_defaults_and_corrupt_values():
     assert 'audio_processing' not in destination.values and 'offline' not in destination.values
 
 
+@pytest.mark.p1
 def test_all_keys_roundtrip_and_missing_device_does_not_erase_selection():
     store = Store(audio_device=json.dumps(['microphone', False]))
     values = read_preferences(store)
@@ -43,6 +45,7 @@ def test_all_keys_roundtrip_and_missing_device_does_not_erase_selection():
         assert read_audio_device(Store(audio_device=invalid)) is None
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('stored, expected', [(False, False), (True, True), (0, False), (1, True),
     ('false', False), ('true', True), ('1', True), ('0', False), ('invalid', False), (None, False),
     (2, False), (1.0, False), ({}, False)])
@@ -50,12 +53,14 @@ def test_beta_opt_in_parses_stored_values_and_rejects_corrupt_settings(stored, e
     assert read_preferences(Store(beta_features=stored))['beta_features'] is expected
 
 
+@pytest.mark.p1
 def test_legacy_metal_migrates_to_llama_without_overriding_explicit_engine():
     assert read_preferences(Store(translation_device='metal'))['translation_engine'] == 'llama'
     assert read_preferences(Store(translation_device='cuda'))['translation_engine'] == 'pytorch'
     assert read_preferences(Store(translation_device='metal', translation_engine='pytorch'))['translation_engine'] == 'pytorch'
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('stored, expected', [('3', 3), (-4, 0), (500, 10), (None, 5),
                                              ('bad', 5), (True, 5), (1.5, 5), (float('inf'), 5)])
 def test_context_count_normalizes_old_or_corrupt_preferences(stored, expected):

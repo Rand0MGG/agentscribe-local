@@ -19,6 +19,7 @@ from scripts.benchmark_ami import frozen_settings
 from scripts.benchmark_ami import run as benchmark
 
 
+@pytest.mark.p2
 def test_xml_word_pointer_coverage_and_nonlexical_annotations():
     w = '''<root xmlns:nite="http://nite.sourceforge.net/">
     <w nite:id="a0" starttime="0" endtime=".1">We</w>
@@ -53,6 +54,7 @@ def reference():
                 audit=dict(partial_words=0, annotation_types={}, gap_seconds=0., word_interval_overlap_seconds=.5))
 
 
+@pytest.mark.p2
 def test_overlap_orders_are_explicit_and_keep_every_word():
     ref = reference()
     assert [w['word'] for w in reference_tokens(ref, 'turn')] == ['hello', 'there', 'yes']
@@ -73,6 +75,7 @@ def run_fixture():
     return manifest, events
 
 
+@pytest.mark.p2
 @pytest.mark.parametrize('defect', ['incomplete', 'end', 'source', 'length', 'samples', 'speed', 'leak', 'pacing', 'draft', 'clock', 'runtime'])
 def test_protocol_rejects_invalid_runs(defect):
     manifest, events = run_fixture()
@@ -112,6 +115,7 @@ def write_run(tmp_path, empty=False):
     write_json(tmp_path/'manifest.json', manifest)
 
 
+@pytest.mark.p2
 def test_complete_score_exports_both_orderings_and_keeps_final_revision(tmp_path):
     write_run(tmp_path)
     result = evaluate(reference(), tmp_path, tmp_path/'score')
@@ -122,6 +126,7 @@ def test_complete_score_exports_both_orderings_and_keeps_final_revision(tmp_path
     assert (tmp_path/'score/report.md').is_file()
 
 
+@pytest.mark.p2
 def test_empty_output_is_full_deletion_and_csv_counts_match(tmp_path):
     write_run(tmp_path, empty=True)
     result = evaluate(reference(), tmp_path, tmp_path/'score')
@@ -130,6 +135,7 @@ def test_empty_output_is_full_deletion_and_csv_counts_match(tmp_path):
         assert len(list(csv.DictReader(f))) == 3
 
 
+@pytest.mark.p2
 def test_tampered_event_file_cannot_generate_score(tmp_path):
     write_run(tmp_path)
     with (tmp_path/'events.jsonl').open('a', encoding='utf-8') as f:
@@ -139,6 +145,7 @@ def test_tampered_event_file_cannot_generate_score(tmp_path):
     assert not (tmp_path/'score').exists()
 
 
+@pytest.mark.p2
 def test_default_settings_and_windowed_path_rejection(tmp_path):
     settings = frozen_settings()
     assert settings['qwen_model'] == 'Qwen/Qwen3-ASR-1.7B'
@@ -149,6 +156,7 @@ def test_default_settings_and_windowed_path_rejection(tmp_path):
         frozen_settings(tmp_path/'settings.json')
 
 
+@pytest.mark.p2
 def test_orchestrator_failure_does_not_start_scoring(tmp_path, monkeypatch):
     import argparse
     import subprocess
@@ -173,6 +181,7 @@ def test_orchestrator_failure_does_not_start_scoring(tmp_path, monkeypatch):
     assert not (args.output/'score').exists()
 
 
+@pytest.mark.p2
 def test_score_existing_checks_frozen_inputs_then_writes_report(tmp_path):
     from scripts.benchmark_ami import ROOT, score_existing
     folder = tmp_path/'experiment'

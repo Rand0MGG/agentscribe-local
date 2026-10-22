@@ -6,6 +6,7 @@ import pytest
 from linguaflow import download_progress
 
 
+@pytest.mark.p1
 def test_hub_progress_preserves_resume_offset_and_restores_adapter_after_failure(monkeypatch, capsys):
     class Original:
         def __init__(self, **kwargs):
@@ -24,6 +25,7 @@ def test_hub_progress_preserves_resume_offset_and_restores_adapter_after_failure
     assert module.tqdm is Original
 
 
+@pytest.mark.p1
 def test_semantic_downloads_use_progress_but_local_checks_remain_offline(monkeypatch, tmp_path):
     import sys
     from contextlib import nullcontext

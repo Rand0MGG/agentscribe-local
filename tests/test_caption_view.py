@@ -1,6 +1,7 @@
 """Real Qt interaction regressions, in isolated processes with simulated content."""
 import os
 
+import pytest
 from ui_support import run_ui_process
 
 
@@ -9,6 +10,7 @@ def run_qt(code, tmp_path):
                    env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'AGENTSCRIBE_LIBRARY': str(tmp_path)})
 
 
+@pytest.mark.p1
 def test_caption_anchor_audio_selection_sync_and_recording_lock(tmp_path):
     run_qt('''
 import os

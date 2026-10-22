@@ -1,8 +1,10 @@
 """User interaction acceptance without capturing or playing audio."""
+import pytest
 from ui_support import run_ui
 
 
-def test_live_overlay_catches_up_and_controls_release_reading_space(tmp_path):
+@pytest.mark.p2
+def test_live_overlay_catches_up_with_current_and_hidden_revisions(tmp_path):
     run_ui(r'''
 from dataclasses import replace
 from PySide6.QtCore import QObject, Signal
@@ -27,6 +29,17 @@ w.toggle_overlay()
 session.caption.emit(Caption(3, 8, 10, 'Received while hidden', 'en', '隐藏期间字幕'))
 w.toggle_overlay()
 assert w.overlay.source.text() == 'Received while hidden'
+w.set_recording_state(module.RecordingState.IDLE)
+w.close()
+''', tmp_path)
+
+
+@pytest.mark.p3
+def test_overlay_hidden_controls_release_reading_space_without_resizing(tmp_path):
+    run_ui(r'''
+w.show()
+w.toggle_overlay()
+wait(w.overlay.isVisible)
 o = w.overlay
 o.set_controls_visible(True)
 settle_geometry(o, o.scroll)
@@ -39,6 +52,7 @@ w.close()
 ''', tmp_path)
 
 
+@pytest.mark.p2
 def test_click_only_on_caption_text_plays_but_selection_and_live_recording_do_not(tmp_path):
     run_ui(r'''
 from types import SimpleNamespace
@@ -83,6 +97,7 @@ w.close()
 ''', tmp_path)
 
 
+@pytest.mark.p0
 def test_player_reads_real_gain_stream_and_closes_it_without_changing_original(tmp_path):
     run_ui(r'''
 import sys, types, wave

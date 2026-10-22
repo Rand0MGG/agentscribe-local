@@ -4,6 +4,7 @@ from linguaflow.library import Library
 from linguaflow.library_access import acquire_recording_lock, check_library_access
 
 
+@pytest.mark.p0
 def test_active_recording_protects_its_parent_folder_and_releases_cleanly(tmp_path):
     library = Library(tmp_path)
     folder = library.index['folders'][0]

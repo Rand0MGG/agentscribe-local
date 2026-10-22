@@ -1,8 +1,9 @@
 """Beta visibility, persistent opt-in and isolation from ordinary local recording."""
-
+import pytest
 from ui_support import run_ui
 
 
+@pytest.mark.p0
 def test_beta_off_hides_entries_and_ignores_old_cloud_consent_and_qwen_context(tmp_path):
     run_ui('''
 from threading import Event
@@ -60,6 +61,7 @@ w.close();app.processEvents()
 ''', tmp_path)
 
 
+@pytest.mark.p0
 def test_beta_toggle_persists_and_closes_owned_worker_without_deleting_course_data(tmp_path):
     run_ui('''
 from linguaflow.knowledge.files import read_json
@@ -98,6 +100,7 @@ reopened.close();app.processEvents()
 ''', tmp_path)
 
 
+@pytest.mark.p2
 def test_disabling_beta_cancels_only_course_component_preparation(tmp_path):
     run_ui('''
 from threading import Event
@@ -122,6 +125,7 @@ finally:
 ''', tmp_path)
 
 
+@pytest.mark.p1
 def test_knowledge_close_reaps_exited_child_with_buffered_input(tmp_path):
     run_ui('''
 import subprocess,sys

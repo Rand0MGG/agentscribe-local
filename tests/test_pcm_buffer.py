@@ -4,6 +4,7 @@ import pytest
 from linguaflow.audio_processing.buffer import PCMBuffer
 
 
+@pytest.mark.p1
 def test_pcm_append_discard_silence_and_backlog_preserve_every_sample():
     buffer = PCMBuffer(64)
     expected = np.empty(0, np.float32)

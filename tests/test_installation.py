@@ -27,6 +27,7 @@ def isolated_paths(tmp_path, monkeypatch):
     return root, data
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('system,machine,allowed', [
     ('darwin', 'arm64', True), ('darwin', 'x86_64', False),
     ('win32', 'AMD64', True), ('win32', 'ARM64', False), ('linux', 'x86_64', False),
@@ -41,6 +42,7 @@ def test_platform_eligibility(monkeypatch, system, machine, allowed):
             hardware.platform_target()
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('output,compatible', [
     ('RTX 3060, 8.6, 570.65\n', True), ('RTX 3060, 8.6, 569.99\n', False),
     ('GTX 1080, 6.1, 590.00\n', False), ('V100, 7.0, 590.00\n', False),
@@ -57,6 +59,7 @@ def test_gpu_driver_and_architecture_match_pinned_torch(monkeypatch, output, com
             hardware.check_installation()
 
 
+@pytest.mark.p1
 def test_missing_gpu_detection_fails_closed(monkeypatch):
     monkeypatch.setattr(hardware, 'platform_target', lambda: 'windows-x64')
     monkeypatch.setattr(hardware, 'spawn_options', lambda: {})
@@ -67,6 +70,7 @@ def test_missing_gpu_detection_fails_closed(monkeypatch):
         hardware.check_installation()
 
 
+@pytest.mark.p1
 def test_hardware_rejection_precedes_all_writes(tmp_path, monkeypatch):
     def reject():
         raise ValueError('hardware rejected')
@@ -77,6 +81,7 @@ def test_hardware_rejection_precedes_all_writes(tmp_path, monkeypatch):
     assert list(tmp_path.iterdir()) == []
 
 
+@pytest.mark.p0
 def test_packaged_paths_survive_installation_replacement(isolated_paths):
     root, data = isolated_paths
     recording = runtime_paths.recordings_root() / '课一' / '录音.wav'
@@ -92,6 +97,7 @@ def test_packaged_paths_survive_installation_replacement(isolated_paths):
     assert model.read_bytes() == b'personal model'
 
 
+@pytest.mark.p1
 def test_frozen_app_is_never_used_as_python(isolated_paths):
     root, _ = isolated_paths
     with pytest.raises(RuntimeError, match='缺少桌面 Python'):
@@ -106,6 +112,7 @@ def test_frozen_app_is_never_used_as_python(isolated_paths):
     assert environment['AGENTSCRIBE_RESOURCES'] == str(root)
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('slot', ['../../escape', '', 'A' * 32, None])
 def test_runtime_pointer_rejects_invalid_paths(isolated_paths, slot):
     _, data = isolated_paths
@@ -116,6 +123,7 @@ def test_runtime_pointer_rejects_invalid_paths(isolated_paths, slot):
         runtime_paths.runtime_python()
 
 
+@pytest.mark.p1
 def test_runtime_requires_matching_app_dependencies(isolated_paths, monkeypatch):
     root, data = isolated_paths
     (root / 'requirements-runtime.txt').write_text('fixed==2')
@@ -133,6 +141,7 @@ def test_runtime_requires_matching_app_dependencies(isolated_paths, monkeypatch)
     assert runtime_paths.runtime_python() == python
 
 
+@pytest.mark.p0
 @pytest.mark.parametrize('fail_at', ['pip', 'verify', 'publish', None])
 def test_environment_failure_preserves_active_and_recordings(tmp_path, monkeypatch, fail_at):
     source, base = tmp_path / 'source', tmp_path / 'runtime'
@@ -176,6 +185,7 @@ def test_environment_failure_preserves_active_and_recordings(tmp_path, monkeypat
     assert recording.read_bytes() == b'preserve'
 
 
+@pytest.mark.p0
 def test_new_library_default_and_existing_location_are_preserved(isolated_paths):
     root, data = isolated_paths
     saved = {}
@@ -201,6 +211,7 @@ def test_new_library_default_and_existing_location_are_preserved(isolated_paths)
     assert (legacy / 'original.wav').read_bytes() == b'keep'
 
 
+@pytest.mark.p1
 def test_atomic_pointer_write_error_preserves_old(tmp_path, monkeypatch):
     pointer = tmp_path / 'active.json'
     pointer.write_text('{"slot":"old"}')
@@ -211,6 +222,7 @@ def test_atomic_pointer_write_error_preserves_old(tmp_path, monkeypatch):
     assert list(tmp_path.iterdir()) == [pointer]
 
 
+@pytest.mark.p1
 def test_cancel_preparation_reaps_download_and_descendants(tmp_path):
     from linguaflow.preparation_task import Preparation
     saved = tmp_path / '已下载部分.bin'
@@ -252,6 +264,7 @@ time.sleep(30)
         thread.join(12)
 
 
+@pytest.mark.p1
 def test_source_preparation_preserves_code_and_licenses_without_experiments(tmp_path):
     revision = 'a' * 40
     directory = tmp_path / 'cache'
@@ -276,6 +289,7 @@ def test_source_preparation_preserves_code_and_licenses_without_experiments(tmp_
                 assert prepared.read(name) == data
 
 
+@pytest.mark.p0
 def test_source_checksum_failure_does_not_publish(tmp_path, monkeypatch):
     revision = 'b' * 40
     requirements = tmp_path / 'original.txt'

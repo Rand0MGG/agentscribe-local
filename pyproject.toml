@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentscribe-local"
-version = "0.10.1"
+version = "0.10.2"
 description = "Local live speech recognition and translation for Windows and macOS"
 requires-python = ">=3.11,<3.14"
 dependencies = [
@@ -35,6 +35,12 @@ include = ["linguaflow*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 cache_dir = ".work/cache/pytest"
+markers = [
+  "p0: safety, privacy, unauthorized costs, or irreversible user data loss",
+  "p1: application core workflow and result correctness",
+  "p2: independent feature functionality",
+  "p3: presentation and interaction convenience",
+]
 
 [tool.ruff]
 line-length = 110

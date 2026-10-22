@@ -46,6 +46,7 @@ int main(void) {
 '''
 
 
+@pytest.mark.p2
 @pytest.mark.skipif(sys.platform != 'darwin', reason='Native Sparkle callback integration')
 def test_native_background_404_does_not_block_manual_retry_or_cancel(tmp_path):
     from scripts.packaging_common import extract, obtain

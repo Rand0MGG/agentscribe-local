@@ -1,7 +1,9 @@
 """Responsive presentation and visible audio selection, without native audio."""
+import pytest
 from ui_support import run_ui
 
 
+@pytest.mark.p1
 def test_device_refresh_is_atomic_and_start_uses_visible_source(tmp_path):
     run_ui(r'''
 from PySide6.QtCore import QSignalBlocker
@@ -52,6 +54,7 @@ w.close()
 ''', tmp_path)
 
 
+@pytest.mark.p1
 def test_recording_starts_without_asset_scan_and_loading_is_distinct_from_capture(tmp_path):
     run_ui(r'''from threading import Event
 from PySide6.QtCore import QObject

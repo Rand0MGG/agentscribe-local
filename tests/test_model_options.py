@@ -6,6 +6,7 @@ import sys
 import pytest
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('system', ['darwin', 'win32'])
 def test_desktop_backend_device_and_model_choices_roundtrip(tmp_path, system):
     code = '''

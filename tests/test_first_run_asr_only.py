@@ -1,7 +1,9 @@
 """Missing translation assets must not block recognition or lose user intent."""
+import pytest
 from ui_support import run_ui
 
 
+@pytest.mark.p1
 def test_translation_recovery_preserves_intent_for_next_recording(tmp_path):
     run_ui(r''' 
 w.check_model_assets = lambda: None

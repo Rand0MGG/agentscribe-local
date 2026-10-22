@@ -1,7 +1,9 @@
 """First-run routing, download ownership, and readable caption/popup boundaries."""
+import pytest
 from ui_support import run_ui
 
 
+@pytest.mark.p2
 def test_model_download_card_is_local_and_dismissal_does_not_cancel_or_reopen(tmp_path):
     run_ui(r'''
 from threading import Event

@@ -7,6 +7,7 @@ import pytest
 from ui_support import assert_ui_process, run_ui_process
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('message,drawing_error', [
     ('QPainter::begin: A paint device can only be painted by one painter at a time.', True),
     ('QWidgetEffectSourcePrivate::pixmap: Painter not active', True),
@@ -28,6 +29,7 @@ def test_qt_warnings_reject_drawing_errors_but_allow_platform_hints(message, dra
         assert_ui_process(result)
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('code, reason', [
     ("print('中文失败详情', flush=True); raise SystemExit(7)", 'Qt child exited 7'),
     ("import time; print('中文失败详情', flush=True); time.sleep(30)", 'Qt child timed out'),

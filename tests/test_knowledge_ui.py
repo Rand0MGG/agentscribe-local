@@ -1,9 +1,11 @@
 """Real Qt/process/file roundtrip without model, network, credentials or audio devices."""
 import os
 
+import pytest
 from ui_support import run_ui_process
 
 
+@pytest.mark.p1
 def test_missing_agent_sdk_corrupt_course_and_worker_exit_leave_local_recording_usable(tmp_path):
     code = '''
 import importlib.abc, os, subprocess, sys, time
@@ -68,6 +70,7 @@ assert not w.knowledge_client.threads
                    env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'AGENTSCRIBE_LIBRARY': str(tmp_path)})
 
 
+@pytest.mark.p0
 def test_course_panel_context_save_source_sync_and_owned_process_cleanup(tmp_path):
     code = '''
 import os, time
@@ -151,6 +154,7 @@ w.close()
                    env={**os.environ, 'QT_QPA_PLATFORM': os.environ.get('AGENTSCRIBE_UI_PLATFORM', 'offscreen'), 'AGENTSCRIBE_LIBRARY': str(tmp_path), 'AGENTSCRIBE_TEST_MATERIAL': str(material)})
 
 
+@pytest.mark.p2
 def test_visual_page_panel_coverage_provenance_and_window_sizes(tmp_path):
     from dataclasses import asdict
 
@@ -200,6 +204,7 @@ p.close()
                    env={**os.environ, 'QT_QPA_PLATFORM': os.environ.get('AGENTSCRIBE_UI_PLATFORM', 'offscreen'), 'AGENTSCRIBE_VISUAL_VIEW': str(data)})
 
 
+@pytest.mark.p0
 def test_new_format_import_filter_and_local_preview_without_cloud(tmp_path):
     from test_knowledge_visual import png
     source = tmp_path / '课程图片.png'

@@ -1,8 +1,11 @@
 from types import SimpleNamespace
 
+import pytest
+
 from linguaflow.runtime_compat import finalize_whisper_once
 
 
+@pytest.mark.p1
 def test_eof_publishes_tokens_committed_while_consumer_handles_previous_snapshot():
     import asyncio
 
@@ -25,6 +28,7 @@ def test_eof_publishes_tokens_committed_while_consumer_handles_previous_snapshot
     asyncio.run(scenario())
 
 
+@pytest.mark.p1
 def test_user_pause_flushes_tail_and_preserves_vad_sample_clock():
     import asyncio
 
@@ -43,6 +47,7 @@ def test_user_pause_flushes_tail_and_preserves_vad_sample_clock():
     assert vad.current_sample == 16123
 
 
+@pytest.mark.p1
 def test_silence_then_eof_does_not_decode_ended_utterance_twice():
     calls = []
     def decode():
@@ -58,6 +63,7 @@ def test_silence_then_eof_does_not_decode_ended_utterance_twice():
     assert len(calls) == 1
 
 
+@pytest.mark.p1
 def test_new_speech_after_silence_still_flushes_on_stop():
     calls = []
     def decode():
@@ -72,6 +78,7 @@ def test_new_speech_after_silence_still_flushes_on_stop():
     assert processor.finish()[0] == ["utterance 2"]
 
 
+@pytest.mark.p1
 def test_pause_origin_uses_audio_clock_instead_of_last_word():
     origins = []
     processor = SimpleNamespace(insert_audio_chunk=lambda *args: None,

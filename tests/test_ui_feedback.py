@@ -1,7 +1,9 @@
 """Task feedback remains actionable through waits, cancellation and disconnection."""
+import pytest
 from ui_support import run_ui
 
 
+@pytest.mark.p2
 def test_migration_progress_and_cancel_remain_reachable_after_wait_and_dismissal(tmp_path):
     run_ui('''
 from types import SimpleNamespace
@@ -34,6 +36,7 @@ w.close()
 ''', tmp_path)
 
 
+@pytest.mark.p1
 def test_model_check_is_busy_cancellable_and_rejects_late_result(tmp_path):
     run_ui('''
 from types import SimpleNamespace
@@ -76,6 +79,7 @@ w.close()
 ''', tmp_path)
 
 
+@pytest.mark.p2
 def test_course_disconnect_disables_actions_and_keeps_unsaved_terms_for_reconnect(tmp_path):
     run_ui('''
 from types import SimpleNamespace
@@ -111,6 +115,7 @@ p.close();w.close()
 ''', tmp_path)
 
 
+@pytest.mark.p2
 def test_real_course_worker_exit_and_reconnect_preserve_draft(tmp_path):
     run_ui('''
 from unittest.mock import patch

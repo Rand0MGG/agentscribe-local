@@ -1,6 +1,8 @@
+import pytest
 from ui_support import run_ui_process
 
 
+@pytest.mark.p2
 def test_workspace_components_own_state_without_importing_main_window():
     run_ui_process(r'''
 import sys

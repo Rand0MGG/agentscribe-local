@@ -1,7 +1,9 @@
 """Language selectors share the same translation setting without changing active sessions."""
+import pytest
 from ui_support import run_ui
 
 
+@pytest.mark.p1
 def test_matching_languages_disable_translation_in_both_views(tmp_path):
     run_ui(r'''
 from types import SimpleNamespace

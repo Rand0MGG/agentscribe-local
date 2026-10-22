@@ -76,6 +76,7 @@ def stub_worker(monkeypatch, platform='win32'):
     return configured, online, stores
 
 
+@pytest.mark.p1
 def test_loading_backlog_backpressures_input_without_dropping_pcm(monkeypatch):
     import base64
     stub_worker(monkeypatch)
@@ -130,6 +131,7 @@ def test_loading_backlog_backpressures_input_without_dropping_pcm(monkeypatch):
     asyncio.run(exercise())
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('old_mode', ['fast', 'accurate'])
 def test_windows_worker_installs_the_same_qwen_revision_pipeline(monkeypatch, old_mode):
     configured, online, stores = stub_worker(monkeypatch)
@@ -147,6 +149,7 @@ def test_windows_worker_installs_the_same_qwen_revision_pipeline(monkeypatch, ol
     assert events[-1]['type'] == 'done'
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('backend', ['qwen3-streaming', 'qwen3-mlx'])
 @pytest.mark.parametrize('failure', ['', 'semantic', 'session'])
 def test_worker_uses_shared_startup_and_owns_backend_resource(monkeypatch, backend, failure):
@@ -196,6 +199,7 @@ def test_worker_uses_shared_startup_and_owns_backend_resource(monkeypatch, backe
     assert closed == ([True] if backend == 'qwen3-mlx' else [])
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('backend', ['qwen3-streaming', 'qwen3-mlx'])
 def test_cancelled_worker_releases_owned_backend_without_publishing_late_results(monkeypatch, backend):
     import linguaflow.mlx_asr as mlx
@@ -230,6 +234,7 @@ def test_cancelled_worker_releases_owned_backend_without_publishing_late_results
     asyncio.run(exercise())
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize(('platform', 'device'), [('win32', 'cuda'), ('darwin', 'cpu')])
 def test_whisper_uses_shared_startup_and_preserves_device(monkeypatch, platform, device):
     stub_worker(monkeypatch, platform)
@@ -258,6 +263,7 @@ def test_whisper_uses_shared_startup_and_preserves_device(monkeypatch, platform,
     assert received == [(engine, None, model)]
 
 
+@pytest.mark.p1
 def test_whisper_missing_cache_is_rejected_before_model_loading(monkeypatch, tmp_path):
     stub_worker(monkeypatch)
     monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path))
@@ -271,6 +277,7 @@ def test_whisper_missing_cache_is_rejected_before_model_loading(monkeypatch, tmp
     assert not any(event['type'] == 'ready' for event in events)
 
 
+@pytest.mark.p1
 def test_source_lock_waiters_do_not_starve_live_translation(monkeypatch):
     _, online, _ = stub_worker(monkeypatch)
     entered, release = Event(), Event()

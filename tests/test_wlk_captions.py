@@ -9,6 +9,7 @@ def line(text, start=0, end=1):
     return {"text": text, "start": start, "end": end}
 
 
+@pytest.mark.p1
 def test_span_lookup_preserves_exact_edges_gaps_and_language():
     mapper = CaptionMapper('en', predictor=lambda text: [2, 4])
     events = mapper.update(dict(revision_text='甲。乙。丙。', stable_end=6,
@@ -18,6 +19,7 @@ def test_span_lookup_preserves_exact_edges_gaps_and_language():
         ('甲。', 0., 1., 'zh'), ('乙。', 1., 5., 'ja'), ('丙。', 5., 9., 'zh')]
 
 
+@pytest.mark.p1
 def test_unchanged_context_and_tail_reuse_segmentation_but_readiness_advances():
     calls, clock = [], [0.]
 
@@ -48,6 +50,7 @@ def text(mapper):
     return " ".join(c.source for c in mapper.previous.values())
 
 
+@pytest.mark.p1
 def test_model_boundary_creates_provisional_row_not_final():
     mapper = CaptionMapper("en", predictor=lambda text: [12] if len(text) > 12 else [])
     first = mapper.update({"lines": [], "buffer_transcription": "Hell"})[0]
@@ -58,6 +61,7 @@ def test_model_boundary_creates_provisional_row_not_final():
     assert second[1].source == "Next" and not second[1].ready
 
 
+@pytest.mark.p1
 def test_stable_partial_and_speculative_tail_are_distinguished():
     mapper = CaptionMapper("en", predictor=lambda text: [])
     event = mapper.update({"lines": [line("Hello")], "buffer_transcription": "world"})[0]
@@ -67,6 +71,7 @@ def test_stable_partial_and_speculative_tail_are_distinguished():
     assert mapper.update({"lines": [line("Hello world")]}, done=True) == []
 
 
+@pytest.mark.p1
 def test_elapsed_time_submits_stable_tail_but_does_not_finalize():
     clock = [0.]
     mapper = CaptionMapper("zh", predictor=lambda text: [], clock=lambda: clock[0])
@@ -78,6 +83,7 @@ def test_elapsed_time_submits_stable_tail_but_does_not_finalize():
     assert not events[0].final and not events[0].ready
 
 
+@pytest.mark.p1
 def test_unconfirmed_boundary_needs_fresh_sat_context_not_just_elapsed_heartbeats():
     clock = [0.]
     prefix = 'A provisional sentence.'
@@ -93,6 +99,7 @@ def test_unconfirmed_boundary_needs_fresh_sat_context_not_just_elapsed_heartbeat
     assert submitted.ready and not submitted.asr_final and not submitted.final
 
 
+@pytest.mark.p1
 def test_boundary_needs_fresh_context_and_confirmed_asr_characters():
     clock = [0.]
     mapper = CaptionMapper("zh", predictor=lambda text: [9] if len(text) > 9 else [], clock=lambda: clock[0])
@@ -113,6 +120,7 @@ def test_boundary_needs_fresh_context_and_confirmed_asr_characters():
     assert not mapper.previous[first[1].id].final
 
 
+@pytest.mark.p1
 def test_correction_merges_boundary_and_revises_same_id():
     mapper = CaptionMapper("en", predictor=lambda text: [18, 38] if "Actually" in text else [18])
     first = mapper.update({"lines": [line("The value is five. Next detail.", end=5)]})
@@ -123,6 +131,7 @@ def test_correction_merges_boundary_and_revises_same_id():
     assert 'Next detail.' in text(mapper)
 
 
+@pytest.mark.p1
 def test_retracted_tail_gets_tombstone_and_id_is_not_reused():
     mapper = CaptionMapper("en", predictor=lambda text: [13])
     events = mapper.update({"lines": [line("Welcome here.")], "buffer_transcription": "noise"})
@@ -134,6 +143,7 @@ def test_retracted_tail_gets_tombstone_and_id_is_not_reused():
     assert events[-1].id > tail_id
 
 
+@pytest.mark.p1
 def test_pending_model_boundary_preserves_long_text_and_timestamps():
     tokens = [Item(start=i, end=i+1, text=f" word{i}") for i in range(80)]
     segment = Item(text="words", speaker=-1, tokens=tokens, detected_language="en")
@@ -145,6 +155,7 @@ def test_pending_model_boundary_preserves_long_text_and_timestamps():
     assert events[0].end == 80
 
 
+@pytest.mark.p1
 def test_fragment_tokens_are_not_rewritten_by_joining():
     tokens = [Item(start=i, end=i+1, text=t) for i, t in enumerate(["学", "习", "知识"])]
     front = Item(lines=[Item(text="学习知识", speaker=-1, tokens=tokens, detected_language="zh")], to_dict=lambda: {})
@@ -153,6 +164,7 @@ def test_fragment_tokens_are_not_rewritten_by_joining():
     assert CaptionMapper(predictor=lambda text: []).update({"lines": [line(".")]})[0].source == "."
 
 
+@pytest.mark.p1
 def test_real_upstream_correction_can_reopen_committed_caption():
     mapper = CaptionMapper("en", predictor=lambda text: [])
     first = mapper.update({"lines": [line("Incorrect word.")]}, done=True)[0]
@@ -161,6 +173,7 @@ def test_real_upstream_correction_can_reopen_committed_caption():
     assert changed.id == first.id and changed.revision > first.revision
 
 
+@pytest.mark.p1
 def test_growing_stream_preserves_all_text_across_many_commits():
     clock = [0.]
     sentences = [f"This is classroom statement number {i}." for i in range(40)]
@@ -181,6 +194,7 @@ def test_growing_stream_preserves_all_text_across_many_commits():
     assert all(c.final for c in mapper.previous.values())
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('position', [0, 1023, 1024, 4095])
 def test_committed_history_reopens_at_first_changed_character(position):
     from linguaflow.wlk_captions import _common_prefix_end
@@ -190,6 +204,7 @@ def test_committed_history_reopens_at_first_changed_character(position):
     assert _common_prefix_end(history, history + 'next') == len(history)
 
 
+@pytest.mark.p1
 def test_confirmation_withdrawal_reopens_exact_boundary_without_text_change():
     mapper = CaptionMapper('en', predictor=lambda value: [i+1 for i, char in enumerate(value) if char == '.'])
     original = 'First sentence. Second sentence. Third sentence.'
@@ -204,6 +219,7 @@ def test_confirmation_withdrawal_reopens_exact_boundary_without_text_change():
     assert {caption.id for caption in events} == set(ids[1:])
 
 
+@pytest.mark.p1
 def test_committed_history_storage_grows_linearly():
     import sys
     sizes = []
@@ -220,6 +236,7 @@ def test_committed_history_storage_grows_linearly():
     assert sizes[2] < sizes[1] * 2.1
 
 
+@pytest.mark.p1
 def test_long_session_diffs_with_ten_stable_context_rows(monkeypatch):
     import linguaflow.wlk_captions as module
     mapper = CaptionMapper('en', predictor=lambda text: [
@@ -249,6 +266,7 @@ def test_long_session_diffs_with_ten_stable_context_rows(monkeypatch):
     assert ' '.join(c.source for c in mapper.previous.values()) == history + ' A corrected sentence.'
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('count', [3, 10])
 def test_diff_context_includes_up_to_ten_stable_rows(monkeypatch, count):
     import linguaflow.wlk_captions as module
@@ -268,6 +286,7 @@ def test_diff_context_includes_up_to_ten_stable_rows(monkeypatch, count):
     assert compared == [(context, context + ' Next sentence.')]
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('changed_index, context_start', [(4, 0), (14, 4)])
 def test_correction_before_sliding_window_expands_to_affected_history(monkeypatch, changed_index, context_start):
     import linguaflow.wlk_captions as module
@@ -303,6 +322,7 @@ def test_correction_before_sliding_window_expands_to_affected_history(monkeypatc
     assert text(mapper) == corrected and all(c.final for c in mapper.previous.values())
 
 
+@pytest.mark.p1
 def test_model_offsets_determine_short_and_unpunctuated_segments():
     mapper = CaptionMapper("zh", predictor=lambda text: [2, 4])
     events = mapper.update({"lines": [line("好。开始我们继续", end=5)]})
@@ -311,6 +331,7 @@ def test_model_offsets_determine_short_and_unpunctuated_segments():
     assert events[0].boundary_reason == "上下文分句"
 
 
+@pytest.mark.p1
 def test_model_can_rejoin_provisional_rows():
     mapper = CaptionMapper("en", predictor=lambda text: [6] if text == "Hello world" else [])
     first = mapper.update({"buffer_transcription": "Hello world"})
@@ -320,6 +341,7 @@ def test_model_can_rejoin_provisional_rows():
     assert any(c.id == first[1].id and not c.source for c in changed)
 
 
+@pytest.mark.p1
 def test_model_pending_tail_waits_for_context_or_session_end():
     mapper = CaptionMapper("en", predictor=lambda text: [])
     snapshot = {"lines": [line("Hello world. Is this complete? Yes!", end=30)]}
@@ -330,6 +352,7 @@ def test_model_pending_tail_waits_for_context_or_session_end():
     assert final[0].source == pending[0].source
 
 
+@pytest.mark.p1
 def test_predictor_is_required_and_errors_leave_captions_intact():
     with pytest.raises(TypeError):
         CaptionMapper(predictor=None)
@@ -344,6 +367,7 @@ def test_predictor_is_required_and_errors_leave_captions_intact():
     assert mapper.previous == {first.id: first}
 
 
+@pytest.mark.p1
 def test_overlapping_model_windows_and_cache_preserve_offsets():
     calls = []
     def predict(text):
@@ -358,12 +382,14 @@ def test_overlapping_model_windows_and_cache_preserve_offsets():
     assert len(policy.split(original)) == 3 and len(calls) == 3
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize('mark', [',', '，', ';', '；', ':', '：', '、'])
 def test_clause_separator_does_not_create_sentence_boundary(mark):
     policy = BoundaryPolicy(lambda text: [len('First' + mark + ' ')])
     assert policy.split('First' + mark + ' second') == [(len('First' + mark + ' second'), '等待后文')]
 
 
+@pytest.mark.p1
 @pytest.mark.parametrize("offset", [0, -1, 100, 1.5])
 def test_invalid_model_offsets_raise(offset):
     with pytest.raises(ValueError, match="SaT"):

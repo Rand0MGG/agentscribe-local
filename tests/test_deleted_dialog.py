@@ -1,7 +1,9 @@
 """Bulk deletion is confirmed, scoped to displayed trash entries, and preserves failures."""
+import pytest
 from ui_support import run_ui
 
 
+@pytest.mark.p0
 def test_delete_all_cancel_then_confirm_preserves_live_and_unknown_files(tmp_path):
     run_ui(r'''
 from linguaflow.deleted_dialog import DeletedDialog
@@ -52,6 +54,7 @@ d.close();w.close()
 ''',tmp_path)
 
 
+@pytest.mark.p0
 def test_delete_all_retains_shared_course_and_reports_partial_failure(tmp_path):
     run_ui(r'''
 import json

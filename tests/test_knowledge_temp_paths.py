@@ -11,6 +11,7 @@ from linguaflow.knowledge import rendering
 from linguaflow.knowledge.files import file_path, write_json
 
 
+@pytest.mark.p2
 @pytest.mark.skipif(sys.platform != 'win32', reason='Windows 8.3 temporary path regression')
 def test_render_temp_short_alias_is_canonicalized_before_checked_writes(tmp_path, monkeypatch):
     work = tmp_path / 'Temporary render workspace with spaces'

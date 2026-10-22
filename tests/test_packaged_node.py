@@ -7,6 +7,7 @@ import pytest
 from linguaflow import runtime_paths
 
 
+@pytest.mark.p2
 @pytest.mark.parametrize('system', ['darwin', 'win32'])
 def test_bundle_owns_node_and_npm_without_path(tmp_path, monkeypatch, system):
     monkeypatch.setattr(sys, 'platform', system)
@@ -33,6 +34,7 @@ def test_bundle_owns_node_and_npm_without_path(tmp_path, monkeypatch, system):
     assert runtime_paths.node_executable() == owned
 
 
+@pytest.mark.p2
 def test_incomplete_bundle_does_not_use_system_node(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime_paths, 'resource_root', lambda: tmp_path)
     monkeypatch.setattr(runtime_paths, 'runtime_root', lambda: tmp_path / 'runtime')
@@ -42,6 +44,7 @@ def test_incomplete_bundle_does_not_use_system_node(tmp_path, monkeypatch):
         runtime_paths.node_executable()
 
 
+@pytest.mark.p2
 def test_source_keeps_existing_node_installation(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime_paths, 'resource_root', lambda: tmp_path)
     monkeypatch.setattr(runtime_paths, 'runtime_root', lambda: tmp_path / 'runtime')

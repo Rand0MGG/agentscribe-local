@@ -3,9 +3,11 @@ import os
 import subprocess
 import sys
 
+import pytest
 from ui_support import assert_ui_process
 
 
+@pytest.mark.p1
 def test_recognition_delegates_selection_and_propagates_command_failure(tmp_path):
     program = '''
 from pathlib import Path
