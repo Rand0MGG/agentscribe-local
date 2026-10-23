@@ -241,6 +241,7 @@ class KnowledgeWorker:
             self.view()
         elif operation == 'edit':
             self.store.edit_note(value['id'], value['text'])
+            self.notify({'type': 'note_saved', 'id': value['id'], 'request': value.get('request')})
             self.view()
         elif operation == 'export':
             self.sync_materials()

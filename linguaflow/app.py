@@ -214,7 +214,7 @@ class Window(QMainWindow):
         self.caption_feed.rows = Transcript(rows)
 
 
-    def __init__(self, discover=True, library_root=None, prefs=None, library=None, runtime=None):
+    def __init__(self, discover=True, library_root=None, prefs=None, library=None, runtime=None, no_audio=False):
         super().__init__()
         if sys.platform == "darwin":
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -231,6 +231,8 @@ class Window(QMainWindow):
         self.setWindowTitle("AgentScribe · 本地同声字幕")
         self.resize(1280, 840)
         self.setMinimumSize(640, 480)
+        self.no_audio = no_audio
+        self.frontend_handoff = None
         self.session = None
         self.runtime = runtime
         self.recording_lock = None
@@ -652,6 +654,10 @@ class Window(QMainWindow):
             storage_root=self.library.root, manager=self.model_manager, audio_source_hint=hint,
             controls={key: getattr(self, key) for key in
                       ('device', 'source', 'target', 'translate', 'reduce_motion', 'beta_features', 'appearance', 'compute')})
+        self.frontend_button = QPushButton('切换到 Electron 界面')
+        self.frontend_button.clicked.connect(self.switch_frontend)
+        self.model_manager.runtime_form.addRow(label('界面', 'settingsSection'))
+        self.model_manager.runtime_form.addRow(self.frontend_button)
         self.beta_features.toggled.connect(self.apply_beta_features)
         self.apply_beta_features(self.beta_features.isChecked(), persist=False)
         self.settings_panel = self.settings_workspace.listening_page
@@ -689,7 +695,7 @@ class Window(QMainWindow):
         self.activity_timer.timeout.connect(self.update_activity)
         self.activity_timer.start(1000)
         self.knowledge_client.closing_changed.connect(self.on_knowledge_closing)
-        if discover:
+        if discover and not self.no_audio:
             QTimer.singleShot(0, self.refresh_devices)
         self.model_manager.preparation_changed.connect(self.refresh_model_assets_after_preparation)
         self.model_manager.preparation_message.connect(self.on_preparation_message)
@@ -704,7 +710,8 @@ class Window(QMainWindow):
         self.settings_workspace.model_browser.status.hide()
         self.model_manager.selection_changed.connect(lambda *_: self.notifications.post(
             'model-selection', '模型选择已保存，下一次聆听生效。', kind='success'))
-        QTimer.singleShot(0, self.check_model_assets)
+        if not self.no_audio:
+            QTimer.singleShot(0, self.check_model_assets)
         if sys.platform == 'darwin':
             self.setup_application_menu()
 
@@ -1972,6 +1979,8 @@ class Window(QMainWindow):
             self.close()
 
     def prepare_playback(self):
+        if self.no_audio:
+            return
         path = self.library.directory(self.current_item['id']) / '录音.wav' if self.current_item else None
         self.playback_controller.load(path, self.captions.values(), recover_recording=bool(
             self.current_item and self.recording_lock is None and self.current_item['state'] in ('recording', 'incomplete')))
@@ -2240,6 +2249,8 @@ class Window(QMainWindow):
             self.asr.setCurrentText(path)
 
     def refresh_devices(self):
+        if self.no_audio:
+            return
         previous = self.device.currentData()
         if previous is None:
             previous = read_audio_device(self.prefs)
@@ -2280,6 +2291,9 @@ class Window(QMainWindow):
         self.refresh_source.setToolTip('刷新音频设备列表')
 
     def start(self, *, models_checked=False):
+        if self.no_audio:
+            self.notifications.post('audio-protected', '当前为无音频对照模式，录音和回听不可用。', kind='attention')
+            return
         if self.library_reader.busy:
             self.notifications.post('library', '正在载入录音，请完成后再开始聆听。', kind='attention')
             return
@@ -2970,6 +2984,37 @@ class Window(QMainWindow):
     def update_titlebar_inset(self, margins):
         self.title_bar.setFixedHeight(max(36, margins.top()))
 
+    def frontend_switch_reason(self):
+        if self.session is not None or self.recording_state.active:
+            return '请先结束聆听并保存，再切换界面。'
+        if self.session_dirty or self.save_error or self.recording_saver.busy or self.export_saver.busy:
+            return '请先完成保存或文字恢复，再切换界面。'
+        if self.model_manager.worker or self.library_migration.busy or self.library_reader.busy or self.update_fenced or self.native_updater.pending:
+            return '请先完成或取消当前后台任务，再切换界面。'
+        if self.knowledge_panel and (self.knowledge_panel.has_unsaved_terms() or self.knowledge_panel.busy):
+            return '课程仍有未保存编辑或进行中任务，请处理后再切换。'
+        if self.workspace_title.currentIndex() == 1:
+            return '请先确认或取消名称编辑，再切换界面。'
+        return ''
+
+    def switch_frontend(self):
+        reason = self.frontend_switch_reason()
+        if reason:
+            self.notifications.post('frontend', reason, kind='attention')
+            return
+        from .frontend_switch import prepare
+        try:
+            self.save()
+            self.frontend_handoff = prepare('electron', library=self.library, prefs=self.prefs,
+                recording=self.current_item['id'] if self.current_item else None,
+                draft=None if self.current_item else dict(name=self.workspace_title.text(), folder=self.folder_id),
+                no_audio=self.no_audio, geometry=dict(zip(('x', 'y', 'width', 'height'), self.geometry().getRect())))
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.notifications.post('frontend', str(exc), kind='error')
+            return
+        self.closing = True
+        self.close()
+
     def closeEvent(self, event):
         diag.periodic('app_close_requested', seconds=2., recording_active=self.session is not None,
                       preparing=self.model_manager.worker is not None, saving=self.recording_saver.busy)
@@ -3015,6 +3060,7 @@ class Window(QMainWindow):
             event.ignore()
             return
         if self.knowledge_panel and not self.knowledge_panel.confirm_exit():
+            self.frontend_handoff = None
             self.closing = False
             diag.periodic('app_close_deferred', seconds=2., key='knowledge_confirmation', reason='knowledge_confirmation')
             event.ignore()
@@ -3048,6 +3094,17 @@ class Window(QMainWindow):
             diag.periodic('app_close_deferred', seconds=2., key='ui_shutdown', reason='ui_shutdown')
             event.ignore()
             return
+        if self.frontend_handoff:
+            from .frontend_switch import launch
+            try:
+                launch(self.frontend_handoff)
+                self.frontend_handoff = None
+            except OSError as exc:
+                self.frontend_handoff = None
+                self.closing = False
+                self.notifications.post('frontend', f'无法切换界面：{exc}', kind='error')
+                event.ignore()
+                return
         self.native_updater.close()
         diag.event('app_close_accepted')
         event.accept()
@@ -3065,8 +3122,27 @@ def main():
     app.setStyle("Fusion")
     app.setStyleSheet(STYLE)
     runtime = RuntimePreparation()
-    window = Window(runtime=runtime)
+    from .frontend_switch import context, ready
+    saved = context()
+    no_audio = os.environ.get('AGENTSCRIBE_NO_AUDIO') == '1' or saved.get('no_audio', False)
+    prefs = (QSettings(saved['preferences'], QSettings.Format(saved.get('preferences_format', 1))) if saved.get('preferences') else None)
+    window = Window(runtime=runtime, discover=not no_audio, no_audio=no_audio,
+                    library_root=saved.get('library'), prefs=prefs)
+    if saved.get('recording') in window.library_rows:
+        window.open_library_item(window.library_rows[saved['recording']], 0)
+    elif saved.get('draft'):
+        window.new_recording(folder_id=saved['draft'].get('folder'), check_models=False)
+        window.pending_recording_name = saved['draft']['name']
+        window.workspace_title.setText(saved['draft']['name'])
+    geometry = saved.get('geometry')
+    if geometry:
+        area = window.screen().availableGeometry()
+        window.resize(min(area.width(), max(640, geometry['width'])), min(area.height(), max(480, geometry['height'])))
+        window.move(max(area.x(), min(area.right()-window.width()+1, geometry['x'])), max(area.y(), min(area.bottom()-window.height()+1, geometry['y'])))
     window.show()
+    ready('qt', window.prefs)
+    if os.environ.get('AGENTSCRIBE_FRONTEND_RECOVERY'):
+        window.notifications.post('frontend', os.environ['AGENTSCRIBE_FRONTEND_RECOVERY'], kind='error')
     diag.event('app_ready')
     from .resource_monitor import ResourceMonitor
     resources = ResourceMonitor()
@@ -3087,9 +3163,13 @@ def main():
         if notice:
             window.notifications.post('update', notice['text'], kind='error', details=notice['details'])
     QTimer.singleShot(0, startup_feedback)
-    QTimer.singleShot(0, window.show_first_run)
-    QTimer.singleShot(1500, window.check_startup_updates)
-    QTimer.singleShot(0, runtime.prepare)
+    if not no_audio:
+        QTimer.singleShot(0, window.show_first_run)
+        if saved.get('purpose') == 'updates':
+            QTimer.singleShot(0, window.check_software_updates)
+        else:
+            QTimer.singleShot(1500, window.check_startup_updates)
+        QTimer.singleShot(0, runtime.prepare)
     app.aboutToQuit.connect(lambda: runtime.close(wait=False))
     try:
         exit_code = app.exec()

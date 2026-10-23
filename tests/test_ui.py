@@ -5,9 +5,10 @@ from ui_support import run_ui_process
 
 
 @pytest.mark.p1
-def test_main_prepares_runtime_after_show_and_closes_on_quit():
+def test_main_prepares_runtime_after_show_and_closes_on_quit(tmp_path):
     code = """
-from PySide6.QtCore import QTimer
+import os
+from PySide6.QtCore import QTimer, QSettings
 from PySide6.QtWidgets import QApplication, QWidget
 import linguaflow.app as module
 calls=[]
@@ -28,8 +29,11 @@ class Runtime:
         assert not wait
         calls.append('closed')
 class Window(QWidget):
-    def __init__(self,runtime):
+    def __init__(self,runtime,*,discover,no_audio,library_root,prefs):
         super().__init__()
+        assert discover and not no_audio and library_root is None and prefs is None
+        self.prefs = QSettings(os.environ['AGENTSCRIBE_TEST_PREFS'], QSettings.Format.IniFormat)
+        self.library_rows = {}
         self.background_checks = set()
         assert isinstance(runtime,Runtime)
     def show(self):
@@ -47,7 +51,8 @@ assert calls==['shown','prepared','closed'],calls
 assert (1500, 'check_startup_updates') in timers
 """
     run_ui_process(code, timeout=10,
-                   env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen'})
+                   env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'AGENTSCRIBE_TEST_PREFS': str(tmp_path/'prefs.ini'),
+                        'AGENTSCRIBE_LOG_DIR': str(tmp_path/'logs')})
 
 
 @pytest.mark.p1

@@ -9,6 +9,7 @@ class PlaybackController(QObject):
     duration_changed = Signal('qlonglong')
     position_changed = Signal('qlonglong')
     state_changed = Signal(str)
+    seeked = Signal('qlonglong')
     failed = Signal(str)
     notice = Signal(str)
 
@@ -17,6 +18,7 @@ class PlaybackController(QObject):
         self.player = self.stream = self.audio_output = None
         self.index = PlaybackIndex()
         self.duration_ms = 0
+        self.pending_seek = None
 
     def close_stream(self):
         if self.stream is not None:
@@ -25,6 +27,7 @@ class PlaybackController(QObject):
             self.stream = None
 
     def release(self):
+        self.pending_seek = None
         if self.player:
             self.player.stop()
             self.player.setSource(QUrl())
@@ -68,7 +71,9 @@ class PlaybackController(QObject):
             player.durationChanged.connect(self.duration_changed)
             player.positionChanged.connect(self.position_changed)
             player.playbackStateChanged.connect(lambda state: self.state_changed.emit(state.name))
-            player.errorOccurred.connect(lambda *_: self.failed.emit(player.errorString()))
+            player.mediaStatusChanged.connect(self._apply_pending_seek)
+            player.seekableChanged.connect(self._apply_pending_seek)
+            player.errorOccurred.connect(self._playback_error)
         except Exception:
             if player is not None:
                 player.deleteLater()
@@ -76,6 +81,31 @@ class PlaybackController(QObject):
                 output.deleteLater()
             raise
         self.player, self.audio_output = player, output
+
+    def _playback_error(self, *_):
+        self.pending_seek = None
+        self.failed.emit(self.player.errorString())
+
+    def seek(self, milliseconds, *, play=False):
+        if self.player is None:
+            return
+        # setSourceDevice loads asynchronously. Keep the latest requested target
+        # until the media is seekable, then position it before starting playback.
+        self.pending_seek = (round(milliseconds), play)
+        self._apply_pending_seek()
+
+    def _apply_pending_seek(self, *_):
+        if self.pending_seek is None or self.player is None:
+            return
+        if (self.player.mediaStatus().name not in ('LoadedMedia', 'BufferedMedia', 'BufferingMedia', 'EndOfMedia')
+                or not self.player.isSeekable()):
+            return
+        position, play = self.pending_seek
+        self.pending_seek = None
+        self.player.setPosition(position)
+        self.seeked.emit(position)
+        if play:
+            self.player.play()
 
     def set_volume(self, value):
         if self.audio_output is not None:
@@ -88,6 +118,10 @@ class PlaybackController(QObject):
                 self.player.setPosition(self.player.position())
 
     def toggle(self):
+        if self.pending_seek is not None:
+            position, play = self.pending_seek
+            self.pending_seek = (position, not play)
+            return
         if self.player:
             if self.player.playbackState().name == 'PlayingState':
                 self.player.pause()

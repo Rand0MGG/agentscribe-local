@@ -28,8 +28,8 @@ def _number(value):
 
 
 class ResourceSampler:
-    def __init__(self):
-        self.root = psutil.Process()
+    def __init__(self, *, root_pid=None):
+        self.root = psutil.Process() if root_pid is None else psutil.Process(root_pid)
         self.previous = {}
         self.previous_time = None
         self.previous_system = None

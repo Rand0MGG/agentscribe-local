@@ -2,6 +2,24 @@
 
 本文维护实现职责与当前方案，行为要求见 [spec](specs/README.md)，测试方法见 [TESTING](TESTING.md)。职责描述不代表全部异常路径已符合规范；已确认的实现差距在 [ROADMAP](ROADMAP.md#实现缺口)，不能当作已发行或全平台验收证明。
 
+## Electron 候选入口
+
+`desktop/` 提供与 Qt 并存的 Electron 前端；首次默认 Qt，之后由成功打开的前端偏好决定。Electron 主进程拥有窗口、原生文件选择、剪贴板和本地 Python 子进程；沙箱 renderer 通过受限 preload 请求业务，不获得 Node、任意路径打开或进程执行能力。主窗口、非模态课程窗口及悬浮字幕各有 IPC 白名单；请求同时校验本应用窗口、顶层 frame 与本地页面 URL。
+
+`linguaflow/desktop_service.py` 使用 QtCore 事件循环复用 Session、RecordingSaver、LibraryReader、Preparation、BackgroundCheck、KnowledgeClient 和 PlaybackController；暂未移除后端 QtCore 依赖，但不创建隐藏 QWidget 窗口。UTF-8 JSONL v1 使用请求编号与有界消息；超时只报告等待失败，不假定后台操作已取消。stdout 专用于协议，诊断日志保持原隐私边界。
+
+React 组合共享 Radix 基础控件，`Playback.tsx` 同时用于实际回听与演示。Vite 从 `ui_theme.THEMES` 生成颜色；布局仍须按 v0.10.2 校准。课程窗口隐藏时保留本次运行的各课程草稿；原生关闭请求先交给编辑保护，主程序退出仍等实际录音保存、子进程和任务终态。音频只通过已有 Python 平台适配，浏览器媒体权限拒绝，`--no-audio` 阻断设备与回听入口。
+
+显式导出使用每次请求独立的队列身份，自动保存仍按录音版本合并；恢复备份另存录音身份、版本与文件摘要，全部排队写入结束才结束导出进度，后续成功不覆盖同批失败。模型准备范围使用 `all/asr/translation`，`all` 不下传为 CLI `--only`；完成、取消及选择变化合并触发后台资源检查，过期检查不覆盖新选择。
+
+Electron 服务拥有可复用的 `RuntimePreparation`，会话只借用；环境维护及退出在独立任务中等待释放，失败保留 owner 以便重试。回听元数据通过原 `PlaybackStream` 只读 WAV 获取，不为显示时长创建音频设备；首次定位由 `PlaybackController` 等待异步媒体就绪并可定位后，先定位再播放；释放/错误清除待执行请求，成功定位回执恢复前端跟随。保存结束并释放录音锁后刷新，建立播放器时重新应用音量。两前端共享悬浮窗逻辑坐标，旧 Qt 二进制几何继续作为兼容回退。启动库失败时，宿主只在原后台已退出、尚未完成启动的情况下允许重新选目录；新后台验证库后才持久化选择。
+
+源码入口、验证方法见 [TESTING](TESTING.md#electron-候选入口)，实现缺口见 [ROADMAP](ROADMAP.md#electron-迁移对照)。双前端构建仍复用现有原生启动器和平台锁；安装版更新明确切到 Qt，以保留已验收的签名与恢复链路，未引入 electron-updater。不要把本地构建或逻辑回归理解为跨平台发行验收。
+
+`desktop_launcher.py` 统一原 `python -m linguaflow` 与 console-script 入口；`frontend_switch.py` 先检查目标组件，再记录私有临时交接文件，等待原 GUI / 业务进程退出后启动目标。交接只传库路径、偏好格式、录音 ID / 内存草稿、窗口几何和无音频约束。主界面实际挂载后的 `frontend.ready` 回执才确认 Electron 启动成功；Qt 在 show 后确认。目标未就绪即退出时回退，既不杀死仍在保存的旧进程，也不同时运行两个录音 owner。安装态切回 Qt 必须使用原生启动器，不能把 portable Python 当作原生应用身份。
+
+`desktop_platform.py` 是短时、无网络/音频/录音资源的系统显示查询：读取 Qt 与系统同源的双击/拖动阈值，并通过未显示的空 QWidget 转换旧悬浮窗二进制几何；它不运行业务窗口。Electron 服务的资源采样包含宿主及其子进程。通知按任务独立存储、优先级选择和收起，课程笔记编辑收到持久化回执才关闭。
+
 ## 数据与执行流
 
 ```text

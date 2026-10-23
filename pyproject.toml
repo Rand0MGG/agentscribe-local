@@ -23,8 +23,8 @@ release = ["cryptography==50.0.2"]
 knowledge = ["deepagents==0.7.23", "langchain-deepseek==1.1.1", "pypdf==6.19.0", "keyring==25.7.0"]
 
 [project.scripts]
-agentscribe = "linguaflow.app:main"
-linguaflow = "linguaflow.app:main"
+agentscribe = "linguaflow.desktop_launcher:main"
+linguaflow = "linguaflow.desktop_launcher:main"
 
 [tool.setuptools.packages.find]
 include = ["linguaflow*"]

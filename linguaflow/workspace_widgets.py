@@ -470,7 +470,7 @@ class SettingsWorkspace(QWidget):
         aliases = {"模型管理": "下载 缓存 删除 ASR 翻译 Qwen HY-MT2 Whisper 本地 参数 前文 后文 GPU CPU MLX NLLB", "常规": "文件 存储 目录 路径 删除 恢复 跟随", "聆听": "设备 输入 语言",
                    "识别模型": "Qwen Whisper GPU CPU MLX 下载", "翻译模型": "NLLB HY-MT2 前文 后文 GPU CPU 下载 译文",
                    "字幕与延迟": "字幕 草稿 刷新 停顿",
-                   "运行环境": "安装 修复 更新 版本 GitHub", '使用指南': '首次 使用 帮助 入门 导出 SRT 开始 说明'}
+                   "运行环境": "安装 修复 更新 版本 GitHub 界面 前端 切换 Qt Electron", '使用指南': '首次 使用 帮助 入门 导出 SRT 开始 说明'}
         aliases['常规'] += ' 动画 减少动态效果'
         query = query.strip().casefold()
         visible = []

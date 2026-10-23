@@ -16,6 +16,7 @@ class PlaybackStream(QIODevice):
         self._file = Path(path).open('rb')
         self._size = os.fstat(self._file.fileno()).st_size
         self.gain = 1.
+        self.byte_rate = 0
         self.recovered = False
         self._header = b''
         self.data_start, self.data_size, self.encoding, self.bits = 0, 0, 0, 0
@@ -76,12 +77,17 @@ class PlaybackStream(QIODevice):
             if kind == b'fmt ':
                 info = self._file.read(min(size, 40))
                 if len(info) >= 16:
+                    self.byte_rate = struct.unpack_from('<I', info, 8)[0]
                     self.encoding, self.bits = struct.unpack_from('<H', info)[0], struct.unpack_from('<H', info, 14)[0]
                     if self.encoding == 65534 and len(info) >= 40:
                         self.encoding = struct.unpack_from('<H', info, 24)[0]
             elif kind == b'data':
                 self.data_start, self.data_size = start, size
             self._file.seek(start+size+(size % 2))
+
+    @property
+    def duration_ms(self):
+        return round(self.data_size * 1000 / self.byte_rate) if self.byte_rate else 0
 
     @property
     def supports_gain(self):

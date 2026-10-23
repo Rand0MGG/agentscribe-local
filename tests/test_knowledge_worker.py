@@ -454,3 +454,28 @@ def test_late_terms_save_cannot_write_into_another_course(tmp_path):
                                   'terms': [{'canonical': 'wrong course', 'approved': True}]})
         assert worker.course['id'] == course_b['id'] and read_json(path_b)['terms'] == []
     asyncio.run(scenario())
+
+
+@pytest.mark.p1
+def test_note_edit_receipt_follows_durable_write_and_missing_note_keeps_editor(tmp_path):
+    library = Library(tmp_path / 'library')
+    item = library.create(library.index['folders'][0]['id'], {}, '课堂')
+    library.save(item, [Caption(1, 0, 2, 'evidence', 'en')], 'complete')
+    events = []
+
+    async def scenario():
+        worker = KnowledgeWorker(events.append)
+        await worker.command({'operation': 'open', 'root': str(library.root), 'identifier': item['id'],
+                              'folder_id': item['folder'], 'epoch': 'edit'})
+        worker.store.publish(worker.store.make_job(), {'upserts': [{'id': 'note', 'section': '课堂讲述',
+            'text': '初稿', 'origin': 'lecture', 'refs': [{'id': 'caption:1', 'quote': 'evidence'}]}], 'delete_note_ids': []})
+        await worker.command({'operation': 'edit', 'id': 'note', 'text': '个人修改', 'request': 'receipt-1'})
+        receipt = next(event for event in events if event['type'] == 'note_saved')
+        assert receipt['id'] == 'note' and receipt['request'] == 'receipt-1'
+        saved = worker.store.view()['notes'][0]
+        assert saved['text'] == '个人修改' and saved['user_locked']
+        events.clear()
+        with pytest.raises(ValueError, match='已不存在'):
+            await worker.command({'operation': 'edit', 'id': 'missing', 'text': '保留编辑', 'request': 'receipt-2'})
+        assert not any(event['type'] == 'note_saved' for event in events)
+    asyncio.run(scenario())

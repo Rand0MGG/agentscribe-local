@@ -74,7 +74,7 @@ def qt_subset(python):
     return sorted(keep)
 
 
-def build(downloads):
+def build(downloads, *, with_electron=False):
     assets = json.loads((CONFIG / 'assets.json').read_text())
     archives = {name: obtain(item, downloads) for name, item in assets.items()}
     notices = json.loads((ROOT / 'packaging/macos/licenses.json').read_text())
@@ -113,6 +113,9 @@ def build(downloads):
     for library in python.glob('*.dll'):
         shutil.copy2(library, payload / library.name)
     application_files = copy_application(ROOT, payload / 'linguaflow')
+    if with_electron:
+        from scripts.package_electron import copy_electron
+        application_files.update(copy_electron(ROOT, payload / 'desktop', downloads, 'windows-x64'))
     for name in ('requirements-runtime.txt', 'requirements-mlx.txt', 'THIRD_PARTY_NOTICES.md'):
         shutil.copy2(ROOT / name, payload / name)
     shutil.copy2(CONFIG / 'desktop.lock', payload / 'desktop.lock')
@@ -150,12 +153,16 @@ def build(downloads):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--with-electron', action='store_true', help='Include the switchable Electron frontend')
     parser.add_argument('--fetch', action='store_true', help='Only fetch and verify locked inputs')
     parser.add_argument('--downloads', type=Path, default=WORK / 'windows-downloads')
     args = parser.parse_args()
     if sys.platform != 'win32' or platform.machine().lower() not in ('amd64', 'x86_64'):
         raise SystemExit('必须在 Windows x64 / MSVC 开发环境构建。')
     if args.fetch:
+        if args.with_electron:
+            from scripts.package_electron import asset
+            obtain(asset(ROOT, 'windows-x64'), args.downloads, download=True)
         assets = json.loads((CONFIG / 'assets.json').read_text())
         for item in assets.values():
             obtain(item, args.downloads, download=True)
@@ -164,7 +171,7 @@ def main():
         run(sys.executable, '-m', 'pip', 'download', '--only-binary=:all:', '--require-hashes',
             '--dest', args.downloads / 'wheels', '-r', CONFIG / 'desktop.lock')
     else:
-        build(args.downloads)
+        build(args.downloads, with_electron=args.with_electron)
 
 
 if __name__ == '__main__':

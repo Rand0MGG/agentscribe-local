@@ -1,5 +1,7 @@
 """Resizable, independently owned subtitle window; presentation only."""
-from PySide6.QtCore import QRectF, Qt, QTimer
+import json
+
+from PySide6.QtCore import QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication,
@@ -95,6 +97,15 @@ class Overlay(QWidget):
             geometry = prefs.value('overlay_geometry')
             if geometry:
                 self.restoreGeometry(geometry)
+            try:
+                bounds = json.loads(prefs.value('electron_overlay_bounds', '{}'))
+                if isinstance(bounds, dict) and set(bounds) == {'x', 'y', 'width', 'height'} and all(type(value) is int and abs(value) <= 100000 for value in bounds.values()):
+                    rect = QRect(bounds['x'], bounds['y'], bounds['width'], bounds['height'])
+                    rect.setWidth(max(380, rect.width()))
+                    rect.setHeight(max(160, rect.height()))
+                    self.setGeometry(visible_window_geometry(rect, [screen.availableGeometry() for screen in QApplication.screens()]))
+            except (ValueError, TypeError):
+                pass
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8)
         self.backdrop = SubtitleBackdrop()
@@ -204,6 +215,7 @@ class Overlay(QWidget):
         self.set_controls_visible(False)
         if self.prefs is not None:
             self.prefs.setValue('overlay_geometry', self.saveGeometry())
+            self.prefs.setValue('electron_overlay_bounds', json.dumps(dict(zip(('x', 'y', 'width', 'height'), self.geometry().getRect()))))
         super().hideEvent(event)
 
     def showEvent(self, event):

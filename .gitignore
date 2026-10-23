@@ -34,3 +34,4 @@ media/AMI/
 .playwright-cli/
 output/playwright/
 /录音/
+node_modules/

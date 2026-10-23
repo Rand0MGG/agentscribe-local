@@ -91,7 +91,7 @@ def qt_subset(python):
         if path in examined:
             continue
         examined.add(path)
-        output = run('otool', '-L', path, capture_output=True, text=True).stdout
+        output = run('otool', '-m', '-L', path, capture_output=True, text=True).stdout
         for name in re.findall(r'(Qt\w+\.framework)/Versions/[^/]+/(Qt\w+)', output):
             framework = libraries / name[0]
             if framework not in keep:
@@ -111,7 +111,7 @@ def qt_subset(python):
     return sorted(path.name for path in keep)
 
 
-def make_icon(resources):
+def make_icon(resources, *, electron=False):
     from PySide6.QtCore import Qt
     from PySide6.QtGui import QImage, QPainter
     from PySide6.QtSvg import QSvgRenderer
@@ -122,6 +122,9 @@ def make_icon(resources):
     painter = QPainter(image)
     QSvgRenderer(str(CONFIG / 'AgentScribe.svg')).render(painter)
     painter.end()
+    # Electron's nativeImage/dock accepts PNG, not the launcher's ICNS file.
+    if electron and not image.save(str(resources / 'AgentScribe.png')):
+        raise ValueError('无法生成 Electron Dock 图标。')
     for size in (16, 32, 128, 256, 512):
         for scale in (1, 2):
             name = f'icon_{size}x{size}' + ('@2x' if scale == 2 else '') + '.png'
@@ -131,15 +134,30 @@ def make_icon(resources):
     shutil.rmtree(iconset)
 
 
+def bundle_executable(bundle):
+    info_path = bundle / ('Resources/Info.plist' if bundle.suffix == '.framework' else 'Contents/Info.plist')
+    info = plistlib.loads(info_path.read_bytes())
+    # Electron helper apps omit CFBundleExecutable and use their bundle name.
+    name = info.get('CFBundleExecutable') or info.get('CFBundleName')
+    if not isinstance(name, str) or Path(name).name != name:
+        raise ValueError('原生 bundle 缺少有效可执行文件名：' + str(bundle))
+    entry = bundle / name if bundle.suffix == '.framework' else bundle / 'Contents/MacOS' / name
+    if bundle.suffix == '.framework' and not entry.is_file():
+        # PySide wheels retain Versions/A without a root executable symlink.
+        candidates = {path.resolve() for path in (bundle / 'Versions').glob('*/' + name) if path.is_file()}
+        if len(candidates) == 1:
+            entry = candidates.pop()
+    if not entry.is_file():
+        raise ValueError('原生 bundle 缺少可执行文件：' + str(entry))
+    return entry
+
+
 def sign(app):
     bundles = [p for p in app.rglob('*') if p.is_dir() and not p.is_symlink()
                and p.suffix in {'.framework', '.app', '.xpc'}] + [app]
     mains = set()
     for bundle in bundles:
-        info_path = bundle / ('Resources/Info.plist' if bundle.suffix == '.framework' else 'Contents/Info.plist')
-        info = plistlib.loads(info_path.read_bytes())
-        entry = bundle / info['CFBundleExecutable'] if bundle.suffix == '.framework' else (
-            bundle / 'Contents/MacOS' / info['CFBundleExecutable'])
+        entry = bundle_executable(bundle)
         mains.add(entry.resolve())
     native = list(native_files(app))
     for path in native:
@@ -151,13 +169,13 @@ def sign(app):
             run('lipo', path, '-thin', 'arm64', '-output', temporary)
             temporary.chmod(path.stat().st_mode)
             temporary.replace(path)
-        commands = run('otool', '-l', path, capture_output=True, text=True).stdout
+        commands = run('otool', '-m', '-l', path, capture_output=True, text=True).stdout
         identifiers = re.findall(r'cmd LC_ID_DYLIB\s+cmdsize \d+\s+name (.+?) \(offset \d+\)', commands)
         # otool -L also prints the dylib's own install name, which is not a
         # dependency. Normalize build-prefix IDs before sealing the bundle.
         if any(name.startswith('/') for name in identifiers):
             run('install_name_tool', '-id', '@rpath/' + path.name, path, capture_output=True)
-        dependencies = run('otool', '-L', path, capture_output=True, text=True).stdout
+        dependencies = run('otool', '-m', '-L', path, capture_output=True, text=True).stdout
         linked = [p for p in re.findall(r'^\s+(.+?) \(compatibility version', dependencies, re.M)
                   if p not in identifiers]
         if any(p.startswith('/') and not p.startswith(('/System/Library/', '/usr/lib/')) for p in linked):
@@ -178,7 +196,7 @@ def sign(app):
     return len(native)
 
 
-def build(downloads, *, without_updater=False):
+def build(downloads, *, without_updater=False, with_electron=False):
     from linguaflow.update_config import bundle_version, update_identity
     runtimes, notices = assets()
     paths = {name: obtain(item, downloads) for name, item in runtimes.items()}
@@ -262,6 +280,9 @@ def build(downloads, *, without_updater=False):
         if path.name not in {'python', 'python3', 'python3.12'}:
             path.unlink()
     application_files = copy_application(ROOT, resources / 'linguaflow')
+    if with_electron:
+        from scripts.package_electron import copy_electron
+        application_files.update(copy_electron(ROOT, resources / 'desktop', downloads, 'macos-arm64'))
     for name in ('requirements-runtime.txt', 'requirements-mlx.txt', 'THIRD_PARTY_NOTICES.md'):
         shutil.copy2(ROOT / name, resources / name)
     copy_notices(notices, downloads / 'licenses', resources / 'Licenses/Qt-PySide')
@@ -291,7 +312,7 @@ def build(downloads, *, without_updater=False):
                     SUSendProfileInfo=False, SUVerifyUpdateBeforeExtraction=True)
     with (contents / 'Info.plist').open('wb') as handle:
         plistlib.dump(info, handle)
-    make_icon(resources)
+    make_icon(resources, electron=with_electron)
     run('clang', '-arch', 'arm64', '-mmacosx-version-min=15.0', '-O2', '-Wall', '-Wextra',
         '-I' + str(python / 'include/python3.12'), CONFIG / 'launcher.c',
         '-L' + str(python / 'lib'), '-lpython3.12', '-framework', 'CoreFoundation',
@@ -325,12 +346,17 @@ def build(downloads, *, without_updater=False):
                      r'href="Qt-PySide/qtwebengine/documentation/\1"', credits)
     (resources / 'Licenses/QtWebEngine-credits.html').write_text(credits, encoding='utf-8')
     count = sign(app)
+    if with_electron:
+        from scripts.package_electron import seal_manifest
+        seal_manifest(resources / 'desktop')
+        run('codesign', '--force', '--sign', '-', '--timestamp=none', app, capture_output=True)
+        run('codesign', '--verify', '--deep', '--strict', '--verbose=2', app)
     from scripts.probe_packaged_launcher import probe
     probe(app)
     volume.joinpath('Applications').symlink_to('/Applications', target_is_directory=True)
     output = WORK / 'dist'
     output.mkdir(exist_ok=True)
-    dmg = output / f'AgentScribe-{version}-macos-arm64.dmg'
+    dmg = output / f'AgentScribe-{version}{"-dual-ui" if with_electron else ""}-macos-arm64.dmg'
     temporary = stage / dmg.name
     run('hdiutil', 'create', '-volname', f'AgentScribe {version}', '-srcfolder', volume,
         '-format', 'UDZO', '-fs', 'HFS+', '-imagekey', 'zlib-level=9', temporary)
@@ -362,6 +388,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--fetch', action='store_true', help='只下载校验后的构建依赖')
     parser.add_argument('--downloads', type=Path, default=WORK / 'downloads')
+    parser.add_argument('--with-electron', action='store_true', help='包含可切换的 Electron 界面；需先准备锁定的 desktop 依赖')
     parser.add_argument('--without-updater', action='store_true',
                         help='只用于开发/过渡包：不带更新器，不能进入自动更新订阅')
     args = parser.parse_args()
@@ -369,6 +396,9 @@ def main():
         raise SystemExit('必须在原生 Apple Silicon Mac 构建此安装包。')
     WORK.mkdir(parents=True, exist_ok=True)
     if args.fetch:
+        if args.with_electron:
+            from scripts.package_electron import asset
+            obtain(asset(ROOT, 'macos-arm64'), args.downloads, download=True)
         runtimes, notices = assets()
         for item in runtimes.values():
             obtain(item, args.downloads, download=True)
@@ -380,7 +410,7 @@ def main():
         run(sys.executable, '-m', 'pip', 'download', '--only-binary=:all:', '--require-hashes',
             '--cache-dir', WORK / 'pip-cache', '--dest', args.downloads / 'wheels', '-r', CONFIG / 'desktop.lock')
     else:
-        build(args.downloads, without_updater=args.without_updater)
+        build(args.downloads, without_updater=args.without_updater, with_electron=args.with_electron)
 
 
 if __name__ == '__main__':

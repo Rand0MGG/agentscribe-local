@@ -82,3 +82,10 @@ Three small public legacy Office regression fixtures are adapted from Apache POI
 - WinSparkle 0.9.4: https://github.com/vslavik/winsparkle — MIT; Windows installer assembly retains the upstream COPYING in `Licenses/WinSparkle.txt`.
 - Inno Setup: https://jrsoftware.org/isinfo.php — Windows installer compiler used on the build machine, not a desktop runtime dependency.
 - cryptography 50.0.2: https://github.com/pyca/cryptography — Apache-2.0 OR BSD-3-Clause; release/development dependency for independently verifying Ed25519 installer signatures. Bundled dependencies are recorded in each platform's desktop.lock.
+
+
+## Electron 候选前端（源码开发依赖）
+
+`desktop/package-lock.json` 固定新增前端依赖：Electron、React、React DOM、Radix UI、Vite 使用 MIT；TypeScript 与 Playwright 使用 Apache-2.0。其完整许可保留于各安装包；Chromium、Node.js 等 Electron 随附组件另有第三方许可。该目录尚未接入正式安装包；将来发行必须将 Electron 的 LICENSE 与 LICENSES.chromium.html 等完整声明随包保留，不以本摘要替代分发许可。现有 Qt/Python 安装包声明仍适用。
+
+Electron 双前端包会附带 Electron 发行归档内的 LICENSE / LICENSES.chromium.html，以及锁定的 React、Radix 和生产依赖许可全文。`react-remove-scroll-bar` 2.3.8 的 npm 包遗漏 LICENSE，补充文本来自[上游许可](https://github.com/theKashey/react-remove-scroll-bar/blob/master/LICENSE)，保存在 `packaging/electron/react-remove-scroll-bar-LICENSE`，摘要随源码清单封存。Electron 两平台归档的固定 SHA-256 来自版本 45.0.0 的官方 SHASUMS256.txt，见 `packaging/electron/assets.json`。

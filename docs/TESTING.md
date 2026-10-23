@@ -225,3 +225,28 @@ UI 测试统一从 `ui_support` 导入：`run_ui` 创建无设备发现的正式
 临时原始证据在 `.work/`，提交的简短结果写清代码范围、系统/架构、Python/关键依赖、设备/后端、命令、通过/失败/跳过和未验证内容。无效/失败运行保留并标明，私人录音/全文/密钥不进 Git。
 
 [VALIDATION](VALIDATION.md) 只索引证据与边界；历史详细记录归档。未完成验收在 [ROADMAP](ROADMAP.md) 跟踪。测试方法变化改本文，行为变化改 spec，具体结果不得反复追加进 AGENTS 或架构。
+
+
+## Electron 候选入口
+
+安装桌面 Python 开发依赖至 `.venv`，再在 `desktop/` 执行 `npm ci`、`npx install-electron --no`、`npm run build`。版本由 `desktop/package-lock.json` 固定；构建从原 Python 主题生成 CSS，Windows 使用 `.venv/Scripts/python.exe`，Mac 使用 `.venv/bin/python`，可由 `AGENTSCRIBE_DESKTOP_PYTHON` 指定已准备的解释器。
+
+- 服务回归：仓库根执行 `.venv/bin/python scripts/test_no_audio.py tests/test_desktop_service.py tests/test_frontend_switch.py tests/test_electron_packaging.py -q`；Windows 换相应解释器路径。覆盖协议、后台读库、原格式、保存锁/恢复、模型检查回执和课程归属。
+- 原生流程：`desktop/` 执行 `npm test`；使用 Playwright Electron，创建隔离库/偏好及 Electron profile，Python 子进程继承音频导入保护。验证共享组件、中文编辑、搜索、主题、独立课程窗口/草稿、悬浮窗口权限、回听控件几何及退出。回听控件只用模拟位置，不播放音频。Mac 需可用的原生桌面会话；失败不能改用浏览器截图冒充原生通过。
+- 真正前后端回归：`npm run test:chain`。保留 renderer → preload → Electron IPC → JSONL → DesktopService 校验 → 共享后台；模型安装/下载在 `scripts/desktop_chain_fixture.py` 中仅替换执行命令，真实 Preparation、监督进程、BackgroundCheck、取消和完成回执照常运行；云端执行替换为本地回答，KnowledgeClient、worker、许可、版本和真实文件持久化不替换。测试夹具仅由临时 `sitecustomize.py` 加载，正式入口没有测试控制路由。不得用 `Service.request` 返回成功来验收推荐组合或其他命令。真实 WAV 文件只读取元数据，禁止访问设备。证据在 `output/playwright/parity-fixed/`。
+- 用户反馈交互回归：`npm run test:interaction`。实际菜单互斥/嵌套选择、单击/双击字幕、返回播放位置、检查更新及深色窄窗口；真实 IPC、参数校验、DesktopService、PlaybackController 与 WAV 读取均保留。`scripts/desktop_playback_fixture.py` 只提供延迟 350ms 才能定位的无设备 QMediaPlayer/QAudioOutput 适配器和离线 HTTP 响应；仅测试实例的回听入口允许使用适配器，采集/设备发现仍被禁止。不能替代真实声音、系统媒体后端或 Windows 实机验收。输出在 `output/playwright/interaction-fixes/`，帧间隔仅为本机 rAF 与 transform 采样，不是全平台显示器呈现保证。
+- 原生双向切换：`npm run test:switch`；独立实例实际 Electron → Qt → Electron，核对同一录音、字幕、库路径与无音频约束。Qt 操作观察器仅在临时测试侧注入；正式应用没有测试控制接口。证据在 `output/playwright/switch/`。
+- 封存载荷的 Electron 界面：`npm test` 可指定 `AGENTSCRIBE_PROBE_RESOURCES` 为实际包内 Resources、`AGENTSCRIBE_PROBE_ELECTRON` 为包内 Electron 可执行文件、`AGENTSCRIBE_DESKTOP_PYTHON` 为包内 Python，并设置 `AGENTSCRIBE_PACKAGED=1`、`AGENTSCRIBE_RESOURCES` 与 `PYTHONDONTWRITEBYTECODE=1`；`AGENTSCRIBE_PROBE_EVIDENCE` 区分源码和安装包证据。探针仍使用临时库/偏好/profile 和音频阻断，不安装应用、不访问已有录音；实际旧版升级另验。
+- 组件演示：`npm run components`；直接复用正式基础组件与 Playback。旧 Qt Demo 是完整对照基准，Electron Demo 当前覆盖尚不完整，不能据此关闭 I09–I14 全部验收。
+- 与 Qt 对照：使用 `preview_workspace.py` 相同示例文字，分别检查900×650、640×480、1280×840及明暗主题；记录实际内容尺寸、DPR、Qt离屏/原生与 Electron 原生的区别。比较菜单动作、焦点、输入法、动态状态与数据结果，不能只比静态截图。
+
+产物在 `output/playwright/electron/`（本轮已有隔离证据）与 `.work/reports/electron-*.log`，不提交。CI 新增独立 Windows/Mac Electron job，原 Python job 保留；本地通过不代表远程 CI 已执行。真实设备、模型/供应商、不同缩放多屏、Windows 原生和安装更新是独立证据。
+
+
+### 新旧前端逐页对照
+
+先构建当前 `desktop/`，依次执行 `.venv/bin/python scripts/preview_parity.py --capture` 与 `node desktop/scripts/parity.cjs`；需要原生桌面会话，两个截图任务不要同时争用焦点。Qt 探针在导入界面前安装音频保护；Electron 使用独立库、偏好、profile，并让全部 Python 子进程继承保护。显示夹具提供同样的字幕、模型清单和 `/录音示例` 路径，实际业务仍使用临时库、拒绝音频访问。不会采集、播放、下载或调用云端。
+
+范围包括录音工作区、六个设置页、模型弹窗、课程三个页签和悬浮字幕，深浅主题 × 1280×797 / 900×650 / 640×480；大窗口高度根据本轮 macOS 原生内容区可用高度选取。清单记录实际尺寸与小岛矩形，不把系统约束后的截图冒充请求尺寸。Electron 另测正常/反向小岛和音量动画、开关中间帧、减少动态效果、弹窗/切页时长和字幕追加/修订。几何与动画使用正式组件，不请求真实采集。
+
+两份清单完成后执行 `.venv/bin/python scripts/compare_desktop_ui.py`，生成 `.work/browser/ui-parity/index.html`，可按页面双栏/叠加比较，并查看动画轨迹与小岛几何差值。图片和显示数据留在 `.work/`，不写入个人录音或源码图例。原生业务交互仍另跑 `npm --prefix desktop test`；截图夹具不替代服务端回执、平台设备与模型验收。

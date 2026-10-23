@@ -68,3 +68,11 @@
 2026-10-17 已发布 `v0.10.0`，标签固定 `95fa8c3`，Windows/Mac 安装包、清单和摘要均核对。Mac 使用既有更新私钥签署原 DMG，真实 0.9.2→0.10.0 的升级、故障恢复与数据保留通过，经既有 `release-updates` 审批部署 stable/beta 订阅；原始 0.9.2 包通过真实线上地址再验成功。Mac 仍为 ad-hoc、未公证；录音门禁用模拟状态，Windows 原生升级与真实采集尚未同等验收。证据见 [VALIDATION](VALIDATION.md)，剩余范围见 [ROADMAP](ROADMAP.md)。
 
 依据：[GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages)、[Actions 触发限制](https://docs.github.com/en/actions/how-tos/trigger-workflows)、[Sparkle](https://sparkle-project.org/documentation/)、[WinSparkle](https://winsparkle.org/guides/getting-started/)、[Inno Setup](https://jrsoftware.org/ishelp.php)。
+
+## 双前端候选包
+
+现有 Qt 构建命令不变。需要包含对照界面时，先准备 `desktop/` 中锁定的依赖与 Electron 二进制（见 TESTING），再为对应平台构建脚本增加 `--with-electron`；`--fetch --with-electron` 只获取固定版本输入。Electron 45.0.0 的 Mac arm64 / Windows x64 归档 SHA-256 维护于 `packaging/electron/assets.json`，构建拒绝版本不符、缺许可或未纳入版本控制的前端源码。
+
+Mac：`python scripts/build_macos.py --with-electron`，候选 DMG 名包含 `-dual-ui-`，不会覆盖普通 Qt 产物。Windows：`python scripts/build_windows.py --with-electron` 后仍由原 `build_windows_installer.py` 封存。两者保留原 launcher、更新配置、公钥、用户数据边界及默认 Qt 入口；不把新增 runtime 当作新的发行身份。Electron 检查更新通过明确按钮切回原生 Qt 窗口。
+
+前端包只带编译产物、受限主进程/桥、经校验的 Electron runtime 和生产依赖许可，不带 node_modules、开发服务器、浏览器 profile 或个人数据。`frontend-manifest.json` 记录源码、原始归档及最终文件摘要；Mac 原生签名后重算文件摘要，再重新封存外层应用。构建成功后还须验证包内双向切换、退出、真实设备和旧版升级，平台分别记录；本地候选不自动发布或推进更新订阅。

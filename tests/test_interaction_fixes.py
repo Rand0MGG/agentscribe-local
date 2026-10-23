@@ -121,6 +121,8 @@ class Player(QObject):
     positionChanged = Signal('qlonglong')
     playbackStateChanged = Signal(object)
     errorOccurred = Signal(object, str)
+    mediaStatusChanged = Signal(object)
+    seekableChanged = Signal(bool)
     PlaybackState = State
     def __init__(self, parent):
         super().__init__(parent); self.state = State.StoppedState; self.offset = 0
@@ -173,5 +175,27 @@ assert stream.gain == 1 and w.audio_output.volume == .25
 w.release_playback()
 assert not stream.isOpen() and stream._file.closed and w.playback_stream is None
 assert path.read_bytes() == original
+w.close()
+''', tmp_path)
+
+
+@pytest.mark.p2
+def test_overlay_geometry_round_trips_shared_electron_coordinates(tmp_path):
+    run_ui(r'''
+import json
+from linguaflow.subtitles_overlay import Overlay
+from PySide6.QtCore import QSettings
+prefs = QSettings(str(path.parent / 'overlay-shared.ini'), QSettings.Format.IniFormat)
+prefs.setValue('electron_overlay_bounds', json.dumps({'x': 50, 'y': 60, 'width': 620, 'height': 210}))
+o = Overlay(prefs)
+o.show()
+settle_geometry(o)
+assert o.width() == 620 and o.height() == 210
+o.resize(650, 230)
+settle_geometry(o)
+expected = dict(zip(('x', 'y', 'width', 'height'), o.geometry().getRect()))
+o.hide()
+assert json.loads(prefs.value('electron_overlay_bounds')) == expected
+assert prefs.value('overlay_geometry')
 w.close()
 ''', tmp_path)

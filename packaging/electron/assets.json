@@ -1,0 +1,16 @@
+{
+  "version": "45.0.0",
+  "checksum_source": "https://github.com/electron/electron/releases/download/v45.0.0/SHASUMS256.txt",
+  "targets": {
+    "macos-arm64": {
+      "filename": "electron-v45.0.0-darwin-arm64.zip",
+      "sha256": "896c3a50b148e89a158dca08a6996a022ddf39b23aac871e107f5b4087f8caa9",
+      "url": "https://github.com/electron/electron/releases/download/v45.0.0/electron-v45.0.0-darwin-arm64.zip"
+    },
+    "windows-x64": {
+      "filename": "electron-v45.0.0-win32-x64.zip",
+      "sha256": "ae53887a23bb640369c93dbd38c408a2af5c0deb86f2fa76c6c244cb444b7f47",
+      "url": "https://github.com/electron/electron/releases/download/v45.0.0/electron-v45.0.0-win32-x64.zip"
+    }
+  }
+}

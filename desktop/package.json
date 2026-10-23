@@ -1,0 +1,30 @@
+{
+  "name": "agentscribe-desktop",
+  "version": "0.10.2",
+  "private": true,
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "start": "npm run build && electron .",
+    "test": "node scripts/probe.cjs",
+    "components": "npm run build && electron . --components --no-audio",
+    "preview": "vite --host 127.0.0.1",
+    "test:switch": "node scripts/switch-probe.cjs",
+    "test:chain": "node scripts/chain-probe.cjs",
+    "test:interaction": "node scripts/interaction-probe.cjs"
+  },
+  "dependencies": {
+    "radix-ui": "1.8.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "electron": "45.0.0",
+    "playwright": "1.64.1",
+    "typescript": "5.9.3",
+    "vite": "8.3.5"
+  }
+}

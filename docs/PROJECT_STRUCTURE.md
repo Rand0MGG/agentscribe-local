@@ -37,6 +37,7 @@
 ```text
 linguaflow/            桌面、业务、模型及系统适配
   knowledge/          可选课程处理，独立于实时音频
+desktop/              Electron 前端、受限桥、共享组件和双向切换探针；首次默认 Qt
 scripts/              安装、构建、探针、文件回放和评测
 tests/                回归与小型许可夹具
 packaging/            平台锁、启动器、安装器、更新身份和许可
@@ -54,3 +55,7 @@ docs/                 当前指南、规范、计划与证据入口
 `.work/cache/` 放缓存，`.work/browser/` 放截图，`.work/reports/` 放临时验证摘要。既有 `.work/ami`、`.work/macwhinney`、`.work/revisions-short`、`.work/mac-file-tests` 等冻结证据按原路径保留，不当作普通缓存清理。私人 `media/` / `srt/`、录音、材料和模型不进 Git；安装包/摘要/构建清单进 Release。
 
 具体模块位置在架构维护，操作步骤在指南维护。旧专题的现行要求进入 spec，原始实验和决定可从归档检索；许可和固定测试协议保留各自正文，不因压缩文档而删减来源或条款。
+
+双前端入口：`linguaflow/desktop_launcher.py`；安全交接：`frontend_switch.py`；系统交互参数、旧几何与同源壁纸材质：`desktop_platform.py`；Electron 业务边界：`desktop_service.py`。可选打包输入与许可归 `packaging/electron/`，装配归 `scripts/package_electron.py`；安装包方法归 RELEASING，不在 UI 文档重复维护。
+
+新旧 UI 对照工具：`scripts/preview_parity.py`（受保护的原生 Qt 夹具）、`desktop/scripts/parity.cjs`（原生 Electron 页面/动画）、`scripts/compare_desktop_ui.py`（离线逐页对照）；执行与证据边界归 TESTING / VALIDATION。

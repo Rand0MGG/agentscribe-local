@@ -4,6 +4,46 @@
 
 ## 最近可核对的证据
 
+2026-10-24 **用户反馈交互修复**：树行透明悬停、工具菜单互斥、圆形返回播放位置、首次回听异步定位，以及更新进度动画。保留用户确认的最近删除/弹窗效果；另修通知遮挡弹窗关闭按钮、主题切换短暂沿用旧材质、重复检查更新和更新失败语义。
+
+- 本次定向无音频回归 **32 passed**，14.89秒；原有原生工作流及新增 `test:interaction` 五组原生流程通过，构建/Ruff/差异检查通过。首次回听保留真实IPC/服务/控制器/WAV读取，只有媒体硬件用延迟350ms的无设备适配器替换；更新使用离线HTTP响应，保留后台线程与解析。
+- 约1.2秒更新动画采样73帧/73个transform，rAF P95与最大间隔17.7ms，字幕DOM变更0；仅本机短时采样，不是全平台帧率保证。截图含深色640×480弹窗，关闭按钮不被通知遮挡。
+- 证据 `output/playwright/interaction-fixes/`、`.work/reports/user-interaction-fixes-20261024.md` 和 `interaction-fixes-*.log`。未进行真实音频或原生Windows测试；两平台CI已加入探针，未推送。未提交、打包或发布。
+
+
+
+2026-10-24 **功能对照修复**：按 F01–F13 修复导出排队丢请求、推荐组合参数、准备后就绪检查、别名输入、跨录音回答、滚动条/设置导航阅读锚点，并补任务反馈、Beta 取消、运行时复用、回听元数据、批量最近删除、首次引导和启动目录恢复。实现/证据逐项记录于本地 `.work/reports/frontend-parity-fixes-20261024.md`。
+
+- 全量无音频 **1130 passed / 3 skipped**，293.89 秒；3 项均为 Windows 专属。末轮元数据与共享悬浮窗几何等定向回归 **56 passed**，13.04 秒；不与全量累加。首次沙箱运行遭 `psutil/sysctl` 进程枚举权限限制，保留失败日志，在允许进程检查的环境重跑通过。两批均零音频导入尝试。
+- 原有原生工作流探针通过；推荐组合测试已删除 `Service.request` 成功替身。新增 `test:chain` 保留前端→preload→IPC→JSONL→真实校验/共享后台，使用真实文件及工作进程；仅安装/下载和云端生成执行换为本地受控任务。覆盖成功、失败、取消、重试、持久化回执、库存设备适配、跨录音和坏库恢复。不能据此声称真实模型/云端已验收。
+- 当前构建复拍 **86 个 Electron 页面状态**，与已保存的 v0.10.2 Qt 原生基准形成 **72 组配对**，人工核对工作区、窄运行环境、课程窗口及最近删除；最近删除恢复 560×440。小岛18组矩形尺寸/纵向差为0、横向最大0.5px；7组连续动画各41–42帧，含反向与减少动态效果。报告 `.work/browser/ui-parity/index.html`，不是新一轮真实音频会话或 Windows 渲染证明。
+- 实际 Electron → Qt → Electron 往返通过，同一录音/字幕/录音库与无音频约束保留；属于源码环境。TypeScript/Vite、Ruff 和差异检查通过。当前源码未提交或推送，旧候选包未重新打包；Windows CI 已增加相同链路测试，未远程执行。
+
+2026-10-23 **视觉与动效细节补齐**（晚于下述双前端候选 DMG）：仍在 `mac` / `e0d3c19` 加本地修改，未提交、推送、重打安装包或发布。
+
+- 原生 Qt **72** 张参考图、原生 Electron **86** 个页面状态，整理为 **72 组同名配对**：工作区、六个设置页、模型目录/设置/高级、课程三页签、悬浮字幕；深浅主题及 1280×797 / 900×650 / 640×480。尺寸是实际窗口内容区；Qt Retina 图以平滑采样归一到逻辑像素。统一示例正文、模型清单与显示路径，实际库和偏好均隔离。`.work/browser/ui-parity/{qt,electron}/manifest.json`、`index.html`；对照页全部图片加载、叠加控件及动画图表检查通过（`report-check.json`）。
+- 18 组待录音/录音/回听矩形比较：宽、高、纵向位置差为 **0px**，横向最大 **0.5px**（CSS 居中分数像素）。修复主侧栏最小宽度、标题栏、滚动条占位与小岛底部锚定。没有把这项几何检查称为全图逐像素相等。
+- 共享动画逐帧采样覆盖小岛展开/收起/100ms 时反向、音量展开/中途反向、开关、减少动态效果；各轨迹 41 帧。小岛设置 280ms InOutCubic，本次点击到首次采到终值为 306.9 / 294.6ms（含提交及帧调度）；音量设置 200ms OutCubic，本次整数高度首次达到170px为198.2ms。进度条宽度/位置不随音量展开变化；切页150ms、弹窗140ms检查实际动画对象。`electron/motion.json`。这是原生渲染采样，不是实际录音/播放或屏幕录像。
+- 壁纸材质直接复用 Qt 的采样、模糊、叠色和噪声实现，测试解码后像素相同，主题变化会使签名失效；原生截图等待页面背景实际加载并解码。连续移动时保留同一屏幕和主题下仍可用的已完成材质，避免连续刷新一直丢弃结果。相关无音频回归 **29 passed**，6.26秒，零原生音频导入尝试；包含服务、材质、切换边界和封装检查（`ui-parity-tests.log`）。本批未重跑上轮1123项全量，不把历史数量叠加成本轮结果。
+- TypeScript/Vite、Ruff、差异检查通过；隔离原生工作流通过：中文编辑/IME、下拉键盘/关闭焦点、模型草稿取消、推荐组合应用（拦截真实下载，只核对请求与临时偏好）、跨平台模型禁用、课程保存回执/隐藏重开、悬浮字幕最新一段/字号/自动隐藏/手柄实际拖动缩放、字幕追加/修订和正常退出。`.work/reports/ui-parity-{build,workflows,electron,qt-matrix,report}.log` 与 `.work/browser/ui-parity/workflows/result.json`。
+- 过程中修正截图夹具的异步读库/材质等待（使用有界异步轮询，避免 Promise 被当作已满足条件）、不同原生窗口识别、macOS内容高度限制及组件路由重载。一次焦点断言早于 Radix 的异步关闭回调；事件记录确认约10ms后已归还，改为有界等待同一焦点条件，保留原断言与失败记录。不是强制聚焦后宣称关闭正常。
+- **旧候选 DMG 不含本轮视觉修改**。Windows原生、跨屏/不同缩放、所有异常状态组合、真实音频/模型/云端和安装升级仍未由本批证明；现有Qt入口与双向切换保留。字体栅格化、原生装饰和少量复杂弹窗间距不宣称完全等价。
+
+以下为这次细节补齐之前的迁移与封装证据：
+
+2026-10-23 Electron / Qt 双前端的 v0.10.2 对照：基准 `dd31363`，开发于 `e0d3c19` 加未提交修改；两提交之间仅有 Windows worker 测试隔离调整。已核对 `UI_DESIGN`、业务 specs、三套 UI Demo 与 Qt 组件/接线。两个界面增加明确切换按钮，第一次仍打开 Qt，随后记住成功打开的前端；未提交、推送或发布。尚待平台/设备验收的范围保留在 R27。
+
+- macOS 26.6.2 arm64、Python 3.12.14：完整无音频回归 **1123 passed / 3 skipped**，301.86 秒，零原生音频导入尝试。跳过项仅为 Windows 8.3 临时路径、Job Object 生命周期及原生安装器编译器。证据 `.work/reports/electron-final-native-full.log` / `.xml`。首次受限沙箱批次出现图形会话/本机端口/进程读取受限，以及旧 UI 测试夹具未接受新参数；失败记录保留于 `electron-final-full.log` / `.xml`，没有以该失败批次冒充通过。
+- 完整回归后补充启动就绪回执、取消切换及 Mac 封存兼容修复，相关定向回归 **68 passed**，5.90 秒，零原生音频导入尝试；包括服务、切换、Electron/原有封装、Qt 主入口与笔记持久化回执。`.work/reports/electron-final-targeted.log`。随后模型库存边界与设备草稿修复由 TypeScript 构建和下面的原生探针覆盖，没有把早期全量结果称为所有最后改动的全量运行。
+- 包内原生探针发现 ICNS 不能传给 Electron Dock，已在可选双前端 Mac 构建中生成同源 PNG；Qt 单前端构建保持原行为。最后封装回归 **44 passed**，0.91 秒，零原生音频导入尝试（`electron-final-packaging.log`）；该数量与前述专项有重叠，不累加。启动失败及错误堆栈分别保留在 `electron-packaged-startup-failure.log`、`electron-packaged-icon-failure.log`。
+- TypeScript/Vite 构建与 Ruff 通过；原生 Electron 探针覆盖临时录音库、中文名称、搜索、主题、模型草稿取消、对齐/跨平台模型禁止误用、MLX 设备草稿、下载目录、独立课程窗口与保存回执、受限悬浮窗口、IME/键盘焦点、音量展开不挤压进度条、字幕追加/修订与退出。独立录音库、偏好及浏览器 profile，零原生音频访问。`.work/reports/electron-build.log`、`electron-native.log` 和 `output/playwright/electron/result.json`。
+- 原生 **Electron → Qt → Electron** 实际往返通过：同一录音 ID、标题、库路径、字幕恢复，无音频状态保留；未保存编辑阻止切换。Qt 观察器只注入临时测试环境，目标进程退出后才启动下一界面，没有靠强杀旧界面完成切换。`.work/reports/electron-switch-native.log`、`output/playwright/switch/result.json`。此项是源码环境验证。
+- 最终 Mac 双前端候选包构建成功：`AgentScribe-0.10.2-dual-ui-macos-arm64.dmg`，430752946 字节，SHA-256 `8bea86777f02515d0a82f38deebfb36a7b80c5edf8d7cff19c3ca3df75a44b03`。原生签名完整性、启动器隔离、DMG 校验及只读挂载后的 Qt/worker/关闭探针通过；包内 Electron + Python 另跑上述原生交互流程通过，零音频访问（`electron-macos-build.log`、`electron-packaged-native.log`、`output/playwright/electron-packaged/result.json`）。运行后复核360个前端载荷文件、25个源码输入摘要及签名未变，见 `electron-sealed-verification.json`。产物在 `.work/packaging/dist/`，为 ad-hoc、未公证候选，未安装或发布；此处不声称安装包双向切换及真实旧版升级均已验收。
+- 900×650 相同示例正文已人工对照 Qt 与 Electron 图片，校准侧栏宽度、字幕留白/段间距、小岛及标题；Qt 参考在 `.work/browser/electron-baseline/`，Electron 在 `output/playwright/electron/`。Qt 这批为离屏渲染，Electron 为原生窗口内容；窗口外框/字体栅格和所有状态尚非逐像素等价。Mac 截图不证明 Windows 或其他缩放通过。
+- 没有真实采集/播放、模型下载/推理、供应商调用、Windows 原生或旧版升级验收。CI 已增加两端 Electron job，但本轮未推送触发远程运行；本机不能代替 Windows 验收。
+
+原生探针曾发现课程部分视图导致重开术语不完整、弹窗下拉被遮罩挡住，均修复并复验；窗口隐藏使用操作系统可见状态核验，音量几何比较排除页面滚动位移。末轮组件键盘探针两次等待焦点/选择超时，保留 `electron-native-focus-failure*.log`；测试切换组件页面后显式激活自己的原生窗口，再复验通过。没有强制点击、放宽选择断言或跳过该检查。新增模型库存测试曾误跑旧构建而失败（`electron-inventory-stale-build.log`），重新构建后覆盖通过。
+
 各行单独注明代码、环境及证据；测试通过数不跨批次累加。无音频回归和隔离界面探针不替代真实录音、GPU、云端质量或安装升级验收。
 
 | 证据 | 已证明 | 范围与限制 |
