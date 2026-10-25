@@ -43,12 +43,18 @@ async function main() {
  await page.getByRole('button',{name:'录音 A',exact:true}).click();
  await page.getByText('00:00 / 00:02',{exact:true}).waitFor();
  assert.equal((await rpc('bootstrap')).state.playback.supports_gain,true);passed.push('WAV metadata before playback without opening any device');
- // Native scrollbar, then settings navigation. Neither may surrender the reading anchor.
- await until(()=>page.locator('.caption-scroll').evaluate(el=>el.scrollTop>5000),'initial caption tail');
+ // Saved audio opens at the beginning. Establish a reading position with real
+ // keyboard input before testing native scrollbar ownership and navigation.
+ const captions=page.locator('.caption-scroll');
+ await until(()=>captions.locator('[data-caption]').count().then(count=>count===120),'saved captions loaded');
+ assert.equal(await captions.evaluate(el=>el.scrollTop),0);
+ await captions.focus();await captions.press('End');
+ await until(()=>captions.evaluate(el=>el.scrollTop>0&&el.scrollHeight-el.scrollTop-el.clientHeight<3),'keyboard caption tail');
+ const tail=await captions.evaluate(el=>el.scrollTop);
  const rect=await page.locator('.caption-scroll').boundingBox();
  await page.mouse.move(rect.x+rect.width-3,rect.y+rect.height-18);await page.mouse.down();await page.mouse.move(rect.x+rect.width-3,rect.y+rect.height*.25,{steps:12});await page.mouse.up();
  await pause(350);const dragged=await page.locator('.caption-scroll').evaluate(el=>el.scrollTop);
- assert(dragged<5000,`scrollbar drag failed: ${dragged}`);
+ assert(dragged<tail,`scrollbar drag failed: ${dragged} >= ${tail}`);
  await page.screenshot({path:path.join(evidence,'scrollbar-reading.png')});
  await page.getByRole('button',{name:'设置',exact:true}).click();await page.getByRole('button',{name:'返回录音',exact:false}).click();await pause(350);
  assert(Math.abs(await page.locator('.caption-scroll').evaluate(el=>el.scrollTop)-dragged)<2);passed.push('native scrollbar and settings round trip retain reading position');

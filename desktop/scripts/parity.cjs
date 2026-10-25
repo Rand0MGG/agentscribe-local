@@ -18,15 +18,18 @@ async function main() {
   execFileSync(python, ['-c', `
 from pathlib import Path
 from dataclasses import asdict
-import sys
+import sys,json
 from scripts.test_no_audio import GUARD
 from linguaflow.library import Library
 from linguaflow.core import Caption, Settings
+from linguaflow.recording_state import RecordingState,capture_feedback
 root=Path(sys.argv[1]);(root/'sitecustomize.py').write_text(GUARD)
+(root/'capture-feedback.json').write_text(json.dumps({state.name:capture_feedback(state,model_ready=True) for state in RecordingState} | {'STARTING':capture_feedback(RecordingState.STARTING,model_ready=False),'loading':capture_feedback(RecordingState.LISTENING,model_ready=False)}),encoding='utf-8')
 library=Library(root/'library');folder=library.folder('课程笔记 · 示例')
 item=library.create(folder['id'],asdict(Settings('preview')),'理解语言与上下文 · 示例')
 library.save(item,[Caption(1,0,5,'Language is more than a sequence of words. It is a way of sharing ideas.','en','语言不只是词语的排列，也是分享想法的方式。'),Caption(2,5,10,'Context helps us understand what comes next.','en','上下文帮助我们理解接下来的内容。'),Caption(3,10,14,'Each new sentence brings the meaning into focus.','en','每一句新话都让意思更加清楚。')],'complete')
 `, fixture], { cwd: root });
+  const captureFeedback=JSON.parse(fs.readFileSync(path.join(fixture,'capture-feedback.json'),'utf8'));
   let app;
   const errors = [], records = [];
   try {
@@ -118,9 +121,24 @@ library.save(item,[Caption(1,0,5,'Language is more than a sequence of words. It 
       await page.getByText('Context helps us understand what comes next.',{exact:true}).waitFor();
       await until(() => page.evaluate(async()=>!!(await window.agentScribe.request('bootstrap')).state.item), 'Recording did not finish opening');
       const original = (await page.evaluate(() => window.agentScribe.request('bootstrap'))).state;
-      await send('state',{...original,state:'LISTENING'}); await send('clock',{seconds:754}); await send('level',.024);
+      const savedPage=await page.evaluate(async()=>(await window.agentScribe.request('bootstrap')).captions);
+      await send('captions',{...savedPage,rows:[],total:0});
+      await send('state',{...original,state:'STARTING',capture:captureFeedback.STARTING});
+      await page.getByText('正在加载模型',{exact:true}).waitFor();
+      await page.getByText('正在连接音频来源…',{exact:true}).waitFor();await shot(`capture-starting-${theme}`);
+      const center=await page.locator('.caption-region .empty').boundingBox(),workspace=await page.locator('.workspace').boundingBox();
+      assert(Math.abs(center.y+center.height/2-workspace.y-workspace.height/2)<2,'Capture hint must stay centered on the workspace like Qt');
+      await send('state',{...original,state:'LISTENING',capture:captureFeedback.loading});await send('clock',{seconds:3.8});
+      await page.getByText('录音已开始',{exact:true}).waitFor();await shot(`capture-loading-${theme}`);
+      await send('state',{...original,state:'LISTENING',capture:captureFeedback.LISTENING});
+      await page.getByText('正在加载模型',{exact:true}).waitFor({state:'hidden'});await shot(`capture-ready-${theme}`);
+      await send('state',{...original,state:'STOPPING',capture:captureFeedback.STOPPING});await shot(`capture-stopping-${theme}`);
+      await send('captions',savedPage);
+      await send('state',{...original,state:'LISTENING',capture:captureFeedback.LISTENING}); await send('clock',{seconds:754}); await send('level',.024);
       for (const dimensions of sizes) { await size(...dimensions); await shot(`recording-${theme}-${dimensions.join('x')}`); }
-      await send('state',{...original,state:'PAUSED'}); await send('level',0); await shot(`paused-${theme}`);
+      const buttons=await page.locator('.island-controls>button').evaluateAll(nodes=>nodes.map(n=>n.getBoundingClientRect().x));
+      assert.equal(buttons.length,4);assert(buttons.slice(1).every((x,i)=>Math.abs(x-buttons[i]-48)<1),'Recording controls must remain centered with Qt 8px gaps');
+      await send('state',{...original,state:'PAUSED',capture:captureFeedback.PAUSED}); await send('level',0); await shot(`paused-${theme}`);
       await send('state',{...original,has_audio:true}); await send('playback',{position:7000,duration:94000,state:'StoppedState'});
       for (const dimensions of sizes) { await size(...dimensions); await shot(`playback-${theme}-${dimensions.join('x')}`); }
       await page.getByRole('button',{name:'回放音量',exact:true}).click(); await shot(`volume-${theme}`);

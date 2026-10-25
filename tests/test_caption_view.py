@@ -11,6 +11,33 @@ def run_qt(code, tmp_path):
 
 
 @pytest.mark.p1
+def test_saved_transcript_is_complete_in_forward_order_without_page_controls(tmp_path):
+    run_qt('''
+from PySide6.QtWidgets import QApplication
+from linguaflow.caption_feed import CaptionFeed
+from linguaflow.core import Caption
+from linguaflow.transcript import Transcript
+from ui_support import settle_geometry
+app = QApplication([])
+feed = CaptionFeed()
+feed.resize(600, 500)
+feed.show()
+feed.set_context(translating=True, active=False, loading=True)
+feed.rows = Transcript((i, Caption(i, i*2, i*2+2, f'Sentence {i}', 'en', final=True)) for i in range(650))
+feed.render()
+feed.set_playback(True)
+settle_geometry(feed)
+assert list(feed.cards) == list(range(650)), (len(feed.cards), min(feed.cards), max(feed.cards))
+assert feed.older.isHidden() and feed.newer.isHidden()
+assert feed.verticalScrollBar().value() == 0
+assert feed.cards[0].y() < feed.cards[325].y() < feed.cards[649].y()
+feed.ensure_card(425)
+assert len(feed.cards) == 650
+feed.close()
+''', tmp_path)
+
+
+@pytest.mark.p1
 def test_caption_anchor_audio_selection_sync_and_recording_lock(tmp_path):
     run_qt('''
 import os

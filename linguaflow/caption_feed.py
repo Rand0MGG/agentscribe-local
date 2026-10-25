@@ -142,11 +142,14 @@ class CaptionFeed(CaptionScrollArea):
 
     def render(self):
         identifiers = self.rows.ordered_ids
-        if self.page_start is None and len(self.cards) >= 200 and not self.following and not self.loading:
+        complete = self.loading or self.playback_mode
+        if complete:
+            self.page_start = None
+        if not complete and self.page_start is None and len(self.cards) >= 200 and not self.following and not self.loading:
             self.page_start = min(self.cards)
         start = (max(0, len(identifiers) - 200) if self.page_start is None else
                  min(bisect_left(identifiers, self.page_start), max(0, len(identifiers) - 200)))
-        visible = identifiers[start:start + 200]
+        visible = identifiers if complete else identifiers[start:start + 200]
         if self.page_start is not None and visible:
             self.page_start = visible[0]
         for identifier in self.cards.keys() - set(visible):
@@ -173,11 +176,17 @@ class CaptionFeed(CaptionScrollArea):
     def update_page_controls(self):
         identifiers = self.rows.ordered_ids
         first, last = min(self.cards, default=0), max(self.cards, default=0)
-        self.older.setVisible(bool(identifiers and first > identifiers[0]))
-        self.newer.setVisible(bool(identifiers and last < identifiers[-1]))
+        self.older.setVisible(not (self.loading or self.playback_mode) and bool(identifiers and first > identifiers[0]))
+        self.newer.setVisible(not (self.loading or self.playback_mode) and bool(identifiers and last < identifiers[-1]))
         target = self.playing_id if self.playback_mode else (identifiers[-1] if identifiers else None)
         self.set_outside_target(-1 if target is not None and target < first else
                                1 if target is not None and target > last else 0)
+
+    def set_playback(self, enabled):
+        super().set_playback(enabled)
+        if enabled:
+            self.render()
+            self.verticalScrollBar().setValue(0)
 
     def ensure_card(self, identifier):
         if identifier in self.rows and identifier not in self.cards:

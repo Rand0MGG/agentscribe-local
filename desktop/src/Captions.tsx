@@ -61,7 +61,7 @@ export function Captions({ seekRevision = 0, visible = true, page, state, positi
       } else {
         return;
       }
-    } else if (!active && state.has_audio) return;
+    } else if (!active) return;
     else goal.current = Math.max(0, area.scrollHeight - area.clientHeight);
     if (document.documentElement.dataset.reducedMotion === 'true' || matchMedia('(prefers-reduced-motion: reduce)').matches) {
       cancelAnimationFrame(followFrame.current); followFrame.current = 0; area.scrollTop = goal.current; return;
@@ -169,8 +169,8 @@ export function Captions({ seekRevision = 0, visible = true, page, state, positi
       }
     }}>
     <div className="caption-body" ref={body}>
-      {page.start > 0 && <Button variant="quiet" onClick={() => { stopFollowing(); onPage(Math.max(0, page.start - 200)); }}>较早的字幕</Button>}
-      {!rows.length && !state.preview && (summary || <div className="empty"><div>{active ? state.failure || (state.state === 'PAUSED' ? '已暂停聆听' : state.status) : '无内容'}</div></div>)}
+      {active && page.start > 0 && <Button variant="quiet" onClick={() => { stopFollowing(); onPage(Math.max(0, page.start - 200)); }}>较早的字幕</Button>}
+      {!rows.length && !state.preview && (summary || <div className="empty"><div>{active ? state.failure || state.capture?.waiting || (state.state === 'PAUSED' ? '已暂停聆听' : state.status) : '无内容'}</div></div>)}
       {rows.map(row => <article key={row.id} data-caption={row.id} className={`caption ${playing === row.id && !active ? 'playing' : ''} ${locate === row.id ? 'located' : ''}`}>
         <div className="timestamp">{clock(row.start).slice(row.start >= 3600 ? 0 : 3)}{row.final ? ' · 已定稿' : ' · 优化中'}</div>
         <p className={`source ${!row.final ? 'draft' : ''}`} onMouseDown={event => { pointer.current = { x: event.clientX, y: event.clientY, at: performance.now(), button: event.button }; }}
@@ -179,7 +179,7 @@ export function Captions({ seekRevision = 0, visible = true, page, state, positi
         {(row.error || row.translation && !['译文已定稿', '已保存译文'].includes(row.translation_status)) && <p className={`caption-status ${row.error ? 'error' : ''}`}>{row.error || row.translation_status}</p>}
       </article>)}
       {state.preview && <article className="caption"><div className="timestamp">{clock(state.preview.start).slice(state.preview.start >= 3600 ? 0 : 3)} · 实时原文</div><p className="source draft"><CaptionText text={state.preview.source} animate={active} /></p></article>}
-      {page.start + page.rows.length < page.total && <Button variant="quiet" onClick={() => { stopFollowing(); onPage(page.start + 200); }}>较新的字幕</Button>}
+      {active && page.start + page.rows.length < page.total && <Button variant="quiet" onClick={() => { stopFollowing(); onPage(page.start + 200); }}>较新的字幕</Button>}
     </div>
   </div>{!follow && returnDirection !== 0 && <Tip label={active ? '回到最新字幕' : `返回播放位置（${returnDirection < 0 ? '上方' : '下方'}）`}><Button className="return-caption" style={{bottom:returnBottom}} aria-label={active ? '回到最新字幕并恢复自动跟随' : '返回播放位置并恢复跟随'} onClick={() => { humanScroll.current = false; playbackOffset.current = null; anchor.current = null; following.current = true; onFollow(true); setFollow(true); onPage(); requestAnimationFrame(followTarget); }}>
     <svg aria-hidden="true" width="38" height="38" viewBox="0 0 40 40" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{transform:returnDirection < 0 ? 'rotate(180deg)' : undefined}}><path d="M20 12v15m-6-6 6 6 6-6" /></svg>

@@ -4,7 +4,7 @@ from ui_support import run_ui
 
 
 @pytest.mark.p2
-def test_long_recording_search_pages_and_playback_load_history(tmp_path):
+def test_long_recording_search_and_playback_keep_complete_saved_transcript(tmp_path):
     run_ui('''
 from linguaflow.core import Caption
 from linguaflow.playback import PlaybackIndex
@@ -16,22 +16,21 @@ assert w.persist_session('complete')
 identifier=w.current_item['id']
 w.open_library_item(w.library_rows[identifier],0)
 w.show();settle_geometry(w)
+assert w.scroll.verticalScrollBar().value() <= 2, (w.scroll.verticalScrollBar().value(), w.scroll.following, w.scroll._anchor)
+assert len(w.cards)==405, (len(w.cards), w.loading_saved, w.scroll.loading, w.scroll.playback_mode, w.notifications.notices)
 w.find_captions();s=w.search_dialog
 s.query.setText('Lecture sentence 1.');s.search();s.choose()
 settle_geometry(w)
 assert 1 in w.cards and w.cards[1].isVisibleTo(w)
 assert 'operation' not in w.notifications.notices
-assert len(w.cards)<=200
-w.newer_captions.click();settle_geometry(w)
-assert max(w.cards)>200 and len(w.cards)<=200
-w.older_captions.click();settle_geometry(w)
-assert 1 in w.cards
+assert len(w.cards)==405 and min(w.cards)==1 and max(w.cards)==405
+assert w.newer_captions.isHidden() and w.older_captions.isHidden()
 w.scroll.set_playback(True)
 w.playback_index=PlaybackIndex(w.captions.values())
 w.seek_playback(405*4000)
 settle_geometry(w)
 assert 405 in w.cards and w.cards[405].property('playing')
-assert len(w.cards)<=200
+assert len(w.cards)==405
 w.locate_caption(identifier,1);settle_geometry(w)
 assert 1 in w.cards and not w.scroll.following
 w.highlight_playback(405*4000);app.processEvents()

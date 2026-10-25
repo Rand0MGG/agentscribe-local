@@ -50,7 +50,12 @@ def prepare(frontend, *, library, prefs, recording=None, draft=None, no_audio=Fa
     command_for(frontend)  # Fail before closing any window.
     owner_pid = owner_pid or os.getpid()
     if owner_pid not in (os.getpid(), os.getppid()):
-        raise ValueError('界面进程归属无效。')
+        # Windows venv python.exe redirects to a child interpreter. Only accept
+        # its direct launcher when the intervening parent is this interpreter.
+        parent = psutil.Process(os.getppid())
+        if (sys.platform != 'win32' or parent.ppid() != owner_pid
+                or Path(parent.exe()).resolve() != Path(sys.executable).resolve()):
+            raise ValueError('界面进程归属无效。')
     directory = Path(tempfile.mkdtemp(prefix='agentscribe-frontend-'))
     path = directory / 'context.json'
     owners = [{'pid': pid, 'created': psutil.Process(pid).create_time()} for pid in {owner_pid, os.getpid()}]

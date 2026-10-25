@@ -516,7 +516,7 @@ class CaptionScrollArea(QScrollArea):
         self._move(max(0, card.y()-24))
         # A newly loaded page may still have the previous page's scroll range.
         # Keep the intended offset so the next layout pass can finish locating it.
-        self._anchor = (card, min(24, card.y()))
+        self._anchor = (card, 24)
 
     def set_playback(self, enabled):
         self.animation.stop()

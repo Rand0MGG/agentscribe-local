@@ -23,9 +23,9 @@ root=Path(sys.argv[1])
 (root/'sitecustomize.py').write_text(GUARD+'\nfrom scripts.desktop_chain_fixture import install\ninstall()\nfrom scripts.desktop_playback_fixture import install\ninstall()\n')
 library=Library(root/'library');folder=library.folder('交互测试')
 item=library.create(folder['id'],asdict(Settings('preview')),'字幕回听')
-library.save(item,[Caption(i,i*2,i*2+2,f'Sentence {i}: context and evidence.','en',f'第 {i} 句文字。',final=True) for i in range(1,101)],'complete')
+library.save(item,[Caption(i,i*2,i*2+2,f'Sentence {i}: context and evidence.','en',f'第 {i} 句文字。',final=True) for i in range(1,651)],'complete')
 with wave.open(str(library.directory(item['id'])/'录音.wav'),'wb') as audio:
- audio.setparams((1,2,8000,0,'NONE','not compressed'));audio.writeframes(bytes(204*8000*2))
+ audio.setparams((1,2,8000,0,'NONE','not compressed'));audio.writeframes(bytes(1304*8000*2))
 `, fixture], { cwd: root, encoding: 'utf8' });
 let app;
 async function main() {
@@ -55,6 +55,18 @@ async function main() {
  await page.screenshot({path:path.join(output,'hover-light.png')});
  await page.getByRole('button',{name:'字幕回听',exact:true}).click();
  await page.locator('[data-caption="1"] .source').waitFor();
+ await page.waitForFunction(()=>document.querySelectorAll('[data-caption]').length===650);
+ const transcript=page.locator('.caption-scroll');
+ assert.deepEqual(await transcript.locator('[data-caption]').evaluateAll(nodes=>nodes.map(node=>Number(node.dataset.caption))),Array.from({length:650},(_,i)=>i+1));
+ assert.equal(await transcript.evaluate(node=>node.scrollTop),0);
+ assert.equal(await page.getByRole('button',{name:/较早的字幕|较新的字幕/}).count(),0);
+ await transcript.focus();await transcript.press('End');
+ await page.waitForFunction(()=>{const area=document.querySelector('.caption-scroll'),last=area.querySelector('[data-caption="650"]'),a=area.getBoundingClientRect(),r=last.getBoundingClientRect();return area.scrollHeight-area.scrollTop-area.clientHeight<3&&r.top>=a.top&&r.bottom<=a.bottom;});
+ assert.equal(await transcript.locator('[data-caption]').count(),650);
+ await page.screenshot({path:path.join(output,'complete-transcript-end.png')});
+ await transcript.press('Home');await page.waitForFunction(()=>document.querySelector('.caption-scroll').scrollTop===0);
+ await page.screenshot({path:path.join(output,'complete-transcript-start.png')});
+ passed.push('650 saved captions load together in forward order at the beginning; Home/End never page or discard text');
  const target=page.locator('[data-caption="3"] .source');
  await target.click({position:{x:15,y:10}});
  await page.getByRole('button',{name:'暂停回听',exact:true}).waitFor();
@@ -79,6 +91,20 @@ async function main() {
  assert(visibleTarget);await page.locator(`[data-caption="${visibleTarget}"] .source`).click({position:{x:15,y:10}});
  await pause(900);assert.equal(await back.count(),0);assert.equal(media().at(-1).position,Number(visibleTarget)*2000);
  passed.push('Double-click selects without playback; circular return follows without seeking; new click resumes follow');
+ await page.evaluate(()=>window.agentScribe.request('playback.seek',{milliseconds:1250000,play:false}));
+ await page.locator('[data-caption="625"].playing').waitFor();
+ assert.equal(await transcript.locator('[data-caption]').count(),650);
+ await page.evaluate(()=>window.agentScribe.request('playback.seek',{milliseconds:2000,play:false}));
+ await page.locator('[data-caption="1"].playing').waitFor();
+ assert.equal(await transcript.locator('[data-caption]').count(),650);
+ passed.push('Seeking beyond the former 200/400 boundaries and back retains every caption');
+ await page.getByRole('button',{name:'更多操作',exact:true}).click();
+ await page.getByRole('menuitem',{name:'查找字幕',exact:true}).click();
+ await page.getByRole('textbox',{name:'搜索当前录音字幕'}).fill('Sentence 425:');
+ await page.getByRole('dialog').getByRole('button').filter({hasText:'Sentence 425:'}).click();
+ await page.locator('[data-caption="425"].located').waitFor();
+ assert.equal(await transcript.locator('[data-caption]').count(),650);
+ passed.push('Search locates saved text beyond the old page boundary without replacing the complete transcript');
  await page.getByRole('button',{name:'检查更新',exact:true}).click();
  await page.locator('.notice-progress').waitFor();
  await page.screenshot({path:path.join(output,'update-progress.png'),animations:'allow'});
@@ -107,6 +133,7 @@ async function main() {
  const dialogBox=await page.getByRole('dialog',{name:'最近删除',exact:true}).boundingBox();assert(dialogBox.x>=0&&dialogBox.y>=0&&dialogBox.x+dialogBox.width<=640&&dialogBox.y+dialogBox.height<=480);
  await page.getByRole('button',{name:'关闭最近删除',exact:true}).click();
  passed.push('Existing delete dialog preserved in light mode and dark narrow window with reduced motion');
+ await require('./parity-checks.cjs')(app,page,root,output,passed);
  assert.deepEqual(errors,[]);assert(!fs.existsSync(path.join(fixture,'blocked.log')));
  fs.writeFileSync(path.join(output,'result.json'),JSON.stringify({fixture,passed,highlight,motion,errors,native_audio_attempts:0},null,2));
  await app.close();app=null;console.log(JSON.stringify({passed,motion},null,2));

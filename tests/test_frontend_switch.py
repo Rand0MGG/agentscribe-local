@@ -25,7 +25,7 @@ def test_prepare_preflights_before_writing_and_carries_isolated_context(tmp_path
         switch.prepare('qt', library=library, prefs=prefs, owner_pid=-1)
     path = switch.prepare('electron', library=library, prefs=prefs, recording='recording-id',
                           geometry=dict(x=10, y=20, width=900, height=650), no_audio=True)
-    value = json.loads(path.read_text())
+    value = json.loads(path.read_text(encoding='utf-8'))
     assert value['recording'] == 'recording-id' and value['no_audio']
     assert value['preferences'] == prefs.fileName() and value['preferences_format'] == 1
     assert value['library'] == str(library.root)
@@ -101,7 +101,7 @@ with patch('linguaflow.frontend_switch.command_for', return_value=[__import__('s
     w.frontend_button.click()
     close_window(w, app)
 assert len(launched) == 1
-saved = json.loads(launched[0].read_text())
+saved = json.loads(launched[0].read_text(encoding='utf-8'))
 assert saved['draft']['name'] == '切换草稿 · 中文'
 assert saved['recording'] is None and saved['no_audio']
 assert not list((root/'library').rglob('session.json'))
@@ -118,3 +118,38 @@ def test_packaged_qt_switch_uses_native_launcher_identity(tmp_path, monkeypatch,
     executable.parent.mkdir(parents=True)
     executable.touch()
     assert switch.command_for('qt') == [str(executable), '--frontend', 'qt']
+
+
+@pytest.mark.p1
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows venv redirector process')
+def test_windows_venv_service_accepts_its_launching_owner(tmp_path):
+    source = '''
+import json, sys
+from pathlib import Path
+from types import SimpleNamespace
+from PySide6.QtCore import QSettings
+from linguaflow import frontend_switch as switch
+switch.command_for = lambda target: [sys.executable]
+root = Path(sys.argv[1])
+prefs = QSettings(str(root/'prefs.ini'), QSettings.Format.IniFormat)
+path = switch.prepare('qt', library=SimpleNamespace(root=root), prefs=prefs,
+                      owner_pid=int(sys.argv[2]), no_audio=True)
+value = json.loads(path.read_text(encoding='utf-8'))
+assert any(owner['pid'] == int(sys.argv[2]) for owner in value['owners'])
+assert value['no_audio']
+'''
+    result = subprocess.run([sys.executable, '-c', source, str(tmp_path), str(os.getpid())],
+                            capture_output=True, text=True, encoding='utf-8', timeout=10)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.p0
+@pytest.mark.parametrize('platform,redirector', [('win32', False), ('darwin', True)])
+def test_frontend_owner_rejects_unrelated_grandparent(tmp_path, monkeypatch, platform, redirector):
+    monkeypatch.setattr(switch, 'command_for', lambda target: [sys.executable])
+    monkeypatch.setattr(switch.sys, 'platform', platform)
+    parent = SimpleNamespace(ppid=lambda: -123, exe=lambda: sys.executable if redirector else str(tmp_path/'other.exe'))
+    monkeypatch.setattr(switch.psutil, 'Process', lambda pid: parent)
+    prefs = QSettings(str(tmp_path/'prefs.ini'), QSettings.Format.IniFormat)
+    with pytest.raises(ValueError, match='归属'):
+        switch.prepare('qt', library=SimpleNamespace(root=tmp_path), prefs=prefs, owner_pid=-123)

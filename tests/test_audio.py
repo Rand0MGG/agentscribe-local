@@ -1,3 +1,5 @@
+import json
+import subprocess
 import sys
 from threading import Event
 from types import SimpleNamespace
@@ -10,10 +12,65 @@ from linguaflow.core import Settings
 
 
 @pytest.mark.p1
+def test_device_discovery_import_does_not_load_capture_libraries():
+    source = '''
+import sys
+class NoCaptureImports:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] in {'numpy', 'scipy', 'soundcard'}:
+            raise RuntimeError('Discovery imported capture libraries: ' + fullname)
+sys.meta_path.insert(0, NoCaptureImports())
+from linguaflow.audio import Device, discover_devices
+assert Device('fixture', 'source', False).id == 'fixture'
+assert callable(discover_devices)
+'''
+    result = subprocess.run([sys.executable, '-c', source], capture_output=True,
+                            text=True, encoding='utf-8', timeout=10)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.p1
+@pytest.mark.parametrize('outcome', ['success', 'failure', 'timeout', 'invalid'])
+def test_device_discovery_reaps_its_owned_process_on_every_result(monkeypatch, outcome):
+    from linguaflow import process_platform
+    from linguaflow.audio import Device, discover_devices
+    calls = []
+    job = object()
+    def communicate(timeout):
+        assert timeout == 15
+        if outcome == 'timeout':
+            raise subprocess.TimeoutExpired('synthetic-device-discovery', timeout)
+        output = json.dumps([dict(id='fixture', name='隔离来源', loopback=False)]).encode('utf-8')
+        return (b'invalid' if outcome == 'invalid' else output), b'fixture failure'
+    process = SimpleNamespace(communicate=communicate, returncode=1 if outcome == 'failure' else 0)
+    def start(python, module, **options):
+        assert module == 'linguaflow.audio'
+        assert options['stdin'] == subprocess.DEVNULL
+        return process, job
+    monkeypatch.setattr(process_platform, 'start_worker', start)
+    monkeypatch.setattr(process_platform, 'stop_worker', lambda p, j, threads, **kw: calls.append(('stop', p, j, kw)))
+    monkeypatch.setattr(process_platform, 'close_process_pipes', lambda p: calls.append(('close', p)))
+    if outcome == 'success':
+        assert discover_devices() == [Device('fixture', '隔离来源', False)]
+    else:
+        with pytest.raises(json.JSONDecodeError if outcome == 'invalid' else RuntimeError):
+            discover_devices()
+    assert calls == [('stop', process, job, {'force': True}), ('close', process)]
+
+
+@pytest.mark.p1
 @pytest.mark.parametrize("rate, frames", [(16000, 1600), (48000, 4800)])
 @pytest.mark.parametrize("platform", ["darwin", "win32"])
 def test_stereo_capture_downmixes_resamples_and_stops(monkeypatch, rate, frames, platform):
     monkeypatch.setattr(sys, "platform", platform)
+    if rate == 48000:
+        import builtins
+        original_import = builtins.__import__
+        def without_resampling(name, *args, **kwargs):
+            if name.split('.')[0] == 'scipy':
+                pytest.fail('48kHz capture must not load unused SciPy/BLAS before the first PCM block')
+            return original_import(name, *args, **kwargs)
+        monkeypatch.setattr(builtins, '__import__', without_resampling)
     class Recorder:
         def __enter__(self):
             return self

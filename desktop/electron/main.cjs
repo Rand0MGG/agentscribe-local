@@ -17,7 +17,7 @@ const methods = new Set([
   'recording.start', 'recording.stop', 'recording.pause', 'playback.toggle', 'playback.seek',
   'playback.volume', 'models.prepare', 'models.cancel', 'models.retry', 'knowledge.open', 'knowledge.command',
   'models.inventory', 'models.delete', 'updates.check', 'library.cancel_migration',
-  'models.check', 'models.cancel_check',
+  'models.check', 'models.cancel_check', 'layout.sidebar',
   'recording.close_recovered', 'knowledge.image',
 ]);
 let window, overlay, knowledge, service, quitting = false, state, preferences, overlayRows = [];
@@ -29,6 +29,11 @@ let closePrompt = false, switching = false, bootstrapped = false;
 let platformHints = { doubleClickInterval: 500, dragDistance: 10 };
 let material, materialTimer, materialRefresh, materialBusy = false, materialAgain = false;
 const desktopPython = () => process.env.AGENTSCRIBE_DESKTOP_PYTHON || path.join(root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
+const titlebarOverlay = () => ({ color: '#00000000',
+  symbolColor: preferences?.appearance === 'dark' ? '#ededf0' : '#29292d', height: 36 });
+function updateWindowControls() {
+  if (process.platform === 'win32' && window && !window.isDestroyed()) window.setTitleBarOverlay(titlebarOverlay());
+}
 function materialPosition() {
   if (!window || window.isDestroyed() || !material) return null;
   const bounds = window.getContentBounds(), display = screen.getDisplayMatching(bounds);
@@ -104,9 +109,8 @@ function secureWindow(options, inactive = false) {
 function createWindow() {
   window = secureWindow({ width: 1280, height: 840, minWidth: 640, minHeight: 480,
     title: 'AgentScribe · 本地同声字幕', backgroundColor: '#f7f5f5',
-    titleBarStyle: 'hidden', ...(process.platform === 'win32' ? { titleBarOverlay: {
-      color: '#f7f5f5', symbolColor: '#29292d', height: 36,
-    } } : {}), ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 16, y: 13 } } : {}),
+    titleBarStyle: 'hidden', ...(process.platform === 'win32' ? { titleBarOverlay: titlebarOverlay() } : {}),
+    ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 16, y: 13 } } : {}),
   });
   window.loadFile(page, process.argv.includes('--components') ? { hash: 'components' } : {});
   window.on('move', () => { publish({ event: 'material', data: materialPosition() }); requestMaterial(); });
@@ -252,7 +256,8 @@ ipcMain.handle('desktop:request', async (event, request) => {
   }
   if (!service || service.closed) throw new Error(fault || '本地后台未连接，请重新打开应用。');
   if (method === 'path.reveal' || method === 'path.diagnostics') {
-    const destination = await service.request(method === 'path.reveal' ? 'path.recording' : 'path.diagnostics');
+    const destination = await service.request(method === 'path.reveal' ? 'path.recording' : 'path.diagnostics',
+      method === 'path.reveal' && params.identifier !== undefined ? { identifier: params.identifier } : {});
     const error = await shell.openPath(destination);
     if (error) throw new Error(error);
     return;
@@ -292,6 +297,7 @@ ipcMain.handle('desktop:request', async (event, request) => {
   if (method === 'bootstrap') {
     installed = result.installed;
     preferences = result.settings;
+    updateWindowControls();
     requestMaterial();
     state = result.state;
     overlayRows = result.captions.rows.slice(-2);
@@ -337,10 +343,7 @@ else {
       if (value.event === 'settings') {
         preferences = value.data;
         requestMaterial();
-        if (process.platform === 'win32' && window && !window.isDestroyed()) window.setTitleBarOverlay({
-          color: preferences.appearance === 'dark' ? '#272629' : '#f7f5f5',
-          symbolColor: preferences.appearance === 'dark' ? '#ededf0' : '#29292d',
-        });
+        updateWindowControls();
       }
       if (value.event === 'captions') overlayRows = value.data.rows.slice(-2);
       if (value.event === 'caption') {

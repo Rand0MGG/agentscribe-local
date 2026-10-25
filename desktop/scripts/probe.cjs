@@ -44,6 +44,7 @@ library.save(item, [
     const page = await desktop.firstWindow();
     page.on('pageerror', error => errors.push(error.message));
     await page.getByRole('button', { name: '新录音', exact: false }).first().waitFor();
+    await require('./titlebar-checks.cjs')(desktop, page);
     assert(await page.getByRole('button', { name: '开始聆听', exact: true }).isDisabled());
     await page.locator('.recording-title').click();
     await page.getByRole('textbox', { name: '录音名称', exact: true }).fill('待录音 · 不创建文件');
@@ -250,13 +251,14 @@ library.save(item, [
     await page.getByRole('button', { name: '修订示例文字', exact: true }).click();
     assert.equal(await page.getByLabel('动态字幕示例').textContent(), '修订立即替换。');
     const seek = page.getByRole('slider', { name: '播放位置', exact: true });
-    const before = await seek.evaluate(element => ({ width: element.getBoundingClientRect().width, y: element.getBoundingClientRect().top + window.scrollY }));
+    // Compare rendered device pixels, not DOM floating-point roundoff at 150%.
+    const before = await seek.evaluate(element => ({ width: Math.round(element.getBoundingClientRect().width * devicePixelRatio), y: Math.round((element.getBoundingClientRect().top + window.scrollY) * devicePixelRatio) }));
     await page.getByRole('button', { name: '回放音量', exact: true }).click();
     const gain = page.getByRole('slider', { name: '回放音量百分比', exact: true });
     await gain.waitFor();
     await gain.focus(); await page.keyboard.press('ArrowUp');
     await page.waitForFunction(() => document.querySelector('[role="slider"][aria-label="回放音量百分比"]')?.getAttribute('aria-valuenow') === '102');
-    const after = await seek.evaluate(element => ({ width: element.getBoundingClientRect().width, y: element.getBoundingClientRect().top + window.scrollY }));
+    const after = await seek.evaluate(element => ({ width: Math.round(element.getBoundingClientRect().width * devicePixelRatio), y: Math.round((element.getBoundingClientRect().top + window.scrollY) * devicePixelRatio) }));
     assert.equal(after.width, before.width); assert.equal(after.y, before.y);
     await page.screenshot({ path: path.join(evidence, 'playback-volume.png'), scale: 'css' });
     await page.screenshot({ path: path.join(evidence, 'components-light.png') });

@@ -1,11 +1,10 @@
 """SoundCard uses WASAPI on Windows and CoreAudio on macOS."""
 
+import json
+import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from platform import mac_ver
-
-import numpy as np
-from scipy.signal import resample_poly
 
 MAC_SYSTEM_AUDIO = "macos:system-audio"
 
@@ -30,6 +29,26 @@ def list_devices() -> list[Device]:
     return result
 
 
+def discover_devices() -> list[Device]:
+    """Bound native discovery to an owned process; keep COM out of UI threads."""
+    from .process_platform import close_process_pipes, start_worker, stop_worker
+    from .runtime_paths import knowledge_python, python_environment, resource_root
+    process, job = start_worker(knowledge_python(), 'linguaflow.audio', env=python_environment(),
+                                cwd=resource_root(), stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        try:
+            output, errors = process.communicate(timeout=15)
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError('音频来源检查超时，请检查设备连接后重新刷新。') from exc
+        if process.returncode:
+            raise RuntimeError('无法刷新音频来源，请检查设备连接后重试：' + errors.decode('utf-8', errors='replace').strip())
+        return [Device(**row) for row in json.loads(output.decode('utf-8'))]
+    finally:
+        stop_worker(process, job, (), force=True)
+        close_process_pipes(process)
+
+
 def capture(settings, stop, on_block):
     if stop.is_set():
         return
@@ -39,7 +58,15 @@ def capture(settings, stop, on_block):
         return
     if sys.platform == "darwin" and settings.loopback:
         raise RuntimeError("macOS 不支持 Windows 系统回环配置，请在音频来源中重新选择“系统音频 · 电脑声音”；macOS 13 以下请选择已配置的音频输入。")
+    import numpy as np
     import soundcard as sc
+
+    # Both desktop frontends capture at 48kHz. Do not load SciPy/BLAS before
+    # opening that stream when no resampling is needed (cold native DLL loads
+    # can stall alongside concurrent model-cache imports on Windows).
+    output_rate = getattr(settings, 'input_sample_rate', 16000)
+    if output_rate != 48000:
+        from scipy.signal import resample_poly
 
     # Resolve inside the capture thread; native audio handles stay thread-local.
     devices = sc.all_microphones(include_loopback=settings.loopback)
@@ -59,7 +86,10 @@ def capture(settings, stop, on_block):
         options["blocksize"] = 48000
     if stop.is_set():
         return
+    from . import diagnostic_log as diag
+    diag.event('capture_backend_open', output_rate=output_rate, loopback=bool(settings.loopback))
     with mic.recorder(**options) as recorder:
+        diag.event('capture_backend_started')
         while not stop.is_set():
             data = recorder.record(numframes=4800)
             data = np.asarray(data, dtype=np.float32)
@@ -68,6 +98,10 @@ def capture(settings, stop, on_block):
             if not np.isfinite(data).all():
                 raise RuntimeError("录音设备返回了无效采样，请重新连接设备。")
             mono = np.asarray(data, dtype=np.float32).mean(axis=1)
-            samples = (mono if getattr(settings, "input_sample_rate", 16000) == 48000
+            samples = (mono if output_rate == 48000
                        else resample_poly(mono, 1, 3).astype(np.float32))
             on_block(samples)
+
+
+if __name__ == '__main__':
+    print(json.dumps([asdict(device) for device in list_devices()], ensure_ascii=False))

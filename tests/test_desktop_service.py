@@ -10,6 +10,7 @@ from threading import Event
 import pytest
 from PySide6.QtCore import QCoreApplication, QObject, QSettings, Signal
 
+from linguaflow.audio import Device
 from linguaflow.core import Caption
 from linguaflow.desktop_service import DesktopService
 from linguaflow.library_access import acquire_recording_lock
@@ -42,6 +43,49 @@ def drain(service):
         QCoreApplication.instance().processEvents()
         assert time.monotonic() < deadline
         time.sleep(.005)
+
+
+@pytest.mark.p2
+def test_sidebar_width_is_validated_and_persisted_without_changing_model_settings(desktop):
+    original = dict(desktop.values)
+    assert desktop.bootstrap()['layout']['sidebar_width'] is None
+    assert desktop.set_sidebar_width(320) == 320
+    assert desktop.bootstrap()['layout']['sidebar_width'] == 320
+    assert desktop.prefs.value('electron_sidebar_width', type=int) == 320
+    for invalid in (True, None, '320', 179, 421):
+        with pytest.raises(ValueError, match='宽度'):
+            desktop.set_sidebar_width(invalid)
+    assert desktop.values == original
+
+
+@pytest.mark.p0
+def test_reveal_path_accepts_only_library_identifiers_without_switching_recording(desktop):
+    desktop._create_recording(name='当前录音')
+    current = desktop.item
+    folder = desktop.library.folder('另一个文件夹')
+    other = desktop.library.create(folder['id'], {}, '另一个录音')
+    assert desktop.recording_path(other['id']) == str(desktop.library.directory(other['id']))
+    assert desktop.recording_path(folder['id']) == str(desktop.library.directory(folder['id']))
+    for invalid in ('../outside', str(desktop.library.root.parent), 'missing'):
+        with pytest.raises(ValueError):
+            desktop.recording_path(invalid)
+    assert desktop.item == current
+
+
+@pytest.mark.p1
+@pytest.mark.parametrize('previous,available', [(None, True), (('missing', False), True), (('missing', False), False)])
+def test_source_refresh_selects_only_first_use_and_reports_current_selection(desktop, monkeypatch, previous, available):
+    desktop.device = previous
+    monkeypatch.setattr(desktop, '_audio_allowed', lambda: None)
+    monkeypatch.setattr('linguaflow.audio.discover_devices', lambda: [Device('fixture', '隔离输入', False)] if available else [])
+    replies = []
+    desktop.output.connect(replies.append)
+    desktop.refresh_devices()
+    assert desktop.bootstrap()['audio_refreshing']
+    drain(desktop)
+    assert not desktop.bootstrap()['audio_refreshing']
+    assert desktop.device == (('fixture', False) if previous is None and available else previous)
+    assert any(row.get('event') == 'device' and row['data'] == desktop.device for row in replies)
 
 
 @pytest.mark.p1
@@ -245,6 +289,51 @@ def test_desktop_protocol_rejects_unknown_commands_and_native_audio(desktop):
     assert replies[-1]['result']['no_audio']
 
 
+@pytest.mark.p1
+@pytest.mark.parametrize('outcome', ['success', 'failure', 'closing'])
+def test_slow_device_refresh_keeps_protocol_responsive_and_preserves_results(desktop, monkeypatch, outcome):
+    entered, release = Event(), Event()
+    calls = []
+    old = [dict(id='old', name='Previous source', loopback=False)]
+    desktop.devices = old
+    def discover():
+        calls.append(True)
+        entered.set()
+        assert release.wait(2), 'device discovery blocked the protocol thread'
+        if outcome == 'failure':
+            raise RuntimeError('Device discovery failed; refresh again.')
+        return [Device('new', 'New source', False)]
+    # Only the synthetic discovery is permitted; the native-audio guard remains.
+    monkeypatch.setattr(desktop, '_audio_allowed', lambda: None)
+    monkeypatch.setattr('linguaflow.audio.discover_devices', discover)
+    replies = []
+    desktop.output.connect(replies.append)
+    try:
+        desktop.dispatch({'version': 1, 'id': 81, 'method': 'audio.refresh'})
+        assert entered.wait(1)
+        assert next(value for value in replies if value.get('id') == 81).get('error') is None
+        desktop.dispatch({'version': 1, 'id': 82, 'method': 'bootstrap'})
+        assert next(value for value in replies if value.get('id') == 82)['result']['devices'] == old
+        desktop.refresh_devices()
+        assert len(calls) == 1
+        if outcome == 'closing':
+            desktop.closing = True
+            monkeypatch.setattr(desktop, '_continue_close', lambda: None)
+    finally:
+        release.set()
+        drain(desktop)
+    for value in replies:
+        json.dumps(value, ensure_ascii=False)
+    if outcome == 'success':
+        assert desktop.devices == [dict(id='new', name='New source', loopback=False)]
+        assert any(value.get('event') == 'devices' and value['data'] == desktop.devices for value in replies)
+    else:
+        assert desktop.devices == old
+        assert not any(value.get('event') == 'devices' for value in replies)
+        if outcome == 'failure':
+            assert any(value.get('event') == 'notice' and value['data'].get('error') for value in replies)
+
+
 @pytest.mark.p0
 def test_desktop_slow_open_keeps_commands_responsive_and_cancel_preserves_view(desktop, monkeypatch):
     service = desktop
@@ -299,7 +388,25 @@ def test_desktop_active_rename_keeps_writer_path_until_final_save(desktop):
 
 
 @pytest.mark.p1
-def test_desktop_preview_recovery_and_bounded_pages(desktop):
+def test_saved_transcript_opens_complete_from_beginning_and_keeps_live_window_bounded(desktop):
+    rows = [Caption(i, i * 2, i * 2 + 2, f'Sentence {i}', 'en', final=True) for i in range(650)]
+    desktop._select(None, rows)
+    for params in ({}, {'locate': 425}, {'seconds': 850}, {'start': 200}):
+        page = desktop.page(**params)
+        assert page['start'] == 0
+        assert [row['id'] for row in page['rows']] == list(range(650))
+    assert len(desktop.bootstrap()['captions']['rows']) == 650
+    from linguaflow.recording_state import RecordingState
+    desktop.state = RecordingState.LISTENING
+    try:
+        assert desktop.page()['start'] == 450
+        assert len(desktop.page()['rows']) == 200
+    finally:
+        desktop.state = RecordingState.IDLE
+
+
+@pytest.mark.p1
+def test_desktop_preview_recovery_preserves_complete_saved_transcript(desktop):
     service = desktop
     service._create_recording(name='分页')
     for number in range(450):
@@ -308,7 +415,7 @@ def test_desktop_preview_recovery_and_bounded_pages(desktop):
                        'start': 449, 'end': 451, 'language': 'en'}
     service._save('incomplete')
     drain(service)
-    assert len(service.page()['rows']) == 200
+    assert len(service.page()['rows']) == 450
     assert service.page(locate=5)['rows'][0]['id'] == 0
     saved = service.library.load(service.item)[1]
     assert saved[-1].source == 'Latest recognized tail' and not saved[-1].final
@@ -372,6 +479,47 @@ def test_desktop_recovery_receipt_rejects_changed_backup_and_new_caption(desktop
     assert service.item is None and not service.dirty
     assert 'Original draft' in backup.read_text('utf-8-sig')
     assert 'New draft' in backup.read_text('utf-8-sig')
+
+
+@pytest.mark.p1
+def test_capture_feedback_distinguishes_audio_and_model_lifecycle(desktop):
+    from types import SimpleNamespace
+
+    from linguaflow.recording_state import RecordingState
+    ready = Event()
+    desktop.session = SimpleNamespace(model_ready=ready)
+    try:
+        desktop.state = RecordingState.STARTING
+        starting = desktop.snapshot()['capture']
+        assert starting == {'label': '正在启动…', 'volume_label': '准备收音', 'waiting': '正在连接音频来源…', 'model_loading': True}
+        desktop._source_changed(0)
+        capturing = desktop.snapshot()['capture']
+        assert capturing['label'] == '录音中' and capturing['waiting'] == '录音已开始'
+        assert capturing['volume_label'] == '输入音量' and capturing['model_loading']
+        desktop.pending_source_revision = 2
+        replies = []
+        desktop.output.connect(replies.append)
+        desktop._source_changed(2)
+        assert desktop.pending_source_revision is None
+        assert replies[-1]['event'] == 'state' and replies[-1]['data']['capture']['volume_label'] == '输入音量'
+        ready.set()
+        desktop._ready()
+        assert not desktop.snapshot()['capture']['model_loading']
+        assert desktop.snapshot()['capture']['waiting'] == '正在聆听…'
+        desktop._stage('音频', '输入持续为零，请检查来源 / 静音')
+        assert desktop.snapshot()['capture']['waiting'].startswith('没有收到声音。')
+        desktop.state = RecordingState.PAUSED
+        assert desktop.snapshot()['capture']['volume_label'] == '已暂停'
+        desktop.pending_source_revision = 2
+        assert desktop.snapshot()['capture']['volume_label'] == '继续后切换'
+        ready.clear()
+        desktop.state = RecordingState.STOPPING
+        assert not desktop.snapshot()['capture']['model_loading']
+        assert desktop.snapshot()['capture']['volume_label'] == '收尾中'
+    finally:
+        desktop.session = None
+        desktop.state = RecordingState.IDLE
+        desktop.pending_source_revision = None
 
 
 @pytest.mark.p1

@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 import { usePageTransition } from './motion';
-import { Button, Choice, ConfirmDialog, Modal, SettingsRow, Toggle } from './components';
+import { Button, Choice, ConfirmDialog, Modal, NumberField, SettingsRow, Toggle } from './components';
 import { bridge, request, type Bootstrap, type Settings, type State } from './types';
 
 const categories = ['常规', '聆听', '模型管理', '字幕与延迟', '运行环境', '使用指南'];
 const backendNames: Record<string, string> = { 'wlk-whisper': 'WhisperLiveKit · Whisper / AlignAtt', 'qwen3-streaming': 'WhisperLiveKit · Qwen3-ASR 流式', 'qwen3-mlx': 'Qwen3-ASR · MLX（试验）' };
 const deviceNames: Record<string, string> = { cpu: 'CPU（通用）', cuda: 'NVIDIA GPU · 半精度', mlx: 'Apple GPU · Metal / MLX', metal: 'Apple GPU · Metal' };
 
-export function SettingsPage({ data, values, state, switchDisabled, updatesBusy, onClose, onDeleted, perform, onPatch, onCategory, initialCategory = '常规' }: {
-  data: Bootstrap; values: Settings; state: State; switchDisabled: boolean; updatesBusy: boolean; onClose: () => void; onDeleted: () => void;
+export function SettingsPage({ data, values, state, switchDisabled, updatesBusy, audioBusy, audioMessage, onClose, onDeleted, perform, onPatch, onCategory, initialCategory = '常规' }: {
+  audioBusy: boolean; audioMessage: string; data: Bootstrap; values: Settings; state: State; switchDisabled: boolean; updatesBusy: boolean; onClose: () => void; onDeleted: () => void;
   perform: (method: string, params?: Record<string, unknown>) => Promise<any>;
   onPatch: (values: Settings) => void; onCategory?: (category: string) => void; initialCategory?: string;
 }) {
@@ -58,7 +58,7 @@ export function SettingsPage({ data, values, state, switchDisabled, updatesBusy,
     <p className="settings-footnote">更改将用于下一次录音</p>
   </aside><section className="settings-content"><header><h1>{visibleCategories.length ? category : '搜索设置'}</h1><p>{visibleCategories.length ? descriptions[category] : ''}</p></header>
     {!visibleCategories.length && <div className="settings-empty"><h2>没有找到这个设置</h2><p>试试「字幕」「GPU」「保存位置」或「翻译」。</p><Button onClick={() => setQuery('')}>清除搜索</Button></div>}
-    <div className="settings-scroll" hidden={!visibleCategories.length}><div className={`settings-page-body ${category === '模型管理' ? 'models-page' : ''}`} ref={pageTransition}>
+    <div key={category} className="settings-scroll" hidden={!visibleCategories.length}><div className={`settings-page-body ${category === '模型管理' ? 'models-page' : ''}`} ref={pageTransition}>
     {category === '常规' && <><h3>文件与存储</h3><div className="settings-group">
       <SettingsRow title="录音保存位置" hint={data.root}><Button onClick={() => perform('path.reveal')}>打开</Button><Button disabled={state.migrating} onClick={() => perform('library.migrate')}>更改…</Button>{state.migrating && <Button onClick={() => perform('library.cancel_migration')}>取消迁移</Button>}</SettingsRow>
       <SettingsRow title="最近删除" hint="删除的文件先保留在录音目录的「垃圾桶」文件夹，可随时恢复。"><Button onClick={onDeleted}>查看最近删除</Button></SettingsRow>
@@ -69,7 +69,7 @@ export function SettingsPage({ data, values, state, switchDisabled, updatesBusy,
     </div></>}
     {category === '聆听' && <><h3>输入与语言</h3><div className="settings-group">
       <SettingsRow title="音频来源" hint={data.platform === 'darwin' ? '电脑声音选择“系统音频”。首次使用时需允许系统录制权限。' : '选择麦克风或正在播放声音的设备。'}><Choice label="音频来源" className="audio-device-choice" disabled={data.no_audio || !['IDLE', 'LISTENING', 'PAUSED'].includes(state.state)} value={data.device ? JSON.stringify(data.device) : ''} options={data.devices.map(device => ({ value: JSON.stringify([device.id, device.loopback]), label: device.name }))} onChange={value => { const [identifier, loopback] = JSON.parse(value); perform('audio.select', { identifier, loopback }); }} /></SettingsRow>
-      <SettingsRow title="设备列表" hint="连接新设备后刷新。"><Button disabled={data.no_audio} onClick={() => perform('audio.refresh')}>刷新设备</Button></SettingsRow>
+      <SettingsRow title="设备列表" hint={audioMessage || '连接新设备后刷新。'}><Button disabled={data.no_audio || audioBusy} onClick={() => perform('audio.refresh')}>{audioBusy ? '正在刷新…' : '刷新设备'}</Button></SettingsRow>
       <SettingsRow title="原文语言" hint="Qwen 需要明确选择原文语言。">{choices('原文语言', 'source', [...(values.backend === 'wlk-whisper' ? [{ value: '自动检测', label: '自动检测' }] : []), ...languages])}</SettingsRow>
       <SettingsRow title="翻译语言" hint="选择定稿与实时译文使用的语言。">{choices('翻译为', 'target', languages)}</SettingsRow>
       <SettingsRow title="启用翻译" hint="开启本地翻译并保存译文；关闭后仅识别和保存原文。"><Toggle label="启用翻译" disabled={!state.translation_available} value={!!values.translate && state.translation_available} onChange={value => onPatch({ translate: value })} /></SettingsRow>
@@ -77,7 +77,14 @@ export function SettingsPage({ data, values, state, switchDisabled, updatesBusy,
     {category === '模型管理' && <><div className="settings-actions"><Button disabled={active} onClick={() => setCatalog(true)}>下载模型…</Button></div>
       <div className="model-roles">{role('asr', '语音识别')}{role('translation', '翻译')}</div>
       {(checking || inventoryMessage || !inventory.length) && <p className="inventory-status" role="status">{checking ? '正在读取本地模型…' : inventoryMessage || (inventory.length ? '双击模型可查看引擎与参数；使用模型需在窗口中确认。' : '还没有下载模型。点击“下载模型”选择一个模型，或直接下载推荐组合。')}</p>}
-      <div className="model-inventory" role="listbox" aria-label="本地模型">{inventory.map(model => <button key={model.id} role="option" aria-selected={selectedId === model.id} className={selectedId === model.id ? 'selected' : ''} title={model.path} onClick={() => setSelectedId(model.id)} onDoubleClick={() => inspect(model)} onKeyDown={event => { if (event.key === 'Enter') inspect(model); }}>
+      <div className="model-inventory" role="listbox" aria-label="本地模型">{inventory.map(model => <button key={model.id} role="option" aria-selected={selectedId === model.id} className={selectedId === model.id ? 'selected' : ''} tabIndex={selectedId === model.id ? 0 : -1} title={model.path} onFocus={() => setSelectedId(model.id)} onClick={() => setSelectedId(model.id)} onDoubleClick={() => inspect(model)} onKeyDown={event => {
+        if (event.key === 'Enter') { event.preventDefault(); inspect(model); return; }
+        if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const rows = [...event.currentTarget.parentElement!.querySelectorAll<HTMLButtonElement>('[role=option]')];
+        const index = rows.indexOf(event.currentTarget), next = event.key === 'Home' ? 0 : event.key === 'End' ? rows.length - 1 : Math.max(0, Math.min(rows.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)));
+        rows[next]?.focus();
+      }}>
         <span>{{ asr: '识别', translation: '翻译', alignment: '时间对齐 · 当前流程未使用' }[model.kind as string] || '模型'}  ·  {model.name}</span><span>{backendNames[model.engine] || model.engine || '独立组件'} · {(model.size / 1024 ** 3).toFixed(2)} GB</span>
       </button>)}</div>
       <div className="settings-actions"><Button disabled={checking} onClick={() => perform('models.inventory')}>刷新</Button><Button variant="danger" disabled={!selected?.deletable || active || checking || state.preparing} onClick={() => setDeleting(selected)}>删除模型</Button></div>
@@ -85,7 +92,7 @@ export function SettingsPage({ data, values, state, switchDisabled, updatesBusy,
       {modelCheck && <p role="status">{modelCheck}</p>}
     </>}
     {category === '字幕与延迟' && <div className="settings-form"><p className="muted">沿用当前识别参数。以下时间是请求与停顿检测目标，不是动态窗口长度，也不保证实际刷新速度。</p><Button aria-expanded={advanced} onClick={() => setAdvanced(!advanced)}>{advanced ? '收起高级参数' : '显示高级参数'}</Button>
-      {advanced && [['update_seconds', '音频合并间隔'], ['draft_seconds', 'Qwen 原文草稿刷新目标'], ['endpoint_seconds', 'ASR 停顿检测（不直接定稿）']].map(([key, title]) => <div className="parameter-field" key={key}><label htmlFor={key}>{title}</label><div className="number-field"><input id={key} title={parameterHelp[key]} type="number" min={key === 'draft_seconds' ? .25 : .5} max={3} step={key === 'draft_seconds' ? .25 : .5} defaultValue={Number(values[key])} onBlur={event => { if (event.target.checkValidity()) onPatch({ [key]: Number(event.target.value) }); }} /><span>秒</span></div></div>)}
+      {advanced && [['update_seconds', '音频合并间隔'], ['draft_seconds', 'Qwen 原文草稿刷新目标'], ['endpoint_seconds', 'ASR 停顿检测（不直接定稿）']].map(([key, title]) => <div className="parameter-field" key={key}><label htmlFor={key}>{title}</label><NumberField id={key} label={title} help={parameterHelp[key]} value={Number(values[key])} min={key === 'draft_seconds' ? .25 : .5} max={3} step={key === 'draft_seconds' ? .25 : .5} onCommit={value => request('settings.set', { values: { [key]: value } })} /></div>)}
       {advanced && <p className="muted">默认保持流畅且不过度占用计算资源；更小的间隔可能增加负载，不保证实际刷新速度。</p>}
     </div>}
     {category === '运行环境' && <div className="settings-form"><h3>本地推理组件</h3><p>统一检查识别与翻译所需组件；缺失或损坏时自动修复。</p>
@@ -209,7 +216,7 @@ function ModelEditor({ kind, entry, data, values, disabled, onClose }: { kind: '
     <p className="muted">{modelHints[engine]}</p>{kind === 'translation' && <p className="document-text muted">{data.options.generation?.[engine === 'llama' || String(draft[modelKey]).toLowerCase().includes('hy-mt2') ? 'hy' : 'nllb']}</p>}
     <SettingsRow title="模型 / 下载地址"><ModelField label="模型 / 下载地址" value={String(draft[modelKey])} options={data.options.models[engine]} onChange={value => patch({ [modelKey]: value })} /></SettingsRow>
     <SettingsRow title="计算设备"><Choice label="计算设备" value={String(draft[deviceKey])} options={devices.map(value => ({ value: kind === 'asr' ? deviceNames[value] : value, label: deviceNames[value] }))} onChange={value => patch({ [deviceKey]: value })} /></SettingsRow>
-    {kind === 'asr' && [['draft_seconds', '草稿刷新目标'], ['update_seconds', '音频合并间隔'], ['endpoint_seconds', '停顿检测阈值']].filter(([key]) => engine !== 'wlk-whisper' || key !== 'draft_seconds').map(([key, label]) => <SettingsRow key={key} title={label} hint={parameterHelp[key]}><input aria-label={label} type="number" min={key === 'draft_seconds' ? .25 : .5} max={3} step={key === 'draft_seconds' ? .25 : .5} value={Number(draft[key])} onChange={event => patch({ [key]: Number(event.target.value) })} />秒</SettingsRow>)}
+    {kind === 'asr' && [['draft_seconds', '草稿刷新目标'], ['update_seconds', '音频合并间隔'], ['endpoint_seconds', '停顿检测阈值']].filter(([key]) => engine !== 'wlk-whisper' || key !== 'draft_seconds').map(([key, label]) => <SettingsRow key={key} title={label}><NumberField label={label} help={parameterHelp[key]} value={Number(draft[key])} min={key === 'draft_seconds' ? .25 : .5} max={3} step={key === 'draft_seconds' ? .25 : .5} onCommit={value => patch({ [key]: value })} /></SettingsRow>)}
     <div className="settings-actions"><Button disabled={busy} onClick={async () => { try { const result = await request('models.choose', { key: modelKey, apply: false }); if (result.path) patch({ [modelKey]: result.path }); } catch (error) { setError((error as Error).message); } }}>导入本地模型…</Button><Button disabled={disabled || busy} onClick={() => submit(true)}>下载模型</Button></div></>}
     {error && <p className="error" role="alert">{error}</p>}</div>
   </Modal>;

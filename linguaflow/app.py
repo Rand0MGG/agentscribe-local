@@ -71,7 +71,7 @@ from .qt_controls import data_index
 from .qt_controls import text_label as label
 from .recording_controls import RecordingControls
 from .recording_save import RecordingSaver
-from .recording_state import RecordingState
+from .recording_state import RecordingState, capture_feedback
 from .runtime_preparation import RuntimePreparation
 from .settings_binding import SettingsBinding
 from .subtitles_overlay import Overlay
@@ -1613,6 +1613,8 @@ class Window(QMainWindow):
         self.export_button.setEnabled(any(c.final and c.source for c in captions))
         self.attach_knowledge()
         self.prepare_playback()
+        if self.cards and not self.scroll.playback_mode:
+            self.scroll.reveal_card(self.cards[min(self.cards)])
         self.update_recording_hint()
 
     def open_knowledge(self):
@@ -2030,12 +2032,7 @@ class Window(QMainWindow):
         source = self.quick_device.currentData()
         category = ('系统音频' if source[1] else '外部输入') if source else '音频音量'
         state = self.recording_state
-        detail = ('收尾中' if state is RecordingState.STOPPING else
-                  '继续后切换' if self.pending_source_revision is not None and state is RecordingState.PAUSED else
-                  '正在切换…' if self.pending_source_revision is not None else
-                  '已暂停' if state is RecordingState.PAUSED else
-                  '输入音量' if state is RecordingState.LISTENING else
-                  '准备收音' if state.active else '')
+        detail = capture_feedback(state, source_pending=self.pending_source_revision is not None)['volume_label']
         self.volume_caption.setText(detail)
         self.volume_caption.setToolTip(category + ' · ' + detail)
         visible = state.active and self.transport.currentWidget() is self.live_transport
@@ -2389,7 +2386,7 @@ class Window(QMainWindow):
             diag.event('recording_state', state=state.name,
                        recording_id=self.current_item['id'] if self.current_item else None)
         self.recording_state = state
-        self.state_caption.setText('录音中' if state is RecordingState.LISTENING else state.value)
+        self.state_caption.setText(capture_feedback(state)['label'])
         self.update_capture_feedback()
         if state is RecordingState.STARTING:
             self.capture_time.setText('00:00:00')
@@ -2463,22 +2460,13 @@ class Window(QMainWindow):
                 self.empty.setText(self.capture_wait_text())
 
     def capture_wait_text(self):
-        state = self.recording_state
-        if state is RecordingState.IDLE:
-            return '等待语音…'
-        if state is RecordingState.STARTING:
-            return '正在连接音频来源…'
-        if state is not RecordingState.LISTENING:
-            return state.value
         ready = getattr(self.session, 'model_ready', None)
-        return ('录音已开始'
-                if ready is not None and not ready.is_set() else '正在聆听…')
+        return capture_feedback(self.recording_state, model_ready=ready.is_set() if ready is not None else None)['waiting']
 
     def update_capture_feedback(self):
         ready = getattr(self.session, 'model_ready', None)
-        loading = (self.recording_state.active
-            and self.recording_state is not RecordingState.STOPPING
-            and not self.last_error and ready is not None and not ready.is_set())
+        loading = capture_feedback(self.recording_state, failed=bool(self.last_error),
+            model_ready=ready.is_set() if ready is not None else None)['model_loading']
         if loading:
             self.notifications.post('model-loading', '正在加载模型', kind='progress')
         else:

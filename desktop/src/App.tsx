@@ -1,8 +1,9 @@
 import { Deleted } from './Deleted';
 import { Transport } from './Transport';
+import { LibraryTree, ResizableSidebar } from './LibraryTree';
 import { useEffect, useRef, useState } from 'react';
 import { Tooltip } from 'radix-ui';
-import { ActionMenu, Button, Choice, ConfirmDialog, ContextActions, ControlPopover, EditDialog, Icon, IconMenu, InlineTitle, Modal, Tip, Toggle, type MenuAction } from './components';
+import { ActionMenu, Button, Choice, ConfirmDialog, ControlPopover, EditDialog, Icon, IconMenu, InlineTitle, Modal, Tip, Toggle, type MenuAction } from './components';
 import { Captions } from './Captions';
 import { SettingsPage, progressText, prepareRecommended } from './Settings';
 import { Playback } from './Playback';
@@ -10,6 +11,8 @@ import { LevelMeter, RecordingIsland } from './RecordingIsland';
 import { useMaterial, usePageTransition } from './motion';
 import { useNotifications } from './notifications';
 import { bridge, clock, request, type Bootstrap, type Caption, type Item, type Page, type Settings, type State } from './types';
+
+const blockingCommands = new Set(['recording.new', 'recording.open', 'recording.start', 'recording.stop', 'recording.pause', 'recording.save', 'recording.close_recovered', 'library.refresh', 'library.migrate', 'frontend.switch']);
 
 const emptyPage: Page = { generation: 0, revision: 0, start: 0, total: 0, rows: [] };
 type Editor = { title: string; initial?: string; save: (name: string) => Promise<unknown> };
@@ -30,30 +33,38 @@ export function App() {
   const [searchPage, setSearchPage] = useState(0), [searchTotal, setSearchTotal] = useState(0);
   const [diagnostics, setDiagnostics] = useState<string[]>([]), [showDiagnostics, setShowDiagnostics] = useState(false);
   const [loadingModel, setLoadingModel] = useState(false), [loadingHidden, setLoadingHidden] = useState(false), [preparationHidden, setPreparationHidden] = useState(false);
+  const modelLoading = data?.state.capture?.model_loading ?? loadingModel;
   const [guidance, setGuidance] = useState<string[] | null>(null), offeredGuidance = useRef(false);
   const [settingsCategory, setSettingsCategory] = useState('常规');
-  const [folder, setFolder] = useState(''), [collapsed, setCollapsed] = useState(new Set<string>());
-  const dataRef = useRef(data), pageRef = useRef(page), tail = useRef(true), searchGeneration = useRef(0), commands = useRef(new Set<string>());
+  const [folder, setFolder] = useState('');
+  const [audioBusy, setAudioBusy] = useState(false), [audioMessage, setAudioMessage] = useState('');
+  const dataRef = useRef(data), tail = useRef(true), searchGeneration = useRef(0), commands = useRef(new Set<string>());
   const stateGeneration = useRef(0);
-  const playbackPage = useRef<number | null>(null);
   const [seekRevision, setSeekRevision] = useState(0);
   const [updatesBusy, setUpdatesBusy] = useState(false);
-  dataRef.current = data; pageRef.current = page;
+  dataRef.current = data;
 
   async function perform(method: string, params: Record<string, unknown> = {}) {
     if (commands.current.has(method)) return;
-    commands.current.add(method); setBusy(true);
+    commands.current.add(method); setBusy([...commands.current].some(command => blockingCommands.has(command)));
     try {
       const result = await request(method, params);
-      if (method === 'audio.select') setData(old => old ? { ...old, device: result } : old);
+      if (method === 'audio.select') {
+        setData(old => old ? { ...old, device: result } : old);
+        setAudioMessage('已选择音频来源。'); setNotice(null, 'audio-discovery');
+      }
       return result;
     }
     catch (e) { setNotice({ text: (e as Error).message, error: true }); }
-    finally { commands.current.delete(method); setBusy(commands.current.size > 0); }
+    finally { commands.current.delete(method); setBusy([...commands.current].some(command => blockingCommands.has(command))); }
   }
   async function loadPage(start?: number, target?: number) {
     const generation = dataRef.current?.state.generation;
     tail.current = start === undefined && target === undefined;
+    if (dataRef.current?.state.state === 'IDLE') {
+      if (target !== undefined) setLocate(target);
+      return;
+    }
     try {
       const playbackTarget = start === undefined && target === undefined ? playback.caption_id : null;
       const result = await request<Page>('captions.page', { ...(start !== undefined ? { start } : {}), ...(target !== undefined || playbackTarget !== null ? { locate: target ?? playbackTarget } : {}) });
@@ -79,14 +90,26 @@ export function App() {
       if (event === 'library-root') setData(old => old ? { ...old, root: value } : old);
       if (event === 'updates') { setUpdatesBusy(!!value.busy); setNotice({ text: value.busy ? '正在检查更新…' : value.error || value.result?.message || '', error: !!value.error || value.result?.kind === 'error', busy: value.busy }, 'updates'); }
       if (event === 'settings') setData(old => old ? { ...old, settings: value } : old);
-      if (event === 'devices') setData(old => old ? { ...old, devices: value } : old);
+      if (event === 'devices') {
+        const previous = dataRef.current?.device;
+        const missing = previous && !value.some((row: Bootstrap['devices'][number]) => row.id === previous[0] && row.loopback === previous[1]);
+        const message = !value.length ? '未发现音频来源，请连接设备并检查麦克风权限。' : missing ? '上次的音频来源不可用，请重新选择系统音频或外部输入。' : `已刷新 · 找到 ${value.length} 个音频来源`;
+        setAudioMessage(message); setNotice({ text: message, error: !value.length || !!missing }, 'audio-discovery');
+        setData(old => old ? { ...old, devices: value } : old);
+      }
+      if (event === 'device') setData(old => old ? { ...old, device: value } : old);
+      if (event === 'audio-discovery') {
+        setAudioBusy(!!value.busy);
+        if (value.busy) setAudioMessage('正在检查音频来源…');
+        else if (value.error) setAudioMessage(`刷新失败，原列表保留：${value.error}`);
+      }
       if (event === 'captions' && value.generation === stateGeneration.current) setPage(value);
       if (event === 'caption') setPage(old => {
         if (old.generation !== value.generation) return old;
         let rows = old.rows.filter(row => row.id !== value.caption.id);
         if (value.caption.source && (tail.current || old.rows.some(row => row.id === value.caption.id))) rows.push(value.caption);
         rows.sort((a, b) => a.id - b.id);
-        if (rows.length > 200) rows = rows.slice(-200);
+        if (dataRef.current?.state.state !== 'IDLE' && rows.length > 200) rows = rows.slice(-200);
         return { ...old, rows, revision: value.revision, total: value.total, start: tail.current ? Math.max(0, value.total - rows.length) : old.start };
       });
       if (event === 'migration') setNotice({ text: typeof value.progress === 'number' ? `正在迁移录音… ${Math.round(value.progress)}%` : String(value.progress), busy: value.busy }, 'migration');
@@ -103,19 +126,13 @@ export function App() {
       if (event === 'playback') {
         if (value.seek) { tail.current = true; setLocate(null); setSeekRevision(old => old + 1); }
         setPlayback(old => ({ ...old, ...value, ...(scrubbing.current ? { position: old.position, caption_id: old.caption_id } : {}) }));
-        if (!scrubbing.current && value.caption_id != null && tail.current && playbackPage.current !== value.caption_id && !pageRef.current.rows.some(row => row.id === value.caption_id)) {
-          playbackPage.current = value.caption_id;
-          request<Page>('captions.page', { locate: value.caption_id }).then(result => {
-            if (result.generation === stateGeneration.current && tail.current) setPage(result);
-          }).catch(e => setNotice({ text: e.message, error: true })).finally(() => { playbackPage.current = null; });
-        }
       }
     });
     request<Bootstrap>('bootstrap').then(result => {
       if (!live) return;
       stateGeneration.current = result.state.generation;
       setPlayback({ position: 0, duration: result.state.playback?.duration || 0, state: 'StoppedState', caption_id: null }); setVolume(result.state.playback?.volume ?? 100);
-      setData(result); setPage(result.captions); setFolder(result.library.folders[0]?.id || '');
+      setAudioBusy(!!result.audio_refreshing); setData(result); setPage(result.captions); setFolder(result.library.folders[0]?.id || '');
       if (result.fault) setNotice({ text: result.fault, error: true });
       if (!result.no_audio) { perform('audio.refresh'); perform('models.check'); }
     }).catch(e => { if (live) setError(e.message); });
@@ -133,7 +150,7 @@ export function App() {
     wasPreparing.current = !!data?.state.preparing;
   }, [data?.state.preparing, data?.state.preparation_status, setNotice]);
   useEffect(() => { if (!data?.state.preparing) setPreparationHidden(false); }, [data?.state.preparing]);
-  useEffect(() => { setNotice(loadingModel && !loadingHidden ? { text: '正在加载模型', busy: true } : null, 'model-loading'); }, [loadingModel, loadingHidden, setNotice]);
+  useEffect(() => { if (!modelLoading) setLoadingHidden(false); setNotice(modelLoading && !loadingHidden ? { text: '正在加载模型', busy: true } : null, 'model-loading'); }, [modelLoading, loadingHidden, setNotice]);
   useEffect(() => { setNotice(data?.state.preparing && !preparationHidden && !(section === 'settings' && ['模型管理', '运行环境'].includes(settingsCategory)) ? { text: data.state.preparation_status + (data.state.progress ? ` · ${progressText(data.state.progress)}` : ''), busy: true } : null, 'preparation'); }, [data?.state.preparing, data?.state.preparation_status, data?.state.progress, preparationHidden, section, settingsCategory, setNotice]);
   useEffect(() => {
     if (search === null) return;
@@ -151,6 +168,7 @@ export function App() {
   const blocked = active || busy || state.saving || state.dirty || state.closing || state.migrating;
   const languages = data.options.languages.map(row => ({ value: row[0], label: row[0] }));
   const setSettings = (values: Settings) => { perform('settings.set', { values }); };
+  const sourceAvailable = !!data.device && data.devices.some(row => row.id === data.device![0] && row.loopback === data.device![1]);
   const open = async (item: Item) => { if (!blocked) { await perform('recording.open', { identifier: item.id }); setFolder(item.folder || folder); setSection('recording'); } };
   const newRecording = (folderId = folder) => { setSection('recording'); perform('recording.new', { folder_id: folderId || undefined }); };
   function actions(item: Item): MenuAction[] {
@@ -166,32 +184,26 @@ export function App() {
     const renameBlocked = active && item.id === state.item?.id ? commonBlocked || !!state.save_error : manageBlocked;
     return [
       { label: '重命名', disabled: renameBlocked, run: () => setEditor({ title: '重命名', initial: item.name, save: name => request('item.rename', { identifier: item.id, name }) }) },
+      { label: '在资源管理器中打开', run: () => { perform('path.reveal', { identifier: item.id }); } },
       { label: '移动到…', disabled: manageBlocked, run: () => { setMoving(item); setMoveTo(data!.library.folders.find(row => row.id !== item.id)?.id || ''); } },
       { label: '移到最近删除', disabled: manageBlocked, danger: true, run: () => setConfirmation({ title: `删除“${item.name}”？`, description: '移到最近删除后可以恢复。', label: '移到最近删除', run: () => request('item.trash', { identifier: item.id }) }) },
     ];
-  }
-  function toggleFolder(id: string) {
-    setCollapsed(old => { const result = new Set(old); if (result.has(id)) result.delete(id); else result.add(id); return result; });
   }
   function folderActions(item: Item): MenuAction[] {
     return [{ label: '新录音', disabled: blocked, run: () => newRecording(item.id) },
       { label: '新建子文件夹', disabled: blocked, run: () => setEditor({ title: '新建子文件夹', save: name => request('folder.create', { name, parent: item.id }) }) }, ...actions(item)];
   }
-  function folderRows(parent: string | null = null, depth = 0): React.ReactNode {
-    return data!.library.folders.filter(item => (item.parent || null) === parent).map(item => <div key={item.id}>
-      <ContextActions actions={folderActions(item)}><div className={`library-row folder ${!state.item && folder === item.id ? 'selected' : ''}`} style={{ paddingLeft: 12 + depth * 14 }}><Icon name="tree-folder" /><button className="tree-toggle" aria-label={`${collapsed.has(item.id) ? '展开' : '折叠'} ${item.name}`} aria-expanded={!collapsed.has(item.id)} onClick={() => toggleFolder(item.id)}>{collapsed.has(item.id) ? '›' : '⌄'}</button><button className="item-name" onClick={() => setFolder(item.id)} onDoubleClick={() => toggleFolder(item.id)}>{item.name}</button><ActionMenu label={`${item.name}的操作`} actions={folderActions(item)} /></div></ContextActions>
-      {!collapsed.has(item.id) && <>{data!.library.sessions.filter(row => row.folder === item.id).map(row => <ContextActions key={row.id} actions={actions(row)}><div className={`library-row ${state.item?.id === row.id ? 'selected' : ''}`} style={{ paddingLeft: 24 + depth * 14 }}>
-        <Icon name="tree-document" /><button className="item-name" disabled={blocked} onClick={() => open(row)} title={row.name}>{row.name}</button><ActionMenu label={`${row.name}的操作`} actions={actions(row)} /></div></ContextActions>)}{folderRows(item.id, depth + 1)}</>}
-    </div>);
-  }
   return <Tooltip.Provider delayDuration={550}><div className={`app ${data.platform}`} style={material}>
     <header className="titlebar" aria-label="窗口拖动区域" />
-    <div className="page-stack" ref={pageTransition}>{section === 'settings' && <SettingsPage updatesBusy={updatesBusy} switchDisabled={blocked || state.preparing} initialCategory={settingsCategory} data={data} values={data.settings} state={state} onClose={() => setSection('recording')} onDeleted={async () => { const result = await perform('trash.list'); if (result) setDeleted(result); }} perform={perform} onPatch={setSettings} onCategory={setSettingsCategory} />}<div className="workspace-layout" hidden={section !== 'recording'}>
-      <aside className="sidebar"><div className="brand">AgentScribe</div><Button className="navigation" variant="quiet" disabled={blocked} onClick={() => newRecording()}><Icon name="new" />新录音</Button>
+    <div className="page-stack" ref={pageTransition}>{section === 'settings' && <SettingsPage audioBusy={audioBusy} audioMessage={audioMessage} updatesBusy={updatesBusy} switchDisabled={blocked || state.preparing} initialCategory={settingsCategory} data={data} values={data.settings} state={state} onClose={() => setSection('recording')} onDeleted={async () => { const result = await perform('trash.list'); if (result) setDeleted(result); }} perform={perform} onPatch={setSettings} onCategory={setSettingsCategory} />}<div className="workspace-layout" hidden={section !== 'recording'}>
+      <ResizableSidebar preferred={data.layout?.sidebar_width} onCommit={async width => {
+        try { const saved = await request<number>('layout.sidebar', { width }); setData(old => old ? { ...old, layout: { sidebar_width: saved } } : old); }
+        catch (error) { setNotice({ text: (error as Error).message, error: true }); throw error; }
+      }}><div className="brand">AgentScribe</div><Button className="navigation" variant="quiet" disabled={blocked} onClick={() => newRecording()}><Icon name="new" />新录音</Button>
         <div className="folder-heading"><span>文件夹</span><Button variant="quiet" aria-label="新建文件夹" disabled={blocked} onClick={() => setEditor({ title: '新建文件夹', save: name => request('folder.create', { name }) })}>＋</Button></div>
-        <nav aria-label="录音文件夹" className="library-tree">{folderRows()}</nav><div className="sidebar-bottom"><Button variant="quiet" onClick={async () => { const result = await perform('trash.list'); if (result) setDeleted(result); }}><Icon name="trash" />最近删除</Button>
+        <LibraryTree library={data.library} current={state.item?.id} folder={folder} blocked={blocked} onOpen={open} onFolder={setFolder} actions={actions} folderActions={folderActions} /><div className="sidebar-bottom"><Button variant="quiet" onClick={async () => { const result = await perform('trash.list'); if (result) setDeleted(result); }}><Icon name="trash" />最近删除</Button>
         <Button variant="quiet" disabled={updatesBusy} onClick={() => perform('updates.check')}><Icon name="download" />{updatesBusy ? '正在检查…' : data.installed ? '切换到 Qt 检查更新' : '检查更新'}</Button><Button variant="quiet" onClick={() => setSection('settings')}><Icon name="settings" />设置</Button></div>
-      </aside><main className="workspace"><header className="workspace-header"><InlineTitle key={state.generation} value={state.item?.name || state.draft?.name || '新录音'} disabled={busy || state.migrating || state.closing || !!state.save_error} onSave={name => request('item.rename', { identifier: state.item?.id ?? null, name })} />
+      </ResizableSidebar><main className="workspace"><header className="workspace-header"><InlineTitle key={state.generation} value={state.item?.name || state.draft?.name || '新录音'} disabled={busy || state.migrating || state.closing || !!state.save_error} onSave={name => request('item.rename', { identifier: state.item?.id ?? null, name })} />
         <div className="header-actions">{data.settings.beta_features && <Button className="knowledge-header" variant="quiet" disabled={!state.item} onClick={() => perform('knowledge.window')}>课程资料与笔记 · Beta</Button>}
           <Button variant="quiet" onClick={() => perform('overlay.toggle')}>悬浮字幕</Button><Button variant="quiet" disabled={!state.item || active || !page.total} onClick={() => perform('recording.export')}>导出定稿</Button>
           <ActionMenu actions={[
@@ -212,21 +224,21 @@ export function App() {
             ...(state.item ? actions(state.item) : []),
           ]} />
         </div></header>
-        <Captions seekRevision={seekRevision} visible={section === 'recording'} interaction={data.interaction} page={page} state={state} position={playback.state === 'StoppedState' && playback.position === 0 ? -1 : playback.position} onPage={loadPage} onSeek={milliseconds => perform('playback.seek', { milliseconds, play: true })} locate={locate} onFollow={value => { tail.current = value; }} summary={state.draft ? <div className="pending-summary"><p>准备开始录音</p><p>{data.devices.find(row => row.id === data.device?.[0] && row.loopback === data.device?.[1])?.name || '请选择音频来源'}</p><p>{String(data.settings.source)}{data.settings.translate ? ` → ${data.settings.target}` : ' · 仅识别原文'}</p><p>{data.library.folders.find(row => row.id === state.draft?.folder)?.name}</p></div> : undefined} />
+        <Captions seekRevision={seekRevision} visible={section === 'recording'} interaction={data.interaction} page={page} state={state} position={playback.state === 'StoppedState' && playback.position === 0 ? -1 : playback.position} onPage={loadPage} onSeek={milliseconds => perform('playback.seek', { milliseconds, play: true })} locate={locate} onFollow={value => { tail.current = value; }} summary={state.draft ? <div className="pending-summary"><h2>准备开始录音</h2><p>点击下方开始按钮，即可聆听。</p><p>音频来源 · {data.devices.find(row => row.id === data.device?.[0] && row.loopback === data.device?.[1])?.name || '请选择音频来源'}</p><p>语言 · {String(data.settings.source)}{data.settings.translate ? ` → ${data.settings.target}` : ' · 仅识别原文'}</p><p>保存到 · {data.library.folders.find(row => row.id === state.draft?.folder)?.name}</p><small>下方图标调整设置 · 顶部标题修改名称</small></div> : undefined} />
         {showDiagnostics && <pre className="diagnostics" aria-label="诊断记录">{diagnostics.join('\n') || '暂无运行记录'}</pre>}
         <Transport active={active} playback={!active && state.has_audio}>{geometry => <>
           {!active && state.has_audio && <Playback maxVolume={state.playback?.supports_gain === false ? 100 : 300} geometry={geometry} position={playback.position} duration={playback.duration} playing={playback.state === 'PlayingState'} disabled={data.no_audio || busy} volume={volume}
             onToggle={() => perform('playback.toggle')} onPosition={position => { scrubbing.current = true; setPlayback(old => ({ ...old, position })); }}
             onSeek={async milliseconds => { await perform('playback.seek', { milliseconds }); scrubbing.current = false; }} onVolume={value => { setVolume(value); perform('playback.volume', { value }); }} />}
-          {(active || !state.has_audio) && <RecordingIsland geometry={geometry} active={active} status={<><span>{stateLabels[state.state]}</span><span>{clock(seconds)}</span><span>输入音量</span><LevelMeter rms={level} /></>}>
+          {(active || !state.has_audio) && <RecordingIsland geometry={geometry} active={active} status={<><span>{state.capture?.label || stateLabels[state.state]}</span><span className="capture-time">{clock(seconds)}</span><span>{state.capture?.volume_label ?? '输入音量'}</span><LevelMeter rms={state.state === 'LISTENING' && !state.failure ? level : 0} /></>}>
             <IconMenu label="音频来源" icon={data.device && !data.device[1] ? 'microphone' : 'source'} disabled={data.no_audio || !['IDLE', 'LISTENING', 'PAUSED'].includes(state.state)} value={data.device ? JSON.stringify(data.device) : ''}
               options={data.devices.map(device => ({ value: JSON.stringify([device.id, device.loopback]), label: device.name }))} onChange={async value => {
                 const [identifier, loopback] = JSON.parse(value); const selected = await perform('audio.select', { identifier, loopback }); if (selected) setData(old => old ? { ...old, device: selected } : old);
-              }} refresh={() => { perform('audio.refresh'); }} />
+              }} refreshing={audioBusy} refreshStatus={audioMessage} refresh={() => { perform('audio.refresh'); }} />
               <ControlPopover label="语言设置" icon="language"><label>原文语言</label><Choice label="原文语言" value={String(data.settings.source)} options={[...(data.settings.backend === 'wlk-whisper' ? [{ value: '自动检测', label: '自动检测' }] : []), ...languages]} onChange={value => setSettings({ source: value })} /><label>翻译为</label><Choice label="翻译语言" value={String(data.settings.target)} options={languages} onChange={value => setSettings({ target: value })} /><label>启用翻译</label><Toggle label="启用翻译" disabled={!state.translation_available} value={!!data.settings.translate && state.translation_available} onChange={value => setSettings({ translate: value })} />{active && <p>语言变化在下次录音生效。</p>}</ControlPopover>
               {!active && <IconMenu label="保存文件夹" icon="folder" disabled={blocked} value={state.draft?.folder || folder} options={data.library.folders.map(row => ({ value: row.id, label: row.name }))} onChange={value => { setFolder(value); perform('recording.new', { folder_id: value, name: state.draft?.name }); }} />}
               {active ? <><Tip label={state.state === 'PAUSED' ? '继续录音' : '暂停'}><Button className="icon-button" aria-label={state.state === 'PAUSED' ? '继续录音' : '暂停'} disabled={!['LISTENING', 'PAUSED'].includes(state.state) || !!state.failure} onClick={() => perform('recording.pause')}><Icon name={state.state === 'PAUSED' ? 'play' : 'pause'} /></Button></Tip><Tip label="停止"><Button variant="primary" className="transport-button" aria-label="停止" disabled={state.state === 'STOPPING'} onClick={() => perform('recording.stop')}><Icon name="stop" /></Button></Tip></> :
-                <Tip label="开始聆听"><Button variant="primary" className="transport-button" aria-label="开始聆听" disabled={busy || state.preparing || state.saving || state.closing || data.no_audio || !data.device} onClick={() => perform('recording.start')}><Icon name="play" /></Button></Tip>}
+                <Tip label="开始聆听"><Button variant="primary" className="transport-button" aria-label="开始聆听" disabled={busy || state.preparing || state.saving || state.closing || data.no_audio || !sourceAvailable} onClick={() => perform('recording.start')}><Icon name="play" /></Button></Tip>}
           </RecordingIsland>}
           {(state.failure || state.save_error || state.closing) && <p className="status error" role="alert">{state.save_error || state.failure || '正在保存并退出…'}</p>}
         </>}</Transport>

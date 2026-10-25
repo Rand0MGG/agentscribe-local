@@ -4,6 +4,53 @@
 
 ## 最近可核对的证据
 
+2026-10-25 **真实录音冷启动与 Qt 反馈对齐修复**（本地 `windows`，未提交/推送）：
+
+- 用户反馈揭示此前验收边界不足：原生交互、完整业务链路与截图均运行过，但采集/模型执行部分使用夹具，未覆盖真实冷启动。用户日志中 Electron 两次停止时 recorded_seconds=0（约等待 29s / 17s），随后 Qt 约 0.75s 收到首包并录得 7.6s；不能以之前的夹具通过声称这条真实路径正常。
+- 经用户明确授权“最多 10 秒”，在当前 Windows 来源、独立临时库先复现 4s 首包始终为零；堆栈定位采集线程卡在 `audio.capture → scipy.signal → scipy.linalg.blas` 原生模块导入。桌面实际输出 48kHz，不需要重采样，却无条件加载 SciPy。改为仅 16kHz 转换路径导入原 `resample_poly`，48kHz 直接混音传递；没有换来源、吞异常、增加重试或改模型。
+- 第二次 4s 真实复验，Session start→首包 **0.251s**，计时连续推进到 **3.8s**；已读 WAV 头核对 **182400 帧 / 48000Hz / 单声道 / 3.8s**。真实模型于会话开始约 13s 就绪，随后处理已采集内容，日志 `session_end complete=true, failed=false, recorded_seconds=3.8`。两次采集窗口合计约 8s，未播放/上传，也未操作已有 Qt 窗口。原始证据 `output/playwright/real-capture/probe-{wpp0Td,oHrbwM}/`，日志 `.work/reports/real-capture-{before,after}.log`；后者的 FINAL 行是中间 STOPPING 快照，最终完成另据 session_end 与 WAV 核对，诊断等待循环已修正但没有为重跑脚本追加录音。
+- 按 Qt 原实现抽取 `recording_state.capture_feedback`，统一岛内状态/计时旁说明、正文等待文字、模型加载资格。模型进度与录音事实独立，并纳入 snapshot 防漏事件；切源回执更新等待状态，暂停/失败电平归零。活动按钮从均匀分散改为 40px、8px 间距整体居中，输入说明/计时按 Qt 层级呈现；连接和加载中的无字幕文字改为工作区居中，通知右侧间距 16px。
+- 相关音频/桌面服务/Session/交互 **71 passed / 1 skipped / 17.46s**（跳过 Mac-only MLX helper）；末轮定向 **55 passed / 12.14s**，不与前批累加。构建、Ruff、JavaScript 语法与差异检查通过；基础原生及原有 **19 组**交互通过。补出 Qt **8** 个状态和独立工具通知，Electron **94** 个状态及原动效；新增连接→采集中加载→就绪→收尾的显示断言、48px 按钮中心距和等待文字居中检查，人工查看明暗主题及 Qt 对照。此组显示夹具与上面的真实音频证据分别成立。
+- 对照与证据摘要 `.work/browser/recording-runtime-fix/index.html`、`real-evidence.json`；无音频日志 `.work/reports/capture-{feedback-final,lifecycle-regression,feedback-parity,feedback-native,feedback-interaction}.log`。Qt 浮动通知是独立工具窗口，主窗 grab 不包含它，另取控件截图，不据此误报 Qt 没有提示。短实录不能证明转写质量、所有设备、真实暂停/切源、多次长会话或 Mac 实机；未提交、推送或发布。
+
+2026-10-25 **Windows Electron 窗口控制外观修复**（本地 `windows`，未提交/推送）：
+
+- 原生窗口复现：深色偏好冷启动时右上三个按钮仍为白底/黑图标；运行中切主题虽更新颜色，但固定纯色背景与窗口材质之间形成色块。根因是 bootstrap 未同步 overlay，构造固定浅色且后续更新仍使用不透明色。原生最小化、最大化/还原及关闭的动作本身可响应，未将其误报为全部失效。
+- 构造、bootstrap 与 settings 共用覆盖层选项：透明背景、对应主题的图标与 36px 高度；保留系统按钮、命中区及现有关闭保护。新增 `titlebar-checks.cjs` 先在旧实现失败，修后随 `npm test` 的完整基础原生回归通过；涵盖深浅设置、模拟构造初态后的真实 bootstrap 重载、可用覆盖层尺寸。JavaScript 语法及差异检查通过。日志 `.work/reports/titlebar-{before,after}.log`。
+- Windows 150% 缩放下，修后使用独立无音频窗口实际查看深色冷启动、深色最大化及浅色 640×481 内容区；原生捕获可见按钮背景与材质衔接、图标清楚及关闭悬停警示色。实际点击最大化后 native `maximized=true`、覆盖层 36px；还原后显示最大化按钮；最小化后 native `minimized=true`；恢复并点击关闭后自有测试进程正常退出。此部分为原生窗口工具会话的观察，不把页面截图当作原生控制证据。
+- 无设备访问、采集或播放，不操作用户录音或其他窗口；未实测系统 Snap 菜单、其他缩放/多屏、Mac 或远程 CI。未提交、推送或发布。
+
+2026-10-25 **回放字幕全文与正序首屏修复**（本地 `windows`，未提交/推送）：
+
+- 用户反馈长录音只显示一部分、需要从后向前加载。650 条隔离字幕复现：服务默认 start=450，Qt 仅保留 450–649，两个新增回归修前均失败。此前原生链路样本只有 120 条，未跨过 200 条边界；原 spec 也把有限窗口用于回听，本轮按用户要求修正该行为契约。
+- Electron 的 IDLE 字幕改为完整返回，打开默认正序从头；搜索只定位已载入文本，播放位置不再请求/替换另一页，回听隐藏更早/较新入口。Qt 已保存加载及回放模式展示全部卡片，纯文字录音同样从开头定位；首卡定位保留请求的 24px 阅读偏移，避免尚未稳定的几何使最终首屏产生几像素偏移。实时录音仍保留原有窗口及手动历史保护。
+- 相关服务/Qt/恢复/组件回归 **49 passed / 31.47秒**；补跑字幕反馈、文字选择/跟随及搜索 **7 passed / 11.44秒**，均零原生音频导入尝试。构建、Ruff、脚本语法及差异检查通过；Electron 基础原生流程、**19 组**交互、**11 组**全链路与双向切换通过。
+- 原生交互使用 650 条字幕，检查载入时全部 DOM 已存在且首屏在开头、Home/End 的首末实际可见位置、跳转第 625 条再回第 1 条，以及搜索第 425 条后全文仍为 650 条。已查看开始/末尾截图，未以条数代替界面检查。证据 `output/playwright/interaction-fixes/{complete-transcript-start.png,complete-transcript-end.png,result.json}`；日志 `.work/reports/playback-transcript-{before,after,follow,build,test,test-interaction,test-chain,test-switch}.log`。
+- 本机 Windows 隔离库、离线媒体适配验证，不访问用户录音或音频设备；没有验真实声音输出、Mac、多屏缩放或任意超大全文性能。全文增加内存和首次排版成本，不能用本次 650 条样本宣称所有长度均无卡顿。未提交、推送或发布。
+
+2026-10-25 **以 Qt 为基准的 12 项界面修复**（本地 `windows`，保留此前未提交工作）：
+
+- 原审查 U01–U12 已在本地实现：局部忙碌、设置分类滚动隔离、数值输入与保存值一致、弹窗单层滚动、树与模型键盘导航、可调整侧栏、行菜单打开目录、来源刷新反馈、参数帮助、待录音摘要、展开命中区及短目录高度。数值箭头步长不限制合法手输小数；后台只在首次无选择时选首个来源，失效旧来源要求重选。
+- 相关无音频 Python **61 passed / 5.62秒**，覆盖桌面服务、音频、前端切换及打包；零原生音频导入尝试。构建、Ruff、脚本语法和差异检查通过。Electron 基础原生流程、**11 组**全链路、**16 组**交互及 **Electron → Qt → Electron** 切换通过；交互探针复用原有隔离库与音频保护，新增 Qt 对照检查。几何回归将小于一个设备像素的浮点测量归一为实际设备像素，仍断言位置及宽度完全相同。
+- 修后重新生成 Qt **72**、Electron **86** 个界面状态，其中 **72** 个同名状态纳入三列对照；Electron 横向溢出与原有动效断言通过。人工复查工作区、待录音摘要、深色窄设置页、模型高级弹窗及下载目录。Qt 图片含系统边框/阴影，Electron 页面截图不含；Windows 150% 缩放使请求 640×480 偶得 640×481/482，实际尺寸保留在清单，临时截图适配允许 1px 系统舍入，交互探针允许 2px。
+- 报告 `.work/browser/ui-fixes-20261025/index.html` 提供 Qt / 修前 / 修后三列切换及逐项说明；原审查保留在 `.work/browser/ui-audit-20261025/`。日志 `.work/reports/ui-fixes-{python,build,test,test-chain,test-switch,interaction,qt-capture,electron-capture}.log`，原生交互结果 `output/playwright/interaction-fixes/result.json`。
+- 来源变化呈现使用事件夹具，首次选择/旧来源失效行为另由 Python 回归验证；目录解析走真实后台，仅系统目录打开由夹具拦截。离线媒体、HTTP、模型清单不证明真实录音、播放、下载、推理或云端可用。未验 Mac、多屏不同缩放、安装升级或远程 CI；未提交、推送或发布。
+
+2026-10-24 **正常启动阻塞与切回 Qt 复查**（本地 `windows`，沿用未提交修改）：
+
+- 用户正常模式日志中，`audio.refresh` 到后续请求之间分别停顿约 **10.46 / 13.23 秒**；切换失败仍为旧进程的归属校验。慢发现替身复现主线程阻塞，新增三分支修前均失败；正常协议后台的冷启动堆栈进一步定位到 `audio.py` 顶层导入 `scipy.signal → scipy.linalg.blas`。原无音频/预导入测试未覆盖这个条件，不能据此前通过结果宣称正常启动已验收。
+- 来源刷新改为异步任务与受控发现子进程，超时回收自有进程树；合并重复刷新、失败保留原列表、关闭丢弃迟到结果。采集专用 NumPy/SciPy 延后至采集入口导入。最终相关无音频 **56 passed**（5.62秒），覆盖桌面服务、音频、切换、Electron 打包，零原生音频导入尝试；Ruff 与差异检查通过。双向切换隔离探针再次通过。
+- 本机 Windows 正常来源检查返回 **5 个来源 / 1.015秒**（仅枚举，不采集或播放）。正式正常入口实际操作设置、运行环境并点击切回 Qt 成功，待录音草稿及库路径保持，Qt 窗口与来源/开始按钮正常显示；成功启动实例 `audio.refresh` 请求于 14:23:51.765，后续 `models.check` 于 51.766、`frontend.ready` 于 51.810，表明发现不再阻塞这些协议请求，不把该差值当成完整启动耗时。
+- 证据 `.work/reports/device-refresh-before.log`、`startup-related-after.log`、`windows-device-discovery.log`、`startup-switch-after.log`、`startup-debug/` 及真实用户日志 `support-desktop-electron-20261024T062351-*.jsonl`。调试中只回收本轮自行启动、确认未录音且无编辑的空白实例；最终保留正常 Qt 窗口。未采集/播放、未验模型推理或 Mac 实机、未重跑远程 CI；未提交或推送。
+
+2026-10-24 **GitHub 检查失败复现与本地修复**（基于 `1f8c140`，本地 `windows`，未提交/推送）：
+
+- Windows / Python 3.12.8、PySide6 6.11.2、Node 24.13.0、Electron 45.0.0。明确设置 `PYTHONUTF8=0` 后，原前端切换测试 **2 failed / 3 passed**，中文 UTF-8 交接文件被默认 GBK 解码；GitHub Windows 3.11–3.13 日志为相同两例、默认 cp1252。两处测试读取显式指定 UTF-8 后 **5 passed**，不修改生产文件格式或全局编码设置。
+- 原 `test:chain` 复现 `initial caption tail` 超时；实际 120 条已加载，`scrollTop=0`、`scrollHeight=13984`、`clientHeight=765`，处于已有音频的 IDLE 回听状态。测试错误期待自动跳到末尾；改为确认开头状态、用实际 End 键到达末尾，再按实际尾部位置验证原生滚动条拖动及设置往返锚点，保留原场景与后续断言。修复后 **11 组全链路检查通过**，`test:interaction` **5 组通过**。
+- 补跑此前 CI 被跳过的 `test:switch`，复现 `frontend.prepare` 拒绝归属、随后切换超时。独立短进程及新增回归确认 Windows venv redirector 位于宿主与服务之间；新增用例修前 **1 failed / 7 passed**。归属判断仅额外允许通过同一解释器启动器验证的直接祖父宿主；无关可执行路径及非 Windows 祖父请求仍拒绝。修后真实 **Electron → Qt → Electron** 通过，同一录音、字幕、库路径及无音频约束保持。
+- 最终 `test_desktop_service.py`、`test_frontend_switch.py`、`test_electron_packaging.py` 无音频回归 **37 passed**（4.33秒），零原生音频导入尝试；Ruff、JavaScript 语法及差异检查通过。复现与修复日志 `.work/reports/frontend-switch-{before,after}.log`、`frontend-owner-before.log`、`desktop-related-after.log`、`electron-chain-{before,diagnosis,after}.log`、`electron-interaction-after.log`、`electron-switch-{after,fixed}.log`。Electron 探针使用独立库/偏好及音频拦截，媒体、HTTP、安装下载和云执行为离线夹具；不影响既有用户窗口。
+- 仅在本机 Windows/Python 3.12 复验，未重新运行全量 Python、其他 Python 版本、Mac 实机或远程 CI，未验真实设备/模型、安装升级。此次修复不能视为 GitHub 已转绿；没有提交、推送或发布。
+
 2026-10-24 **用户反馈交互修复**：树行透明悬停、工具菜单互斥、圆形返回播放位置、首次回听异步定位，以及更新进度动画。保留用户确认的最近删除/弹窗效果；另修通知遮挡弹窗关闭按钮、主题切换短暂沿用旧材质、重复检查更新和更新失败语义。
 
 - 本次定向无音频回归 **32 passed**，14.89秒；原有原生工作流及新增 `test:interaction` 五组原生流程通过，构建/Ruff/差异检查通过。首次回听保留真实IPC/服务/控制器/WAV读取，只有媒体硬件用延迟350ms的无设备适配器替换；更新使用离线HTTP响应，保留后台线程与解析。

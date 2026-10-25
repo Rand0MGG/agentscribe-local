@@ -111,6 +111,7 @@ class DesktopService(QObject):
         self.session = None
         self.recording_lock = None
         self.state = RecordingState.IDLE
+        self.audio_stage = ''
         self.failure = self.save_error = ''
         self.status = '就绪'
         self.dirty = False
@@ -195,6 +196,7 @@ class DesktopService(QObject):
             ('app.close', self.close), ('path.recording', self.recording_path),
             ('frontend.prepare', self.prepare_frontend), ('frontend.ready', self.mark_frontend_ready),
             ('frontend.cancel', self.cancel_frontend),
+            ('layout.sidebar', self.set_sidebar_width),
             ('overlay.get', self.overlay_preferences), ('overlay.set', self.set_overlay_preferences),
             ('path.diagnostics', lambda: str(diag.log_directory())),
         )}
@@ -235,7 +237,11 @@ class DesktopService(QObject):
             self.output.emit({'id': identifier, 'error': {'message': str(exc), 'kind': type(exc).__name__}})
 
     def snapshot(self):
-        return {'item': self.item, 'draft': self.draft, 'state': self.state.name, 'status': self.status,
+        from .recording_state import capture_feedback
+        ready = getattr(self.session, 'model_ready', None)
+        capture = capture_feedback(self.state, model_ready=ready.is_set() if ready is not None else None,
+            failed=bool(self.failure), source_pending=self.pending_source_revision is not None, audio_stage=self.audio_stage)
+        return {'item': self.item, 'draft': self.draft, 'state': self.state.name, 'status': self.status, 'capture': capture,
                 'failure': self.failure, 'save_error': self.save_error,
                 'saving': self.saver.busy, 'dirty': self.dirty, 'generation': self.generation,
                 'revision': self.revision, 'count': len(self.captions), 'preview': self.preview,
@@ -259,6 +265,9 @@ class DesktopService(QObject):
         return {'version': __version__, 'protocol': PROTOCOL, 'platform': sys.platform, 'installed': packaged(), 'no_audio': self.no_audio,
                 'settings': self.values, 'library': self.library.index, 'root': str(self.library.root),
                 'state': self.snapshot(), 'captions': self.page(), 'devices': self.devices, 'device': self.device,
+                'audio_refreshing': 'audio-discovery' in self.tasks,
+                'layout': {'sidebar_width': self.prefs.value('electron_sidebar_width', type=int)
+                           if self.prefs.contains('electron_sidebar_width') else None},
                 'options': {'languages': LANGUAGES, 'backends': asr_backends(), 'devices': asr_devices(),
                             'models': {key: model_catalog(key) for key in (*asr_backends(), 'llama', 'pytorch')},
                             'translation_devices': {key: translation_devices(key) for key in ('llama', 'pytorch')},
@@ -369,6 +378,7 @@ class DesktopService(QObject):
             self.playback_volume = min(self.playback_volume, 300 if self.playback_metadata['supports_gain'] else 100)
 
     def _select(self, item, captions=(), translating=None):
+        self.audio_stage = ''
         self.generation += 1
         self.revision = 0
         self.item = item
@@ -509,12 +519,18 @@ class DesktopService(QObject):
         return self.deleted()
 
     def page(self, start=None, locate=None, seconds=None):
+        if start is not None and (type(start) is not int or start < 0):
+            raise ValueError('无效的字幕分页。')
         ids = self.captions.ordered_ids
         if seconds is not None:
             if type(seconds) not in (int, float) or not math.isfinite(seconds) or seconds < 0:
                 raise ValueError('无效的字幕时间。')
             locate = next((key for key in ids if self.captions[key].start <= seconds < self.captions[key].end), None)
-        if locate is not None:
+        # Saved recordings are one complete transcript. The live tail window is
+        # only for recording, never the starting point for reviewing a class.
+        if self.state is RecordingState.IDLE:
+            start = 0
+        elif locate is not None:
             start = (ids.index(locate) // 200) * 200 if locate in ids else 0
         elif start is None:
             start = max(0, len(ids) - 200)
@@ -522,7 +538,8 @@ class DesktopService(QObject):
             raise ValueError('无效的字幕分页。')
         start = min(start, max(0, len(ids) - 1))
         return {'generation': self.generation, 'revision': self.revision, 'start': start,
-                'total': len(ids), 'rows': [caption_value(self.captions[key]) for key in ids[start:start+200]]}
+                'total': len(ids), 'rows': [caption_value(self.captions[key]) for key in
+                                         (ids if self.state is RecordingState.IDLE else ids[start:start+200])]}
 
     def search(self, query, start=0):
         if not isinstance(query, str) or len(query) > 1024 or type(start) is not int or start < 0:
@@ -641,9 +658,20 @@ class DesktopService(QObject):
 
     def refresh_devices(self):
         self._audio_allowed()
-        from .audio import list_devices
-        self.devices = [asdict(row) for row in list_devices()]
-        self.emit('devices', self.devices)
+        if 'audio-discovery' in self.tasks or self.closing:
+            return self.devices
+        def discover():
+            from .audio import discover_devices
+            return [asdict(row) for row in discover_devices()]
+        def completed(error):
+            if not error and not self.closing:
+                self.devices = task.value
+                if not self.device and self.devices and not self.session:
+                    self.device = (self.devices[0]['id'], self.devices[0]['loopback'])
+                    self.prefs.setValue('audio_device', json.dumps(self.device))
+                self.emit('devices', self.devices)
+                self.emit('device', self.device)
+        task = self._start_task('audio-discovery', discover, completed)
         return self.devices
 
     def select_device(self, identifier, loopback):
@@ -662,6 +690,7 @@ class DesktopService(QObject):
             self.emit('level', 0)
         self.device = (identifier, loopback)
         self.prefs.setValue('audio_device', json.dumps(self.device))
+        self.changed()
         return self.device
 
     def start(self):
@@ -697,7 +726,7 @@ class DesktopService(QObject):
             session = Session(settings, self, runtime=self.runtime, recording_path=self.library.directory(self.item['id']) / '录音.wav')
             self.session = session
             session.status.connect(self._status)
-            session.stage.connect(lambda name, value: self.emit('stage', {'name': name, 'value': value}))
+            session.stage.connect(self._stage)
             session.ready.connect(self._ready)
             session.paused.connect(self._paused)
             session.caption.connect(self._caption)
@@ -723,13 +752,18 @@ class DesktopService(QObject):
             self.changed()
 
     def _source_changed(self, revision):
+        changed = False
         if self.session and self.state == RecordingState.STARTING and not self.failure:
             self.state = RecordingState.LISTENING
             self.status = '录音已开始' if not self.session.model_ready.is_set() else '正在聆听'
             self.emit('model-loading', {'busy': not self.session.model_ready.is_set()})
-            self.changed()
+            changed = True
         if revision == self.pending_source_revision:
             self.pending_source_revision = None
+            changed = True
+        if changed:
+            self.audio_stage = '连续采集'
+            self.changed()
 
     def _level(self, value):
         self.emit('level', value if self.state == RecordingState.LISTENING and self.pending_source_revision is None else 0)
@@ -762,6 +796,12 @@ class DesktopService(QObject):
         self.emit('diagnostic', value)
         # Loading/catch-up diagnostics must not replace the capture fact shown
         # in the island or create repeated notifications.
+
+    def _stage(self, name, value):
+        self.emit('stage', {'name': name, 'value': value})
+        if name == '音频':
+            self.audio_stage = value
+            self.changed()
 
     def _failed(self, value):
         self.emit('model-loading', {'busy': False})
@@ -942,8 +982,25 @@ class DesktopService(QObject):
         self._select(None)
         self.refresh()
 
-    def recording_path(self):
+    def recording_path(self, identifier=None):
+        if identifier is not None:
+            item = self._find(identifier)
+            return str(self.library.directory(item['id']))
         return str(self.library.directory(self.item['id']) if self.item else self.library.root)
+
+    def set_sidebar_width(self, width):
+        if type(width) is not int or not 180 <= width <= 420:
+            raise ValueError('录音库宽度必须在 180–420 之间。')
+        previous = self.prefs.value('electron_sidebar_width')
+        self.prefs.setValue('electron_sidebar_width', width)
+        self.prefs.sync()
+        if self.prefs.status() != QSettings.Status.NoError:
+            if previous is None:
+                self.prefs.remove('electron_sidebar_width')
+            else:
+                self.prefs.setValue('electron_sidebar_width', previous)
+            raise OSError('录音库宽度未能保存，请检查设置目录权限。')
+        return width
 
     def migrate_library(self, path):
         if not isinstance(path, str) or not Path(path).is_absolute():
@@ -1030,6 +1087,7 @@ class DesktopService(QObject):
         task.finished.connect(lambda: QTimer.singleShot(0, lambda: self._task_finished(name, task)))
         task.start()
         self.emit(name, {'busy': True})
+        return task
 
     def _task_finished(self, name, task):
         if task.isRunning():

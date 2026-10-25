@@ -60,15 +60,15 @@ export function Tip({ label, children }: { label: string; children: ReactNode })
 }
 
 /** The island opens the choice list directly, as in the Qt ChoiceBox. */
-export function IconMenu({ label, icon, value, options, onChange, disabled, refresh }: {
+export function IconMenu({ label, icon, value, options, onChange, disabled, refresh, refreshing = false, refreshStatus = '' }: {
   label: string; icon: string; value: string; options: { value: string; label: string }[];
-  onChange: (value: string) => void; disabled?: boolean; refresh?: () => void;
+  onChange: (value: string) => void; disabled?: boolean; refresh?: () => void; refreshing?: boolean; refreshStatus?: string;
 }) {
   const { onCloseAutoFocus, ...popup } = usePopup();
   return <DropdownMenu.Root {...popup} modal={false}><Tip label={label}><DropdownMenu.Trigger asChild><Button variant="quiet" className="icon-button" aria-label={label} disabled={disabled}><Icon name={icon} /></Button></DropdownMenu.Trigger></Tip>
     <DropdownMenu.Portal><DropdownMenu.Content onCloseAutoFocus={onCloseAutoFocus} className="popup action-menu source-menu" side="top" sideOffset={10} collisionPadding={8}>
       <DropdownMenu.RadioGroup value={value} onValueChange={onChange}>{options.map(option => <DropdownMenu.RadioItem key={option.value} value={option.value} className="menu-item">{option.label}<DropdownMenu.ItemIndicator>✓</DropdownMenu.ItemIndicator></DropdownMenu.RadioItem>)}</DropdownMenu.RadioGroup>
-      {refresh && <><DropdownMenu.Separator className="menu-separator" /><DropdownMenu.Item className="menu-item" onSelect={refresh}>刷新音频来源</DropdownMenu.Item></>}
+      {refresh && <><DropdownMenu.Separator className="menu-separator" />{refreshStatus && <p className="source-status" role="status">{refreshStatus}</p>}<DropdownMenu.Item className="menu-item" disabled={refreshing} onSelect={refresh}>{refreshing ? '正在刷新…' : '刷新音频来源'}</DropdownMenu.Item></>}
     </DropdownMenu.Content></DropdownMenu.Portal>
   </DropdownMenu.Root>;
 }
@@ -99,9 +99,9 @@ export type MenuAction = { label: string; run: () => void; disabled?: boolean; d
 export function ContextActions({ children, actions }: { children: ReactNode; actions: MenuAction[] }) {
   return <ContextMenu.Root><ContextMenu.Trigger asChild>{children}</ContextMenu.Trigger><ContextMenu.Portal><ContextMenu.Content className="popup action-menu" collisionPadding={8}>{actions.map(action => <ContextMenu.Item key={action.label} className={`menu-item ${action.danger ? 'danger' : ''}`} disabled={action.disabled} onSelect={action.run}>{action.label}</ContextMenu.Item>)}</ContextMenu.Content></ContextMenu.Portal></ContextMenu.Root>;
 }
-export function ActionMenu({ label = '更多操作', actions }: { label?: string; actions: MenuAction[] }) {
+export function ActionMenu({ label = '更多操作', actions, tabIndex }: { label?: string; actions: MenuAction[]; tabIndex?: number }) {
   const { onCloseAutoFocus, ...popup } = usePopup();
-  return <DropdownMenu.Root {...popup} modal={false}><DropdownMenu.Trigger asChild><Button variant="quiet" aria-label={label}>···</Button></DropdownMenu.Trigger>
+  return <DropdownMenu.Root {...popup} modal={false}><DropdownMenu.Trigger asChild><Button variant="quiet" tabIndex={tabIndex} aria-label={label}>···</Button></DropdownMenu.Trigger>
     <DropdownMenu.Portal><DropdownMenu.Content onCloseAutoFocus={onCloseAutoFocus} className="popup action-menu" sideOffset={5} collisionPadding={8}>
       {actions.map(action => <DropdownMenu.Item key={action.label} className={`menu-item ${action.danger ? 'danger' : ''}`}
         onSelect={action.run} disabled={action.disabled}>{action.label}</DropdownMenu.Item>)}
@@ -190,4 +190,34 @@ export function Range({ label, value, max, min = 0, step = 1, orientation = 'hor
 
 export function SettingsRow({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
   return <div className="settings-row"><div><div className="settings-label">{title}</div>{hint && <p>{hint}</p>}</div><div className="settings-control">{children}</div></div>;
+}
+
+/** Keep the edited text separate from the last acknowledged setting. */
+export function NumberField({ id, label, value, min, max, step, help, onCommit }: {
+  id?: string; label: string; value: number; min: number; max: number; step: number; help?: string;
+  onCommit: (value: number) => void | Promise<unknown>;
+}) {
+  const generated = useId(), fieldId = id || generated;
+  const [text, setText] = useState(String(value)), [error, setError] = useState(''), [saving, setSaving] = useState(false);
+  const editing = useRef(false);
+  useEffect(() => { if (!editing.current) setText(String(value)); }, [value]);
+  async function save() {
+    editing.current = false;
+    const number = Number(text);
+    // Qt's singleStep controls the arrows, not which in-range values can be typed.
+    if (!text.trim() || !Number.isFinite(number) || number < min || number > max) {
+      setText(String(value)); setError(`请输入 ${min}–${max} 秒。已恢复原值。`); return;
+    }
+    if (number === value) { setError(''); return; }
+    setSaving(true);
+    try { await onCommit(number); setError(''); }
+    catch (error) { setText(String(value)); setError(`未保存：${(error as Error).message}`); }
+    finally { setSaving(false); }
+  }
+  return <div className="numeric-control"><div className="number-field"><input id={fieldId} aria-label={label} type="number" min={min} max={max} step={step} value={text} disabled={saving}
+    title={help} aria-invalid={!!error} aria-describedby={error ? `${fieldId}-error` : help ? `${fieldId}-help` : undefined}
+    onFocus={() => { editing.current = true; }} onChange={event => { setText(event.target.value); setError(''); }} onBlur={save}
+    onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { setText(String(value)); setError(''); editing.current = false; } }} /><span>秒</span></div>
+    {help && <span className="sr-only" id={`${fieldId}-help`}>{help}</span>}{error && <p className="error" role="alert" id={`${fieldId}-error`}>{error}</p>}
+  </div>;
 }
