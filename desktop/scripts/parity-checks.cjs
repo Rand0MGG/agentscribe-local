@@ -128,7 +128,11 @@ module.exports=async function(app,page,root,output,passed){
  await app.evaluate(({shell})=>{globalThis.parityReveal=[];shell.openPath=async value=>{globalThis.parityReveal.push(value);return '';};});
  const before=await rpc('bootstrap'),folder=before.library.folders[0];
  await page.getByRole('button',{name:`${folder.name}的操作`,exact:true}).click();await page.getByRole('menuitem',{name:'在资源管理器中打开',exact:true}).click();
- const opened=await app.evaluate(()=>globalThis.parityReveal);assert.equal(opened.length,1);assert(opened[0].startsWith(before.root));assert.equal((await rpc('bootstrap')).state.item?.id,before.state.item?.id);
+ const opened=await app.evaluate(async()=>{
+  const deadline=Date.now()+2000;
+  while(!globalThis.parityReveal.length&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,20));
+  return globalThis.parityReveal;
+ });assert.equal(opened.length,1);assert(opened[0].startsWith(before.root));assert.equal((await rpc('bootstrap')).state.item?.id,before.state.item?.id);
  await assert.rejects(()=>rpc('path.reveal',{identifier:'../outside'}));passed.push('U07: reveal validates the target without switching recordings');
  await page.getByRole('button',{name:'新录音',exact:true}).click();await page.locator('.pending-summary h2').waitFor();
  const summary=await page.locator('.pending-summary').innerText();assert(summary.includes('保存到 ·')&&summary.includes('音频来源 ·'));passed.push('U10: pending summary has heading, guidance and labels');

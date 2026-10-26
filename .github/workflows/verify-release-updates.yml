@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 已签署候选或已发布版本的固定标签
+        description: 候选版本名或已发布版本的固定标签
         type: string
         required: true
       old_tag:
@@ -16,9 +16,22 @@ on:
         description: 使用未修改旧客户端的正式 HTTPS 订阅（候选验收后执行）
         type: boolean
         default: false
+      commit:
+        description: 发布前验收的固定完整提交 SHA（不提前建立发行标签）
+        type: string
+      build_run:
+        description: 发布前已成功的安装包构建运行编号
+        type: string
+      mac_signature:
+        description: 发布前 Mac 安装包的公开 Ed25519 签名（不是私钥）
+        type: string
+      windows_signature:
+        description: 发布前 Windows 安装包的公开 Ed25519 签名（不是私钥）
+        type: string
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: native-release-acceptance-${{ inputs.live }}
@@ -41,16 +54,46 @@ jobs:
       OLD_TAG: ${{ inputs.old_tag }}
       UPDATE_LIVE: ${{ inputs.live }}
       UPDATE_TARGET: ${{ matrix.target }}
+      CANDIDATE_COMMIT: ${{ inputs.commit }}
+      CANDIDATE_RUN: ${{ inputs.build_run }}
+      CANDIDATE_SIGNATURE: ${{ matrix.target == 'macos-arm64' && inputs.mac_signature || inputs.windows_signature }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ inputs.commit || inputs.tag }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'
       - run: python -m pip install -e ".[dev]"
+      - name: Verify prepublication candidate identity
+        if: inputs.build_run != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import base64,json,os,re,subprocess
+          sha,run=os.environ['CANDIDATE_COMMIT'],os.environ['CANDIDATE_RUN']
+          assert os.environ['UPDATE_LIVE']!='true'
+          assert re.fullmatch('[0-9a-f]{40}',sha) and run.isdecimal()
+          assert len(base64.b64decode(os.environ['CANDIDATE_SIGNATURE'],validate=True))==64
+          repo=os.environ['GITHUB_REPOSITORY']
+          value=json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/actions/runs/{run}'],text=True))
+          assert value['head_sha']==sha and value['conclusion']=='success'
+          assert value['path']=='.github/workflows/build-installers.yml'
+          assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()==sha
+          subprocess.run(['git','merge-base','--is-ancestor',sha,'origin/main'],check=True)
+          PY
+      - name: Download exact prepublication candidate
+        if: inputs.build_run != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.build_run }}
+          name: AgentScribe-${{ matrix.target }}-${{ inputs.commit }}
+          path: .work/update-downloads
       - name: Download and verify immutable old and candidate packages
         env:
           GH_TOKEN: ${{ github.token }}
@@ -62,8 +105,19 @@ jobs:
           target,tag,old=os.environ['UPDATE_TARGET'],os.environ['UPDATE_TAG'],os.environ['OLD_TAG']
           assert tag!=old and all(re.fullmatch(r'v\d+\.\d+\.\d+',value) for value in (tag,old))
           repo=os.environ['GITHUB_REPOSITORY'];suffix='dmg' if target=='macos-arm64' else 'exe'
-          work=Path('.work/update-downloads');work.mkdir(parents=True)
+          work=Path('.work/update-downloads');work.mkdir(parents=True,exist_ok=True)
           for selected in (old,tag):
+              if selected==tag and os.environ['CANDIDATE_RUN']:
+                  stem=f'AgentScribe-{tag[1:]}-{target}'
+                  if target=='macos-arm64':
+                      for ending in ('.dmg','.build.json'):
+                          source=work/(f'AgentScribe-{tag[1:]}-dual-ui-{target}'+ending)
+                          source.rename(work/(stem+ending))
+                  (work/(stem+'.'+suffix+'.ed25519')).write_text(os.environ['CANDIDATE_SIGNATURE']+'\n')
+                  manifest=json.loads((work/(stem+'.build.json')).read_text(encoding='utf-8'))
+                  assert manifest['source_commit']==os.environ['CANDIDATE_COMMIT'] and manifest['source_modified'] is False
+                  assert manifest['target']==target and manifest['version']==tag[1:]
+                  continue
               release=json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/releases/tags/{selected}'],text=True))
               assert not release['draft'] or selected==tag and os.environ['UPDATE_LIVE']!='true'
               stem=f'AgentScribe-{selected[1:]}-{target}'

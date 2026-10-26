@@ -4,6 +4,7 @@ const { execFileSync } = require('node:child_process');
 const { mkdtempSync, mkdirSync, existsSync, readFileSync, writeFileSync } = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
+const closeWorkspace = require('./close-workspace.cjs');
 
 async function main() {
   const root = path.resolve(__dirname, '../..');
@@ -275,9 +276,7 @@ library.save(item, [
     await page.screenshot({ path: path.join(evidence, 'playback-volume.png'), scale: 'css' });
     await page.screenshot({ path: path.join(evidence, 'components-light.png') });
     assert.deepEqual(errors, []);
-    const closed = desktop.waitForEvent('close');
-    await page.evaluate(() => window.agentScribe.request('window.close'));
-    await closed;
+    await closeWorkspace(desktop, page);
     desktop = null;
     assert(!existsSync(path.join(fixture, 'blocked.log')), 'Native audio access was attempted');
     writeFileSync(path.join(evidence, 'result.json'), JSON.stringify({ passed: true, fixture, errors, native_audio_attempts: 0 }, null, 2));

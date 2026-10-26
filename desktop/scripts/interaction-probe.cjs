@@ -5,6 +5,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
+const closeWorkspace = require('./close-workspace.cjs');
 const root = path.resolve(__dirname, '../..');
 const output = path.join(root, 'output/playwright/interaction-fixes');
 fs.mkdirSync(output, { recursive: true });
@@ -147,6 +148,6 @@ async function main() {
  await require('./parity-checks.cjs')(app,page,root,output,passed);
  assert.deepEqual(errors,[]);assert(!fs.existsSync(path.join(fixture,'blocked.log')));
  fs.writeFileSync(path.join(output,'result.json'),JSON.stringify({fixture,passed,highlight,motion,errors,native_audio_attempts:0},null,2));
- await app.close();app=null;console.log(JSON.stringify({passed,motion},null,2));
+ await closeWorkspace(app,page);app=null;console.log(JSON.stringify({passed,motion},null,2));
 }
 main().catch(async error=>{console.error(error);if(app){for(const page of app.windows())await page.screenshot({path:path.join(output,'failure.png')}).catch(()=>{});await app.evaluate(({app})=>app.exit(1)).catch(()=>{});}process.exitCode=1;});

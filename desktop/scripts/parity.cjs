@@ -4,6 +4,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
+const closeWorkspace = require('./close-workspace.cjs');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check, message) {
   const deadline = Date.now() + 15000;
@@ -226,8 +227,7 @@ library.save(item,[Caption(1,0,5,'Language is more than a sequence of words. It 
     fs.writeFileSync(path.join(output,'motion.json'),JSON.stringify({traces,dialogTiming,workspaceFade,settingsFade},null,2));
     assert.deepEqual(errors,[]);
     assert(records.every(record => !record.overflow),'A page overflowed horizontally');
-    await page.evaluate(()=>window.agentScribe.request('window.close'));
-    await app.close(); app=null;
+    await closeWorkspace(app,page); app=null;
     assert(!fs.existsSync(path.join(fixture,'blocked.log')),'Attempted native audio access');
     fs.writeFileSync(path.join(output,'manifest.json'),JSON.stringify({fixture,records,errors,audioAttempts:0},null,2));
     console.log(`Captured ${records.length} production UI states with isolated sample data.`);

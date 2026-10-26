@@ -116,7 +116,9 @@ if __import__('os').environ.get('AGENTSCRIBE_SWITCH_PROBE'):
     assert.deepEqual(after.captions.rows, before.captions.rows);
     await reopened.screenshot({ path: path.join(evidence, 'roundtrip.png') });
     const closedAgain = reopened.waitForEvent('close');
-    await reopened.evaluate(() => window.agentScribe.request('window.close')).catch(() => {});
+    await reopened.evaluate(() => window.agentScribe.request('window.close')).catch(error => {
+      if (!error.message.includes('Target page, context or browser has been closed')) throw error;
+    });
     await closedAgain;
     await second.close(); second = null;
     assert(!existsSync(path.join(fixture, 'blocked.log')));

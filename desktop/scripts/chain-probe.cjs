@@ -4,6 +4,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
+const closeWorkspace = require('./close-workspace.cjs');
 const root = path.resolve(__dirname, '../..');
 const evidence = path.join(root, 'output/playwright/parity-fixed');
 fs.mkdirSync(evidence, {recursive:true});
@@ -11,17 +12,6 @@ const fixture = fs.mkdtempSync(path.join(evidence, 'chain-'));
 const python = process.env.AGENTSCRIBE_DESKTOP_PYTHON || path.join(root,'.venv',process.platform === 'win32' ? 'Scripts/python.exe':'bin/python');
 const pause = ms => new Promise(resolve => setTimeout(resolve,ms));
 async function until(test, label) { const deadline=Date.now()+15000; while(Date.now()<deadline) { if(await test()) return; await pause(50); } throw new Error('Timed out: '+label); }
-async function closeWorkspace(application,page) {
- const child=application.process(),closed=application.waitForEvent('close',{timeout:15000});
- // A successful close may destroy the renderer before its IPC receipt arrives.
- // Accept only that transport outcome, then require an actual clean process exit.
- const receipt=page.evaluate(()=>window.agentScribe.request('window.close')).catch(error=>{
-  if(!error.message.includes('Target page, context or browser has been closed'))throw error;
- });
- await Promise.all([closed,receipt]);
- await until(()=>child.exitCode!==null||child.signalCode!==null,'Electron process exit');
- assert(page.isClosed());assert.equal(child.exitCode,0);assert.equal(child.signalCode,null);
-}
 execFileSync(python, ['-c', String.raw`
 import sys, wave
 from pathlib import Path
