@@ -15,6 +15,28 @@ from scripts import build_macos, build_windows_installer, packaging_common, prob
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.mark.p0
+@pytest.mark.parametrize('actions,status,forced', [('true', 16, True), ('false', 16, False), ('true', 1, False)])
+def test_readonly_probe_force_detach_is_limited_to_busy_disposable_ci(tmp_path, monkeypatch, actions, status, forced):
+    from scripts import probe_macos_update
+
+    calls = []
+    monkeypatch.setenv('GITHUB_ACTIONS', actions)
+    def run(command, **kwargs):
+        calls.append(command)
+        if len(calls) == 1:
+            raise subprocess.CalledProcessError(status, command)
+        return subprocess.CompletedProcess(command, 0)
+    monkeypatch.setattr(probe_macos_update.subprocess, 'run', run)
+    if forced:
+        probe_macos_update.detach_readonly(tmp_path)
+        assert calls == [['hdiutil', 'detach', str(tmp_path)], ['hdiutil', 'detach', '-force', str(tmp_path)]]
+    else:
+        with pytest.raises(subprocess.CalledProcessError):
+            probe_macos_update.detach_readonly(tmp_path)
+        assert calls == [['hdiutil', 'detach', str(tmp_path)]]
+
+
 def tracked_source(root):
     (root / 'linguaflow/knowledge').mkdir(parents=True)
     (root / 'linguaflow/__init__.py').write_text('__version__ = "0.8.0"')

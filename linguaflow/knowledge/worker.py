@@ -524,6 +524,10 @@ async def serve():
         except Exception as exc:
             worker.error(exc)
         worker.tick()
+        # Queue.get() can complete synchronously for an existing backlog, as
+        # can local caption persistence. Let the owned notes task run between
+        # commands instead of waiting for the input queue to become empty.
+        await asyncio.sleep(0)
 
 
 if __name__ == '__main__':

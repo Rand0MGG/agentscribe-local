@@ -84,7 +84,8 @@ def test_course_unavailable_keeps_notes_editable_and_can_reassociate(tmp_path):
 
 @pytest.mark.p2
 @pytest.mark.parametrize('pipe_encoding', ['utf-8', 'cp1252'])
-def test_continuous_caption_messages_do_not_starve_automatic_notes(tmp_path, pipe_encoding):
+@pytest.mark.parametrize('slow_persistence', [False, True])
+def test_continuous_caption_messages_do_not_starve_automatic_notes(tmp_path, pipe_encoding, slow_persistence):
     import json
     import subprocess
     import sys
@@ -111,9 +112,16 @@ class FakeService:
                 'refs':[{'id':'caption:1','quote':'saved evidence'}]}],'delete_note_ids':[]}
     async def close(self): pass
 worker.DeepSeekService=FakeService
+if sys.argv[2]=='slow':
+    import time
+    original=worker.KnowledgeWorker.command
+    async def slow_command(self,value):
+        await original(self,value)
+        if value['operation'] in ('caption','saved'): time.sleep(.08)
+    worker.KnowledgeWorker.command=slow_command
 asyncio.run(worker.serve())
 '''
-    process = subprocess.Popen([sys.executable, '-u', '-c', code, pipe_encoding], stdin=subprocess.PIPE,
+    process = subprocess.Popen([sys.executable, '-u', '-c', code, pipe_encoding, 'slow' if slow_persistence else 'normal'], stdin=subprocess.PIPE,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8')
     queue, stop = Queue(), Event()
     def read():
@@ -123,10 +131,13 @@ asyncio.run(worker.serve())
         process.stdin.write(json.dumps(value, ensure_ascii=False) + '\n')
         process.stdin.flush()
     def feed():
+        burst = 100 if slow_persistence else 1
         while not stop.is_set():
             try:
-                write({'operation': 'caption', 'caption': asdict(caption)})
-                write({'operation': 'saved', 'captions': [asdict(caption)]})
+                for _ in range(burst):
+                    write({'operation': 'caption', 'caption': asdict(caption)})
+                    write({'operation': 'saved', 'captions': [asdict(caption)]})
+                burst = 1
             except OSError:
                 queue.put({'worker_exited': True})
                 return
@@ -139,6 +150,20 @@ asyncio.run(worker.serve())
                'folder_id': item['folder'], 'epoch': 'stream'})
         write({'operation': 'permission', 'materials': False, 'notes': True})
         feeder.start()
+        # Separate cold worker startup from the automatic-notes scheduling
+        # deadline; a populated input backlog must not monopolize the event loop.
+        ready, deadline = False, time.monotonic()+8
+        while time.monotonic() < deadline:
+            try:
+                event = queue.get(timeout=.2)
+            except Empty:
+                continue
+            if event.get('worker_exited'):
+                break
+            if event.get('manifest', {}).get('notes_cloud'):
+                ready = True
+                break
+        assert ready, 'Worker did not open the recording and enable automatic notes'
         deadline, published = time.monotonic()+8, False
         while time.monotonic() < deadline:
             try:
