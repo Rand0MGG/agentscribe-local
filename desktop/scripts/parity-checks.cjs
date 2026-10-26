@@ -72,11 +72,22 @@ module.exports=async function(app,page,root,output,passed){
  // Sample real rendered widths instead of accepting an animation declaration.
  await size(1000,650);await rpc('settings.set',{values:{reduce_motion:false}});
  await page.waitForFunction(()=>document.documentElement.dataset.reducedMotion==='false');
- await page.evaluate(()=>{window.sidebarWidths=[];window.sidebarSampleUntil=performance.now()+900;const sample=()=>{window.sidebarWidths.push(document.querySelector('.sidebar').getBoundingClientRect().width);if(performance.now()<window.sidebarSampleUntil)requestAnimationFrame(sample);};requestAnimationFrame(sample);});
- await page.getByRole('button',{name:'收起侧边栏',exact:true}).click();
- await page.waitForFunction(()=>window.sidebarWidths.some(width=>width>36.5&&width<175));
- const reversing=await page.locator('.sidebar').evaluate(n=>n.getBoundingClientRect().width);
- await page.getByRole('button',{name:'展开侧边栏',exact:true}).click();
+ // Observe and reverse in the same renderer frame. A host round trip can
+ // outlast the 220ms animation even after an intermediate frame was observed.
+ const reversing=await page.evaluate(()=>new Promise((resolve,reject)=>{
+  const sidebar=document.querySelector('.sidebar'),widths=[];
+  let frame=0;
+  const timer=setTimeout(()=>{cancelAnimationFrame(frame);reject(new Error(`No intermediate sidebar width: ${JSON.stringify(widths)}`));},2000);
+  const sample=()=>{
+   const width=sidebar.getBoundingClientRect().width;widths.push(width);
+   if(width>36.5&&width<175){
+    sidebar.querySelector('button[aria-label="展开侧边栏"]').click();
+    clearTimeout(timer);resolve(width);
+   }else frame=requestAnimationFrame(sample);
+  };
+  sidebar.querySelector('button[aria-label="收起侧边栏"]').click();
+  frame=requestAnimationFrame(sample);
+ }));
  await page.waitForFunction(()=>Math.abs(document.querySelector('.sidebar').getBoundingClientRect().width-180)<.5);
  assert(reversing>36&&reversing<180);
  await page.getByRole('button',{name:'收起侧边栏',exact:true}).click();

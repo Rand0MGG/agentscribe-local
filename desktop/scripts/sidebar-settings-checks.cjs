@@ -18,13 +18,23 @@ module.exports=async function(app,page,rpc,passed){
  await sample();await back().click();
  await page.waitForFunction(()=>window.navigationWidths.some(width=>width>40&&width<165));
  await page.waitForFunction(()=>Math.abs(document.querySelector('.sidebar').getBoundingClientRect().width-36)<.5);
- // Reverse before the entry animation finishes; use activation without waiting
- // for the moving button's bounding box to become stable.
- await settings().click();
- await page.waitForFunction(()=>{const nav=document.querySelector('.settings-nav');return nav&&nav.getBoundingClientRect().width>40&&nav.getBoundingClientRect().width<180;});
- const reversing=await back().evaluate(node=>{const width=document.querySelector('.settings-nav').getBoundingClientRect().width;node.click();return width;});
- await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(resolve)));
- assert((await page.locator('.sidebar').boundingBox()).width<=reversing+16,'Rapid return must continue from the current navigation width');
+ // Keep observation, reversal and the next-frame sample in the renderer so
+ // host scheduling cannot turn a rapid return into a completed transition.
+ const reversal=await page.evaluate(()=>new Promise((resolve,reject)=>{
+  let frame=0;
+  const timer=setTimeout(()=>{cancelAnimationFrame(frame);reject(new Error('No intermediate settings navigation width'));},2000);
+  const sample=()=>{
+   const nav=document.querySelector('.settings-nav'),width=nav?.getBoundingClientRect().width;
+   if(width>40&&width<180){
+    [...nav.querySelectorAll('button')].find(node=>node.textContent.includes('返回录音')).click();
+    frame=requestAnimationFrame(()=>{clearTimeout(timer);resolve({width,resumed:document.querySelector('.sidebar').getBoundingClientRect().width});});
+   }else frame=requestAnimationFrame(sample);
+  };
+  document.querySelector('.sidebar button[aria-label="设置"]').click();
+  frame=requestAnimationFrame(sample);
+ }));
+ assert(reversal.width>40&&reversal.width<180);
+ assert(reversal.resumed<=reversal.width+16,'Rapid return must continue from the current navigation width');
  await page.waitForFunction(()=>Math.abs(document.querySelector('.sidebar').getBoundingClientRect().width-36)<.5);
  assert.equal(await page.locator('.sidebar.compact').count(),1);
  await settings().click();await rpc('settings.set',{values:{reduce_motion:true}});

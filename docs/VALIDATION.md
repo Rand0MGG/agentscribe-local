@@ -4,6 +4,15 @@
 
 ## 最近可核对的证据
 
+2026-10-26 **Windows Electron CI 动画反向取样竞态修复**（基于 `9cfb2e4`，本地 `mac`，未提交/推送）：
+
+- GitHub Actions [40304987421](https://github.com/Rand0MGG/agentscribe-local/actions/runs/40304987421) 为 12 项成功、1 项失败。Windows Electron job 的构建、基础探针与 11 组全链路均成功，交互脚本在 `parity-checks.cjs` 的 `assert(reversing>36&&reversing<180)` 失败，后续双向切换未执行；Mac Electron 与两端 Python 3.11–3.13 回归均成功。原始 Windows 日志 `.work/reports/windows-electron-ci-40304987421.log`。
+- 原测试先检查历史帧中出现中间宽度，再跨进程读取当前宽度并点击展开。给测试端这两步之间注入 250ms 调度延迟，可在本机重现读取已完成的 36px 而误报；没有修改应用或增加动画时长。首轮本机探针在到达目标前遇到独立后台请求超时，日志 `sidebar-ci-delay-before-20261026.log` 保留；复跑命中目标断言，证据 `.work/reports/sidebar-ci-delay-before-repeat-20261026.log`。
+- 改为在同一渲染帧读取真实中间宽度并激活反向动作；设置往返动画的同类读取与反向也一并放入渲染端。保留中间帧、36/180px 最终宽度、收起状态、连续返回及减少动态效果断言，未改应用逻辑、依赖或增加超时。测试方法同步 TESTING。
+- 同样注入 250ms 测试端延迟后，完整 **26 组原生 Electron 交互检查通过**；再仅在隔离窗口中禁用侧栏 CSS 动画，新检查按预期以 `No intermediate sidebar width` 失败，连续读到 36px，确认没有把缺失动画判为通过。证据 `.work/reports/sidebar-ci-{delay-after,missing-animation}-20261026.log`，临时注入器仅保留于 `.work/reports/`，不进入 Git。
+- 不带任何注入的正式 `npm run test:interaction` 同样 **26 组通过**，零原生音频访问；日志 `.work/reports/sidebar-ci-interaction-final-20261026.log`。两处 JavaScript 语法与差异检查通过；应用代码未变，未重复完整 Python 或安装包验证。
+- 当前本机验证为 macOS 原生隔离窗口和无音频防护，不代表已复验 Windows。远程修复后 CI、安装包、真实设备/模型尚未验收；本条提交前的记录不等于推送或发行完成。
+
 2026-10-26 **全面回归与四处边界缺陷修复**（`mac`，基于 `d184149` 加本地改动，未提交/推送）：
 
 - 覆盖静态审查、完整无音频回归、Qt/Electron 关键工作区与本机原生基础/交互/全链路/前端切换探针。审查重点为当前侧栏、动画、跨文件夹导航和菜单调整，同时通过完整 Python 套件检查保存、取消、恢复、课程、模型编排、路径与进程释放。
