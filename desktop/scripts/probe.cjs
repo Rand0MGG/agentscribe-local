@@ -1,7 +1,7 @@
 // Isolated native-window probe. All Python children inherit the audio import guard.
 const { _electron: electron } = require('playwright');
 const { execFileSync } = require('node:child_process');
-const { mkdtempSync, mkdirSync, existsSync, readFileSync, writeFileSync } = require('node:fs');
+const { mkdtempSync, mkdirSync, existsSync, readFileSync, writeFileSync, appendFileSync } = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const closeWorkspace = require('./close-workspace.cjs');
@@ -42,6 +42,7 @@ library.save(item, [
         PYTHONPATH: [fixture, root, process.env.PYTHONPATH || ''].join(path.delimiter),
       }, timeout: 20000,
     });
+    desktop.process().stderr.on('data', chunk => appendFileSync(path.join(fixture, 'electron-stderr.log'), chunk));
     const page = await desktop.firstWindow();
     page.on('pageerror', error => errors.push(error.message));
     await page.getByRole('button', { name: '新录音', exact: false }).first().waitFor();
@@ -205,7 +206,9 @@ library.save(item, [
     await overlay.getByRole('button',{name:'关闭悬浮字幕',exact:true}).waitFor({state:'hidden'});
     await overlay.mouse.move(40,30);
     await overlay.screenshot({ path: path.join(evidence, 'overlay-dark.png') });
+    const overlayClosed = overlay.waitForEvent('close');
     await overlay.getByRole('button', { name: '关闭悬浮字幕', exact: true }).click();
+    await overlayClosed;
     await desktop.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows().find(win => !win.webContents.getURL().includes('#')); win.setSize(640, 480); });
     await page.screenshot({ path: path.join(evidence, 'workspace-640.png') });
     const horizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);

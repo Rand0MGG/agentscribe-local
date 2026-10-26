@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsc --noEmit && vite build",
     "start": "npm run build && electron .",
-    "test": "node scripts/probe.cjs",
+    "test": "node scripts/platform-helper-checks.cjs && node scripts/probe.cjs",
     "components": "npm run build && electron . --components --no-audio",
     "preview": "vite --host 127.0.0.1",
     "test:switch": "node scripts/switch-probe.cjs",

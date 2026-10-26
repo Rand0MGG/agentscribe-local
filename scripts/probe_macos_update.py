@@ -87,22 +87,7 @@ def mount(image, destination):
     try:
         yield destination / 'AgentScribe.app'
     finally:
-        detach_readonly(destination)
-
-
-def detach_readonly(destination):
-    """Release our read-only probe image, including CI filesystem observers."""
-    try:
         subprocess.run(['hdiutil', 'detach', str(destination)], check=True, capture_output=True, timeout=60)
-    except subprocess.CalledProcessError as error:
-        if error.returncode != 16 or os.environ.get('GITHUB_ACTIONS') != 'true':
-            raise
-        # The mounted volume contains no writable user data. On a disposable
-        # runner only, OS indexing/launch services may still hold the image after
-        # the tested application and its recorded helpers have cleanly exited.
-        print('Releasing busy read-only probe image on disposable CI runner', flush=True)
-        subprocess.run(['hdiutil', 'detach', '-force', str(destination)],
-                       check=True, capture_output=True, timeout=60)
 
 
 def owned_processes(executable):

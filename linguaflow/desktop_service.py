@@ -1585,6 +1585,9 @@ def main():
         return app.exec()
     finally:
         resources.close()
+        # Electron acknowledges the closed event by ending its input pipe.
+        # Let the reader release stdin before Python finalizes buffered IO.
+        reader.join(timeout=5)
         diag.close_logging()
 
 

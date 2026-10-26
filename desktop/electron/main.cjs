@@ -1,11 +1,11 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, session, Menu, screen, clipboard } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
-const { execFile } = require('node:child_process');
-const { promisify } = require('node:util');
 const { pathToFileURL } = require('node:url');
 const { Service } = require('./service.cjs');
 const { isSplitLayout } = require('./window-layout.cjs');
+const { PlatformHelpers } = require('./platform-helpers.cjs');
+const platformHelpers = new PlatformHelpers();
 
 let restartService;
 const root = path.resolve(__dirname, '../..');
@@ -29,6 +29,7 @@ const edited = new Set();
 let closePrompt = false, switching = false, bootstrapped = false;
 let platformHints = { doubleClickInterval: 500, dragDistance: 10 };
 let material, materialTimer, materialRefresh, materialBusy = false, materialAgain = false;
+let quitTask, quitReady = false;
 const desktopPython = () => process.env.AGENTSCRIBE_DESKTOP_PYTHON || path.join(root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
 const titlebarOverlay = () => ({ color: '#00000000',
   symbolColor: preferences?.appearance === 'dark' ? '#ededf0' : '#29292d', height: 36 });
@@ -43,10 +44,31 @@ function materialPosition() {
 }
 function requestMaterial() {
   clearTimeout(materialTimer);
+  if (quitting || state?.closing) return;
   materialTimer = setTimeout(renderMaterial, 80);
 }
+function cancelMaterial() {
+  clearTimeout(materialTimer); materialAgain = false;
+  platformHelpers.cancel();
+}
+function quitAfterOwnedProcesses() {
+  if (quitTask) return quitTask;
+  quitting = true;
+  cancelMaterial(); clearInterval(materialRefresh);
+  quitTask = (async () => {
+    await platformHelpers.close();
+    const backend = await service?.finished;
+    quitReady = true;
+    if (backend && (backend.code !== 0 || backend.signal)) {
+      console.error('本地后台未正常退出：', backend, service.stderr);
+      app.exit(1);
+    }
+    else app.quit();
+  })();
+  return quitTask;
+}
 async function renderMaterial() {
-  if (!window || window.isDestroyed() || quitting) return;
+  if (!window || window.isDestroyed() || quitting || state?.closing) return;
   if (materialBusy) { materialAgain = true; return; }
   materialBusy = true;
   const bounds = window.getContentBounds(), display = screen.getDisplayMatching(bounds);
@@ -56,7 +78,7 @@ async function renderMaterial() {
     const args = ['-m', 'linguaflow.desktop_platform', '--material', '--size', String(display.bounds.width), String(display.bounds.height),
       '--position', String(bounds.x), String(bounds.y), '--appearance', appearance];
     if (material?.key === key) args.push('--signature', JSON.stringify(material.signature));
-    const result = await promisify(execFile)(desktopPython(), args, { cwd: root, env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+    const result = await platformHelpers.run(desktopPython(), args, { cwd: root, env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
       windowsHide: true, timeout: 15000, maxBuffer: 16 * 1024 * 1024 });
     const value = JSON.parse(result.stdout);
     if (quitting || window.isDestroyed()) return;
@@ -68,7 +90,7 @@ async function renderMaterial() {
       material = { key, appearance, signature: value.signature, image: value.unchanged ? material.image : value.image };
       publish({ event: 'material', data: materialPosition() });
     }
-  } catch (error) { console.error('窗口材质生成失败：', error.message); }
+  } catch (error) { if (!quitting && !state?.closing && !window?.isDestroyed()) console.error('窗口材质生成失败：', error.message); }
   finally { materialBusy = false; if (materialAgain) { materialAgain = false; requestMaterial(); } }
 }
 
@@ -121,7 +143,7 @@ function createWindow() {
   window.loadFile(page, process.argv.includes('--components') ? { hash: 'components' } : {});
   window.on('move', () => { publish({ event: 'material', data: materialPosition() }); publish({ event: 'window-layout', data: windowLayout() }); requestMaterial(); });
   window.on('resize', () => { publish({ event: 'material', data: materialPosition() }); publish({ event: 'window-layout', data: windowLayout() }); });
-  window.once('closed', () => { clearTimeout(materialTimer); clearInterval(materialRefresh); });
+  window.once('closed', () => { cancelMaterial(); clearInterval(materialRefresh); });
   materialRefresh = setInterval(requestMaterial, 30000);
   requestMaterial();
   if (process.env.AGENTSCRIBE_FRONTEND_CONTEXT) {
@@ -324,11 +346,12 @@ else {
     session.defaultSession.on('will-download', event => event.preventDefault());
     const python = process.env.AGENTSCRIBE_DESKTOP_PYTHON || path.join(root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
     try {
-      const result = await promisify(execFile)(python, ['-m', 'linguaflow.desktop_platform'], {
+      const result = await platformHelpers.run(python, ['-m', 'linguaflow.desktop_platform'], {
         cwd: root, env: { ...process.env, PYTHONIOENCODING: 'utf-8' }, timeout: 15000, windowsHide: true,
       });
       platformHints = JSON.parse(result.stdout);
     } catch (error) { console.error('无法读取系统交互阈值：', error.message); }
+    if (quitting) return;
     const args = [];
     if (process.argv.includes('--no-audio') || process.env.AGENTSCRIBE_NO_AUDIO === '1') args.push('--no-audio');
     // Explicit development/test overrides. The renderer cannot choose these paths.
@@ -344,8 +367,11 @@ else {
       fault = ''; service = new Service(python, launchArgs, { cwd: root });
     service.on('event', value => {
       if (value.event === 'state') {
-        if (state?.closing && !value.data.closing) switching = false;
+        const wasClosing = state?.closing;
+        if (wasClosing && !value.data.closing) switching = false;
         state = value.data;
+        if (state.closing) cancelMaterial();
+        else if (wasClosing) requestMaterial();
       }
       if (value.event === 'settings') {
         preferences = value.data;
@@ -358,15 +384,19 @@ else {
           .filter(row => row.source).sort((a, b) => a.id - b.id).slice(-2);
       }
       publish(value);
-      if (value.event === 'closed') { quitting = true; app.quit(); }
+      if (value.event === 'closed') quitAfterOwnedProcesses();
     });
     service.on('fault', message => {
+      if (quitting && service.closed && service.child.exitCode === 0) return;
       fault = message; publish({ event: 'notice', data: { text: message, error: true } });
       // A failed handoff must exit so the supervisor can reopen the old UI.
       // The service's stdin EOF still runs its ordinary save/close path.
-      if (process.env.AGENTSCRIBE_FRONTEND_CONTEXT && !bootstrapped) { quitting = true; app.quit(); }
+      if (process.env.AGENTSCRIBE_FRONTEND_CONTEXT && !bootstrapped) {
+        if (service.child.stdin.writable) service.child.stdin.end();
+        quitAfterOwnedProcesses();
+      }
     });
-    service.on('exit', () => { if (quitting) app.quit(); });
+    service.on('exit', () => { if (quitting) quitAfterOwnedProcesses(); });
     };
     restartService();
     Menu.setApplicationMenu(Menu.buildFromTemplate([
@@ -377,10 +407,11 @@ else {
     createWindow();
   });
   app.on('before-quit', event => {
-    if (!quitting && service && !service.closed) {
-      event.preventDefault();
-      window?.close();
-    }
+    if (quitReady) return;
+    event.preventDefault();
+    if (quitting) return;
+    if (service && !service.closed) window?.close();
+    else quitAfterOwnedProcesses();
   });
-  app.on('window-all-closed', () => { if (quitting || !service || service.closed) app.quit(); });
+  app.on('window-all-closed', () => { if (quitting || !service || service.closed) quitAfterOwnedProcesses(); });
 }

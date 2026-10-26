@@ -19,6 +19,7 @@ class Service extends EventEmitter {
       ...options, shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, ...options.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
     });
+    this.finished = new Promise(resolve => this.child.once('close', (code, signal) => resolve({ code, signal })));
     this.child.stdout.on('data', chunk => this.receive(chunk));
     this.child.stderr.on('data', chunk => { this.stderr = (this.stderr + chunk.toString('utf8')).slice(-4000); });
     this.child.stdin.on('error', error => this.fail(error));
@@ -49,6 +50,9 @@ class Service extends EventEmitter {
       }
       if (!value || typeof value !== 'object') continue;
       if (value.event) {
+        // Once durable shutdown completes, release the protocol reader before
+        // waiting for Python's actual process exit.
+        if (value.event === 'closed' && this.child.stdin.writable) this.child.stdin.end();
         if (value.event === 'ready') {
           if (value.data?.protocol !== VERSION) {
             this.fail(new Error('桌面与后台协议版本不一致。'));
