@@ -89,7 +89,9 @@ def copy_electron(root, destination, downloads, target):
                     NSMicrophoneUsageDescription='AgentScribe 使用你选择的音频输入进行本地录音、识别和字幕翻译。')
         info_path.write_bytes(plistlib.dumps(info))
     shutil.copytree(frontend / 'dist', destination / 'dist')
-    for name in ('package.json', 'electron/main.cjs', 'electron/service.cjs', 'electron/preload.cjs'):
+    runtime_modules = sorted(name.removeprefix('desktop/') for name in source_files
+                             if name.startswith('desktop/electron/') and name.endswith('.cjs'))
+    for name in ('package.json', *runtime_modules):
         path = destination / name
         path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(frontend / name, path)

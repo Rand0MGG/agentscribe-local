@@ -2,6 +2,11 @@ name: Build candidate installers
 
 on:
   workflow_dispatch:
+    inputs:
+      with_electron:
+        description: 包含可切换的 Qt 与 Electron 界面并验证包内启动
+        type: boolean
+        default: false
   push:
     branches: [windows, mac]
 
@@ -34,6 +39,16 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        if: inputs.with_electron
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Prepare locked frontend dependencies
+        if: inputs.with_electron
+        working-directory: desktop
+        run: npm ci
       - name: Verify source and build host
         env:
           CANDIDATE_SHA: ${{ github.sha }}
@@ -59,8 +74,8 @@ jobs:
       - name: Build Apple Silicon DMG
         if: matrix.target == 'macos-arm64'
         run: |
-          python scripts/build_macos.py --fetch
-          python scripts/build_macos.py
+          python scripts/build_macos.py --fetch ${{ inputs.with_electron && '--with-electron' || '' }}
+          python scripts/build_macos.py ${{ inputs.with_electron && '--with-electron' || '' }}
       - name: Build Windows payload and installer
         if: matrix.target == 'windows-x64'
         shell: pwsh
@@ -75,10 +90,42 @@ jobs:
           if ($LASTEXITCODE) { throw 'MSVC environment setup failed' }
           python scripts/test_no_audio.py -q tests/test_update_recovery.py --tb=short
           if ($LASTEXITCODE) { throw 'Recovery primitives failed' }
-          python scripts/build_windows.py --fetch
+          python scripts/build_windows.py --fetch ${{ inputs.with_electron && '--with-electron' || '' }}
           if ($LASTEXITCODE) { throw 'Windows dependency preparation failed' }
-          python -c "import subprocess,sys; from pathlib import Path; from scripts.build_windows import build; from scripts.build_windows_installer import build as seal, prepare_compiler; downloads=Path('.work/packaging/windows-downloads'); compiler=prepare_compiler(downloads); subprocess.run([sys.executable,'scripts/test_no_audio.py','tests/test_windows_installer_paths.py','-q'],check=True); payload=build(downloads); seal(payload, compiler, downloads, fetch=True)"
+          python -c "import subprocess,sys; from pathlib import Path; from scripts.build_windows import build; from scripts.build_windows_installer import build as seal, prepare_compiler; downloads=Path('.work/packaging/windows-downloads'); compiler=prepare_compiler(downloads); subprocess.run([sys.executable,'scripts/test_no_audio.py','tests/test_windows_installer_paths.py','-q'],check=True); payload=build(downloads,with_electron=${{ inputs.with_electron && 'True' || 'False' }}); seal(payload, compiler, downloads, fetch=True)"
           if ($LASTEXITCODE) { throw 'Windows installer build failed' }
+      - name: Verify installed dual-frontend package without audio
+        if: inputs.with_electron
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os,subprocess,sys
+          from contextlib import contextmanager
+          from pathlib import Path
+          from scripts.probe_package import run_probe
+          from scripts.probe_macos_update import mount
+          @contextmanager
+          def installed():
+              work=Path('.work/packaging/installed-probe').resolve();work.mkdir(parents=True)
+              if sys.platform=='darwin':
+                  image,=Path('.work/packaging/dist').glob('*.dmg')
+                  with mount(image.resolve(),work/'volume') as app: yield app
+              else:
+                  installer,=Path('.work/packaging/dist').glob('*.exe')
+                  app=work/'AgentScribe'
+                  subprocess.run([str(installer.resolve()),'/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',f'/DIR={app}'],check=True,timeout=300)
+                  run_probe(app)
+                  yield app
+          with installed() as app:
+              resources=app/'Contents/Resources' if sys.platform=='darwin' else app
+              python=resources/('python/bin/python3' if sys.platform=='darwin' else 'python/python.exe')
+              executable=resources/'desktop/runtime'/('Electron.app/Contents/MacOS/Electron' if sys.platform=='darwin' else 'electron.exe')
+              env={**os.environ,'AGENTSCRIBE_PACKAGED':'1','AGENTSCRIBE_RESOURCES':str(resources),
+                   'AGENTSCRIBE_DESKTOP_PYTHON':str(python),'AGENTSCRIBE_PROBE_RESOURCES':str(resources),
+                   'AGENTSCRIBE_PROBE_ELECTRON':str(executable),'PYTHONDONTWRITEBYTECODE':'1',
+                   'AGENTSCRIBE_PROBE_EVIDENCE':str(Path('.work/reports/packaged-electron').resolve())}
+              subprocess.run(['node','desktop/scripts/probe.cjs'],env=env,check=True,timeout=180)
+          PY
       - name: Upload candidate installer and checksums
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

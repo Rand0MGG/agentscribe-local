@@ -1,6 +1,7 @@
 """Pinned dual-frontend payload inputs; Qt-only packaging stays independent."""
 import json
 import stat
+import subprocess
 import zipfile
 from pathlib import Path
 
@@ -8,6 +9,52 @@ import pytest
 
 from scripts.package_electron import asset, extract_runtime, seal_manifest
 from scripts.packaging_common import digest
+
+
+@pytest.mark.p1
+def test_packaged_electron_keeps_tracked_main_process_dependencies(tmp_path, monkeypatch):
+    from scripts import package_electron
+
+    root = tmp_path / 'source'
+    frontend = root / 'desktop'
+    (frontend / 'electron').mkdir(parents=True)
+    (frontend / 'src').mkdir()
+    (frontend / 'dist').mkdir()
+    (root / 'packaging/electron').mkdir(parents=True)
+    description = {'filename': 'electron.zip', 'sha256': 'a' * 64}
+    (root / 'packaging/electron/assets.json').write_text(json.dumps({
+        'version': '45.0.0', 'targets': {'windows-x64': description}}))
+    (frontend / 'package.json').write_text(json.dumps({'devDependencies': {'electron': '45.0.0'}}))
+    (frontend / 'package-lock.json').write_text(json.dumps({'packages': {}}))
+    (frontend / 'src/App.tsx').write_text('export {};')
+    (frontend / 'dist/index.html').write_text('<html>isolated built UI</html>')
+    modules = {'main.cjs': "module.exports=require('./window-layout.cjs');",
+               'window-layout.cjs': 'exports.isSplitLayout=()=>false;',
+               'preload.cjs': 'module.exports={};', 'service.cjs': 'module.exports={};'}
+    for name, content in modules.items():
+        (frontend / 'electron' / name).write_text(content)
+    subprocess.run(['git', 'init', '-q', str(root)], check=True)
+    subprocess.run(['git', '-C', str(root), 'add', '.'], check=True)
+    (frontend / 'electron/local-only.cjs').write_text('untracked local fixture')
+    archive = tmp_path / 'electron.zip'
+    with zipfile.ZipFile(archive, 'w') as stream:
+        stream.writestr('electron.exe', b'isolated runtime boundary')
+    monkeypatch.setattr(package_electron, 'obtain', lambda *_: archive)
+    original_run = subprocess.run
+    def run(command, **kwargs):
+        if command[0] in ('npm', 'npm.cmd'):
+            assert command[1:] == ['run', 'build'] and kwargs['cwd'] == frontend
+            return subprocess.CompletedProcess(command, 0)
+        return original_run(command, **kwargs)
+    monkeypatch.setattr(package_electron.subprocess, 'run', run)
+    target = tmp_path / 'desktop'
+    inventory = package_electron.copy_electron(root, target, tmp_path, 'windows-x64')
+    for name, content in modules.items():
+        assert (target / 'electron' / name).read_text() == content
+        assert inventory['desktop/electron/' + name] == digest(target / 'electron' / name)
+    assert not (target / 'electron/local-only.cjs').exists()
+    manifest = json.loads((target / 'frontend-manifest.json').read_text())
+    assert manifest['files']['electron/window-layout.cjs'] == digest(target / 'electron/window-layout.cjs')
 
 
 @pytest.mark.p1

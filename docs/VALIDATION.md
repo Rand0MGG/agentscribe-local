@@ -4,6 +4,13 @@
 
 ## 最近可核对的证据
 
+2026-10-26 **0.11.0 双平台安装包准备**（基于 `d646009`，本地 `mac`，构建/签名/发行/订阅尚未完成）：
+
+- `d646009` 的远程 13 项 Code checks 全部成功。按用户要求将 `0.10.2` 升为次版本 `0.11.0`，同步 Python、Electron 元数据与 Mac 包内说明，不改旧标签或已发布附件。
+- 包装器原先只复制三个固定 Electron 主进程文件，遗漏 `main.cjs` 引用的 `window-layout.cjs`。新增真实文件复制回归在修前因缺模块失败；改为复制 Git 跟踪的 `desktop/electron/*.cjs`，同时检查未跟踪本机文件不进入载荷、复制字节与前端清单一致。无音频打包/更新回归 **79 passed / 1.32s**，Ruff、版本一致性、工作流 YAML 与差异检查通过；日志 `.work/reports/release-011-packaging-{before,tests}.log`。
+- 手动候选工作流新增双界面选项，两端仍使用同一固定提交。最终 DMG 或实际安装后的独立 Windows 目录需额外通过包内 Electron 基础流程；这一步不冒充真实旧版自动升级验收。
+- 当前 GitHub 仓库及 `release-build` 环境均未配置更新签名 Secret；既有 Mac Sparkle 账户元数据可查，本机没有有效 Apple Developer ID 身份。Windows 需原 `WINDOWS_UPDATE_PRIVATE_KEY`，不能更换已固定公钥或把未签名包加入订阅。后续构建、签名和验收以对应实际证据为准。
+
 2026-10-26 **Windows Electron CI 动画反向取样竞态修复**（基于 `9cfb2e4`，本地 `mac`，未提交/推送）：
 
 - GitHub Actions [40304987421](https://github.com/Rand0MGG/agentscribe-local/actions/runs/40304987421) 为 12 项成功、1 项失败。Windows Electron job 的构建、基础探针与 11 组全链路均成功，交互脚本在 `parity-checks.cjs` 的 `assert(reversing>36&&reversing<180)` 失败，后续双向切换未执行；Mac Electron 与两端 Python 3.11–3.13 回归均成功。原始 Windows 日志 `.work/reports/windows-electron-ci-40304987421.log`。
