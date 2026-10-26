@@ -11,6 +11,17 @@ const fixture = fs.mkdtempSync(path.join(evidence, 'chain-'));
 const python = process.env.AGENTSCRIBE_DESKTOP_PYTHON || path.join(root,'.venv',process.platform === 'win32' ? 'Scripts/python.exe':'bin/python');
 const pause = ms => new Promise(resolve => setTimeout(resolve,ms));
 async function until(test, label) { const deadline=Date.now()+15000; while(Date.now()<deadline) { if(await test()) return; await pause(50); } throw new Error('Timed out: '+label); }
+async function closeWorkspace(application,page) {
+ const child=application.process(),closed=application.waitForEvent('close',{timeout:15000});
+ // A successful close may destroy the renderer before its IPC receipt arrives.
+ // Accept only that transport outcome, then require an actual clean process exit.
+ const receipt=page.evaluate(()=>window.agentScribe.request('window.close')).catch(error=>{
+  if(!error.message.includes('Target page, context or browser has been closed'))throw error;
+ });
+ await Promise.all([closed,receipt]);
+ await until(()=>child.exitCode!==null||child.signalCode!==null,'Electron process exit');
+ assert(page.isClosed());assert.equal(child.exitCode,0);assert.equal(child.signalCode,null);
+}
 execFileSync(python, ['-c', String.raw`
 import sys, wave
 from pathlib import Path
@@ -125,7 +136,7 @@ async function main() {
  await page.getByRole('dialog',{name:'永久删除 2 项？',exact:true}).getByRole('button',{name:'取消',exact:true}).click();assert.equal((await rpc('trash.list')).length,2);
  await page.getByRole('button',{name:'清空最近删除',exact:true}).click();await page.getByRole('dialog',{name:'永久删除 2 项？',exact:true}).getByRole('button',{name:'永久删除',exact:true}).click();
  await page.getByText('最近删除为空。',{exact:true}).waitFor();assert.equal((await rpc('trash.list')).length,0);await page.getByRole('button',{name:'关闭最近删除',exact:true}).click();passed.push('bulk purge confirmation cancellation preserves all files; confirmation purges captured entries');
- assert.deepEqual(errors,[]);const closed=app.waitForEvent('close');await rpc('window.close');await closed;app=null;
+ assert.deepEqual(errors,[]);await closeWorkspace(app,page);app=null;
  assert(!fs.existsSync(path.join(fixture,'blocked.log')));
  // A failed library startup can recover through a native directory choice.
  const broken=path.join(fixture,'not-a-directory');fs.writeFileSync(broken,'keep this original');
@@ -141,7 +152,7 @@ async function main() {
  assert.equal((await recoveryPage.evaluate(()=>window.agentScribe.request('bootstrap'))).root,recovered);
  assert.equal(fs.readFileSync(broken,'utf8'),'keep this original');
  await recoveryPage.screenshot({path:path.join(evidence,'startup-recovered.png')});
- const recoveredClosed=app.waitForEvent('close',{timeout:15000});await recoveryPage.evaluate(()=>window.agentScribe.request('window.close'));await recoveredClosed;app=null;
+ await closeWorkspace(app,recoveryPage);app=null;
  passed.push('failed library startup chooses, validates and persists a new directory while preserving originals');
  assert(!fs.existsSync(path.join(fixture,'blocked.log')));
  fs.writeFileSync(path.join(evidence,'result.json'),JSON.stringify({passed,fixture,errors,native_audio_attempts:0},null,2));console.log(JSON.stringify({passed,fixture},null,2));

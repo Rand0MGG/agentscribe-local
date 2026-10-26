@@ -259,6 +259,65 @@ def test_release_signer_checks_identity_and_exact_sealed_bytes(tmp_path, monkeyp
 
 
 @pytest.mark.p0
+@pytest.mark.parametrize('target', ['macos-arm64', 'windows-x64'])
+def test_keychain_signer_preserves_each_platform_trust_and_sealed_bytes(tmp_path, monkeypatch, target):
+    from scripts import packaging_common
+
+    signer = script('sign_update_artifact')
+    _, _, _, manifest, artifact, _, config = signed_fixture(tmp_path / 'asset', target)
+    private = Ed25519PrivateKey.generate()
+    public = base64.b64encode(private.public_key().public_bytes_raw()).decode()
+    config['targets'][target]['public_key'] = public
+    config['targets'].setdefault('macos-arm64', {})['filename'] = 'pinned-official-tool.tar.xz'
+    (tmp_path / 'packaging').mkdir()
+    (tmp_path / 'packaging/updates.json').write_text(json.dumps(config))
+    monkeypatch.setattr(signer, 'ROOT', tmp_path)
+    monkeypatch.setattr(packaging_common, 'obtain', lambda item, _: Path(item['filename']))
+    monkeypatch.setattr(packaging_common, 'extract', lambda *_: None)
+    calls = []
+    def official_tool(command, **kwargs):
+        calls.append(Path(command[0]).name)
+        assert command[1:4] == ['--account', 'isolated-fixture-account', '-p']
+        if Path(command[0]).name == 'generate_keys':
+            return public
+        assert command[4] == str(artifact.resolve())
+        return base64.b64encode(private.sign(artifact.read_bytes())).decode()
+    monkeypatch.setattr(signer.subprocess, 'check_output', official_tool)
+    sealed = tmp_path / 'build.json'
+    sealed.write_text(json.dumps(manifest))
+    signature = artifact.with_suffix(artifact.suffix + '.ed25519')
+    signer.sign_from_keychain(artifact, sealed, 'isolated-fixture-account', tmp_path / 'downloads', target=target)
+    private.public_key().verify(base64.b64decode(signature.read_text()), artifact.read_bytes())
+    assert calls == ['generate_keys', 'sign_update']
+    signature.unlink()
+    config['targets'][target]['public_key'] = base64.b64encode(bytes(32)).decode()
+    (tmp_path / 'packaging/updates.json').write_text(json.dumps(config))
+    with pytest.raises(ValueError, match='公钥不匹配'):
+        signer.sign_from_keychain(artifact, sealed, 'isolated-fixture-account', tmp_path / 'downloads', target=target)
+    assert calls[-1] == 'generate_keys' and calls.count('sign_update') == 1
+    assert not signature.exists()
+    artifact.write_bytes(b'changed after sealing')
+    with pytest.raises(ValueError, match='固定产物'):
+        signer.sign_from_keychain(artifact, sealed, 'isolated-fixture-account', tmp_path / 'downloads', target=target)
+    assert not signature.exists()
+
+
+@pytest.mark.p0
+@pytest.mark.parametrize('platform,actions', [('win32', 'false'), ('darwin', 'true')])
+def test_windows_native_upgrade_probe_refuses_user_computers(tmp_path, monkeypatch, platform, actions):
+    probe = script('probe_windows_update')
+    monkeypatch.setattr(probe.sys, 'platform', platform)
+    monkeypatch.setenv('GITHUB_ACTIONS', actions)
+    work = tmp_path / 'must-not-exist'
+    monkeypatch.setattr(probe.sys, 'argv', ['probe', '--old-installer', 'old.exe', '--candidate', 'new.exe',
+                                         '--manifest', 'build.json', '--signature', 'sig', '--work', str(work)])
+    with pytest.raises(SystemExit) as error:
+        probe.main()
+    assert error.value.code == 2
+    assert not work.exists()
+
+
+@pytest.mark.p0
 def test_windows_payload_sealer_rejects_unlisted_and_changed_files(tmp_path, monkeypatch):
     builder = script('build_windows_installer')
     files = ['AgentScribe.exe', 'AgentScribeRecovery.dll', 'python/python.exe', 'requirements-runtime.txt',

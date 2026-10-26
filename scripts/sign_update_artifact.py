@@ -44,27 +44,33 @@ def sign(artifact, manifest_path, target, encoded_key):
     artifact.with_suffix(artifact.suffix + '.ed25519').write_text(base64.b64encode(signature).decode() + '\n')
 
 
-def sign_from_keychain(artifact, manifest_path, account, downloads):
-    """Use the pinned official tool without exporting a private key."""
+def sign_from_keychain(artifact, manifest_path, account, downloads, *, target='macos-arm64'):
+    """Sign either platform on macOS without exporting its distinct private key."""
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
     from scripts.packaging_common import extract, obtain
     config = json.loads((ROOT / 'packaging/updates.json').read_text())
     manifest = json.loads(manifest_path.read_text())
+    if target not in ('macos-arm64', 'windows-x64'):
+        raise ValueError('不支持的更新签名平台。')
+    field = 'dmg' if target == 'macos-arm64' else 'installer'
     with artifact.open('rb') as source:
         sealed_digest = hashlib.file_digest(source, 'sha256').hexdigest()
-    if (manifest.get('target') != 'macos-arm64' or manifest.get('source_modified') is not False
-            or manifest.get('dmg_sha256') != sealed_digest
-            or manifest.get('dmg_bytes') != artifact.stat().st_size):
-        raise ValueError('只签署与已封存构建清单一致的 Mac 安装包。')
+    if (manifest.get('target') != target or manifest.get('source_modified') is not False
+            or manifest.get(field + '_sha256') != sealed_digest
+            or manifest.get(field + '_bytes') != artifact.stat().st_size):
+        raise ValueError('只签署与已封存构建清单一致的固定产物。')
+    # Sparkle's official tool signs the same Ed25519 bytes used by WinSparkle.
+    # The tool archive and the target's trust identity are separate inputs.
     item = config['targets']['macos-arm64']
+    expected_public = config['targets'][target]['public_key']
     archive = obtain(item, downloads)
     with tempfile.TemporaryDirectory(prefix='sign-tools-', dir=downloads.parent) as directory:
         tools = Path(directory)
         extract(archive, tools)
         public = subprocess.check_output([str(tools / 'bin/generate_keys'), '--account', account, '-p'], text=True).strip()
-        if public != item['public_key']:
-            raise ValueError('钥匙串签名账户与现有安装包公钥不匹配。')
+        if public != expected_public:
+            raise ValueError('钥匙串签名账户与此平台现有安装包公钥不匹配。')
         signature = subprocess.check_output([str(tools / 'bin/sign_update'), '--account', account, '-p', str(artifact.resolve())], text=True).strip()
     with artifact.open('rb') as source, mmap.mmap(source.fileno(), 0, access=mmap.ACCESS_READ) as payload:
         Ed25519PublicKey.from_public_bytes(base64.b64decode(public, validate=True)).verify(
@@ -79,13 +85,13 @@ def main():
     parser.add_argument('--artifact', type=Path, required=True)
     parser.add_argument('--manifest', type=Path, required=True)
     parser.add_argument('--target', choices=['macos-arm64', 'windows-x64'], required=True)
-    parser.add_argument('--keychain-account', help='Mac 本机签名：只使用既有钥匙串账户，不导出私钥')
+    parser.add_argument('--keychain-account', help='在 Mac 本机签署所选平台：只使用既有钥匙串账户，不导出私钥')
     parser.add_argument('--downloads', type=Path, default=ROOT / '.work/packaging/downloads')
     args = parser.parse_args()
     if args.keychain_account:
-        if sys.platform != 'darwin' or args.target != 'macos-arm64':
-            parser.error('钥匙串签名只用于 Mac 安装包。')
-        sign_from_keychain(args.artifact, args.manifest, args.keychain_account, args.downloads)
+        if sys.platform != 'darwin':
+            parser.error('钥匙串签名必须在 Mac 本机执行。')
+        sign_from_keychain(args.artifact, args.manifest, args.keychain_account, args.downloads, target=args.target)
         return
     key = os.environ.pop('AGENTSCRIBE_UPDATE_PRIVATE_KEY', '')
     if not key:

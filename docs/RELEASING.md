@@ -46,12 +46,14 @@
 - 既有 0.9.x 试用包固定使用 `stable.xml`；兼容订阅的名称不代表系统签名/公证已完成。试用更新仍须原公钥签名、真实旧包升级与恢复验收，并在发行说明保留临时签名状态；不降低正式系统签名门槛。
 - 系统签名完成后重新核对构建清单摘要/字节数，再以 `scripts/sign_update_artifact.py --artifact <文件> --manifest <清单> --target <平台>` 签署最终字节，得到同名 `.ed25519`。封存后不可更改；变更须重新封存、签名和验收。
 - `packaging/updates.json` 保存固定公钥/身份。私钥不进源码、日志或清单，分别部署至受保护 `release-build` 环境的 `MACOS_UPDATE_PRIVATE_KEY` / `WINDOWS_UPDATE_PRIVATE_KEY`；不得跨平台借用或重建公钥来绕过缺钥。签名器核对公钥并只接受规定 seed 格式。
-- Mac 也可在本机以 `sign_update_artifact.py --keychain-account <既有账户>` 签署封存文件；从锁定摘要的 Sparkle 工具读取既有钥匙串身份，核对公钥并复验公开签名，不导出私钥。只上传同名 `.ed25519`，安装包字节保持不变。
+- 也可在 Mac 本机以 `sign_update_artifact.py --target <平台> --keychain-account <该平台既有账户>` 签署任一平台的封存文件；使用锁定摘要的 Sparkle 官方 Ed25519 工具，核对该平台的公钥并复验公开签名，不导出私钥或混用两端账户。Windows 仍核对自己的 WinSparkle 公钥；这不是 Authenticode。只上传同名 `.ed25519`，安装包字节保持不变。
 - Release 草稿同时包含安装包、SHA256、`.build.json` 和 `.ed25519`。`prepare-release.yml` 拒绝覆盖已发布 Release 或同名附件；草稿上传另受 `release-draft` 环境保护。
 
 ## 验收与发布
 
 在目标机器用真实旧包→同一候选包检查下载/取消/断网/篡改、录音安装门禁、保存失败、自有进程退出、程序替换失败、启动失败恢复、用户数据/模型/运行环境保留和重启。`macos-update-check.yml` 在一次性 Mac runner 用 `probe_macos_update.py` 做该链路：先本地故障订阅，再用 `--live` 验证原始旧包的真实 HTTPS 订阅；保留来源、签名、状态和数据摘要。候选模式以只读权限下载已发布的 `old_tag`（默认 v0.9.2）与 `tag` 安装包，核对 GitHub 附件摘要、构建清单、标签提交和原公钥签名，再运行本地故障订阅；线上模式使用相同封存包。录音/保存门禁使用模拟状态，真实采集单独验收。不得在用户正在使用的 Mac 上运行该探针。
+
+`verify-release-updates.yml` 同时调度一次性 Windows/Mac runner，默认从已发布 `v0.10.2` 升级到指定的已签名候选；本地故障模式允许读未发布草稿，正式 HTTPS 模式要求候选已发布。Windows 使用实际旧 Inno 安装包、WinSparkle 下载/验签、现有录音/保存/退出门禁与新安装包，覆盖取消、断流、篡改拒绝、正常升级和启动失败恢复；Mac 复用原 Sparkle 探针。两端均核对录音、最近删除、外部文件、模型/运行组件与偏好保留；Windows 探针强制仅能在一次性 GitHub Windows runner 执行。探针或工作流存在不代表已验收，以该候选原生运行结果为准。
 
 用户验收后发布原来检查的那批文件，不重新构建。版本与渠道验收必须覆盖 beta→beta、beta→稳定、稳定不收 beta。稳定版发布同步进入该平台 `beta.xml`，保留更新的 beta；`stable.xml` 仅含稳定版。订阅生成回归不代替真实旧客户端升级。
 

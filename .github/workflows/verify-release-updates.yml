@@ -1,0 +1,110 @@
+name: Verify native release upgrades
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 已签署候选或已发布版本的固定标签
+        type: string
+        required: true
+      old_tag:
+        description: 原始已发布旧客户端
+        type: string
+        default: v0.10.2
+        required: true
+      live:
+        description: 使用未修改旧客户端的正式 HTTPS 订阅（候选验收后执行）
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-release-acceptance-${{ inputs.live }}
+  cancel-in-progress: false
+
+jobs:
+  acceptance:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: windows-x64
+            os: windows-2025
+          - target: macos-arm64
+            os: macos-15
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      UPDATE_TAG: ${{ inputs.tag }}
+      OLD_TAG: ${{ inputs.old_tag }}
+      UPDATE_LIVE: ${{ inputs.live }}
+      UPDATE_TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e ".[dev]"
+      - name: Download and verify immutable old and candidate packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib,json,os,re,subprocess
+          from pathlib import Path
+          target,tag,old=os.environ['UPDATE_TARGET'],os.environ['UPDATE_TAG'],os.environ['OLD_TAG']
+          assert tag!=old and all(re.fullmatch(r'v\d+\.\d+\.\d+',value) for value in (tag,old))
+          repo=os.environ['GITHUB_REPOSITORY'];suffix='dmg' if target=='macos-arm64' else 'exe'
+          work=Path('.work/update-downloads');work.mkdir(parents=True)
+          for selected in (old,tag):
+              release=json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/releases/tags/{selected}'],text=True))
+              assert not release['draft'] or selected==tag and os.environ['UPDATE_LIVE']!='true'
+              stem=f'AgentScribe-{selected[1:]}-{target}'
+              endings=['.'+suffix,'.build.json']+(['.'+suffix+'.ed25519'] if selected==tag else [])
+              for ending in endings:
+                  name=stem+ending
+                  asset,=[a for a in release['assets'] if a['name']==name and a['state']=='uploaded']
+                  subprocess.run(['gh','release','download',selected,'--repo',repo,'--pattern',name,'--dir',str(work)],check=True)
+                  path=work/name
+                  with path.open('rb') as source:digest=hashlib.file_digest(source,'sha256').hexdigest()
+                  assert path.stat().st_size==asset['size'] and asset['digest']=='sha256:'+digest
+              manifest=json.loads((work/(stem+'.build.json')).read_text(encoding='utf-8'))
+              sha=subprocess.check_output(['git','rev-parse',selected+'^{commit}'],text=True).strip()
+              assert manifest['source_commit']==sha and manifest['source_modified'] is False
+              assert manifest['version']==selected[1:] and manifest['target']==target
+          PY
+      - name: Exercise native update, preservation and recovery
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os,subprocess,sys
+          from pathlib import Path
+          target,tag,old=os.environ['UPDATE_TARGET'],os.environ['UPDATE_TAG'],os.environ['OLD_TAG']
+          mac=target=='macos-arm64';suffix='dmg' if mac else 'exe'
+          stem=Path('.work/update-downloads')/f'AgentScribe-{tag[1:]}-{target}'
+          command=[sys.executable,'scripts/probe_macos_update.py' if mac else 'scripts/probe_windows_update.py',
+                   '--old-dmg' if mac else '--old-installer',f'.work/update-downloads/AgentScribe-{old[1:]}-{target}.{suffix}',
+                   '--candidate',str(stem)+'.'+suffix,'--manifest',str(stem)+'.build.json',
+                   '--signature',str(stem)+'.'+suffix+'.ed25519','--work','.work/update-acceptance']
+          if os.environ['UPDATE_LIVE']=='true':command.append('--live')
+          subprocess.run(command,check=True)
+          PY
+      - name: Preserve upgrade evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-upgrade-${{ matrix.target }}-${{ inputs.live }}
+          path: |
+            .work/update-acceptance/result.json
+            .work/update-acceptance/*/events.jsonl
+            .work/update-acceptance/*/old-app.log
+            .work/update-acceptance/*/recovery-state.json
+          if-no-files-found: ignore
+          retention-days: 14
