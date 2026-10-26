@@ -1,0 +1,111 @@
+name: Publish existing signed installers
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        type: string
+        required: true
+      commit:
+        type: string
+        required: true
+      build_run:
+        type: string
+        required: true
+      mac_signature:
+        description: Public Ed25519 signature, never a private key
+        type: string
+        required: true
+      windows_signature:
+        description: Public Ed25519 signature, never a private key
+        type: string
+        required: true
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: promote-signed-installers
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: release-draft
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      SOURCE_SHA: ${{ inputs.commit }}
+      BUILD_RUN: ${{ inputs.build_run }}
+      MAC_SIGNATURE: ${{ inputs.mac_signature }}
+      WINDOWS_SIGNATURE: ${{ inputs.windows_signature }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - run: python -m pip install 'cryptography==50.0.2'
+      - name: Verify immutable source and successful build
+        run: |
+          python - <<'PY'
+          import json,os,re,subprocess
+          sha,tag,run=os.environ['SOURCE_SHA'],os.environ['RELEASE_TAG'],os.environ['BUILD_RUN']
+          assert re.fullmatch('[0-9a-f]{40}',sha) and re.fullmatch(r'v\d+\.\d+\.\d+',tag) and run.isdecimal()
+          def get(path):return json.loads(subprocess.check_output(['gh','api',path],encoding='utf-8'))
+          assert subprocess.check_output(['git','rev-parse',tag+'^{commit}'],encoding='utf-8').strip()==sha
+          value=get(f'repos/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{run}')
+          assert value['conclusion']=='success' and value['head_sha']==sha and value['path']=='.github/workflows/build-installers.yml'
+          PY
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.build_run }}
+          pattern: AgentScribe-*-${{ inputs.commit }}
+          path: .work/promote
+      - name: Verify signatures and upload original bytes to draft
+        run: |
+          python - <<'PY'
+          import base64,hashlib,json,os,subprocess
+          from pathlib import Path
+          from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+          repo=os.environ['GITHUB_REPOSITORY'];tag=os.environ['RELEASE_TAG'];sha=os.environ['SOURCE_SHA'];version=tag[1:]
+          def get(path):return json.loads(subprocess.check_output(['gh','api',path],encoding='utf-8'))
+          release,=[r for r in get(f'repos/{repo}/releases') if r['tag_name']==tag]
+          assert release['draft'] is True and release['target_commitish']==sha
+          expected={};upload=[];config=json.loads(Path('packaging/updates.json').read_text())
+          for target in ('macos-arm64','windows-x64'):
+              mac=target=='macos-arm64';suffix='dmg' if mac else 'exe';field='dmg' if mac else 'installer'
+              folder=Path('.work/promote')/f'AgentScribe-{target}-{sha}'
+              original=f'AgentScribe-{version}'+('-dual-ui' if mac else '')+f'-{target}'
+              stem=f'AgentScribe-{version}-{target}';manifest_path=folder/(original+'.build.json')
+              manifest=json.loads(manifest_path.read_text(encoding='utf-8'));artifact=folder/(original+'.'+suffix)
+              assert manifest['source_commit']==sha and manifest['source_modified'] is False
+              assert manifest['target']==target and manifest['version']==version
+              with artifact.open('rb') as f:digest=hashlib.file_digest(f,'sha256').hexdigest()
+              assert artifact.stat().st_size==manifest[field+'_bytes'] and digest==manifest[field+'_sha256']
+              signature=os.environ['MAC_SIGNATURE' if mac else 'WINDOWS_SIGNATURE'].strip()
+              public=config['targets'][target]['public_key'];assert manifest['updater']['public_key']==public
+              Ed25519PublicKey.from_public_bytes(base64.b64decode(public,validate=True)).verify(base64.b64decode(signature,validate=True),artifact.read_bytes())
+              canonical=folder/(stem+'.'+suffix)
+              if canonical!=artifact:artifact.rename(canonical)
+              expected[canonical.name]=(canonical.stat().st_size,digest)
+              for name,data in ((stem+'.build.json',manifest_path.read_bytes()),(canonical.name+'.sha256',(digest+'  '+canonical.name+'\n').encode()),(canonical.name+'.ed25519',(signature+'\n').encode())):
+                  expected[name]=(len(data),hashlib.sha256(data).hexdigest())
+                  asset,=[a for a in release['assets'] if a['name']==name]
+                  assert asset['state']=='uploaded' and (asset['size'],asset['digest'])==(len(data),'sha256:'+expected[name][1])
+              existing=[a for a in release['assets'] if a['name']==canonical.name]
+              if existing:
+                  asset,=existing
+                  assert asset['state']=='uploaded' and (asset['size'],asset['digest'])==(expected[canonical.name][0],'sha256:'+digest)
+              else:upload.append(str(canonical))
+          if upload:subprocess.run(['gh','release','upload',tag,'--repo',repo,*upload],check=True)
+          current=get(f'repos/{repo}/releases/{release["id"]}');assert current['draft'] is True
+          assert {a['name'] for a in current['assets']}==set(expected)
+          for asset in current['assets']:
+              size,digest=expected[asset['name']]
+              assert asset['state']=='uploaded' and (asset['size'],asset['digest'])==(size,'sha256:'+digest)
+          subprocess.run(['gh','release','edit',tag,'--repo',repo,'--draft=false','--latest'],check=True)
+          print('Published original verified signed installers:',tag)
+          PY
