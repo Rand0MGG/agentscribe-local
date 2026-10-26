@@ -4,6 +4,7 @@ The existing native launcher/updater identity remains unchanged. No models or
 personal browser profile are copied, and Qt-only builds keep their old inputs.
 """
 import json
+import os
 import plistlib
 import shutil
 import stat
@@ -77,7 +78,8 @@ def copy_electron(root, destination, downloads, target):
         if not files or any(not path.is_file() for path in files):
             raise ValueError('前端依赖缺少许可全文：' + relative)
         licenses[relative.removeprefix('node_modules/').replace('/', '__')] = files
-    subprocess.run(['npm.cmd' if sys.platform == 'win32' else 'npm', 'run', 'build'], cwd=frontend, check=True)
+    subprocess.run(['npm.cmd' if sys.platform == 'win32' else 'npm', 'run', 'build'], cwd=frontend, check=True,
+                   env={**os.environ, 'AGENTSCRIBE_DESKTOP_PYTHON': sys.executable})
     if any(digest(root / name) != value for name, value in source_files.items()):
         raise ValueError('前端源码在构建期间变化，未封存。')
     destination.mkdir()

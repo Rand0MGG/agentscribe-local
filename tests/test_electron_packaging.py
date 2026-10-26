@@ -2,6 +2,7 @@
 import json
 import stat
 import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -44,6 +45,7 @@ def test_packaged_electron_keeps_tracked_main_process_dependencies(tmp_path, mon
     def run(command, **kwargs):
         if command[0] in ('npm', 'npm.cmd'):
             assert command[1:] == ['run', 'build'] and kwargs['cwd'] == frontend
+            assert kwargs['env']['AGENTSCRIBE_DESKTOP_PYTHON'] == sys.executable
             return subprocess.CompletedProcess(command, 0)
         return original_run(command, **kwargs)
     monkeypatch.setattr(package_electron.subprocess, 'run', run)
