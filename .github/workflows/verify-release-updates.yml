@@ -80,10 +80,10 @@ jobs:
           assert re.fullmatch('[0-9a-f]{40}',sha) and run.isdecimal()
           assert len(base64.b64decode(os.environ['CANDIDATE_SIGNATURE'],validate=True))==64
           repo=os.environ['GITHUB_REPOSITORY']
-          value=json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/actions/runs/{run}'],text=True))
+          value=json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/actions/runs/{run}'],text=True,encoding='utf-8'))
           assert value['head_sha']==sha and value['conclusion']=='success'
           assert value['path']=='.github/workflows/build-installers.yml'
-          assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()==sha
+          assert subprocess.check_output(['git','rev-parse','HEAD'],text=True,encoding='utf-8').strip()==sha
           subprocess.run(['git','merge-base','--is-ancestor',sha,'origin/main'],check=True)
           PY
       - name: Download exact prepublication candidate
@@ -118,7 +118,7 @@ jobs:
                   assert manifest['source_commit']==os.environ['CANDIDATE_COMMIT'] and manifest['source_modified'] is False
                   assert manifest['target']==target and manifest['version']==tag[1:]
                   continue
-              release=json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/releases/tags/{selected}'],text=True))
+              release=json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/releases/tags/{selected}'],text=True,encoding='utf-8'))
               assert not release['draft'] or selected==tag and os.environ['UPDATE_LIVE']!='true'
               stem=f'AgentScribe-{selected[1:]}-{target}'
               endings=['.'+suffix,'.build.json']+(['.'+suffix+'.ed25519'] if selected==tag else [])
@@ -130,7 +130,7 @@ jobs:
                   with path.open('rb') as source:digest=hashlib.file_digest(source,'sha256').hexdigest()
                   assert path.stat().st_size==asset['size'] and asset['digest']=='sha256:'+digest
               manifest=json.loads((work/(stem+'.build.json')).read_text(encoding='utf-8'))
-              sha=subprocess.check_output(['git','rev-parse',selected+'^{commit}'],text=True).strip()
+              sha=subprocess.check_output(['git','rev-parse',selected+'^{commit}'],text=True,encoding='utf-8').strip()
               assert manifest['source_commit']==sha and manifest['source_modified'] is False
               assert manifest['version']==selected[1:] and manifest['target']==target
           PY

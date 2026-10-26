@@ -42,7 +42,9 @@ def unpack_snapshot(data, root):
                     shutil.copyfileobj(source, target)
 
 
-def prepare(tag, target, work, *, initialize=False):
+def prepare(tag, target, work, *, initialize=False, accepted=True, allow_unverified=False):
+    if not accepted and not allow_unverified:
+        raise ValueError("尚未确认验收，且没有用户明确授权提前发布。")
     version = tag.removeprefix("v")
     version_key(version)
     if tag != "v" + version or target not in ("windows-x64", "macos-arm64"):
@@ -60,7 +62,7 @@ def prepare(tag, target, work, *, initialize=False):
     ).strip()
     # Workflow dispatch has an explicit platform acceptance input. No build or
     # API result is interpreted as human installation acceptance.
-    release["accepted_targets"] = {target: True}
+    release["accepted_targets"] = {target: accepted}
     suffix = "dmg" if target == "macos-arm64" else "exe"
     stem = f"AgentScribe-{version}-{target}"
     names = [stem + "." + suffix, stem + ".build.json", stem + "." + suffix + ".ed25519"]
@@ -101,6 +103,7 @@ def prepare(tag, target, work, *, initialize=False):
         work / (stem + "." + suffix),
         (work / (stem + "." + suffix + ".ed25519")).read_text(encoding="utf-8"),
         config,
+        allow_unverified=allow_unverified,
     )
     merge_snapshot(previous, output, entry)
     # The self-contained archive excludes itself; next dispatch restores all

@@ -102,6 +102,22 @@ def test_unverified_assets_never_enter_feed(tmp_path, problem):
         m.feed_entry(release, manifest, artifact, signature, config)
 
 
+@pytest.mark.p0
+@pytest.mark.parametrize("target", ["macos-arm64", "windows-x64"])
+def test_explicit_early_publication_keeps_signature_and_source_checks(tmp_path, target):
+    module, _, release, manifest, artifact, signature, config = signed_fixture(tmp_path, target)
+    release["accepted_targets"] = {target: False}
+    with pytest.raises(ValueError, match="验收"):
+        module.feed_entry(release, manifest, artifact, signature, config)
+    assert module.feed_entry(release, manifest, artifact, signature, config, allow_unverified=True)["target"] == target
+    assert release["accepted_targets"][target] is False
+    with pytest.raises(ValueError, match="签名"):
+        module.feed_entry(release, manifest, artifact, base64.b64encode(bytes(64)).decode(), config, allow_unverified=True)
+    release["source_commit"] = "b" * 40
+    with pytest.raises(ValueError, match="来源"):
+        module.feed_entry(release, manifest, artifact, signature, config, allow_unverified=True)
+
+
 @pytest.mark.p2
 def test_full_site_snapshot_preserves_other_platform_and_rejects_downgrade(tmp_path):
     module, mac, *_ = signed_fixture(tmp_path / "mac", "macos-arm64", "0.8.0")

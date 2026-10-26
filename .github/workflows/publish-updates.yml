@@ -22,6 +22,11 @@ on:
         required: true
         default: false
         type: boolean
+      allow_unverified:
+        description: 用户明确要求先推送，原生升级验收尚未完成（仍强制来源、摘要和原公钥签名校验）
+        required: true
+        default: false
+        type: boolean
 
 # Pages replaces the whole site: all platforms and channels share one queue.
 concurrency:
@@ -35,7 +40,7 @@ permissions:
 
 jobs:
   publish:
-    if: inputs.accepted
+    if: inputs.accepted || inputs.allow_unverified
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
@@ -43,7 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
@@ -56,13 +61,17 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag }}
           RELEASE_TARGET: ${{ inputs.target }}
           INITIALIZE_SITE: ${{ inputs.initialize }}
+          PLATFORM_ACCEPTED: ${{ inputs.accepted }}
+          ALLOW_UNVERIFIED: ${{ inputs.allow_unverified }}
         run: |
           python - <<'PY'
           import os
           from pathlib import Path
           from scripts.prepare_update_site import prepare
           prepare(os.environ['RELEASE_TAG'], os.environ['RELEASE_TARGET'], Path('.work/update-site'),
-                  initialize=os.environ['INITIALIZE_SITE'] == 'true')
+                  initialize=os.environ['INITIALIZE_SITE'] == 'true',
+                  accepted=os.environ['PLATFORM_ACCEPTED'] == 'true',
+                  allow_unverified=os.environ['ALLOW_UNVERIFIED'] == 'true')
           PY
       - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
         with:

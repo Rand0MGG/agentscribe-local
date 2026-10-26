@@ -27,7 +27,7 @@ ET.register_namespace("sparkle", SPARKLE)
 REPOSITORY = "https://github.com/Rand0MGG/agentscribe-local"
 
 
-def feed_entry(release, manifest, artifact, signature, configuration):
+def feed_entry(release, manifest, artifact, signature, configuration, *, allow_unverified=False):
     """Return a sealed item, failing closed for drafts/dirty/unaccepted builds."""
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -45,7 +45,7 @@ def feed_entry(release, manifest, artifact, signature, configuration):
         or release.get("prerelease") != (identity["channel"] == "beta")
     ):
         raise ValueError("只允许发布固定标签和来源提交一致的已发布 Release。")
-    if release.get("accepted_targets", {}).get(target) is not True:
+    if release.get("accepted_targets", {}).get(target) is not True and not allow_unverified:
         raise ValueError("此平台尚未通过安装与旧包升级验收。")
     suffix, field = ("dmg", "dmg") if target == "macos-arm64" else ("exe", "installer")
     name = f"AgentScribe-{version}-{target}.{suffix}"
