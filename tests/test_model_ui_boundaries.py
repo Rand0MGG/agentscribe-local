@@ -54,7 +54,8 @@ for kind in ('srt', 'txt', 'md'):
     QFileDialog.getSaveFileName = lambda *args: (str(path), FORMATS[kind][0])
     original = Caption(1, 1, 2, 'Hello', 'en', '你好')
     w.captions = {1: original, 2: Caption(2, 2, 3, 'DRAFT', 'en', final=False)}
-    w.export()
+    w.export_action.setEnabled(True)
+    w.export_action.trigger()
     original.source = 'changed after export'
     assert w.export_saver.flush()
     text = path.read_text(encoding='utf-8-sig')

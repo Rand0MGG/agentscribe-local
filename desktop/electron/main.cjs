@@ -5,6 +5,7 @@ const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { pathToFileURL } = require('node:url');
 const { Service } = require('./service.cjs');
+const { isSplitLayout } = require('./window-layout.cjs');
 
 let restartService;
 const root = path.resolve(__dirname, '../..');
@@ -77,6 +78,11 @@ function publish(value) {
   }
 }
 
+function windowLayout() {
+  const bounds = window.getBounds(), display = screen.getDisplayMatching(bounds);
+  return { split: isSplitLayout(bounds, display.workArea) || isSplitLayout(bounds, display.bounds) };
+}
+
 async function openKnowledge() {
   // Validate the recording and Beta permission before showing a reading window.
   await service.request('knowledge.open');
@@ -113,8 +119,8 @@ function createWindow() {
     ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 16, y: 13 } } : {}),
   });
   window.loadFile(page, process.argv.includes('--components') ? { hash: 'components' } : {});
-  window.on('move', () => { publish({ event: 'material', data: materialPosition() }); requestMaterial(); });
-  window.on('resize', () => publish({ event: 'material', data: materialPosition() }));
+  window.on('move', () => { publish({ event: 'material', data: materialPosition() }); publish({ event: 'window-layout', data: windowLayout() }); requestMaterial(); });
+  window.on('resize', () => { publish({ event: 'material', data: materialPosition() }); publish({ event: 'window-layout', data: windowLayout() }); });
   window.once('closed', () => { clearTimeout(materialTimer); clearInterval(materialRefresh); });
   materialRefresh = setInterval(requestMaterial, 30000);
   requestMaterial();
@@ -219,6 +225,7 @@ ipcMain.handle('desktop:request', async (event, request) => {
     }
   }
   if (method === 'material.get') return materialPosition();
+  if (method === 'window.layout') return windowLayout();
   if (method === 'window.minimize') { window.minimize(); return; }
   if (method === 'window.edited') {
     if (!['name', 'knowledge'].includes(params.owner) || typeof params.dirty !== 'boolean') throw new Error('无效的编辑状态。');

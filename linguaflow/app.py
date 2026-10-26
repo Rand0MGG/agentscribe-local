@@ -6,6 +6,7 @@ from dataclasses import asdict, replace
 from pathlib import Path
 
 from PySide6.QtCore import (
+    QEasingCurve,
     QEvent,
     QPoint,
     QSettings,
@@ -14,6 +15,7 @@ from PySide6.QtCore import (
     Qt,
     QTimer,
     QUrl,
+    QVariantAnimation,
     Slot,
 )
 from PySide6.QtGui import (
@@ -44,7 +46,7 @@ from . import diagnostic_log as diag
 from .audio import list_devices
 from .caption_feed import CaptionCard as CaptionCard
 from .caption_feed import CaptionFeed
-from .core import LANGUAGES, Caption
+from .core import LANGUAGES, Caption, source_is_final
 from .deleted_dialog import DeletedDialog
 from .knowledge.client import KnowledgeClient
 from .knowledge.panel import KnowledgePanel
@@ -83,6 +85,7 @@ from .ui_components import (
     NavigationButton,
     RecordingTitle,
     SurfaceDialog,
+    motion_enabled,
     paint_window_shadow,
 )
 from .ui_components import ChoiceBox as QComboBox
@@ -95,7 +98,7 @@ from .ui_theme import (
     theme_colors,
 )
 from .ui_tooltips import install_tooltips
-from .window_chrome import GlassTitleBar, WorkspaceFrame, line_icon
+from .window_chrome import GlassTitleBar, WorkspaceFrame, is_split_layout, line_icon
 from .window_platform import (
     configure_main_window,
     enable_native_resize,
@@ -312,7 +315,16 @@ class Window(QMainWindow):
         self.title_bar = GlassTitleBar(self)
         self.title_bar.setVisible(sys.platform == "win32" or self.integrated_titlebar)
         layout.addWidget(self.title_bar)
-        split = QSplitter()
+        split = self.recording_splitter = QSplitter()
+        self.sidebar_compact = False
+        self.sidebar_auto_compact = False
+        self.sidebar_override = None
+        self.sidebar_expanded_width = 250
+        self.sidebar_motion = QVariantAnimation(self)
+        self.sidebar_motion.setDuration(220)
+        self.sidebar_motion.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.sidebar_motion.valueChanged.connect(self.advance_sidebar_width)
+        self.sidebar_motion.finished.connect(self.finish_sidebar_width)
         split.setHandleWidth(1)
         self.pages = QStackedWidget()
         self.pages.setContentsMargins(0, 0, 0, 0)
@@ -336,7 +348,7 @@ class Window(QMainWindow):
         sidebar.setMaximumWidth(420)
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setContentsMargins(14, 0, 14, 14)
-        sidebar_layout.setSpacing(10)
+        sidebar_layout.setSpacing(4)
         sidebar_header = QHBoxLayout()
         self.brand = label("AgentScribe", "brand")
         self.brand.setFixedHeight(40)
@@ -352,17 +364,27 @@ class Window(QMainWindow):
         self.new_button.setObjectName("navigation")
         self.new_button.clicked.connect(diag.action('recording.new', self.new_recording))
         sidebar_layout.addWidget(self.new_button)
-        sidebar_layout.addSpacing(10)
-        folders_heading = QHBoxLayout()
-        folders_heading.addWidget(label("文件夹", "section"))
-        folders_heading.addStretch()
-        self.folder_button = QPushButton("＋")
+        self.sidebar_toggle = NavigationButton('收起侧边栏')
+        self.sidebar_toggle.setObjectName('navigation')
+        self.sidebar_toggle.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.sidebar_toggle.clicked.connect(self.toggle_sidebar)
+        sidebar_layout.addWidget(self.sidebar_toggle)
+        folders_heading = self.sidebar_folders_heading = QHBoxLayout()
+        folders_heading.setContentsMargins(0, 4, 0, 0)
+        self.folders_label = label("文件夹", "section")
+        folders_heading.addWidget(self.folders_label)
+        folders_heading.addStretch(1)
+        self.folder_button = NavigationButton('新建文件夹')
+        self.folder_button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.folder_button.setProperty('iconOnly', True)
+        self.folder_button.setIcon(line_icon('folder-add'))
+        self.folder_button.setAccessibleName('新建文件夹')
         self.folder_button.setToolTip("新建文件夹")
         self.folder_button.setObjectName("quiet")
-        self.folder_button.setFixedSize(28, 28)
-        self.folder_button.setStyleSheet('QPushButton { min-width: 28px; max-width: 28px; min-height: 28px; max-height: 28px; border: none; padding: 0; }')
+        self.folder_button.setFixedSize(36, 36)
         self.folder_button.clicked.connect(diag.action('folder.create', self.create_folder))
         folders_heading.addWidget(self.folder_button)
+        folders_heading.addStretch(0)
         sidebar_layout.addLayout(folders_heading)
         self.library_tree = LibraryTree()
         self.library_tree.itemClicked.connect(diag.action('library.select', self.load_library_item))
@@ -483,19 +505,14 @@ class Window(QMainWindow):
         self.knowledge_button.hide()
         self.knowledge_button.clicked.connect(diag.action('knowledge.open', self.open_knowledge))
         header_actions.addWidget(self.knowledge_button)
-        overlay_button = QPushButton("悬浮字幕")
-        overlay_button.setObjectName("quiet")
-        overlay_button.clicked.connect(diag.action('captions.overlay', self.toggle_overlay))
-        header_actions.addWidget(overlay_button)
-        self.export_button = QPushButton("导出定稿")
-        self.export_button.setObjectName("quiet")
-        self.export_button.clicked.connect(diag.action('recording.export', self.export))
-        self.export_button.setEnabled(False)
-        header_actions.addWidget(self.export_button)
         more = QPushButton("···")
         more.setObjectName("quiet")
         more.setToolTip("更多操作")
         menu = ActionMenu(more)
+        self.overlay_action = menu.addAction('悬浮字幕', diag.action('captions.overlay', self.toggle_overlay))
+        self.export_action = menu.addAction('导出定稿', diag.action('recording.export', self.export))
+        self.export_action.setEnabled(False)
+        menu.addSeparator()
         self.knowledge_action = menu.addAction('课程资料与笔记 · Beta', self.open_knowledge)
         self.knowledge_action.setVisible(False)
         self.find_action = menu.addAction('查找字幕…', diag.action('captions.find', self.find_captions))
@@ -534,6 +551,8 @@ class Window(QMainWindow):
         self.reduce_motion = Switch('减少动态效果')
         self.reduce_motion.toggled.connect(lambda value: QApplication.instance().setProperty('reduceMotion', value))
         self.reduce_motion.toggled.connect(self.scroll.content_changed)
+        self.reduce_motion.toggled.connect(lambda reduced: self.finish_sidebar_width()
+            if reduced and self.sidebar_motion.state() == QVariantAnimation.State.Running else None)
         self.beta_features = Switch('体验 Beta 功能')
         menu.addSeparator()
         menu.addAction('移到最近删除…', diag.action('recording.delete', self.delete_current))
@@ -677,6 +696,12 @@ class Window(QMainWindow):
         self.settings_workspace.model_browser.changed.connect(self.check_model_assets)
         self.model_manager.selection_changed.connect(lambda *_: self.asset_check_timer.start(100))
         self.pages.addWidget(self.settings_workspace)
+        self.settings_sidebar_motion = QVariantAnimation(self)
+        self.settings_sidebar_motion.setDuration(220)
+        self.settings_sidebar_motion.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.settings_sidebar_motion.valueChanged.connect(
+            lambda value: self.settings_workspace.sidebar.setFixedWidth(round(value)))
+        self.reduce_motion.toggled.connect(lambda reduced: self.finish_settings_sidebar_width() if reduced else None)
         self.pages.currentChanged.connect(self.update_preparation_feedback)
         self.settings_workspace.pages.currentChanged.connect(self.update_preparation_feedback)
         for pref in PREFERENCES:
@@ -904,6 +929,8 @@ class Window(QMainWindow):
         app.setStyleSheet(appearance_style(mode))
         install_tooltips(app).hide()
         for button, kind in ((self.new_button, 'new'), (self.settings_button, 'settings'),
+                             (self.folder_button, 'folder-add'),
+                             (self.sidebar_toggle, 'sidebar-expand' if self.sidebar_compact else 'sidebar-collapse'),
                              (self.deleted_button, 'trash'),
                              (self.ui_update_button, 'download'),
                              (self.quick_language, 'language'),
@@ -1279,13 +1306,34 @@ class Window(QMainWindow):
         index = self.settings_workspace.categories.index(category)
         self.settings_workspace.navigation.setCurrentRow(index)
         self.settings_workspace.select(index)
+        entering = self.pages.currentIndex() != 1
+        start = self.recording_sidebar.width()
         self.pages.setCurrentIndex(1)
+        if entering and self.sidebar_compact:
+            self.finish_sidebar_width()
+            self.settings_sidebar_motion.stop()
+            self.settings_sidebar_motion.setStartValue(start)
+            self.settings_sidebar_motion.setEndValue(250)
+            if motion_enabled() and self.isVisible():
+                self.settings_workspace.sidebar.setFixedWidth(start)
+                self.settings_sidebar_motion.start()
+            else:
+                self.finish_settings_sidebar_width()
+
+    def finish_settings_sidebar_width(self):
+        self.settings_sidebar_motion.stop()
+        self.settings_workspace.sidebar.setFixedWidth(250)
 
     def leave_settings(self):
         diag.event("navigation", page="recording")
         self.save()
         self.update_model_summary()
+        leaving = self.pages.currentIndex() == 1
+        start = self.settings_workspace.sidebar.width()
+        self.finish_settings_sidebar_width()
         self.pages.setCurrentIndex(0)
+        if leaving and self.sidebar_compact:
+            self.animate_sidebar_width(start, self.title_bar.height())
 
     def return_to_recording(self):
         if self.pages.currentIndex() == 1 and QApplication.activeModalWidget() is None:
@@ -1507,7 +1555,7 @@ class Window(QMainWindow):
             folders = self.library.index['folders']
             self.folder_id = folders[0]['id'] if folders else None
         self.update_recording_hint()
-        self.export_button.setEnabled(False)
+        self.export_action.setEnabled(False)
 
     def new_recording(self, checked=False, *, folder_id=None, name=None, check_models=True):
         if not self.can_edit_library():
@@ -1610,7 +1658,7 @@ class Window(QMainWindow):
         self.recording_pages.setCurrentIndex(0)
         self.recording_actions.show()
         self.empty.setText("无内容")
-        self.export_button.setEnabled(any(c.final and c.source for c in captions))
+        self.export_action.setEnabled(self.can_export_final())
         self.attach_knowledge()
         self.prepare_playback()
         if self.cards and not self.scroll.playback_mode:
@@ -2413,7 +2461,7 @@ class Window(QMainWindow):
         self.update_transport_icons()
         self.start_button.setVisible(not state.active)
         self.update_transport()
-        self.export_button.setEnabled(not state.active and any(c.final and c.source for c in self.captions.values()))
+        self.export_action.setEnabled(self.can_export_final())
         self.update_pipeline_visibility()
         reason = '正在聆听，请先停止录音再切换。' if state.active else ''
         for control in (self.library_tree, self.new_button, self.folder_button):
@@ -2727,7 +2775,7 @@ class Window(QMainWindow):
             active=self.recording_state.active, loading=self.loading_saved)
         self.caption_feed.set_caption(caption)
         self.sync_overlay(animate=not self.loading_saved)
-        self.export_button.setEnabled(any(c.final and c.source for c in self.captions.values()))
+        self.export_action.setEnabled(self.can_export_final())
         self.backup_action.setEnabled(bool(self.captions or self.source_preview))
         if self.current_item and not self.loading_saved:
             if not caption.source:
@@ -2788,7 +2836,15 @@ class Window(QMainWindow):
         QApplication.clipboard().setText("\n".join(x for x in (caption.source, caption.translation) if x))
         self.status.setText("已复制最新字幕")
 
+    def can_export_final(self):
+        return not self.recording_state.active and any(source_is_final(c) and c.source.strip()
+                                                       for c in self.captions.values())
+
     def export(self):
+        if not self.can_export_final():
+            text = '请先停止录音再导出定稿。' if self.recording_state.active else '没有可导出的定稿字幕。'
+            self.notifications.post('export', text, kind='attention')
+            return
         from .recording_export import FORMATS, export_target, write_export
         path, selected_filter = QFileDialog.getSaveFileName(
             self, "导出录音定稿", "字幕", ";;".join(label for label, _ in FORMATS.values()))
@@ -2913,6 +2969,9 @@ class Window(QMainWindow):
             self.playback_volume.raise_()
 
     def eventFilter(self, watched, event):
+        if (event.type() == QEvent.Type.Resize and watched is getattr(self, 'recording_splitter', None)
+                and hasattr(self, 'settings_button')):
+            self.update_sidebar_mode()
         if event.type() == QEvent.Type.Resize and watched is getattr(self, 'workspace_header', None):
             self.update_recording_header()
         if (event.type() == QEvent.Type.Resize and hasattr(self, "workspace_content")
@@ -2928,6 +2987,79 @@ class Window(QMainWindow):
                                       self.size(), maximized=self.isMaximized())):
             return True
         return super().eventFilter(watched, event)
+
+    def sidebar_in_split_layout(self):
+        screen = self.screen()
+        bounds = self.frameGeometry()
+        return bool(screen and (is_split_layout(bounds, screen.availableGeometry())
+                                or is_split_layout(bounds, screen.geometry())))
+
+    def update_sidebar_mode(self):
+        split, sidebar = self.recording_splitter, self.recording_sidebar
+        width = split.width()
+        if not width:
+            return
+        automatic = self.sidebar_in_split_layout()
+        if automatic and not self.sidebar_auto_compact:
+            self.sidebar_override = True
+        self.sidebar_auto_compact = automatic
+        compact = bool(self.sidebar_override)
+        if compact == self.sidebar_compact:
+            return
+        if compact and self.sidebar_motion.state() != QVariantAnimation.State.Running:
+            self.sidebar_expanded_width = split.sizes()[0]
+        start = sidebar.width()
+        self.sidebar_motion.stop()
+        self.sidebar_compact = compact
+        self.brand.setVisible(not compact)
+        self.folders_label.setVisible(not compact)
+        self.sidebar_folders_heading.setContentsMargins(0, 0 if compact else 4, 0, 0)
+        self.sidebar_folders_heading.setStretch(3, 1 if compact else 0)
+        sidebar.layout().setContentsMargins(0 if compact else 14, 0, 0 if compact else 14, 14)
+        self.sidebar_toggle.setText('展开侧边栏' if compact else '收起侧边栏')
+        self.sidebar_toggle.setIcon(line_icon('sidebar-expand' if compact else 'sidebar-collapse',
+                                               theme_colors(self.appearance.currentData() or 'light')['muted']))
+        for button in (self.new_button, self.sidebar_toggle, self.deleted_button, self.ui_update_button, self.settings_button):
+            button.setProperty('iconOnly', compact)
+            button.setMinimumWidth(36 if compact else 0)
+            button.setMaximumWidth(36 if compact else 16777215)
+            button.setAccessibleName(button.text())
+            button.setToolTip(button.text())
+            button.updateGeometry()
+            button.update()
+        self.library_tree.set_compact(compact)
+        split.handle(1).setEnabled(False)
+        restored = self.title_bar.height() if compact else max(180, min(self.sidebar_expanded_width, width - 301))
+        self.animate_sidebar_width(start, restored)
+
+    def animate_sidebar_width(self, start, target):
+        self.sidebar_motion.stop()
+        self.sidebar_motion.setStartValue(start)
+        self.sidebar_motion.setEndValue(target)
+        if motion_enabled() and self.isVisible():
+            self.sidebar_motion.start()
+        else:
+            self.finish_sidebar_width()
+
+    def toggle_sidebar(self):
+        self.sidebar_override = not self.sidebar_compact
+        self.update_sidebar_mode()
+
+    def advance_sidebar_width(self, value):
+        width = round(value)
+        self.recording_sidebar.setFixedWidth(width)
+        self.recording_splitter.setSizes([width, max(300, self.recording_splitter.width()-width-1)])
+
+    def finish_sidebar_width(self):
+        target = self.sidebar_motion.endValue()
+        if target is None:
+            return
+        self.sidebar_motion.stop()
+        self.advance_sidebar_width(target)
+        if not self.sidebar_compact:
+            self.recording_sidebar.setMinimumWidth(180)
+            self.recording_sidebar.setMaximumWidth(420)
+        self.recording_splitter.handle(1).setEnabled(not self.sidebar_compact)
 
     def changeEvent(self, event):
         super().changeEvent(event)
@@ -2950,11 +3082,17 @@ class Window(QMainWindow):
 
     def moveEvent(self, event):
         super().moveEvent(event)
+        if hasattr(self, 'settings_button'):
+            self.update_sidebar_mode()
         if self.centralWidget() is not None:
             self.centralWidget().update()
 
     def showEvent(self, event):
         super().showEvent(event)
+        if not getattr(self, '_sidebar_screen_connected', False):
+            self._sidebar_screen_connected = True
+            self.windowHandle().screenChanged.connect(lambda _: self.update_sidebar_mode())
+        self.update_sidebar_mode()
         if self.integrated_titlebar and not self._native_titlebar_attempted:
             self._native_titlebar_attempted = True
             configure_main_window(int(self.winId()))

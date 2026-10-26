@@ -32,6 +32,17 @@ class WindowButton(QPushButton):
         else:
             p.drawRect(x-4, y-4, 8, 8)
 
+def is_split_layout(bounds, area):
+    """Recognize a full-height edge tile, rather than any narrow window."""
+    tolerance = 16
+    return (area.width() > 0 and area.height() > 0
+            and bounds.width() <= area.width() * .8
+            and abs(bounds.y() - area.y()) <= tolerance
+            and abs(bounds.height() - area.height()) <= tolerance
+            and (abs(bounds.x() - area.x()) <= tolerance
+                 or abs(bounds.right() - area.right()) <= tolerance))
+
+
 class GlassTitleBar(QFrame):
     def __init__(self, window):
         super().__init__(window)
@@ -113,7 +124,13 @@ def line_icon(kind, color="#bdbdbf"):
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     painter.setPen(QPen(QColor(color), 1.45))
-    if kind == "folder":
+    if kind in ('sidebar-collapse', 'sidebar-expand'):
+        painter.drawRoundedRect(3, 3, 14, 14, 3, 3)
+        painter.drawLine(8, 3, 8, 17)
+        direction = -1 if kind == 'sidebar-collapse' else 1
+        painter.drawLine(12-direction, 7, 12+direction*2, 10)
+        painter.drawLine(12+direction*2, 10, 12-direction, 13)
+    elif kind in ('folder', 'folder-add'):
         path = QPainterPath()
         path.moveTo(3, 6)
         path.lineTo(3, 4)
@@ -124,7 +141,11 @@ def line_icon(kind, color="#bdbdbf"):
         path.lineTo(3, 16)
         path.closeSubpath()
         painter.drawPath(path)
-        painter.drawLine(3, 8, 17, 8)
+        if kind == 'folder-add':
+            painter.drawLine(10, 9, 10, 14)
+            painter.drawLine(8, 12, 13, 12)
+        else:
+            painter.drawLine(3, 8, 17, 8)
     elif kind == "new":
         painter.drawRoundedRect(3, 3, 14, 14, 3, 3)
         painter.drawLine(6, 10, 14, 10)

@@ -5,6 +5,9 @@ import { useTween } from './motion';
 
 export function Icon({ name }: { name: string }) {
   const paths: Record<string, ReactNode> = {
+    'folder-add': <><path d="M3 6V4h5l2 2h7v10H3z" /><path d="M10 9v5M7.5 11.5h5" /></>,
+    'sidebar-collapse': <><rect x="3" y="3" width="14" height="14" rx="3" /><path d="M8 3v14m5-10-3 3 3 3" /></>,
+    'sidebar-expand': <><rect x="3" y="3" width="14" height="14" rx="3" /><path d="M8 3v14m3-10 3 3-3 3" /></>,
     new: <><rect x="3" y="3" width="14" height="14" rx="3" /><path d="M10 6v8M6 10h8" /></>,
     folder: <path d="M3 5h5l2 2h7v10H3zM3 9h14" />,
     source: <><rect x="3" y="3" width="14" height="10" rx="2" /><path d="M10 13v4M7 17h6" /></>,
@@ -14,14 +17,14 @@ export function Icon({ name }: { name: string }) {
     pause: <path d="M7 5v10M13 5v10" strokeWidth="3" />,
     stop: <rect x="5" y="5" width="10" height="10" rx="1" fill="currentColor" stroke="none" />,
     volume: <><path d="M3 8h3l4-3v10l-4-3H3zM13 7q4 3 0 6M15 4q7 6 0 12" /></>,
-    'tree-folder': <><rect x="0" y="5" width="15" height="11" rx="2" /><path d="M1 3h6" /></>,
-    'tree-document': <><rect x="0" y="3" width="11" height="14" rx="2" /><path d="M3 8h5M3 12h5" /></>,
+    'tree-folder': <><rect x="3" y="6" width="14" height="11" rx="2" /><path d="M4 4h6" /></>,
+    'tree-document': <><rect x="5" y="3" width="10" height="14" rx="2" /><path d="M8 8h4M8 12h4" /></>,
     document: <><rect x="5" y="3" width="10" height="14" rx="2" /><path d="M8 7h4M8 10h4M8 13h4" /></>,
     download: <path d="M10 3v10m-4-4 4 4 4-4M3 14v3h14v-3" />,
     trash: <><path d="M3 5h14M8 3h4M5 5l1 12h8l1-12M8 8v6M12 8v6" /></>,
     settings: <><path d="M3 5h14M3 10h14M3 15h14" /><circle cx="7" cy="5" r="2" /><circle cx="13" cy="10" r="2" /><circle cx="8" cy="15" r="2" /></>,
   };
-  return <svg aria-hidden="true" width="20" height="20" viewBox={name.startsWith('tree-') ? '0 0 16 20' : '0 0 20 20'} fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
+  return <svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
 
 // Sibling toolbar menus share one owner; nested Select controls stay within their popover.
@@ -51,11 +54,11 @@ export function Button({ variant = 'secondary', ...props }: ButtonHTMLAttributes
   variant?: 'secondary' | 'primary' | 'quiet' | 'danger';
 }) { return <button type="button" {...((props.className || '').match(/icon-button|transport-button/) ? { tabIndex: -1 } : {})} {...props} className={`button ${variant} ${props.className || ''}`} />; }
 
-export function Tip({ label, children }: { label: string; children: ReactNode }) {
+export function Tip({ label, children, side }: { label: string; children: ReactNode; side?: 'top' | 'right' | 'bottom' | 'left' }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { if (open) { const timer = setTimeout(() => setOpen(false), 8000); return () => clearTimeout(timer); } }, [open]);
   return <Tooltip.Root open={open} onOpenChange={setOpen}><Tooltip.Trigger asChild>{children}</Tooltip.Trigger><Tooltip.Portal>
-    <Tooltip.Content className="tooltip" sideOffset={6}>{label}</Tooltip.Content>
+    <Tooltip.Content className="tooltip" side={side} sideOffset={6}>{label}</Tooltip.Content>
   </Tooltip.Portal></Tooltip.Root>;
 }
 

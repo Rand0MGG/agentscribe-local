@@ -427,7 +427,7 @@ row = w.library_tree.topLevelItem(1).child(0)
 w.open_library_item(row, 0)
 assert w.captions[1].source == 'draft' and not w.captions[1].final
 assert w.captions[2].translation == '你好'
-assert w.export_button.isEnabled()
+assert w.export_action.isEnabled()
 w.move_recording(item, 'inbox')
 assert w.library.index['sessions'][0]['folder'] == 'inbox'
 w.session = object()

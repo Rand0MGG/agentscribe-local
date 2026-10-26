@@ -224,6 +224,8 @@ class SettingsWorkspace(QWidget):
         nav.setSpacing(14)
         back = QPushButton("←  返回录音")
         back.setObjectName("navigation")
+        back.setFixedHeight(36)
+        back.setStyleSheet('QPushButton { min-height: 36px; max-height: 36px; border: none; padding: 0 8px; }')
         back.clicked.connect(self.back_requested.emit)
         nav.addWidget(back)
         self.search = QLineEdit()

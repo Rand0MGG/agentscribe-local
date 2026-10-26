@@ -152,7 +152,8 @@ library.save(item,[Caption(1,0,5,'Language is more than a sequence of words. It 
       await knowledge.keyboard.press('Escape');
       await settings({ beta_features:false });
       const overlayOpened=app.waitForEvent('window');
-      await page.getByRole('button',{name:'悬浮字幕',exact:true}).click();
+      await page.getByRole('button',{name:'更多操作',exact:true}).click();
+      await page.getByRole('menuitem',{name:'悬浮字幕',exact:true}).click();
       const overlay=await overlayOpened;
       await overlay.getByText('Each new sentence brings the meaning into focus.',{exact:true}).waitFor();
       await overlay.mouse.move(40,30);

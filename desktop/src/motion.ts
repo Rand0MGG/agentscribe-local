@@ -27,16 +27,39 @@ export function useTween(target: number, duration: number, curve = outCubic) {
 }
 
 /** Reuse a single effect; rapid page changes cancel the old fade. */
-export function usePageTransition(key: string) {
-  const ref = useRef<HTMLDivElement>(null), first = useRef(true);
+export function usePageTransition(key: string, navigation = false) {
+  const ref = useRef<HTMLDivElement>(null), first = useRef(true), navigationWidth = useRef<number | null>(null);
   useLayoutEffect(() => {
     if (first.current) { first.current = false; return; }
+    const root = ref.current;
+    if (!root) return;
+    const settings = root.querySelector<HTMLElement>('.settings-nav');
+    const sidebar = root.querySelector<HTMLElement>('.sidebar');
+    const target = settings ?? sidebar;
+    // The recording tree stays mounted while settings is shown, preserving its
+    // compact state. Read the stored CSS width even while its page is hidden.
+    const start = settings && sidebar ? parseFloat(getComputedStyle(sidebar).width) : navigationWidth.current;
+    const end = target?.getBoundingClientRect().width;
+    navigationWidth.current = end ?? null;
     if (!motionEnabled()) return;
-    const effect = ref.current?.animate([{ opacity: .35 }, { opacity: 1 }], { duration: 150, easing: outCubicCSS });
-    const observer = new MutationObserver(() => { if (!motionEnabled()) effect?.cancel(); });
+    const effects: Animation[] = [];
+    let widthEffect: Animation | undefined;
+    if (navigation && sidebar?.classList.contains('compact') && target && start && end) {
+      widthEffect = target.animate([{ width: `${start}px` }, { width: `${end}px` }], { duration: 220, easing: outCubicCSS });
+      effects.push(widthEffect);
+      const content = root.querySelector(settings ? '.settings-content' : '.workspace');
+      if (content) effects.push(content.animate([{ opacity: .35 }, { opacity: 1 }], { duration: 220, easing: outCubicCSS }));
+    } else effects.push(root.animate([{ opacity: .35 }, { opacity: 1 }], { duration: 150, easing: outCubicCSS }));
+    const observer = new MutationObserver(() => { if (!motionEnabled()) effects.forEach(effect => effect.cancel()); });
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-reduced-motion'] });
-    return () => { effect?.cancel(); observer.disconnect(); };
-  }, [key]);
+    return () => {
+      if (navigation && target) {
+        const progress = widthEffect ? Math.min(1, Number(widthEffect.currentTime ?? 220) / 220) : 1;
+        navigationWidth.current = target.getBoundingClientRect().width || (start && end ? start + (end - start) * outCubic(progress) : end ?? null);
+      }
+      effects.forEach(effect => effect.cancel()); observer.disconnect();
+    };
+  }, [key, navigation]);
   return ref;
 }
 

@@ -26,6 +26,13 @@ item=library.create(folder['id'],asdict(Settings('preview')),'字幕回听')
 library.save(item,[Caption(i,i*2,i*2+2,f'Sentence {i}: context and evidence.','en',f'第 {i} 句文字。',final=True) for i in range(1,651)],'complete')
 with wave.open(str(library.directory(item['id'])/'录音.wav'),'wb') as audio:
  audio.setparams((1,2,8000,0,'NONE','not compressed'));audio.writeframes(bytes(1304*8000*2))
+other=library.folder('导航课程 B')
+nested=library.folder('子课程',parent=library.folder('导航课程 C')['id'])
+for folder,name in ((other,'跨文件夹录音 B'),(nested,'跨文件夹录音 C')):
+ entry=library.create(folder['id'],asdict(Settings('preview')),name)
+ library.save(entry,[Caption(1,0,2,name+' contents','en',final=True)],'complete')
+broken=library.create(other['id'],asdict(Settings('preview')),'损坏导航录音')
+(root/'broken-path').write_text(str(library.directory(broken['id'])/'session.json'),encoding='utf-8')
 `, fixture], { cwd: root, encoding: 'utf8' });
 let app;
 async function main() {
@@ -48,16 +55,20 @@ async function main() {
  assert.equal(await page.locator('.control-popup').count(),1); // Nested select keeps its owner.
  await page.keyboard.press('Escape');assert.equal(await page.locator('.popup').count(),0);
  passed.push('Sibling menus are exclusive; nested language selector and Escape retain focus behavior');
+ await require('./library-navigation-checks.cjs')(app,page,root,fixture,passed);
  const row=page.locator('.library-row').filter({has:page.getByRole('button',{name:'字幕回听',exact:true})});
  await row.hover();
  const highlight=await row.evaluate(node=>({background:getComputedStyle(node,'::before').backgroundColor,token:getComputedStyle(document.documentElement).getPropertyValue('--row-hover').trim()}));
  assert.match(highlight.background,/rgba\(/);
  await page.screenshot({path:path.join(output,'hover-light.png')});
- await page.getByRole('button',{name:'字幕回听',exact:true}).click();
+ await row.getByRole('button',{name:'字幕回听',exact:true}).click();
  await page.locator('[data-caption="1"] .source').waitFor();
- await page.waitForFunction(()=>document.querySelectorAll('[data-caption]').length===650);
  const transcript=page.locator('.caption-scroll');
- assert.deepEqual(await transcript.locator('[data-caption]').evaluateAll(nodes=>nodes.map(node=>Number(node.dataset.caption))),Array.from({length:650},(_,i)=>i+1));
+ const completeTranscript=await page.waitForFunction(()=>{
+  const ids=[...document.querySelectorAll('.caption-scroll [data-caption]')].map(node=>Number(node.dataset.caption));
+  return ids.length===650&&ids.every((id,index)=>id===index+1)?ids:null;
+ });
+ assert.deepEqual(await completeTranscript.jsonValue(),Array.from({length:650},(_,i)=>i+1));
  assert.equal(await transcript.evaluate(node=>node.scrollTop),0);
  assert.equal(await page.getByRole('button',{name:/较早的字幕|较新的字幕/}).count(),0);
  await transcript.focus();await transcript.press('End');

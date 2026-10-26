@@ -142,11 +142,13 @@ class NavigationButton(QPushButton):
         super().__init__(text, parent)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_MacShowFocusRect, False)
-        self.setFixedHeight(38)
-        self.setStyleSheet('QPushButton { min-height: 38px; max-height: 38px; border: none; padding: 0; }')
+        self.setFixedHeight(36)
+        self.setStyleSheet('QPushButton { min-height: 36px; max-height: 36px; border: none; padding: 0; }')
 
     def sizeHint(self):
-        return QSize(self.fontMetrics().horizontalAdvance(self.text()) + 40, 38)
+        if self.property('iconOnly'):
+            return QSize(self.height(), self.height())
+        return QSize(self.fontMetrics().horizontalAdvance(self.text()) + 40, 36)
 
     def minimumSizeHint(self):
         return self.sizeHint()
@@ -159,10 +161,13 @@ class NavigationButton(QPushButton):
         if self.isEnabled() and (self.underMouse() or self.isDown()):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(*interaction_color(QApplication.instance().property('appearance'), 'row_hover')))
-            painter.drawRoundedRect(QRectF(self.rect()).adjusted(2, 2, -2, -2), 8, 8)
+            painter.drawRoundedRect(QRectF(self.rect()).adjusted(.5, .5, -.5, -.5), 8, 8)
         # Keep the icon's visible stroke inside the same inset as the hover surface.
-        self.icon().paint(painter, 9, (self.height()-20)//2, 20, 20,
+        compact = self.property('iconOnly')
+        self.icon().paint(painter, (self.width()-20)//2 if compact else 9, (self.height()-20)//2, 20, 20,
             Qt.AlignmentFlag.AlignCenter, self.icon().Mode.Normal if self.isEnabled() else self.icon().Mode.Disabled)
+        if compact:
+            return
         painter.setPen(QColor(colors['text'] if self.isEnabled() else colors['disabled']))
         painter.setFont(self.font())
         painter.drawText(self.rect().adjusted(41, 0, -8, 0), Qt.AlignmentFlag.AlignVCenter, self.text())

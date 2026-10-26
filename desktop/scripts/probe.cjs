@@ -45,6 +45,8 @@ library.save(item, [
     page.on('pageerror', error => errors.push(error.message));
     await page.getByRole('button', { name: '新录音', exact: false }).first().waitFor();
     await require('./titlebar-checks.cjs')(desktop, page);
+    assert.equal(await page.getByRole('button', { name: '悬浮字幕', exact: true }).count(),0);
+    assert.equal(await page.getByRole('button', { name: '导出定稿', exact: true }).count(),0);
     assert(await page.getByRole('button', { name: '开始聆听', exact: true }).isDisabled());
     await page.locator('.recording-title').click();
     await page.getByRole('textbox', { name: '录音名称', exact: true }).fill('待录音 · 不创建文件');
@@ -55,6 +57,15 @@ library.save(item, [
     writeFileSync(path.join(fixture, 'initial.txt'), await page.locator('body').innerText());
     await page.getByRole('button', { name: '理解语言与上下文 · 示例', exact: true }).click();
     await page.getByText('Context helps us understand what comes next.', { exact: true }).waitFor();
+    const exported=path.join(fixture,'menu-export.srt');
+    await desktop.evaluate(({dialog},filePath)=>{globalThis.originalSaveDialog=dialog.showSaveDialog;dialog.showSaveDialog=async()=>({canceled:false,filePath});},exported);
+    try {
+      await page.getByRole('button',{name:'更多操作',exact:true}).click();
+      assert(await page.getByRole('menuitem',{name:'导出定稿',exact:true}).isEnabled());
+      await page.getByRole('menuitem',{name:'导出定稿',exact:true}).click();
+      await page.locator('.notification').filter({hasText:'导出完成'}).waitFor();
+      assert(existsSync(exported));assert(readFileSync(exported,'utf8').includes('Context helps us understand what comes next.'));
+    } finally {await desktop.evaluate(({dialog})=>{dialog.showSaveDialog=globalThis.originalSaveDialog;});}
     assert(await page.getByRole('button', { name: '开始聆听', exact: true }).isDisabled()); // Qt keeps idle controls for text-only recordings.
     await page.screenshot({ path: path.join(evidence, 'workspace-light.png'), scale: 'css' });
     await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(900, 650));
@@ -171,7 +182,8 @@ library.save(item, [
     await waitKnowledgeVisible(false);
     await page.screenshot({ path: path.join(evidence, 'workspace-dark.png') });
     const overlayOpened = desktop.waitForEvent('window');
-    await page.getByRole('button', { name: '悬浮字幕', exact: true }).click();
+    await page.getByRole('button', { name: '更多操作', exact: true }).click();
+    await page.getByRole('menuitem', { name: '悬浮字幕', exact: true }).click();
     const overlay = await overlayOpened;
     overlay.on('pageerror', error => errors.push(error.message));
     assert.equal(await overlay.evaluate(() => typeof window.require), 'undefined');

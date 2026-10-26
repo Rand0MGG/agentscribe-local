@@ -1,6 +1,6 @@
 import { Deleted } from './Deleted';
 import { Transport } from './Transport';
-import { LibraryTree, ResizableSidebar } from './LibraryTree';
+import { LibraryTree, ResizableSidebar, SidebarToggle } from './LibraryTree';
 import { useEffect, useRef, useState } from 'react';
 import { Tooltip } from 'radix-ui';
 import { ActionMenu, Button, Choice, ConfirmDialog, ControlPopover, EditDialog, Icon, IconMenu, InlineTitle, Modal, Tip, Toggle, type MenuAction } from './components';
@@ -22,7 +22,7 @@ const stateLabels: Record<string, string> = { IDLE: '开始聆听', STARTING: '�
 export function App() {
   const [data, setData] = useState<Bootstrap | null>(null), [error, setError] = useState('');
   const [page, setPage] = useState<Page>(emptyPage), [section, setSection] = useState('recording');
-  const material = useMaterial(String(data?.settings.appearance || 'light')), pageTransition = usePageTransition(section);
+  const material = useMaterial(String(data?.settings.appearance || 'light')), pageTransition = usePageTransition(section, true);
   const { notice, post: setNotice, dismiss } = useNotifications();
   const [editor, setEditor] = useState<Editor | null>(null), [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [busy, setBusy] = useState(false), [seconds, setSeconds] = useState(0), [level, setLevel] = useState(0);
@@ -165,11 +165,19 @@ export function App() {
 
   if (!data) return <div className="startup"><h1>AgentScribe</h1><p role={error ? 'alert' : 'status'}>{error || '正在打开本地工作区…'}</p>{error && <Button onClick={async () => { try { await request('library.recover'); } catch (error) { setError((error as Error).message); } }}>选择其他录音保存位置</Button>}</div>;
   const state = data.state, active = state.state !== 'IDLE';
+  const canExport = !!state.item && !active && page.rows.some(row => row.final && row.asr_final !== false
+    && row.boundary_final !== false && row.source.trim() && (!state.preview || state.preview.keep_ids.includes(row.id)));
   const blocked = active || busy || state.saving || state.dirty || state.closing || state.migrating;
   const languages = data.options.languages.map(row => ({ value: row[0], label: row[0] }));
   const setSettings = (values: Settings) => { perform('settings.set', { values }); };
   const sourceAvailable = !!data.device && data.devices.some(row => row.id === data.device![0] && row.loopback === data.device![1]);
-  const open = async (item: Item) => { if (!blocked) { await perform('recording.open', { identifier: item.id }); setFolder(item.folder || folder); setSection('recording'); } };
+  const open = async (item: Item) => {
+    if (blocked) return false;
+    const opened = await perform('recording.open', { identifier: item.id });
+    if (!opened) return false;
+    setFolder(item.folder || folder); setSection('recording');
+    return true;
+  };
   const newRecording = (folderId = folder) => { setSection('recording'); perform('recording.new', { folder_id: folderId || undefined }); };
   function actions(item: Item): MenuAction[] {
     let current = state.item?.folder;
@@ -199,18 +207,19 @@ export function App() {
       <ResizableSidebar preferred={data.layout?.sidebar_width} onCommit={async width => {
         try { const saved = await request<number>('layout.sidebar', { width }); setData(old => old ? { ...old, layout: { sidebar_width: saved } } : old); }
         catch (error) { setNotice({ text: (error as Error).message, error: true }); throw error; }
-      }}><div className="brand">AgentScribe</div><Button className="navigation" variant="quiet" disabled={blocked} onClick={() => newRecording()}><Icon name="new" />新录音</Button>
-        <div className="folder-heading"><span>文件夹</span><Button variant="quiet" aria-label="新建文件夹" disabled={blocked} onClick={() => setEditor({ title: '新建文件夹', save: name => request('folder.create', { name }) })}>＋</Button></div>
-        <LibraryTree library={data.library} current={state.item?.id} folder={folder} blocked={blocked} onOpen={open} onFolder={setFolder} actions={actions} folderActions={folderActions} /><div className="sidebar-bottom"><Button variant="quiet" onClick={async () => { const result = await perform('trash.list'); if (result) setDeleted(result); }}><Icon name="trash" />最近删除</Button>
-        <Button variant="quiet" disabled={updatesBusy} onClick={() => perform('updates.check')}><Icon name="download" />{updatesBusy ? '正在检查…' : data.installed ? '切换到 Qt 检查更新' : '检查更新'}</Button><Button variant="quiet" onClick={() => setSection('settings')}><Icon name="settings" />设置</Button></div>
+      }}><div className="brand">AgentScribe</div><Button className="navigation sidebar-action" variant="quiet" aria-label="新录音" title="新录音" disabled={blocked} onClick={() => newRecording()}><Icon name="new" /><span className="sidebar-label">新录音</span></Button>
+        <SidebarToggle /><div className="folder-heading"><span className="sidebar-label">文件夹</span><Tip label="新建文件夹" side="right"><Button className="sidebar-action sidebar-icon-action" variant="quiet" aria-label="新建文件夹" disabled={blocked} onClick={() => setEditor({ title: '新建文件夹', save: name => request('folder.create', { name }) })}><Icon name="folder-add" /></Button></Tip></div>
+        <LibraryTree library={data.library} current={state.item?.id} folder={folder} blocked={blocked} onOpen={open} onFolder={setFolder} actions={actions} folderActions={folderActions} /><div className="sidebar-bottom"><Button className="sidebar-action" variant="quiet" aria-label="最近删除" title="最近删除" onClick={async () => { const result = await perform('trash.list'); if (result) setDeleted(result); }}><Icon name="trash" /><span className="sidebar-label">最近删除</span></Button>
+        <Button className="sidebar-action" variant="quiet" aria-label={updatesBusy ? '正在检查…' : data.installed ? '切换到 Qt 检查更新' : '检查更新'} title={data.installed ? '切换到 Qt 检查更新' : '检查更新'} disabled={updatesBusy} onClick={() => perform('updates.check')}><Icon name="download" /><span className="sidebar-label">{updatesBusy ? '正在检查…' : data.installed ? '切换到 Qt 检查更新' : '检查更新'}</span></Button><Button className="sidebar-action" variant="quiet" aria-label="设置" title="设置" onClick={() => setSection('settings')}><Icon name="settings" /><span className="sidebar-label">设置</span></Button></div>
       </ResizableSidebar><main className="workspace"><header className="workspace-header"><InlineTitle key={state.generation} value={state.item?.name || state.draft?.name || '新录音'} disabled={busy || state.migrating || state.closing || !!state.save_error} onSave={name => request('item.rename', { identifier: state.item?.id ?? null, name })} />
         <div className="header-actions">{data.settings.beta_features && <Button className="knowledge-header" variant="quiet" disabled={!state.item} onClick={() => perform('knowledge.window')}>课程资料与笔记 · Beta</Button>}
-          <Button variant="quiet" onClick={() => perform('overlay.toggle')}>悬浮字幕</Button><Button variant="quiet" disabled={!state.item || active || !page.total} onClick={() => perform('recording.export')}>导出定稿</Button>
           <ActionMenu actions={[
+            { label: '悬浮字幕', run: () => perform('overlay.toggle') },
+            { label: '导出定稿', disabled: !canExport, run: () => perform('recording.export') },
             ...(data.settings.beta_features ? [{ label: '课程资料与笔记 · Beta', disabled: !state.item, run: () => perform('knowledge.window') }] : []),
             { label: '查找字幕', disabled: !state.item, run: () => { setSearchPage(0); setSearch(''); } },
-            { label: '导出 TXT', disabled: !state.item || active, run: () => { perform('recording.export', { format: 'txt' }); } },
-            { label: '导出 Markdown', disabled: !state.item || active, run: () => { perform('recording.export', { format: 'md' }); } },
+            { label: '导出 TXT', disabled: !canExport, run: () => { perform('recording.export', { format: 'txt' }); } },
+            { label: '导出 Markdown', disabled: !canExport, run: () => { perform('recording.export', { format: 'md' }); } },
             { label: '重试保存', disabled: !state.dirty || state.saving, run: () => { perform('recording.save'); } },
             { label: '备份全部文字', disabled: !state.item, run: () => { perform('recording.export', { recovery: true }); } },
             { label: '使用文字备份并关闭', disabled: !state.recovery_ready, run: () => setConfirmation({ title: '使用文字备份并关闭此录音？', description: '原录音仍未成功保存。备份不含音频；原目录及已有音频保留。请使用备份核对草稿和译文。', label: '使用备份并关闭', run: () => request('recording.close_recovered') }) },

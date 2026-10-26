@@ -155,7 +155,7 @@ QTabBar::tab:hover:!selected {{ background: {c['hover']}; color: {c['text']}; }}
 QTreeWidget, QListWidget#settingsNavigation, QListWidget#modelInventory {{ background: transparent; border: none; outline: none; }}
 QTreeWidget::branch {{ background: transparent; }}
 QTreeWidget::item {{ height: 36px; padding: 0 5px; border: none; border-radius: 7px; }}
-QListWidget#settingsNavigation::item {{ padding: 10px 14px; margin-bottom: 4px; border-radius: 8px; border: 1px solid transparent; }}
+QListWidget#settingsNavigation::item {{ height: 34px; padding: 0 8px; margin-bottom: 4px; border-radius: 8px; border: 1px solid transparent; }}
 QListWidget#modelInventory::item {{ padding: 14px 16px; margin-bottom: 8px;
     border-radius: 10px; border: 1px solid {c['border']}; }}
 QListWidget#deletedEntries, QDialog#knowledgePanel QListWidget {{ background: {c['control']};

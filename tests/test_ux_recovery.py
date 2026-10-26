@@ -101,7 +101,7 @@ w.new_recording(name='只有草稿',check_models=False)
 w.on_caption(Caption(1,0,2,'Only draft.','en','初译内容',final=False,translation_phase='initial'))
 w.source_preview={'source':'Newest unfinished words.','start':2,'end':3,'language':'en','keep_ids':[1]}
 w.save_error='OSError: disk full';w.update_activity()
-assert not w.export_button.isEnabled() and w.backup_action.isEnabled()
+assert not w.export_action.isEnabled() and w.backup_action.isEnabled()
 target=Path(os.environ['AGENTSCRIBE_LIBRARY'])/'恢复文字.txt'
 with patch.object(module.QFileDialog,'getSaveFileName',return_value=(str(target),'文字恢复备份 (*.txt)')):
     w.backup_recording_text()
@@ -383,12 +383,12 @@ item=w.current_item
 captions=[Caption(i,i,i+1,('Long text. '*180 if i<=200 else 'Short text.'),'en') for i in range(1,451)]
 w.library.save(item,captions,'complete');w.refresh_library()
 w.open_library_item(w.library_rows[item['id']],0)
-w.show();w.resize(640,480);settle_geometry(w)
+w.show();w.resize(640,480)
 w.scroll.set_playback(True)
 w.locate_caption(item['id'],150)
 card=w.cards[150];bar=w.scroll.verticalScrollBar()
-# Search completion is the target card entering the viewport, not the size hint
-# of a window containing 200 wrapping labels becoming quiet.
+# Wrapping labels may keep changing the window's size hint. Search completion
+# is the target card entering the viewport, not global layout stability.
 wait(lambda:bar.value()<=card.y()<bar.value()+w.scroll.viewport().height(),timeout=2)
 assert bar.value() <= card.y() < bar.value()+w.scroll.viewport().height(),(bar.value(),card.y(),bar.maximum())
 w.close()
