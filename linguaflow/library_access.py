@@ -1,9 +1,9 @@
-"""Qt file-lock adapter. Library owns paths; this module owns lock lifetimes."""
-from PySide6.QtCore import QLockFile
+"""File ownership adapter. Library owns paths; this module owns lock lifetimes."""
+from .file_lock import FileLock
 
 
 def acquire_library_migration_lock(root):
-    lock = QLockFile(str(root / '.library-migration.lock'))
+    lock = FileLock(str(root / '.library-migration.lock'))
     lock.setStaleLockTime(0)
     if not lock.tryLock(0):
         raise ValueError('这个保存目录正在其他窗口迁移，请等待迁移完成。')
@@ -16,7 +16,7 @@ def check_library_migration(root):
 
 
 def acquire_recording_lock(directory):
-    lock = QLockFile(str(directory / '.recording.lock'))
+    lock = FileLock(str(directory / '.recording.lock'))
     lock.setStaleLockTime(0)
     if not lock.tryLock(0):
         raise ValueError('这段录音正在另一个窗口中使用。')

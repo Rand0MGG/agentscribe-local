@@ -8,12 +8,15 @@ from dataclasses import replace
 from threading import Event
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QObject, QSettings, Signal
 
 from linguaflow.audio import Device
 from linguaflow.core import Caption
 from linguaflow.desktop_service import DesktopService
+from linguaflow.events import Dispatcher as QCoreApplication
+from linguaflow.events import Owner as QObject
+from linguaflow.events import Signal
 from linguaflow.library_access import acquire_recording_lock
+from linguaflow.settings_store import SettingsStore as QSettings
 
 
 @pytest.fixture
@@ -26,7 +29,7 @@ def desktop(tmp_path):
     service.cancel_model_check()
     deadline = time.monotonic() + 5
     while service.saver.busy or service.exporter.busy or service.migration.busy or service.tasks or service.reader.busy or service.asset_check or service.shutdown.release_job:
-        app.processEvents()
+        app.process()
         assert time.monotonic() < deadline
         time.sleep(.005)
     service.shutdown.timer.stop()
@@ -35,13 +38,13 @@ def desktop(tmp_path):
     if service.recording_lock:
         service.recording_lock.unlock()
     service.deleteLater()
-    app.processEvents()
+    app.process()
 
 
 def drain(service):
     deadline = time.monotonic() + 5
     while service.saver.busy or service.exporter.busy or service.migration.busy or service.tasks or service.reader.busy or service.shutdown.release_job:
-        QCoreApplication.instance().processEvents()
+        QCoreApplication.instance().process()
         assert time.monotonic() < deadline
         time.sleep(.005)
 
@@ -658,6 +661,60 @@ def test_finished_session_populates_playback_after_saving_and_unlocking(desktop)
     assert desktop.recording_lock is None
     assert desktop.snapshot()['playback']['duration'] == 2000
     assert desktop.player is None
+
+
+@pytest.mark.p0
+@pytest.mark.parametrize('failed', [False, True])
+def test_worker_finished_signal_saves_recording_and_releases_stop_state(desktop, monkeypatch, failed):
+    """Exercise the real worker -> workflow -> desktop completion notification."""
+    import wave
+
+    from linguaflow.recording_state import RecordingState
+    from linguaflow.wlk_session import Session
+
+    class FileSession(Session):
+        def run(self):
+            with wave.open(str(self.recording_path), 'wb') as audio:
+                audio.setparams((1, 2, 16000, 0, 'NONE', 'not compressed'))
+                audio.writeframes(bytes(64000))
+            self.capture_started.set()
+            self.source_changed.emit(0)
+            assert self.stop_capture.wait(5)
+            self.caption.emit(Caption(1, 0, 2, 'Saved final sentence.', 'en'))
+            if failed:
+                self.failure.emit('Fixture inference failure')
+
+    monkeypatch.setattr('linguaflow.wlk_session.Session', FileSession)
+    errors = []
+    monkeypatch.setattr(sys, 'excepthook', lambda *args: errors.append(args[1]))
+    desktop._create_recording(name='worker completion')
+    item = desktop.item
+    settings = replace(desktop.settings(), translate=False)
+    desktop.recording.start(settings, desktop._launch_session)
+    session = desktop.session
+    try:
+        deadline = time.monotonic() + 5
+        while desktop.state != RecordingState.LISTENING:
+            QCoreApplication.instance().process()
+            assert not errors
+            assert time.monotonic() < deadline
+            time.sleep(.005)
+        desktop.stop()
+        assert desktop.state == RecordingState.STOPPING
+        while desktop.session is not None or desktop.saver.busy or desktop.recording_lock:
+            QCoreApplication.instance().process()
+            assert not errors, errors
+            assert time.monotonic() < deadline
+            time.sleep(.005)
+        assert desktop.state == RecordingState.IDLE
+        assert not desktop.dirty and not desktop.save_error
+        assert item['state'] == ('incomplete' if failed else 'complete')
+        assert desktop.library.load(item)[1][0].source == 'Saved final sentence.'
+        assert desktop.snapshot()['playback']['duration'] == 2000
+        desktop._idle()  # Finished recordings no longer block navigation/start.
+    finally:
+        session.stop_capture.set()
+        session.wait(5000)
 
 
 def test_failed_runtime_shutdown_cancels_handoff_but_keeps_owner(desktop):

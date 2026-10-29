@@ -479,3 +479,38 @@ def test_new_format_worker_previews_and_dispatches_every_actual_page(monkeypatch
         assert all(row['complete'] for row in worker.coverage.values())
         assert len([row for row in worker.blocks if row.evidence_type == 'visual']) == 4
     asyncio.run(scenario())
+
+
+@pytest.mark.p0
+def test_new_renderer_rejects_script_network_access_and_wrong_image_extension(tmp_path):
+    from linguaflow.knowledge.render_web import render_image
+    source = tmp_path/'wrong.png'
+    source.write_bytes(b'GIF89a'+bytes(100))
+    with pytest.raises(ValueError,match='扩展名'):
+        render_image(source,tmp_path/'wrong-pages')
+    assert source.exists() and not (tmp_path/'wrong-pages').exists()
+    source = tmp_path/'network.html'
+    source.write_text('<h1>Offline</h1><script>fetch("https://example.invalid/private")</script>',encoding='utf-8')
+    library = Library(tmp_path/'library')
+    with pytest.raises(ValueError,match='快照外|加载失败'):
+        asyncio.run(import_document(library,library.index['folders'][0]['id'],source))
+    assert source.exists()
+
+
+@pytest.mark.p1
+def test_utf16_markdown_preserves_text_and_static_png_is_not_animation(tmp_path):
+    import numpy as np
+
+    from linguaflow.desktop_platform import png_rgba
+    from linguaflow.knowledge.render_web import markup_for
+    source = tmp_path/'note.md'
+    source.write_bytes('# 中文标题\n\n**正确内容**'.encode('utf-16'))
+    result = markup_for(source)
+    assert '中文标题' in result and '<strong>正确内容</strong>' in result
+    source = tmp_path/'image.png'
+    source.write_bytes(png_rgba(np.full((10,10,4),255,dtype=np.uint8)))
+    library = Library(tmp_path/'library')
+    document = asyncio.run(import_document(library,library.index['folders'][0]['id'],source))
+    course_path, _ = course_for_folder(library,library.index['folders'][0]['id'])
+    manifest = read_json(material_cache(library,course_path,document)/'pages/manifest.json')
+    assert manifest['staticFrame'] is False

@@ -1,6 +1,6 @@
 """Blind, 1x replay through the desktop Session, AudioJournal and real worker.
 
-prepare: run in .venv-wlk (PyAV). run: run in .venv (Qt).
+prepare: run in .venv-wlk (PyAV). run: run in .venv (backend dispatcher).
 Reference transcripts are deliberately not an input to this program.
 """
 import argparse
@@ -79,9 +79,9 @@ def prepare(source, destination):
 
 def replay(manifest_path, output, settings_path=None, pause_at=(), pause_seconds=2., runtime=None):
     import numpy as np
-    from PySide6.QtCore import QCoreApplication
 
     from linguaflow.core import Settings
+    from linguaflow.events import Dispatcher
     from linguaflow.wlk_session import Session
     manifest = json.loads(Path(manifest_path).read_text(encoding='utf-8'))
     if manifest['rate'] != 48000 or manifest['format'] != 'float32le-mono':
@@ -134,7 +134,7 @@ def replay(manifest_path, output, settings_path=None, pause_at=(), pause_seconds
             capture_info['delivery_lateness_p50_p95_p99_seconds'] = {
                 name: float(np.quantile(delivery_lateness, q))
                 for name, q in [('p50', .5), ('p95', .95), ('p99', .99)]}
-    app = QCoreApplication.instance() or QCoreApplication([])
+    app = Dispatcher.instance()
     session = Session(settings, capture_fn=capture, diagnostic=True, runtime=runtime)
     failures = []
     pending_pauses = sorted(pause_at)
@@ -144,6 +144,7 @@ def replay(manifest_path, output, settings_path=None, pause_at=(), pause_seconds
                   'semantic_model.py', 'semantic_cache.py', 'audio_processing/pipeline.py', 'core.py', 'capture_control.py',
                   'translation_service.py', 'translation_context.py', 'backends.py',
                   'qwen_accurate.py', 'asr_stability.py', 'mlx_asr.py', 'inference_startup.py',
+                  'source_preview.py', 'events.py',
                   'llama_translation.py', 'llama_assets.py', 'managed_process.py', 'process_platform.py',
                   'translation_models.py']
     code_files = sorted(set(code_files) | {
@@ -161,6 +162,7 @@ def replay(manifest_path, output, settings_path=None, pause_at=(), pause_seconds
             events.write(json.dumps(row, ensure_ascii=False)+'\n')
             events.flush()
         session.model_result.connect(lambda data: event("model_result", data=data))
+        session.source_preview.connect(lambda data: event('source_preview', data=data))
         session.ready.connect(lambda: event('ready'))
         def pause_changed(paused):
             event('capture_paused', paused=paused, samples_delivered=capture_info['samples_delivered'])
@@ -177,7 +179,7 @@ def replay(manifest_path, output, settings_path=None, pause_at=(), pause_seconds
         last_progress = started
         try:
             while session.isRunning():
-                app.processEvents()
+                app.process()
                 now = time.monotonic()
                 if resume_at[0] is not None and now >= resume_at[0]:
                     session.resume()
@@ -196,7 +198,7 @@ def replay(manifest_path, output, settings_path=None, pause_at=(), pause_seconds
             session.wait(10000)
             raise
         session.wait()
-        app.processEvents()
+        app.process()
         complete = not failures and capture_info['samples_delivered'] == len(pcm)
         event('session_finished', complete=complete, failures=failures, capture=capture_info)
     provenance.update(complete=complete, failures=failures, capture=capture_info,

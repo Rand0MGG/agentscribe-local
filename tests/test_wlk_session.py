@@ -5,9 +5,9 @@ import time
 
 import numpy as np
 import pytest
-from PySide6.QtCore import QCoreApplication
 
 from linguaflow.core import Settings
+from linguaflow.events import Dispatcher as QCoreApplication
 from linguaflow.wlk_session import Session
 
 
@@ -40,7 +40,7 @@ def execute(monkeypatch, tmp_path, program, capture, stopped=False, cancel_loadi
     session.start()
     deadline = time.monotonic() + 10
     while session.isRunning() and time.monotonic() < deadline:
-        app.processEvents()
+        app.process()
         if tick:
             tick(session)
         if cancel_loading and session.process is not None:
@@ -50,7 +50,7 @@ def execute(monkeypatch, tmp_path, program, capture, stopped=False, cancel_loadi
         session.stop(discard=True)
         session.wait(5000)
         raise AssertionError("Session failed to finish")
-    app.processEvents()
+    app.process()
     return captions, failures
 
 

@@ -23,14 +23,14 @@ from xml.etree import ElementTree as ET
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts.update_probe_host import HOST_IMPORTS
+
 ROOT = Path(__file__).resolve().parents[1]
 SPARKLE = 'http://www.andymatuschak.org/xml-namespaces/sparkle'
 HARNESS = r'''
 import json,sys,time
 from pathlib import Path
-from PySide6.QtCore import QSettings,QTimer
-from PySide6.QtWidgets import QApplication
-from linguaflow.app import Window
+UPDATE_HOST_IMPORTS
 from linguaflow.recording_state import RecordingState
 from linguaflow.update_recovery import startup
 startup()
@@ -192,7 +192,7 @@ def run_case(case, work, old_app, candidate, manifest, signature, live):
         (installed / 'Contents/Info.plist').write_bytes(plistlib.dumps(old_info))
         subprocess.run(['codesign', '--force', '--sign', '-', str(installed)], check=True, capture_output=True)
     installed_before = inventory(installed)
-    harness = HARNESS.replace('WORK', repr(str(work))).replace('CASE', repr(case))
+    harness = HARNESS.replace('UPDATE_HOST_IMPORTS', HOST_IMPORTS).replace('WORK', repr(str(work))).replace('CASE', repr(case))
     child = None
     state = None
     passed = False
@@ -252,7 +252,7 @@ def run_case(case, work, old_app, candidate, manifest, signature, live):
                 assert not any(e['stage'] in ('ready', 'installing', 'installed') for e in events), events
                 assert inventory(installed) == installed_before
             assert expected == (preserved_files(work / 'recordings'), preserved_files(external), digest(model), digest(runtime))
-            from PySide6.QtCore import QSettings
+            from linguaflow.settings_store import SettingsStore as QSettings
             prefs = QSettings('LinguaFlow', 'LocalCaptions')
             prefs.sync()
             assert prefs.value('appearance') == 'dark'

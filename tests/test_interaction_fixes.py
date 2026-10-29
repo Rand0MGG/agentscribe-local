@@ -161,7 +161,7 @@ assert w.player.playbackState() == State.StoppedState
 # Opening again reuses the fully wired player and resets the old timeline.
 player = w.player
 w.prepare_playback()
-assert w.player is player and not stream.isOpen()
+assert w.player is player and not not stream.closed
 assert w.seek.maximum() == 0 and w.play_time.text() == '00:00 / 00:00'
 stream = w.playback_stream
 w.player.durationChanged.emit(9200)
@@ -173,7 +173,7 @@ assert stream.seek(stream.data_start) and bytes(stream.read(2)) == b'\xc4\x09'
 w.playback_volume.slider.setValue(25)
 assert stream.gain == 1 and w.audio_output.volume == .25
 w.release_playback()
-assert not stream.isOpen() and stream._file.closed and w.playback_stream is None
+assert not not stream.closed and stream._file.closed and w.playback_stream is None
 assert path.read_bytes() == original
 w.close()
 ''', tmp_path)

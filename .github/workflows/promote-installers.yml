@@ -78,7 +78,7 @@ jobs:
           for target in ('macos-arm64','windows-x64'):
               mac=target=='macos-arm64';suffix='dmg' if mac else 'exe';field='dmg' if mac else 'installer'
               folder=Path('.work/promote')/f'AgentScribe-{target}-{sha}'
-              original=f'AgentScribe-{version}'+('-dual-ui' if mac else '')+f'-{target}'
+              original=f'AgentScribe-{version}-{target}'
               stem=f'AgentScribe-{version}-{target}';manifest_path=folder/(original+'.build.json')
               manifest=json.loads(manifest_path.read_text(encoding='utf-8'));artifact=folder/(original+'.'+suffix)
               assert manifest['source_commit']==sha and manifest['source_modified'] is False

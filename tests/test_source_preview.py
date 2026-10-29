@@ -399,7 +399,7 @@ os._exit(0)
     original=path.read_bytes()
     stream=PlaybackStream(path,recover_recording=True)
     try:
-        with wave.open(io.BytesIO(bytes(stream.readAll()))) as reader:
+        with wave.open(io.BytesIO(bytes(stream.read(stream.size())))) as reader:
             assert reader.getnframes()==45
             assert reader.readframes(100)==b'\x01\x00'*40+b'\x02\x00'*5
     finally:

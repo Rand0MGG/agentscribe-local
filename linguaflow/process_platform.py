@@ -91,7 +91,9 @@ def worker_entry():
             kernel.CloseHandle(job)
     target = sys.argv[1]
     sys.argv = sys.argv[1:]
-    if target.endswith('.py'):
+    if target == '-c':
+        exec(sys.argv[1], {'__name__': '__main__'})
+    elif target.endswith('.py'):
         runpy.run_path(target, run_name='__main__')
     else:
         runpy.run_module(target, run_name='__main__')
@@ -121,7 +123,7 @@ def spawn_options():
             else {'start_new_session': True})
 
 
-def start_worker(python, module, *, env, cwd, **options):
+def start_worker(python, module, *, env, cwd, arguments=(), **options):
     """Return (process, job) only after spawn; release ownership on spawn failure.
 
     Callers serialize start/stop and retain both resources until cleanup succeeds.
@@ -130,7 +132,7 @@ def start_worker(python, module, *, env, cwd, **options):
     job = WindowsWorkerJob() if sys.platform == 'win32' else None
     try:
         process = subprocess.Popen(
-            [str(python), '-u', '-m', 'linguaflow.process_platform', module],
+            [str(python), '-u', '-m', 'linguaflow.process_platform', module, *arguments],
             env=job.environment(env) if job is not None else env, cwd=cwd,
             **spawn_options(), **options)
     except BaseException:

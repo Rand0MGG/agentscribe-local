@@ -7,15 +7,16 @@
   "scripts": {
     "build": "tsc --noEmit && vite build",
     "start": "npm run build && electron .",
-    "test": "node scripts/platform-helper-checks.cjs && node scripts/probe.cjs",
+    "test": "node scripts/platform-helper-checks.cjs && node scripts/helper-lifetime-checks.cjs && node scripts/probe.cjs",
     "components": "npm run build && electron . --components --no-audio",
     "preview": "vite --host 127.0.0.1",
     "test:migration": "node scripts/migration-probe.cjs",
-    "test:switch": "node scripts/switch-probe.cjs",
     "test:chain": "node scripts/chain-probe.cjs",
-    "test:interaction": "node scripts/interaction-probe.cjs"
+    "test:interaction": "node scripts/interaction-probe.cjs",
+    "test:audio-adapter": "node scripts/audio-adapter-checks.cjs"
   },
   "dependencies": {
+    "marked": "18.1.2",
     "radix-ui": "1.8.1",
     "react": "19.3.1",
     "react-dom": "19.3.1"

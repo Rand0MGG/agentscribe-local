@@ -229,9 +229,9 @@ UI 测试统一从 `ui_support` 导入：`run_ui` 创建无设备发现的正式
 [VALIDATION](VALIDATION.md) 只索引证据与边界；历史详细记录归档。未完成验收在 [ROADMAP](ROADMAP.md) 跟踪。测试方法变化改本文，行为变化改 spec，具体结果不得反复追加进 AGENTS 或架构。
 
 
-## Electron 候选入口
+## Electron 正式入口
 
-启动响应回归须覆盖冷进程导入与慢来源发现，不能仅在已导入音频/科学计算库的 pytest 进程内验证。`test_desktop_service.py` 检查发现期间协议可响应、重复请求合并、失败保留旧列表及关闭后丢弃结果；`test_audio.py` 检查轻量导入及发现子进程成功/失败/超时的回收。原生双向切换的无音频结果不替代正常启动模式的来源发现与真实窗口操作。
+启动响应回归须覆盖冷进程导入与慢来源发现，不能仅在已导入音频/科学计算库的 pytest 进程内验证。`test_desktop_service.py` 检查发现期间协议可响应、重复请求合并、失败保留旧列表及关闭后丢弃结果；`test_audio.py` 检查轻量导入及发现子进程成功/失败/超时的回收。无音频原生流程结果不替代正常启动模式的来源发现与真实窗口操作。
 
 安装桌面 Python 开发依赖至 `.venv`，再在 `desktop/` 执行 `npm ci`、`npx install-electron --no`、`npm run build`。版本由 `desktop/package-lock.json` 固定；构建从原 Python 主题生成 CSS，Windows 使用 `.venv/Scripts/python.exe`，Mac 使用 `.venv/bin/python`，可由 `AGENTSCRIBE_DESKTOP_PYTHON` 指定已准备的解释器。
 
@@ -239,7 +239,7 @@ UI 测试统一从 `ui_support` 导入：`run_ui` 创建无设备发现的正式
 - 原生流程：`desktop/` 执行 `npm test`；使用 Playwright Electron，创建隔离库/偏好及 Electron profile，Python 子进程继承音频导入保护。验证共享组件、中文编辑、搜索、主题、独立课程窗口/草稿、悬浮窗口权限、回听控件几何及退出。回听控件只用模拟位置，不播放音频。Mac 需可用的原生桌面会话；失败不能改用浏览器截图冒充原生通过。
 - 真正前后端回归：`npm run test:chain`。保留 renderer → preload → Electron IPC → JSONL → DesktopService 校验 → 共享后台；模型安装/下载在 `scripts/desktop_chain_fixture.py` 中仅替换执行命令，真实 Preparation、监督进程、BackgroundCheck、取消和完成回执照常运行；云端执行替换为本地回答，KnowledgeClient、worker、许可、版本和真实文件持久化不替换。测试夹具仅由临时 `sitecustomize.py` 加载，正式入口没有测试控制路由。不得用 `Service.request` 返回成功来验收推荐组合或其他命令。真实 WAV 文件只读取元数据，禁止访问设备。证据在 `output/playwright/parity-fixed/`。
 - 用户反馈交互回归：`npm run test:interaction`。实际菜单互斥/嵌套选择、单击/双击字幕、返回播放位置、检查更新及深色窄窗口；真实 IPC、参数校验、DesktopService、PlaybackController 与 WAV 读取均保留。`scripts/desktop_playback_fixture.py` 只提供延迟 350ms 才能定位的无设备 QMediaPlayer/QAudioOutput 适配器和离线 HTTP 响应；仅测试实例的回听入口允许使用适配器，采集/设备发现仍被禁止。不能替代真实声音、系统媒体后端或 Windows 实机验收。输出在 `output/playwright/interaction-fixes/`，帧间隔仅为本机 rAF 与 transform 采样，不是全平台显示器呈现保证。
-- 原生双向切换：`npm run test:switch`；独立实例实际 Electron → Qt → Electron，核对同一录音、字幕、库路径与无音频约束。Qt 操作观察器仅在临时测试侧注入；正式应用没有测试控制接口。证据在 `output/playwright/switch/`。
+- 媒体适配器：`npm run test:audio-adapter`；在 Node 中运行正式音频 preload，仅替换 Audio/AudioContext 设备边界，覆盖就绪前多次定位、暂停、取消、错误及旧回调失效。旧 Qt 双向切换已退役。
 - Windows 标题栏：`npm test` 复用 `titlebar-checks.cjs`，保留原生 setter，检查真实 settings、bootstrap 重载后透明背景/图标主题及覆盖层尺寸。该断言不代替视觉与系统命中验收：用原生窗口截图检查深浅主题、窄窗口和最大化，实际点击最小化、最大化/还原及关闭；页面截图不包含完整原生控制，不能据此判定通过。只操作隔离、未录音且无用户编辑的测试窗口。
 - 回放全文回归：`test:interaction` 使用 650 条已保存双语字幕，核对一次载入、首屏从头、Home/End 的实际可见位置、跨原 200/400 边界的播放定位，以及搜索后全文仍保留；不能只断言 DOM 条数。Python 对照为 `test_desktop_service.py`、`test_caption_view.py`、`test_ux_recovery.py`，另保留实时显示窗口与修订/删除/预览保护。音频仍为隔离适配器，不证明真实声音输出。
 - Qt 交互对照回归复用 `test:interaction` 与 `parity-checks.cjs`：检查局部忙碌、分类滚动、数值回执、树/模型键盘操作、分隔条持久化、目录解析、来源状态呈现、单层弹窗滚动、参数帮助、摘要与短目录。来源变化呈现使用事件夹具，首次选择/失效不替换等后台行为由服务回归验证，不冒充真实设备变化。Windows 缩放可能让请求 640×480 得到 640×481/482，测试允许 2px 的系统舍入，截图清单记录实际尺寸；控件移动比较实际设备像素，仍要求完全相同。
@@ -270,4 +270,16 @@ UI 测试统一从 `ui_support` 导入：`run_ui` 创建无设备发现的正式
 
 `tests/test_frontend_backend_contracts.py` 对 Qt 和 Electron 适配器执行同一故障契约：构造失败必须持久化为未完成，写盘失败必须保留锁与失败终态、重试成功才能释放，课程 status/idle/disconnected 必须即时影响切换门禁。单独子进程验证共用后台可在 QCoreApplication 下导入及创建，不依赖 QtWidgets 或前端模块。
 
-使用 `.venv/bin/python scripts/test_no_audio.py -q tests/test_frontend_backend_contracts.py tests/test_shared_desktop_workflows.py`；涉及共享保存、迁移、准备或退出时还须运行全量无音频回归及 Electron `test:chain`、`test:interaction`、`test:switch`。异步退出测试等待资源实际终态，不以单次处理事件代替退出完成；不会放宽文件状态、锁或失败保存断言。
+使用 `.venv/bin/python scripts/test_no_audio.py -q tests/test_frontend_backend_contracts.py tests/test_shared_desktop_workflows.py`；涉及共享保存、迁移、准备或退出时还须运行全量无音频回归及 Electron `test:chain`、`test:interaction`、`test:audio-adapter`。异步退出测试等待资源实际终态，不以单次处理事件代替退出完成；不会放宽文件状态、锁或失败保存断言。
+
+
+## 无 Qt 正式运行与旧界面对照
+
+正式依赖安装 `.[dev]`，不安装 PySide6/shiboken6。`tests/test_qt_free_backend.py` 拒绝全部 Qt 导入，执行后台启动、库/设置和退出，并审计正式源文件与平台锁；另覆盖设置迁移、失败提交、线程顺序与竞争文件锁。`tests/test_playback_controller.py` 使用生成的静音 WAV 校验 HTTP 范围读取、失效代次和释放，不输出音频。
+
+完整历史对照套件仍需 `.[dev,legacy-qt]`；Qt 仅用于旧界面及图像夹具。它不进入正式安装依赖。实际 HTML/Markdown/图片测试需要先 `cd desktop && npm ci && npm run build`，Mac 需原生图形会话。背景材质比较允许不同栅格器最多一个 8-bit 通道舍入级，尺寸、主题、缓存及交互断言保持。
+
+正式 CI 的 Electron job 不安装 Qt，运行基础、交互、全链路、音频适配器与无 Qt 后台检查。安装包探针断言载荷不含 PySide6/shiboken6；后台/渲染与原生 Electron 窗口分别提供证据。源码回归不能代替 Windows 真实设备、已签名成品、原生更新验收。
+
+
+`npm test` 还运行 `helper-lifetime-checks.cjs`：使用真实 Electron 辅助进程，检查大结果完整写入、输出流提前关闭与父进程先退出。辅助进程不得因 EPIPE 弹出错误框或遗留；错误须交回 owner。这个测试不访问设备，不替代安装态更新验证。

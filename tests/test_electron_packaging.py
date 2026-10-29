@@ -21,6 +21,9 @@ def test_packaged_electron_keeps_tracked_main_process_dependencies(tmp_path, mon
     (frontend / 'electron').mkdir(parents=True)
     (frontend / 'src').mkdir()
     (frontend / 'dist').mkdir()
+    (frontend / 'node_modules/marked').mkdir(parents=True)
+    (frontend / 'node_modules/marked/package.json').write_text('{"name":"marked","version":"18.1.2"}')
+    (frontend / 'node_modules/marked/LICENSE').write_text('MIT fixture')
     (root / 'packaging/electron').mkdir(parents=True)
     description = {'filename': 'electron.zip', 'sha256': 'a' * 64}
     (root / 'packaging/electron/assets.json').write_text(json.dumps({
@@ -31,7 +34,8 @@ def test_packaged_electron_keeps_tracked_main_process_dependencies(tmp_path, mon
     (frontend / 'dist/index.html').write_text('<html>isolated built UI</html>')
     modules = {'main.cjs': "module.exports=require('./window-layout.cjs');",
                'window-layout.cjs': 'exports.isSplitLayout=()=>false;',
-               'preload.cjs': 'module.exports={};', 'service.cjs': 'module.exports={};'}
+               'preload.cjs': 'module.exports={};', 'service.cjs': 'module.exports={};',
+               'markdown-tool.mjs': 'export const test = 1;'}
     for name, content in modules.items():
         (frontend / 'electron' / name).write_text(content)
     subprocess.run(['git', 'init', '-q', str(root)], check=True)
@@ -55,6 +59,7 @@ def test_packaged_electron_keeps_tracked_main_process_dependencies(tmp_path, mon
         assert (target / 'electron' / name).read_text() == content
         assert inventory['desktop/electron/' + name] == digest(target / 'electron' / name)
     assert not (target / 'electron/local-only.cjs').exists()
+    assert (target / 'node_modules/marked/LICENSE').read_text() == 'MIT fixture'
     manifest = json.loads((target / 'frontend-manifest.json').read_text())
     assert manifest['files']['electron/window-layout.cjs'] == digest(target / 'electron/window-layout.cjs')
 

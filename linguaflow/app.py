@@ -52,6 +52,7 @@ from .deleted_dialog import DeletedDialog
 from .knowledge.client import KnowledgeClient
 from .knowledge.panel import KnowledgePanel
 from .knowledge.session import session_context
+from .legacy_playback import PlaybackController
 from .library import default_recording_name
 from .library_access import (
     check_library_access,
@@ -65,7 +66,6 @@ from .native_updates import NativeUpdater
 from .notifications import FeedbackLabel, NotificationCenter
 from .onboarding import FirstRunDialog
 from .playback import PlaybackIndex
-from .playback_controller import PlaybackController
 from .preferences import PREFERENCES, read_audio_device, read_preferences, write_preferences
 from .qt_controls import data_index
 from .qt_controls import text_label as label
@@ -240,6 +240,13 @@ class Window(QMainWindow):
 
     def __init__(self, discover=True, library_root=None, prefs=None, library=None, runtime=None, no_audio=False):
         super().__init__()
+        # Development-only reference UI; released packages exclude this module.
+        from .events import Dispatcher
+        Dispatcher.instance().native_pump = QApplication.processEvents
+        self.backend_events = QTimer(self)
+        self.backend_events.timeout.connect(Dispatcher.instance().process)
+        self.backend_events.start(5)
+
         self.recording = RecordingWorkflow(self)
         self.shutdown = ShutdownWorkflow(recording=self.recording, activity=self.activity_snapshot,
             cancel={

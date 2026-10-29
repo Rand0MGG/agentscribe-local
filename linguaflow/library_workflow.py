@@ -1,8 +1,7 @@
 """Own migration locks, durable preference switch and old-copy cleanup."""
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QSettings, Signal
-
+from .events import Owner, Signal
 from .library_access import (
     acquire_library_migration_lock,
     acquire_recording_lock,
@@ -12,7 +11,7 @@ from .library_access import (
 from .library_migration import LibraryMigration
 
 
-class LibraryWorkflow(QObject):
+class LibraryWorkflow(Owner):
     adopted = Signal(object)
     finished = Signal(list, str)
 
@@ -92,7 +91,7 @@ class LibraryWorkflow(QObject):
         old_root = data.library.root
         self.prefs.setValue('library_directory', str(library.root))
         self.prefs.sync()
-        if self.prefs.status() != QSettings.Status.NoError:
+        if self.prefs.status().value != 0:
             self.prefs.setValue('library_directory', str(old_root))
             self.completed([], '无法保存新位置，原录音保留；新位置有已校验副本。')
             return

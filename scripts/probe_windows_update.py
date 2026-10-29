@@ -20,16 +20,15 @@ from xml.etree import ElementTree as ET
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.probe_macos_update import digest, preserved_files
+from scripts.update_probe_host import HOST_IMPORTS
 
 ROOT = Path(__file__).resolve().parents[1]
 SPARKLE = "http://www.andymatuschak.org/xml-namespaces/sparkle"
 HARNESS = r"""
 import json,sys
 from pathlib import Path
-from PySide6.QtCore import QSettings,QTimer
-from PySide6.QtWidgets import QApplication
+UPDATE_HOST_IMPORTS
 from linguaflow import native_updates
-from linguaflow.app import Window
 from linguaflow.recording_state import RecordingState
 from linguaflow.update_recovery import startup
 startup()
@@ -81,11 +80,11 @@ sys.exit(app.exec())
 
 def run_case(case, work, old_installer, candidate, manifest, signature, live):
     import psutil
-    from PySide6.QtCore import QSettings
 
     from linguaflow.core import Caption
     from linguaflow.library import Library
     from linguaflow.runtime_paths import user_data_root
+    from linguaflow.settings_store import SettingsStore as QSettings
     from linguaflow.update_recovery import NativeRecovery, inventory
 
     work.mkdir()
@@ -180,7 +179,7 @@ def run_case(case, work, old_installer, candidate, manifest, signature, live):
         Thread(target=server.serve_forever, daemon=True).start()
     before = inventory(installed)
     feed = f"http://127.0.0.1:{server.server_port}/feed.xml" if server else None
-    harness = HARNESS.replace("WORK", repr(str(work))).replace("CASE", repr(case)).replace("FEED", repr(feed))
+    harness = HARNESS.replace('UPDATE_HOST_IMPORTS', HOST_IMPORTS).replace("WORK", repr(str(work))).replace("CASE", repr(case)).replace("FEED", repr(feed))
     state, child, passed = None, None, False
     try:
         with (work / "old-app.log").open("wb") as log:

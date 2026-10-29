@@ -2,9 +2,8 @@
 import math
 from dataclasses import dataclass, field, replace
 
-from PySide6.QtCore import QObject, QTimer, Signal
-
 from . import diagnostic_log as diag
+from .events import Owner, Signal, Timer
 from .library_access import acquire_recording_lock
 from .recording_save import RecordingSaver
 from .recording_state import RecordingState
@@ -41,7 +40,7 @@ def recording_field(name):
                     lambda owner, value: setattr(owner.recording.data, name, value))
 
 
-class RecordingWorkflow(QObject):
+class RecordingWorkflow(Owner):
     saved = Signal(object, object, str)
     lock_released = Signal()
 
@@ -51,7 +50,7 @@ class RecordingWorkflow(QObject):
         self.saver = RecordingSaver(self)
         self.saver.completed.connect(self._saved)
         self.saver.idle.connect(self.release_lock)
-        self.autosave = QTimer(self)
+        self.autosave = Timer(self)
         self.autosave.setSingleShot(True)
         self.autosave.timeout.connect(self.save)
         self.knowledge = None

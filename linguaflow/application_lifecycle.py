@@ -1,7 +1,7 @@
 """Shared activity gates and ordered, nonblocking application shutdown."""
 from dataclasses import dataclass
 
-from PySide6.QtCore import QObject, QThread, QTimer, Signal
+from .events import Owner, Signal, Timer, Worker
 
 
 @dataclass(frozen=True)
@@ -33,7 +33,7 @@ class Activity:
         return ''
 
 
-class RuntimeRelease(QThread):
+class RuntimeRelease(Worker):
     def __init__(self, runtime, parent):
         super().__init__(parent)
         self.runtime, self.error = runtime, ''
@@ -45,7 +45,7 @@ class RuntimeRelease(QThread):
             self.error = str(exc)
 
 
-class ShutdownWorkflow(QObject):
+class ShutdownWorkflow(Owner):
     closing = property(lambda self: self.recording.data.closing,
                        lambda self, value: setattr(self.recording.data, 'closing', value))
     retry = Signal()
@@ -59,7 +59,7 @@ class ShutdownWorkflow(QObject):
         self.closing = False
         self.release_job = None
         self.advancing = False
-        self.timer = QTimer(self)
+        self.timer = Timer(self)
         self.timer.setInterval(50)
         self.timer.timeout.connect(self.retry)
 
@@ -105,7 +105,7 @@ class ShutdownWorkflow(QObject):
             runtime = self.runtime()
             if runtime is not None:
                 job = self.release_job = RuntimeRelease(runtime, self)
-                job.finished.connect(lambda: QTimer.singleShot(0, lambda: self._released(job)))
+                job.finished.connect(lambda: Timer.singleShot(0, lambda: self._released(job)))
                 job.start()
                 return False
             self.timer.stop()
@@ -118,7 +118,7 @@ class ShutdownWorkflow(QObject):
 
     def _released(self, job):
         if job.isRunning():
-            QTimer.singleShot(20, lambda: self._released(job))
+            Timer.singleShot(20, lambda: self._released(job))
             return
         self.release_job = None
         job.deleteLater()

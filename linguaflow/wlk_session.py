@@ -1,4 +1,4 @@
-"""Qt session owns capture and an exclusive lease of a local WLK process."""
+"""Backend session owns capture and an exclusive lease of a local WLK process."""
 import base64
 import json
 import time
@@ -9,19 +9,19 @@ from threading import Event, Thread
 from uuid import uuid4
 
 import numpy as np
-from PySide6.QtCore import QThread, Signal
 
 from . import diagnostic_log as diag
 from .audio import capture
 from .capture_control import CaptureControl
 from .core import Caption
+from .events import Signal, Worker
 from .journal import AudioJournal
 from .process_platform import stop_tree
 from .runtime_paths import runtime_python
 from .runtime_preparation import RuntimePreparation
 
 
-class Session(QThread):
+class Session(Worker):
     startup_idle_timeout = 300
     stop_timeout = 180.
     status = Signal(str)

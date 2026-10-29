@@ -89,7 +89,7 @@ python3.12 -m venv .venv
 在“设置 → 常规”开启“体验 Beta 功能”，选中录音后打开“课程资料与笔记”。默认关闭；关闭保留已有材料和笔记，不中断正在运行的本地录音。
 
 1. 关联课程并导入完整静态材料。支持 PDF、常见 Office/OpenDocument、离线 HTML、Markdown、TXT/CSV/TSV 和常见图片；只读取可呈现静态页/分片，不承诺动画、隐藏内容或网页交互。
-2. 源码桌面环境需另装 `.[knowledge]`，可将上面的桌面安装命令改为 `.[dev,knowledge]`。PDF/Office 原页渲染另需 Node.js 22.19 或更新版本及渲染组件；在“运行环境 → 安装/修复课件渲染组件”准备，或由桌面 `.venv` 的 Python 执行 `scripts/install_documents.py`。网页/文本/图片复用 Qt，无需另装浏览器。组件准备需要网络；本地导入不发送云请求。
+2. 源码桌面环境需另装 `.[knowledge]`，可将上面的桌面安装命令改为 `.[dev,knowledge]`。PDF/Office 原页渲染另需 Node.js 22.19 或更新版本及渲染组件；在“运行环境 → 安装/修复课件渲染组件”准备，或由桌面 `.venv` 的 Python 执行 `scripts/install_documents.py`。网页/文本/图片复用包内 Electron，无需另装浏览器。组件准备需要网络；本地导入不发送云请求。
 3. 要云端阅读，配置系统凭据中的 DeepSeek 密钥并允许本课程图文上传，点击“完整阅读并提取术语”。每页保存，取消后可复用有效结果；完整读完才启用课程云端笔记/问答。
 4. 审核候选术语并保存，供下次 Qwen 录音使用。切换课程或录音保留本次运行中的草稿；退出前未保存会询问是否放弃，也会阻止更新重启。保存成功前不应用编辑。上下文超出预算的项会在界面显示，具体限制由 [课程配置](../linguaflow/knowledge/schemas.py) 维护；不改变已开始录音的快照。
 5. 笔记用途另行授权，仅处理已保存定稿及相关课件；个人编辑不会被 AI 覆盖，来源变化会提示核对。引用可回原页/估计时间；失效 AI 内容不作为当前结论导出。
@@ -109,12 +109,10 @@ PDF/PPTX 导入先提取可用文字，点击“准备本地原页”可离线�
 具体行为要求见 [spec](specs/README.md)，验证边界见 [VALIDATION](VALIDATION.md)。旧 LinguaFlow 启动入口、偏好及录音保持兼容。
 
 
-## Qt / Electron 双前端对照
+## Electron 源码入口
 
-本地入口支持两套界面，复用同一录音库和偏好。首次仍打开 Qt；在“设置 → 运行环境”中，通过“切换到 Electron 界面”或“切换到 Qt 界面”往返比较。成功打开后记住所选前端。切换保留当前录音或尚未开始的草稿、保存目录、主题与窗口大小，不复制或转换录音。
+正式入口为 Electron，Python 后台不再依赖 Qt。安装桌面 Python 依赖后，在 `desktop/` 执行 `npm ci` 和 `npm run build`，再使用原来的 `python -m linguaflow` 入口。旧录音格式不变，旧偏好首次读取后转存原子 JSON，原文件保留。
 
-切换会先关闭当前界面，等其保存和释放完成再启动目标界面。录音、保存失败、下载/迁移或未保存的名称/课程编辑需要先处理。目标组件缺失时保留当前窗口；目标启动失败会恢复原界面并显示原因。需要直接回到 Qt 时可使用桌面 Python 的 `-m linguaflow --frontend qt`；`--frontend electron` 指定 Electron。既有录音保护期间只能使用下面的隔离测试入口，或显式 `--no-audio`，不能正常发现设备或回听。
+Qt 界面不再进入安装包，`--frontend qt` 会提示退役。只有执行旧界面开发对照时才安装 `.[dev,legacy-qt]`，正式依赖不需要它。采集继续使用 SoundCard / ScreenCaptureKit；回听、课件图片与网页渲染复用 Electron。
 
-源码依赖准备见 [TESTING](TESTING.md#electron-候选入口)。`desktop/` 的 `npm run components` 展示正式共享控件，`npm test` 与 `npm run test:switch` 使用独立配置和临时录音库、继承音频拦截。直接 `npm start` 连接正常工作区并发现设备，录音保护期间不要执行。浏览器预览仅显示界面。
-
-安装版的 Electron 入口提供“切换到 Qt 检查更新”：完成安全切换后使用已有 Sparkle / WinSparkle、原签名身份和恢复流程。新版本首次升级启动也先由 Qt 完成恢复确认，之后可以再切换。此处是明确保留的两界面操作差异，没有另换更新公钥或订阅。双前端构建方法见 [RELEASING](RELEASING.md#双前端候选包)；本地候选不代表已发布，实际验证及平台限制见 [VALIDATION](VALIDATION.md)。
+录音保护期间只能运行隔离无音频验证，不能直接启动普通工作区或发现设备。测试入口见 [TESTING](TESTING.md#electron-正式入口)：`npm test`、`npm run test:chain`、`npm run test:interaction` 和 `npm run test:audio-adapter`。原生更新仍由 Python 后台及 Sparkle/WinSparkle 负责。

@@ -24,7 +24,7 @@ def test_interrupted_recording_recovers_physical_frames_without_modifying_origin
     stream = PlaybackStream(path, recover_recording=True)
     try:
         assert stream.recovered
-        restored = bytes(stream.readAll())
+        restored = bytes(stream.read(stream.size()))
         expected = pcm[:(len(pcm)-cut)//2*2]
         with wave.open(io.BytesIO(restored)) as reader:
             assert reader.getnframes() == len(expected)//2
@@ -34,7 +34,7 @@ def test_interrupted_recording_recovers_physical_frames_without_modifying_origin
             assert bytes(stream.read(8)) == restored[start:start+8]
         stream.set_gain(2)
         assert stream.seek(44)
-        assert bytes(stream.readAll()) == amplify(expected, 1, 16, 2)
+        assert bytes(stream.read(stream.size())) == amplify(expected, 1, 16, 2)
     finally:
         stream.close()
     assert path.read_bytes() == original
@@ -73,17 +73,17 @@ def test_gain_stream_preserves_headers_original_and_random_byte_seeks(tmp_path):
     digest = hashlib.sha256(original).digest()
     stream = PlaybackStream(path)
     try:
-        assert stream.supports_gain and bytes(stream.readAll()) == original
+        assert stream.supports_gain and bytes(stream.read(stream.size())) == original
         stream.set_gain(3)
         expected = (original[:stream.data_start]
                     +np.clip(samples.astype(np.int32)*3, -32768, 32767).astype('<i2').tobytes())
         assert stream.seek(0)
-        assert bytes(stream.read(45))+bytes(stream.readAll()) == expected
+        assert bytes(stream.read(45))+bytes(stream.read(stream.size())) == expected
         for position in (0, 13, 43, 44, 45, 47, len(expected)-1, len(expected)):
             assert stream.seek(position)
             assert bytes(stream.read(7)) == expected[position:position+7]
         stream.set_gain(1)
-        assert stream.seek(0) and bytes(stream.readAll()) == original
+        assert stream.seek(0) and bytes(stream.read(stream.size())) == original
         assert not stream.seek(len(original)+1)
     finally:
         stream.close()
@@ -134,6 +134,6 @@ def test_unknown_encoding_is_readonly_passthrough_without_fake_boost(tmp_path):
         assert not stream.supports_gain
         with pytest.raises(ValueError, match='不支持'):
             stream.set_gain(2)
-        assert bytes(stream.readAll()) == path.read_bytes()
+        assert bytes(stream.read(stream.size())) == path.read_bytes()
     finally:
         stream.close()

@@ -2,11 +2,11 @@
 
 本文维护实现职责与当前方案，行为要求见 [spec](specs/README.md)，测试方法见 [TESTING](TESTING.md)。职责描述不代表全部异常路径已符合规范；已确认的实现差距在 [ROADMAP](ROADMAP.md#实现缺口)，不能当作已发行或全平台验收证明。
 
-## Electron 候选入口
+## Electron 正式入口
 
-`desktop/` 提供与 Qt 并存的 Electron 前端；首次默认 Qt，之后由成功打开的前端偏好决定。Electron 主进程拥有窗口、原生文件选择、剪贴板和本地 Python 子进程；沙箱 renderer 通过受限 preload 请求业务，不获得 Node、任意路径打开或进程执行能力。主窗口、非模态课程窗口及悬浮字幕各有 IPC 白名单；请求同时校验本应用窗口、顶层 frame 与本地页面 URL。
+`desktop/` 是唯一正式桌面入口。旧 Qt 界面源码仅保留为开发对照，通过 `legacy-qt` 可选依赖运行旧回归，不进入正式安装包。Electron 主进程拥有窗口、原生文件选择、剪贴板和本地 Python 子进程；沙箱 renderer 通过受限 preload 请求业务，不获得 Node、任意路径打开或进程执行能力。主窗口、非模态课程窗口及悬浮字幕各有 IPC 白名单；请求同时校验本应用窗口、顶层 frame 与本地页面 URL。
 
-`linguaflow/desktop_service.py` 使用 QtCore 事件循环复用 Session、RecordingSaver、LibraryReader、Preparation、BackgroundCheck、KnowledgeClient 和 PlaybackController；暂未移除后端 QtCore 依赖，但不创建隐藏 QWidget 窗口。UTF-8 JSONL v1 使用请求编号与有界消息；超时只报告等待失败，不假定后台操作已取消。stdout 专用于协议，诊断日志保持原隐私边界。
+`linguaflow/desktop_service.py` 使用标准库 `events.Dispatcher`，复用 Session、RecordingSaver、LibraryReader、Preparation、BackgroundCheck、KnowledgeClient 和 PlaybackController；正式后台及课件子进程不导入 Qt。后台线程结果按顺序回到 owner 线程，计时器取消与对象释放使旧回调失效，退出等待真实线程/进程结束。UTF-8 JSONL v1 使用请求编号与有界消息；超时只报告等待失败，不假定后台操作已取消。stdout 专用于协议，诊断日志保持原隐私边界。
 
 Qt `Window` 和 Electron `DesktopService` 组合相同的后台流程；后者另负责 JSONL 请求和事件适配。共享模块不导入 QWidget、Qt 控件或 React：
 
@@ -17,13 +17,13 @@ Qt `Window` 和 Electron `DesktopService` 组合相同的后台流程；后者�
 - `application_lifecycle.Activity/ShutdownWorkflow` 统一切换门禁和退出顺序。取消自有任务、等待录音/保存、关闭课程与回听、异步释放推理环境后才允许退出；失败保留资源所有者。原生窗口关闭确认、动画和界面交接呈现由适配层负责。
 - `knowledge/lifecycle.KnowledgeState` 保存当前课程任务状态，除部分 view 外也消费 status/idle/disconnected；命令提交即标忙碌，切换门禁不依赖课程窗口是否打开或旧显示快照。自动连接和导入取消仍共用同一实现。
 
-Qt 和 Electron 继续复用 Session、Library、RecordingSaver、Preparation、PlaybackController 和课程 worker。业务共享不要求 Qt 也经过进程通信；Qt 直接调用这些服务，Electron 经受限 IPC 调用。保留 QtCore/Qt Multimedia 等后台依赖与移除 Qt 界面是两件事。
+录音采集保持原实现：SoundCard 麦克风与 Windows WASAPI 回环、macOS ScreenCaptureKit 均未更换。设置由 `SettingsStore` 原子写入 JSON，首次读取旧 INI/plist/注册表而不修改原文件；跨进程文件锁用操作系统锁串行化竞争，并识别仍存活的旧 Qt 锁。
 
-`update_workflow.py` 共用安装等待、未保存编辑/录音/文件/准备/检查门禁、后台释放、取消和恢复；Qt 直连、Electron 通过受限 IPC 调用。释放前及完成后复查状态，取消释放期间不提前解除操作限制。Electron 的未保存名称、术语和笔记由宿主汇总后交后台门禁。Mac 安装后台只创建 QGuiApplication 的 Cocoa 事件循环，不创建 Qt 窗口，且隐藏额外 Dock 身份；业务规则不依赖 QWidget。
+`update_workflow.py` 共用安装等待、未保存编辑/录音/文件/准备/检查门禁、后台释放、取消和恢复；Qt 直连、Electron 通过受限 IPC 调用。释放前及完成后复查状态，取消释放期间不提前解除操作限制。Electron 的未保存名称、术语和笔记由宿主汇总后交后台门禁。Mac 安装后台通过既有 PyObjC 桥泵送 Cocoa RunLoop，保留 Sparkle 原生身份，不再创建 Qt 应用。
 
 `captions.locate` 携带录音 ID 和代次；后台验证后同时返回字幕位置和不自动播放的定位结果。播放器尚未创建时只保存待定位时间，首次主动播放才打开音频。课程引用携带其原录音身份，迟到的旧录音结果不能定位当前录音。文档组件准备与录音可并行，模型/推理环境准备仍禁止开始录音。
 
-React 组合共享 Radix 基础控件，`Playback.tsx` 同时用于实际回听与演示。Vite 从 `ui_theme.THEMES` 生成颜色；布局仍须按 v0.10.2 校准。课程窗口隐藏时保留本次运行的各课程草稿；原生关闭请求先交给编辑保护，主程序退出仍等实际录音保存、子进程和任务终态。音频只通过已有 Python 平台适配，浏览器媒体权限拒绝，`--no-audio` 阻断设备与回听入口。
+React 组合共享 Radix 基础控件，`Playback.tsx` 同时用于实际回听与演示。Vite 从 `ui_theme.THEMES` 生成颜色；布局仍须按 v0.10.2 校准。课程窗口隐藏时保留本次运行的各课程草稿；原生关闭请求先交给编辑保护，主程序退出仍等实际录音保存、子进程和任务终态。采集只通过已有 Python 平台适配；回听由独立 Electron 音频宿主输出，浏览器采集权限拒绝，`--no-audio` 阻断设备与回听入口。
 
 Windows 窗口控制使用 Electron 原生 `titleBarOverlay`，与 36px 拖动栏同高、背景透明；构造、bootstrap 及 settings 共用颜色选项，避免已保存深色启动仍用浅色按钮。按钮动作保持系统行为，原生关闭仍交给既有编辑/保存保护，不新增 renderer 窗口控制权限。
 
@@ -33,11 +33,13 @@ Windows 窗口控制使用 Electron 原生 `titleBarOverlay`，与 36px 拖动�
 
 显式导出使用每次请求独立的队列身份，自动保存仍按录音版本合并；恢复备份另存录音身份、版本与文件摘要，全部排队写入结束才结束导出进度，后续成功不覆盖同批失败。模型准备范围使用 `all/asr/translation`，`all` 不下传为 CLI `--only`；完成、取消及选择变化合并触发后台资源检查，过期检查不覆盖新选择。
 
-Electron 服务拥有可复用的 `RuntimePreparation`，会话只借用；环境维护及退出在独立任务中等待释放，失败保留 owner 以便重试。回听元数据通过原 `PlaybackStream` 只读 WAV 获取，不为显示时长创建音频设备；首次定位由 `PlaybackController` 等待异步媒体就绪并可定位后，先定位再播放；释放/错误清除待执行请求，成功定位回执恢复前端跟随。保存结束并释放录音锁后刷新，建立播放器时重新应用音量。两前端共享悬浮窗逻辑坐标，旧 Qt 二进制几何继续作为兼容回退。启动库失败时，宿主只在原后台已退出、尚未完成启动的情况下允许重新选目录；新后台验证库后才持久化选择。
+Electron 服务拥有可复用的 `RuntimePreparation`，会话只借用；环境维护及退出在独立任务中等待释放，失败保留 owner 以便重试。回听元数据通过原 `PlaybackStream` 只读 WAV 获取，不为显示时长创建音频设备；`PlaybackController` 持有文件、随机令牌本机媒体流、录音代次、播放状态和命令，Electron 音频适配器等待媒体就绪后先定位再播放；释放/错误清除待执行请求，成功定位回执恢复前端跟随。保存结束并释放录音锁后刷新，建立播放器时重新应用音量。两前端共享悬浮窗逻辑坐标，旧 Qt 二进制几何继续作为兼容回退。启动库失败时，宿主只在原后台已退出、尚未完成启动的情况下允许重新选目录；新后台验证库后才持久化选择。
 
-源码入口、验证方法见 [TESTING](TESTING.md#electron-候选入口)，实现缺口见 [ROADMAP](ROADMAP.md#electron-迁移对照)。双前端构建仍复用现有原生启动器和平台锁；安装版 Electron 后台由外层原生启动器以 `--python -m linguaflow.desktop_service` 承载，保留 Sparkle 的应用身份；检查更新不再切换界面，仍使用 Sparkle/WinSparkle，未引入 electron-updater。不要把本地构建或逻辑回归理解为跨平台发行验收。
+源码入口、验证方法见 [TESTING](TESTING.md#electron-正式入口)，实现缺口见 [ROADMAP](ROADMAP.md#electron-迁移对照)。Qt-free 构建仍复用现有原生启动器和平台锁；安装版 Electron 后台由外层原生启动器以 `--python -m linguaflow.desktop_service` 承载，保留 Sparkle 的应用身份；检查更新不再切换界面，仍使用 Sparkle/WinSparkle，未引入 electron-updater。不要把本地构建或逻辑回归理解为跨平台发行验收。
 
-`desktop_launcher.py` 统一原 `python -m linguaflow` 与 console-script 入口；`frontend_switch.py` 先检查目标组件，再记录私有临时交接文件，等待原 GUI / 业务进程退出后启动目标。交接只传库路径、偏好格式、录音 ID / 内存草稿、窗口几何和无音频约束。主界面实际挂载后的 `frontend.ready` 回执才确认 Electron 启动成功；Qt 在 show 后确认。目标未就绪即退出时回退，既不杀死仍在保存的旧进程，也不同时运行两个录音 owner。安装态切回 Qt 必须使用原生启动器，不能把 portable Python 当作原生应用身份。
+`desktop_launcher.py` 统一原 `python -m linguaflow` 与 console-script 入口，始终启动 Electron；显式 Qt 启动返回退役提示。`frontend_switch.py` 保留旧交接上下文及 Electron 重启支持，等待旧 owner 结束才启动目标；界面已移除 Qt 切换按钮。
+
+课件继续由 Python 负责文件准入、资源快照、预算、哈希、缓存及发布事务。`render-tool.cjs` 使用包内 Electron/Chromium 截图及图片标准化，隔离 profile、沙箱、有限文件白名单和禁止联网/媒体/窗口/下载；不把导入和课程业务搬到 React。Markdown 使用固定版本 Marked（无额外运行依赖），HTML/Markdown 渲染版本更新使旧布局缓存重新导入后刷新。壁纸和应用图标也复用 Electron，NumPy/SciPy 保留原材质算法。
 
 `desktop_startup.py` 在私有临时目录接收当前 Electron 子进程的实际界面就绪回执，由原生启动进程确认更新健康；启动 Electron 进程本身不算成功，更新后也不强制改用 Qt。子进程不继承原启动恢复票据。Windows 原生父进程继续持有安装互斥量到 Electron 退出；父进程存活管道断开时 Electron 请求正常关闭。恢复另核对已登记的 Electron PID/创建时间；仍存活则保留新旧包，交人工恢复，不在其下方替换程序。
 

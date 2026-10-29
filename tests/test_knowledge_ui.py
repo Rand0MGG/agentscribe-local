@@ -15,7 +15,8 @@ class NoCloudSDK(importlib.abc.MetaPathFinder):
         if fullname.split('.')[0] in {'deepagents','langchain','langchain_core','langchain_deepseek','langgraph','openai','httpx','keyring'}:
             raise AssertionError('Cloud SDK entered the desktop: '+fullname)
 sys.meta_path.insert(0, NoCloudSDK())
-from PySide6.QtCore import QObject, QSettings, Signal
+from PySide6.QtCore import QSettings
+from linguaflow.events import Owner as QObject, Signal
 from PySide6.QtWidgets import QApplication
 import linguaflow.app as module
 from linguaflow.core import Caption

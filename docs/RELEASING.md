@@ -24,7 +24,7 @@
 
 候选包保留当前版本，Windows 无 Authenticode，Mac 仅 ad-hoc 签名、未经公证；不能据此认定正式安装/升级验收完成。此流程不创建标签、Release 或更新订阅，不使用发行私钥；正式发行仍遵循本页原有门槛。当前本地未提交源码须先按授权固定提交，不能伪造干净状态或绕过封装器的来源校验。
 
-手动构建可勾选 `with_electron`，两端将包含锁定的 Qt/Electron 双界面；除原成品 Qt 探针外，还从最终 Mac DMG 挂载目录、Windows 安装后的独立目录启动包内 Electron，复用基础无音频探针。默认 Qt 构建不变。候选 Mac 双界面文件名含 `-dual-ui`；发布到既有自动更新渠道时使用规定的标准文件名，改名不改变安装包字节，校验和文件须记录发布名称，并重新核对摘要与清单。签名只针对最终封存字节，安装探针不代替旧版升级验收。
+候选包始终包含 Electron，并排除 PySide6/shiboken6 与旧 Qt 界面。`with_electron` / `--with-electron` 仅保留旧调用兼容，不能构建缺少正式前端的包。后台/课件探针及最终安装路径的 Electron 窗口探针分别验证；候选文件使用标准平台名称，不再附加 `-dual-ui`。签名只针对最终封存字节，安装探针不代替旧版升级验收。
 
 成品探针先检查应用及自有辅助进程正常退出，再正常卸载只读映像；资源忙仍属于验收失败，不以强制卸载掩盖退出缺陷。
 
@@ -38,13 +38,13 @@
 2. `prepare-release.yml` 选择已审核 main SHA、已有不可变标签和目标平台，调用同一生产脚本，不在 CI 临时改版本。普通平台推送只运行开发检查。
 3. Mac 用 `scripts/build_macos.py --fetch` 后再运行同脚本。Windows 在 x64 MSVC 开发命令行运行 `scripts/build_windows.py --fetch`、同脚本构建载荷，再用 `scripts/build_windows_installer.py --payload <载荷目录> --iscc <Inno 7 编译器> --fetch` 封装安装器。CI 通过 `prepare_compiler()` 按 `packaging/windows/inno.json` 的 URL/SHA256 准备固定的便携 Inno 7，仅写入 `.work/packaging/`，不注册文件关联；随后运行真实长许可证路径编译回归。Inno 6 无法完整编译长路径许可文件，不能靠省略许可或缩短测试路径通过。
 
-两端锁定完整便携 Python、实际桌面依赖、Node、Qt/原生组件与许可，不复制开发 venv。应用清单只取 Git 跟踪且声明支持的文件类型；新资源类型须更新共享复制入口。源码归档固定提交，不依赖安装机系统 Git。
+两端锁定完整便携 Python、实际桌面依赖、Node、Electron/原生组件与许可，不复制开发 venv。应用清单只取 Git 跟踪且声明支持的文件类型；新资源类型须更新共享复制入口。源码归档固定提交，不依赖安装机系统 Git。
 
 许可文件只接受 `licenses.json` 声明的相对路径与摘要，未声明文件不进包。仅裁剪确认不需要的开发/测试内容，保留运行模块、资源和许可，再由数值运算及完整包探针验证。依赖声明、两端锁及复制清单一致性要随修改检查。
 
 ## 最终包、签名与草稿
 
-- 以外部工作目录和干扰 PYTHONPATH 验证启动，仅加载包内应用。完整无音频包探针检查真实窗口关闭、Qt 日志、WebEngine、Node/npm、venv、依赖、更新及恢复组件；不能仅检查导入成功。
+- 以外部工作目录和干扰 PYTHONPATH 验证启动，仅加载包内应用。完整无音频包探针检查后台退出、Qt-free 载荷、Chromium 渲染、Node/npm、venv、依赖、更新及恢复组件；不能仅检查导入成功。
 - Windows 在装入更新组件后、封装前探针；Mac 最终 DMG 封存后只读挂载运行探针并保证失败也卸载。探针失败不封存，成功不等于已完成安装升级/录音验收。
 - Mac 正式候选需 Developer ID/公证，Windows 需 Authenticode；当前脚本未自动完成它们。`--without-updater` 只供开发/过渡包，不进入订阅。
 - 既有 0.9.x 试用包固定使用 `stable.xml`；兼容订阅的名称不代表系统签名/公证已完成。试用更新仍须原公钥签名、真实旧包升级与恢复验收，并在发行说明保留临时签名状态；不降低正式系统签名门槛。
@@ -81,10 +81,8 @@
 
 依据：[GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages)、[Actions 触发限制](https://docs.github.com/en/actions/how-tos/trigger-workflows)、[Sparkle](https://sparkle-project.org/documentation/)、[WinSparkle](https://winsparkle.org/guides/getting-started/)、[Inno Setup](https://jrsoftware.org/ishelp.php)。
 
-## 双前端候选包
+## Electron 候选包
 
-现有 Qt 构建命令不变。需要包含对照界面时，先准备 `desktop/` 中锁定的依赖与 Electron 二进制（见 TESTING），再为对应平台构建脚本增加 `--with-electron`；`--fetch --with-electron` 只获取固定版本输入。Electron 45.0.0 的 Mac arm64 / Windows x64 归档 SHA-256 维护于 `packaging/electron/assets.json`，构建拒绝版本不符、缺许可或未纳入版本控制的前端源码。
+先准备 `desktop/` 中锁定的依赖与 Electron 二进制（见 TESTING），再运行对应平台构建脚本。`--fetch` 只获取固定版本输入。Electron 45.0.0 的 Mac arm64 / Windows x64 归档 SHA-256 维护于 `packaging/electron/assets.json`，构建拒绝版本不符、缺许可或未纳入版本控制的前端源码。Marked 与其他前端运行依赖由 package-lock 固定并随包保留许可。
 
-Mac：`python scripts/build_macos.py --with-electron`，候选 DMG 名包含 `-dual-ui-`，不会覆盖普通 Qt 产物。Windows：`python scripts/build_windows.py --with-electron` 后仍由原 `build_windows_installer.py` 封存。两者保留原 launcher、更新配置、公钥、用户数据边界及默认 Qt 入口；不把新增 runtime 当作新的发行身份。Electron 通过原生应用宿主调用共用更新流程，检查更新不再切换到 Qt 窗口；新的多进程链路仍须分别完成安装态升级验收。
-
-前端包只带编译产物、受限主进程/桥、经校验的 Electron runtime 和生产依赖许可，不带 node_modules、开发服务器、浏览器 profile 或个人数据。`frontend-manifest.json` 记录源码、原始归档及最终文件摘要；Mac 原生签名后重算文件摘要，再重新封存外层应用。构建成功后还须验证包内双向切换、退出、真实设备和旧版升级，平台分别记录；本地候选不自动发布或推进更新订阅。
+Mac：`python scripts/build_macos.py`。Windows：`python scripts/build_windows.py` 后仍由原 `build_windows_installer.py` 封存。两者保留原 launcher、更新配置、公钥与用户数据边界；正式入口始终是 Electron。Qt 仅保留为可选开发对照，不进入平台依赖锁或安装载荷。Electron 通过原生应用宿主调用共用更新流程；移除 Qt 后仍须分别完成两端安装态升级验收。

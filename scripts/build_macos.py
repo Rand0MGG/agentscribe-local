@@ -18,10 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.packaging_common import (
-    QT_MODULES,
-    QT_PLUGIN_GROUPS,
     copy_application,
-    copy_notices,
     digest,
     extract,
     obtain,
@@ -40,7 +37,7 @@ def run(*command, **kwargs):
 
 
 def assets():
-    return json.loads((CONFIG / 'assets.json').read_text()), json.loads((CONFIG / 'licenses.json').read_text())
+    return json.loads((CONFIG / 'assets.json').read_text()), []
 
 
 def native_files(root):
@@ -63,73 +60,19 @@ def node_subset(node):
             shutil.rmtree(path)
 
 
-def qt_subset(python):
-    """Deploy used Qt modules plus their actual framework/plugin dependencies.
-
-    Keep multimedia playback, WebEngine's helper/resources/locales and image
-    plugins. Unused developer apps and unrelated GPL-only modules are omitted.
-    """
-    qt = python / 'lib/python3.12/site-packages/PySide6'
-
-    for path in qt.glob('Qt*'):
-        if path.is_file() and path.name.split('.')[0] not in QT_MODULES:
-            path.unlink()
-    for name in ('Assistant.app', 'Designer.app', 'Linguist.app', 'include', 'glue', 'typesystems',
-                 'doc', 'QtAsyncio', 'scripts'):
-        path = qt / name
-        if path.is_dir():
-            shutil.rmtree(path)
-    plugins = qt / 'Qt/plugins'
-    for path in plugins.iterdir():
-        if path.name not in QT_PLUGIN_GROUPS:
-            shutil.rmtree(path)
-    libraries = qt / 'Qt/lib'
-    roots = list(qt.glob('*.so')) + list(qt.glob('*.dylib')) + list(native_files(plugins))
-    keep, examined = set(), set()
-    while roots:
-        path = roots.pop()
-        if path in examined:
-            continue
-        examined.add(path)
-        output = run('otool', '-m', '-L', path, capture_output=True, text=True).stdout
-        for name in re.findall(r'(Qt\w+\.framework)/Versions/[^/]+/(Qt\w+)', output):
-            framework = libraries / name[0]
-            if framework not in keep:
-                keep.add(framework)
-                roots.append(framework / 'Versions/A' / name[1])
-    for framework in libraries.glob('*.framework'):
-        if framework not in keep:
-            shutil.rmtree(framework)
-    for name in ('bin', 'libexec', 'qml', 'metatypes'):
-        path = qt / 'Qt' / name
-        # The WebEngine process is inside its retained framework in macOS wheels.
-        if path.is_dir():
-            shutil.rmtree(path)
-    for path in list(native_files(qt)):
-        if path.parent == qt and path.suffix not in {'.so', '.dylib'}:
-            path.unlink()
-    return sorted(path.name for path in keep)
-
-
-def make_icon(resources, *, electron=False):
-    from PySide6.QtCore import Qt
-    from PySide6.QtGui import QImage, QPainter
-    from PySide6.QtSvg import QSvgRenderer
+def make_icon(resources, *, electron=True):
     iconset = resources / 'AgentScribe.iconset'
     iconset.mkdir()
-    image = QImage(1024, 1024, QImage.Format.Format_ARGB32)
-    image.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(image)
-    QSvgRenderer(str(CONFIG / 'AgentScribe.svg')).render(painter)
-    painter.end()
-    # Electron's nativeImage/dock accepts PNG, not the launcher's ICNS file.
-    if electron and not image.save(str(resources / 'AgentScribe.png')):
-        raise ValueError('无法生成 Electron Dock 图标。')
+    outputs = [dict(size=1024, path=str(resources / 'AgentScribe.png'))]
     for size in (16, 32, 128, 256, 512):
         for scale in (1, 2):
             name = f'icon_{size}x{size}' + ('@2x' if scale == 2 else '') + '.png'
-            image.scaled(size * scale, size * scale, Qt.AspectRatioMode.KeepAspectRatio,
-                         Qt.TransformationMode.SmoothTransformation).save(str(iconset / name))
+            outputs.append(dict(size=size*scale, path=str(iconset / name)))
+    request = iconset / 'request.json'
+    request.write_text(json.dumps(dict(source=str(CONFIG / 'AgentScribe.svg'), outputs=outputs)))
+    run(resources / 'desktop/runtime/Electron.app/Contents/MacOS/Electron',
+        resources / 'desktop/electron/icon-tool.cjs', request, timeout=30)
+    request.unlink()
     run('iconutil', '-c', 'icns', '-o', resources / 'AgentScribe.icns', iconset)
     shutil.rmtree(iconset)
 
@@ -196,7 +139,9 @@ def sign(app):
     return len(native)
 
 
-def build(downloads, *, without_updater=False, with_electron=False):
+def build(downloads, *, without_updater=False, with_electron=True):
+    if not with_electron:
+        raise ValueError('正式安装包必须包含 Electron；Qt 界面已退役。')
     from linguaflow.update_config import bundle_version, update_identity
     runtimes, notices = assets()
     paths = {name: obtain(item, downloads) for name, item in runtimes.items()}
@@ -271,7 +216,7 @@ def build(downloads, *, without_updater=False, with_electron=False):
     run(interpreter, '-m', 'pip', 'install', '--no-index', '--find-links', downloads / 'wheels',
         '--require-hashes', '-r', CONFIG / 'desktop.lock', env=environment)
     run(interpreter, '-m', 'pip', 'check', env=environment)
-    qt_frameworks = qt_subset(python)
+    qt_frameworks = []
     trim_dependency_tests(python / 'lib/python3.12/site-packages')
     # Console wrappers installed by pip retain the construction directory in
     # their shebangs. The app invokes modules through Python, so omit them;
@@ -285,7 +230,6 @@ def build(downloads, *, without_updater=False, with_electron=False):
         application_files.update(copy_electron(ROOT, resources / 'desktop', downloads, 'macos-arm64'))
     for name in ('requirements-runtime.txt', 'requirements-mlx.txt', 'THIRD_PARTY_NOTICES.md'):
         shutil.copy2(ROOT / name, resources / name)
-    copy_notices(notices, downloads / 'licenses', resources / 'Licenses/Qt-PySide')
     # The standalone archive includes the CPython license in its stdlib.
     shutil.copy2(python / 'lib/python3.12/LICENSE.txt', resources / 'Licenses/Python-LICENSE.txt')
     python_notices(paths['python-notices'], resources / 'Licenses/Python-build')
@@ -338,13 +282,6 @@ def build(downloads, *, without_updater=False, with_electron=False):
                     desktop_lock_sha256=digest(CONFIG / 'desktop.lock'), qt_frameworks=qt_frameworks,
                     signature='ad-hoc', notarized=False, models_included=False, updater=identity)
     (resources / 'build-manifest.json').write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + '\n')
-    index = resources / 'Licenses/Qt-PySide/qtwebengine/documentation/qtwebengine-licensing.html'
-    if not index.is_file():
-        raise ValueError('缺少同版 Qt WebEngine 第三方许可全文。')
-    credits = index.read_text(encoding='utf-8')
-    credits = re.sub(r'href="(qtwebengine-3rdparty-[^"/]+\.html)"',
-                     r'href="Qt-PySide/qtwebengine/documentation/\1"', credits)
-    (resources / 'Licenses/QtWebEngine-credits.html').write_text(credits, encoding='utf-8')
     count = sign(app)
     if with_electron:
         from scripts.package_electron import seal_manifest
@@ -356,7 +293,7 @@ def build(downloads, *, without_updater=False, with_electron=False):
     volume.joinpath('Applications').symlink_to('/Applications', target_is_directory=True)
     output = WORK / 'dist'
     output.mkdir(exist_ok=True)
-    dmg = output / f'AgentScribe-{version}{"-dual-ui" if with_electron else ""}-macos-arm64.dmg'
+    dmg = output / f'AgentScribe-{version}-macos-arm64.dmg'
     temporary = stage / dmg.name
     run('hdiutil', 'create', '-volname', f'AgentScribe {version}', '-srcfolder', volume,
         '-format', 'UDZO', '-fs', 'HFS+', '-imagekey', 'zlib-level=9', temporary)
@@ -388,7 +325,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--fetch', action='store_true', help='只下载校验后的构建依赖')
     parser.add_argument('--downloads', type=Path, default=WORK / 'downloads')
-    parser.add_argument('--with-electron', action='store_true', help='包含可切换的 Electron 界面；需先准备锁定的 desktop 依赖')
+    parser.add_argument('--with-electron', action='store_true', default=True, help='兼容旧构建参数；Electron 现为必需组件')
     parser.add_argument('--without-updater', action='store_true',
                         help='只用于开发/过渡包：不带更新器，不能进入自动更新订阅')
     args = parser.parse_args()

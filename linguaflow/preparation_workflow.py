@@ -1,8 +1,7 @@
 """Shared model task ownership, validation and command snapshots."""
 import json
 
-from PySide6.QtCore import QObject, QTimer, Signal
-
+from .events import Owner, Signal, Timer
 from .model_options import asr_backends, translation_devices
 from .preparation_task import Preparation
 from .runtime_paths import installation_command
@@ -36,7 +35,7 @@ def preparation_command(selection, *, kind='models', only=None):
     return command
 
 
-class PreparationWorkflow(QObject):
+class PreparationWorkflow(Owner):
     result = Signal(str)
     download = Signal(dict)
     finished = Signal(object)
@@ -60,7 +59,7 @@ class PreparationWorkflow(QObject):
         task = self.worker = Preparation(action, self, affects_runtime=affects_runtime, beta_only=beta_only)
         task.result.connect(self.result)
         task.download.connect(self.download)
-        task.finished.connect(lambda: QTimer.singleShot(0, lambda: self._finished(task)))
+        task.finished.connect(lambda: Timer.singleShot(0, lambda: self._finished(task)))
         task.start()
         return task
 
@@ -70,7 +69,7 @@ class PreparationWorkflow(QObject):
 
     def _finished(self, task):
         if task.isRunning():
-            QTimer.singleShot(20, lambda: self._finished(task))
+            Timer.singleShot(20, lambda: self._finished(task))
             return
         if self.worker is task:
             self.worker = None

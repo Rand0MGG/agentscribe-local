@@ -2,10 +2,10 @@
 from copy import copy
 from threading import Event, Thread
 
-from PySide6.QtCore import QObject, Qt, Signal
+from .events import Connection, Owner, Signal
 
 
-class LibraryReader(QObject):
+class LibraryReader(Owner):
     completed = Signal(object, str)
     _finished = Signal()
 
@@ -14,7 +14,7 @@ class LibraryReader(QObject):
         self.job = None
         self.cancelled = Event()
         self.result, self.error = None, ''
-        self._finished.connect(self._deliver, Qt.ConnectionType.QueuedConnection)
+        self._finished.connect(self._deliver, Connection.Queued)
 
     @property
     def busy(self):

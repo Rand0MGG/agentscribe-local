@@ -67,7 +67,8 @@ def run_ui(code, tmp_path):
     prefix = '''
 import os, time
 from pathlib import Path
-from PySide6.QtCore import QObject, QSettings, Qt, Signal
+from PySide6.QtCore import QSettings, Qt
+from linguaflow.events import Owner as QObject, Signal
 from PySide6.QtWidgets import QApplication
 import linguaflow.app as module
 app=QApplication([])

@@ -7,9 +7,9 @@ from types import SimpleNamespace
 
 import psutil
 import pytest
-from PySide6.QtCore import QSettings
 
 from linguaflow import frontend_switch as switch
+from linguaflow.settings_store import SettingsStore as QSettings
 
 
 @pytest.mark.p1
@@ -75,7 +75,7 @@ def test_qt_frontend_button_guards_and_accepted_close(tmp_path):
 import json, os
 from pathlib import Path
 from unittest.mock import patch
-from PySide6.QtCore import QSettings
+from linguaflow.settings_store import SettingsStore as QSettings
 from PySide6.QtWidgets import QApplication
 from linguaflow.app import Window
 from linguaflow.recording_state import RecordingState
@@ -110,14 +110,11 @@ assert not list((root/'library').rglob('session.json'))
 
 @pytest.mark.p1
 @pytest.mark.parametrize('platform', ['darwin', 'win32'])
-def test_packaged_qt_switch_uses_native_launcher_identity(tmp_path, monkeypatch, platform):
-    monkeypatch.setattr(switch, 'packaged', lambda: True)
+def test_retired_qt_entry_fails_before_launch(tmp_path, monkeypatch, platform):
     monkeypatch.setattr(switch, 'resource_root', lambda: tmp_path / 'Resources')
     monkeypatch.setattr(switch.sys, 'platform', platform)
-    executable = tmp_path / ('MacOS/AgentScribe' if platform == 'darwin' else 'Resources/AgentScribe.exe')
-    executable.parent.mkdir(parents=True)
-    executable.touch()
-    assert switch.command_for('qt') == [str(executable), '--frontend', 'qt']
+    with pytest.raises(ValueError, match='Qt 界面已退役'):
+        switch.command_for('qt')
 
 
 @pytest.mark.p1
@@ -127,7 +124,7 @@ def test_windows_venv_service_accepts_its_launching_owner(tmp_path):
 import json, sys
 from pathlib import Path
 from types import SimpleNamespace
-from PySide6.QtCore import QSettings
+from linguaflow.settings_store import SettingsStore as QSettings
 from linguaflow import frontend_switch as switch
 switch.command_for = lambda target: [sys.executable]
 root = Path(sys.argv[1])

@@ -92,11 +92,12 @@ def copy_electron(root, destination, downloads, target):
         info_path.write_bytes(plistlib.dumps(info))
     shutil.copytree(frontend / 'dist', destination / 'dist')
     runtime_modules = sorted(name.removeprefix('desktop/') for name in source_files
-                             if name.startswith('desktop/electron/') and name.endswith('.cjs'))
+                             if name.startswith('desktop/electron/') and name.endswith(('.cjs', '.mjs')))
     for name in ('package.json', *runtime_modules):
         path = destination / name
         path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(frontend / name, path)
+    shutil.copytree(frontend / 'node_modules/marked', destination / 'node_modules/marked')
     for name, paths in licenses.items():
         for source in paths:
             path = destination / 'Licenses' / name / source.name

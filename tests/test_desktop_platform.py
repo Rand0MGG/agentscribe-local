@@ -1,4 +1,6 @@
-"""Electron material must reuse the Qt pixels, including its cache signature."""
+"""Preserve wallpaper appearance and caching across rasterizer replacement."""
+import sys
+
 import pytest
 from ui_support import run_ui_process
 
@@ -23,8 +25,7 @@ def render(theme, previous=None):
     if previous is not None:
         args += ['--signature',json.dumps(previous)]
     output = io.StringIO()
-    with patch.object(sys,'argv',args), patch.object(desktop_platform,'QApplication',return_value=app), \
-         patch.object(ui_backdrop,'desktop_wallpaper_path',return_value=str(path)), contextlib.redirect_stdout(output):
+    with patch.object(sys,'argv',args), patch.object(desktop_platform,'wallpaper_path',return_value=str(path)), contextlib.redirect_stdout(output):
         assert desktop_platform.main() == 0
     return json.loads(output.getvalue())
 for theme in ('light','dark'):
@@ -32,8 +33,35 @@ for theme in ('light','dark'):
     assert not result['unchanged']
     image = QImage.fromData(base64.b64decode(result['image'].split(',',1)[1]))
     expected = ui_backdrop.render_wallpaper(str(path),QSize(200,120),theme,None,QImage())[1]
-    assert image == expected, 'Material pixels differ from the original Qt renderer'
+    import numpy as np
+    actual = image.convertToFormat(QImage.Format.Format_RGBA8888)
+    reference = expected.convertToFormat(QImage.Format.Format_RGBA8888)
+    delta = np.abs(np.frombuffer(actual.constBits(),dtype=np.uint8).astype(int)-np.frombuffer(reference.constBits(),dtype=np.uint8).astype(int))
+    assert delta.max() <= 1, f'Material differs beyond one 8-bit rounding level: {delta.max()}'
     cached = render(theme,result['signature'])
     assert cached['unchanged'] and 'image' not in cached
 assert render('dark',render('light')['signature'])['unchanged'] is False
+''', tmp_path)
+
+
+@pytest.mark.p1
+@pytest.mark.skipif(sys.platform != 'darwin', reason='macOS native wallpaper formats')
+def test_heic_wallpaper_renders_material_without_modifying_original(tmp_path):
+    run_ui_process(r'''
+import base64, hashlib, os, subprocess
+from pathlib import Path
+import numpy as np
+from linguaflow.desktop_platform import material, png_rgba
+directory = Path(os.environ['AGENTSCRIBE_LIBRARY'])
+source, heic = directory/'source.png', directory/'wallpaper.heic'
+pixels = np.zeros((40,60,4), dtype=np.uint8)
+pixels[:,:,:] = (170,30,230,255)
+source.write_bytes(png_rgba(pixels))
+subprocess.run(['sips','-s','format','heic',str(source),'--out',str(heic)],check=True,capture_output=True)
+before = hashlib.sha256(heic.read_bytes()).digest()
+result = material(str(heic), (200,120), 'dark', None)
+assert base64.b64decode(result['image'].split(',',1)[1]).startswith(b'\x89PNG')
+assert result['image'] != material('', (200,120), 'dark', None)['image']
+assert material(str(heic), (200,120), 'dark', result['signature'])['unchanged']
+assert hashlib.sha256(heic.read_bytes()).digest() == before
 ''', tmp_path)

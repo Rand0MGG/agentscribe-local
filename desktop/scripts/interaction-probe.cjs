@@ -145,6 +145,7 @@ async function main() {
  const dialogBox=await page.getByRole('dialog',{name:'最近删除',exact:true}).boundingBox();assert(dialogBox.x>=0&&dialogBox.y>=0&&dialogBox.x+dialogBox.width<=640&&dialogBox.y+dialogBox.height<=480);
  await page.getByRole('button',{name:'关闭最近删除',exact:true}).click();
  passed.push('Existing delete dialog preserved in light mode and dark narrow window with reduced motion');
+ await require('./caption-preview-checks.cjs')(app,page,passed);
  await require('./parity-checks.cjs')(app,page,root,output,passed);
  assert.deepEqual(errors,[]);assert(!fs.existsSync(path.join(fixture,'blocked.log')));
  fs.writeFileSync(path.join(output,'result.json'),JSON.stringify({fixture,passed,highlight,motion,errors,native_audio_attempts:0},null,2));

@@ -23,7 +23,7 @@ import sys, time
 from pathlib import Path
 from types import SimpleNamespace
 import psutil
-from PySide6.QtCore import QCoreApplication
+from linguaflow.events import Dispatcher as QCoreApplication
 import linguaflow.knowledge.client as module
 app = QCoreApplication([])
 client = module.KnowledgeClient()
@@ -41,7 +41,7 @@ process = client.process
 pid_file = Path(sys.argv[1]).with_suffix('.pid')
 deadline = time.monotonic() + 8
 while not pid_file.exists():
-    app.processEvents()
+    app.process()
     assert time.monotonic() < deadline
     time.sleep(.01)
 descendant = psutil.Process(int(pid_file.read_text()))
@@ -67,7 +67,7 @@ finally:
         process.wait(timeout=5)
     deadline = time.monotonic() + 5
     while client.closing and time.monotonic() < deadline:
-        app.processEvents()
+        app.process()
         time.sleep(.01)
 '''
     result = subprocess.run([sys.executable, '-c', code, str(child), str(launcher_exits), operation],
@@ -81,7 +81,7 @@ def test_failed_cleanup_retains_threads_and_allows_retry():
     code = '''
 from threading import Thread, Event
 from types import SimpleNamespace
-from PySide6.QtCore import QCoreApplication
+from linguaflow.events import Dispatcher as QCoreApplication
 import linguaflow.knowledge.client as module
 app = QCoreApplication([])
 client = module.KnowledgeClient()

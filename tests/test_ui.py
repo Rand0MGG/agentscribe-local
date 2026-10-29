@@ -111,7 +111,8 @@ def test_finish_does_not_dispose_signal_sender_while_background_save_is_pending(
     code = """
 import os
 from threading import Event
-from PySide6.QtCore import QObject, QSettings, Signal
+from PySide6.QtCore import QSettings
+from linguaflow.events import Owner as QObject, Signal
 from PySide6.QtWidgets import QApplication
 from linguaflow.app import Window
 from linguaflow.core import Caption
@@ -445,7 +446,8 @@ def test_named_recording_start_finish_and_settings_routes(tmp_path):
     code = """
 import os
 from threading import Event
-from PySide6.QtCore import QObject, QSettings, Signal
+from PySide6.QtCore import QSettings
+from linguaflow.events import Owner as QObject, Signal
 from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
 import linguaflow.app as module
 from linguaflow.core import Caption

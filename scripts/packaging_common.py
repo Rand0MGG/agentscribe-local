@@ -6,11 +6,7 @@ import tarfile
 import urllib.request
 from pathlib import Path
 
-QT_MODULES = {'QtCore', 'QtGui', 'QtWidgets', 'QtNetwork', 'QtOpenGL', 'QtOpenGLWidgets',
-              'QtPrintSupport', 'QtSvg', 'QtMultimedia', 'QtWebChannel', 'QtWebEngineCore',
-              'QtWebEngineWidgets'}
-QT_PLUGIN_GROUPS = {'platforms', 'styles', 'imageformats', 'iconengines', 'tls',
-                    'networkinformation', 'multimedia'}
+LEGACY_QT_FILES = {'linguaflow/notifications.py', 'linguaflow/window_platform.py', 'linguaflow/library_browser.py', 'linguaflow/ui_tooltips.py', 'linguaflow/recording_search.py', 'linguaflow/deleted_dialog.py', 'linguaflow/workspace_widgets.py', 'linguaflow/ui_backdrop.py', 'linguaflow/model_dialog.py', 'linguaflow/model_browser.py', 'linguaflow/caption_feed.py', 'linguaflow/ui_components.py', 'linguaflow/management.py', 'linguaflow/onboarding.py', 'linguaflow/playback_controls.py', 'linguaflow/recording_controls.py', 'linguaflow/legacy_playback.py', 'linguaflow/qt_controls.py', 'linguaflow/window_chrome.py', 'linguaflow/subtitles_overlay.py', 'linguaflow/app.py', 'linguaflow/caption_view.py', 'linguaflow/knowledge/panel.py'}
 
 
 def copy_notices(items, source, destination):
@@ -65,6 +61,8 @@ def copy_application(root, destination):
         ['git', '-C', str(root), 'ls-files', '-z', '--', 'linguaflow'], encoding='utf-8').split('\0')
     files = {}
     for name in sorted(filter(None, names)):
+        if name in LEGACY_QT_FILES:
+            continue
         relative = Path(name)
         if relative.suffix not in {'.py', '.mjs'}:
             raise ValueError('未声明的应用资源格式：' + name)

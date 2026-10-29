@@ -12,7 +12,7 @@ import { useMaterial, usePageTransition } from './motion';
 import { useNotifications } from './notifications';
 import { bridge, clock, request, type Bootstrap, type Caption, type Item, type Page, type Settings, type State } from './types';
 
-const blockingCommands = new Set(['recording.new', 'recording.open', 'recording.start', 'recording.stop', 'recording.pause', 'recording.save', 'recording.close_recovered', 'library.refresh', 'library.migrate', 'frontend.switch']);
+const blockingCommands = new Set(['recording.new', 'recording.open', 'recording.start', 'recording.stop', 'recording.pause', 'recording.save', 'recording.close_recovered', 'library.refresh', 'library.migrate']);
 
 const emptyPage: Page = { generation: 0, revision: 0, start: 0, total: 0, rows: [] };
 type Editor = { title: string; initial?: string; save: (name: string) => Promise<unknown> };
@@ -214,7 +214,7 @@ export function App() {
   }
   return <Tooltip.Provider delayDuration={550}><div className={`app ${data.platform}`} style={material}>
     <header className="titlebar" aria-label="窗口拖动区域" />
-    <div className="page-stack" ref={pageTransition}>{section === 'settings' && <SettingsPage audioBusy={audioBusy} audioMessage={audioMessage} updatesBusy={updatesBusy} update={updateEvent} switchDisabled={blocked || state.preparing} initialCategory={settingsCategory} data={data} values={data.settings} state={state} onClose={() => setSection('recording')} onDeleted={async () => { const result = await perform('trash.list'); if (result) setDeleted(result); }} perform={perform} onPatch={setSettings} onCategory={setSettingsCategory} />}<div className="workspace-layout" hidden={section !== 'recording'}>
+    <div className="page-stack" ref={pageTransition}>{section === 'settings' && <SettingsPage audioBusy={audioBusy} audioMessage={audioMessage} updatesBusy={updatesBusy} update={updateEvent} initialCategory={settingsCategory} data={data} values={data.settings} state={state} onClose={() => setSection('recording')} onDeleted={async () => { const result = await perform('trash.list'); if (result) setDeleted(result); }} perform={perform} onPatch={setSettings} onCategory={setSettingsCategory} />}<div className="workspace-layout" hidden={section !== 'recording'}>
       <ResizableSidebar preferred={data.layout?.sidebar_width} onCommit={async width => {
         try { const saved = await request<number>('layout.sidebar', { width }); setData(old => old ? { ...old, layout: { sidebar_width: saved } } : old); }
         catch (error) { setNotice({ text: (error as Error).message, error: true }); throw error; }

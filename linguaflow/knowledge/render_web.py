@@ -1,24 +1,22 @@
-"""Owned offline Qt renderer, adapting DSH's bounded relative-asset packing and image normalization.
+"""Owned offline Electron renderer, adapting DSH's bounded relative-asset packing and image normalization.
 
 DSH ui-sidebar-documentpreview / attachment-local 0.2.0-rc.2 (MIT); see THIRD_PARTY_NOTICES.md.
-Qt is imported only in this disposable helper, never in the portable material data module.
+The isolated renderer receives only backend-approved local resource snapshots.
 """
 import csv
 import hashlib
 import html
 import io
 import json
-import math
-import os
 import re
 import sys
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-from ..process_platform import parent_disconnected, window_session_available
+from ..process_platform import window_session_available
 from .files import checked_path, local_path
-from .rendering import MAX_IMAGE_BYTES, MAX_PIXELS, WEB_RENDER_VERSION
+from .rendering import WEB_RENDER_VERSION
 
 MAX_ASSETS = 64
 MAX_ASSET_BYTES = 4 * 1024**2
@@ -122,10 +120,8 @@ def markup_for(source):
     if suffix in ('.html', '.htm', '.svg'):
         return text
     if suffix in ('.md', '.markdown'):
-        from PySide6.QtGui import QTextDocument
-        document = QTextDocument()
-        document.setMarkdown(text, QTextDocument.MarkdownFeature.MarkdownDialectGitHub)
-        return document.toHtml()
+        from ..electron_tools import run_tool
+        return run_tool('markdown-tool.mjs', source, node=True, timeout=15)
     if suffix in ('.csv', '.tsv'):
         rows = list(csv.reader(io.StringIO(text, newline=''), delimiter='\t' if suffix == '.tsv' else ','))
         if sum(map(len, rows)) > 100000:
@@ -139,251 +135,55 @@ def markup_for(source):
         'white-space:pre-wrap;}table{border-collapse:collapse;}tr{break-inside:avoid;}</style>' + body
 
 
-def render_image(source, output):
-    from PySide6.QtCore import QSize
-    from PySide6.QtGui import QColorSpace, QImage, QImageReader
-    reader = QImageReader(str(source))
-    reader.setAutoTransform(True)
-    detected = bytes(reader.format()).decode('ascii').lower()
-    allowed = {'.png': 'png', '.jpg': 'jpeg', '.jpeg': 'jpeg', '.gif': 'gif', '.webp': 'webp', '.bmp': 'bmp', '.ico': 'ico'}
-    size = reader.size()
-    if detected != allowed[source.suffix.lower()] or not size.isValid() or size.width()*size.height() > 64*1024**2:
-        raise ValueError('图片内容与扩展名不符、无法解码或超过 6400 万像素预算。')
-    ratio = min(1., 4096/max(size.width(), size.height()), math.sqrt(MAX_PIXELS/(size.width()*size.height())))
-    reader.setScaledSize(QSize(max(1, int(size.width()*ratio)), max(1, int(size.height()*ratio))))
-    image = reader.read()
-    if image.isNull():
-        raise ValueError('图片无法完整解码，请重新导出后导入。')
-    if image.colorSpace().isValid():
-        image = image.convertedToColorSpace(QColorSpace(QColorSpace.NamedColorSpace.SRgb))
-    image = image.convertToFormat(QImage.Format.Format_RGBA8888)
-    # Strip source metadata, preserve alpha, static frame only (DSH attachment-local behavior).
-    for key in image.textKeys():
-        image.setText(key, '')
-    output.mkdir()
-    path = output / 'page-0001.png'
-    for _ in range(8):
-        if not image.save(str(path), 'PNG'):
-            raise ValueError('图片标准化保存失败。')
-        if path.stat().st_size <= MAX_IMAGE_BYTES:
-            return {'pageCount': 1, 'images': [{'page': 1, 'path': path.name}],
-                    'staticFrame': reader.imageCount() > 1, 'missingFonts': [], 'native_text': ['']}
-        image = image.scaled(max(1, int(image.width()*.8)), max(1, int(image.height()*.8)))
-    raise ValueError('图片标准化后仍超过 4 MiB 预算，请降低图片尺寸后导入。')
-
-
-def render_web(source, output, limit, resource_source=None):
-    # Chromium initializes AppKit even with Qt offscreen. A denied Quartz session
-    # otherwise aborts in HIServices before Python can report an import error.
+def _render(source, output, limit, resource_source=None, *, image=False):
     if not window_session_available():
         raise ValueError('课件页面生成需要 macOS 图形会话。请在已登录的桌面中运行；原件和已有课件保留。')
-    from PySide6.QtCore import QEventLoop, QTimer, QUrl
-    from PySide6.QtWebEngineCore import (
-        QWebEnginePage,
-        QWebEngineProfile,
-        QWebEngineSettings,
-        QWebEngineUrlRequestInterceptor,
-    )
-    from PySide6.QtWebEngineWidgets import QWebEngineView
-    from PySide6.QtWidgets import QApplication
-    app = QApplication.instance()
-    app.setQuitOnLastWindowClosed(False)
-    loading = QEventLoop()
+    from ..electron_tools import run_tool
     snapshot = output.parent / 'resources'
-    snapshot.mkdir()
-    markup = markup_for(source)
-    assets = pack_resources(resource_source or source, markup, snapshot)
+    snapshot.mkdir(exist_ok=True)
+    markup = '<!doctype html><meta charset="utf-8">' if image else markup_for(source)
+    assets = [] if image else pack_resources(resource_source or source, markup, snapshot)
     entry = snapshot / '.agentscribe-entry.html'
     if entry.exists():
         raise ValueError('网页资源使用了保留文件名，请改名后导入。')
-    # A standalone private profile and URL interceptor isolate scripts from network and local files.
-    entry.write_text(markup, encoding='utf-8')
-    permitted = {local_path(entry.resolve()), *(local_path(snapshot.joinpath(row['path']).resolve()) for row in assets)}
-    failures = []
-    class Interceptor(QWebEngineUrlRequestInterceptor):
-        def interceptRequest(self, info):
-            url = info.requestUrl()
-            if url.scheme() in ('data', 'about', 'blob'):
-                return
-            if url.scheme() == 'file' and local_path(Path(url.toLocalFile()).resolve()) in permitted:
-                return
-            failures.append(True)
-            info.block(True)
-    profile = QWebEngineProfile(app)
-    interceptor = Interceptor(profile)
-    profile.setUrlRequestInterceptor(interceptor)
-    profile.downloadRequested.connect(lambda download: download.cancel())
-    profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.NoCache)
-    class Page(QWebEnginePage):
-        def javaScriptConsoleMessage(self, level, *args):
-            if level == QWebEnginePage.JavaScriptConsoleMessageLevel.ErrorMessageLevel:
-                failures.append(True)
-        def javaScriptAlert(self, *args):
-            pass
-        def javaScriptConfirm(self, *args):
-            return False
-        def javaScriptPrompt(self, *args):
-            return False, ''
-        def chooseFiles(self, *args):
-            return []
-    page = Page(profile, app)
-    if hasattr(page, 'permissionRequested'):
-        page.permissionRequested.connect(lambda permission: permission.deny())
-    page.settings().setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, False)
-    page.settings().setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
-    page.settings().setAttribute(QWebEngineSettings.WebAttribute.PrintElementBackgrounds, True)
-    page.settings().setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, False)
-    view = QWebEngineView()
-    view.setPage(page)
-    view.resize(1200, 1500)
-    view.show()
-    success = []
-    dimensions = []
-    def finish(ok):
-        if not ok:
-            failures.append(True)
-            loading.quit()
-            return
-        # Wait for local fonts/images and two animation frames; animations themselves aren't course pages.
-        page.runJavaScript("let style=document.createElement('style');style.textContent='::-webkit-scrollbar{width:0!important;height:0!important;}';document.head.append(style);")
-        page.runJavaScript("for(let image of document.images)image.loading='eager';")
-        # Moving fixed/sticky content into document flow preserves it once, without
-        # covering a different strip of source content at every scroll position.
-        page.runJavaScript("""Promise.all([document.fonts.ready,...[...document.images].map(i=>i.complete?Promise.resolve():new Promise(r=>{i.onload=r;i.onerror=r;}))]).then(()=>{
-            for(let element of document.querySelectorAll('*')){
-                if(['fixed','sticky'].includes(getComputedStyle(element).position)){
-                    element.style.setProperty('position','static','important');
-                    for(let property of ['top','right','bottom','left'])element.style.setProperty(property,'auto','important');
-                }
-            }
-            requestAnimationFrame(()=>requestAnimationFrame(()=>document.documentElement.dataset.agentscribeReady='yes'));
-        })""")
-        def poll():
-            page.runJavaScript("document.documentElement.dataset.agentscribeReady==='yes'", ready)
-        def ready(value):
-            if value:
-                loaded.stop()
-                if failures:
-                    loading.quit()
-                else:
-                    page.runJavaScript('JSON.stringify([Math.max(innerWidth,document.documentElement.scrollWidth),Math.max(innerHeight,document.documentElement.scrollHeight)])', sized)
-        loaded = QTimer(page)
-        loaded.timeout.connect(poll)
-        loaded.start(100)
-    def sized(value):
-        dimensions.extend(json.loads(value) if value else [])
-        success.append(bool(value))
-        loading.quit()
-    page.loadFinished.connect(finish)
-    page.load(QUrl.fromLocalFile(str(entry)))
-    QTimer.singleShot(110000, loading.quit)
-    loading.exec()
-    if failures:
-        raise ValueError('网页加载了快照外的资源或页面加载失败，请保存完整离线静态课件后导入。')
-    if not success or not success[0]:
-        raise ValueError('网页页面生成超时或失败，请导出静态 PDF 后导入。')
-    width, height = map(math.ceil, dimensions)
-    columns, rows = math.ceil(width/1200), math.ceil(height/1500)
-    if columns*rows > limit:
-        raise ValueError('网页尺寸超过 1000 个页面分片预算，请按章节导入。')
-    # Read actual rendered text nodes, assigning each range to the same screen
-    # tiles as the images. Split only ranges crossing a tile; do not repeat the
-    # whole document on every page or treat hidden/script content as evidence.
-    extracted = []
-    loop = QEventLoop()
-    page.runJavaScript(r"""JSON.stringify((()=>{
-        const width=1200,height=1500,columns=Math.ceil(Math.max(innerWidth,document.documentElement.scrollWidth)/width);
-        const count=columns*Math.ceil(Math.max(innerHeight,document.documentElement.scrollHeight)/height);
-        const texts=Array(count).fill(''),parents=Array(count).fill(null),encoder=new TextEncoder();
-        const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
-        let node,used=0;
-        function collect(node,start,end,block){
-            const range=document.createRange();range.setStart(node,start);range.setEnd(node,end);
-            const rects=[...range.getClientRects()].filter(r=>r.width>0&&r.height>0);
-            const tiles=[...new Set(rects.map(r=>Math.floor(((r.top+r.bottom)/2+scrollY)/height)*columns+Math.floor(((r.left+r.right)/2+scrollX)/width)))];
-            if(!tiles.length)return;
-            if(end-start>1 && (tiles.length>1 || rects.some(r=>Math.floor(r.top/height)!==Math.floor((r.bottom-.01)/height)||Math.floor(r.left/width)!==Math.floor((r.right-.01)/width)))){
-                let mid=Math.floor((start+end)/2);
-                if(node.data.charCodeAt(mid)>=0xDC00&&node.data.charCodeAt(mid)<=0xDFFF)mid++;
-                if(mid<end){collect(node,start,mid,block);collect(node,mid,end,block);return;}
-            }
-            const tile=tiles[0];if(tile<0||tile>=count)return;
-            let text=node.data.slice(start,end);
-            if(!getComputedStyle(node.parentElement).whiteSpace.startsWith('pre'))text=text.replace(/\s+/g,' ');
-            used+=encoder.encode(text).length;
-            if(used>4*1024*1024)throw Error('text budget');
-            if(parents[tile]!==block && texts[tile])texts[tile]+='\n';
-            texts[tile]+=text;parents[tile]=block;
-        }
-        try{
-            while(node=walker.nextNode()){
-                const parent=node.parentElement;
-                if(!node.data||parent.closest('script,style,noscript,template'))continue;
-                if(!parent.checkVisibility({checkOpacity:true,checkVisibilityCSS:true}))continue;
-                collect(node,0,node.length,parent.closest('p,div,li,td,th,pre,h1,h2,h3,h4,h5,h6')||document.body);
-            }
-            return {texts:texts.map(text=>text.trim())};
-        }catch(error){return {error:true};}
-    })())""", lambda value: (extracted.append(json.loads(value) if value else {}), loop.quit()))
-    QTimer.singleShot(30000, loop.quit)
-    loop.exec()
-    if not extracted or extracted[0].get('error') or len(extracted[0].get('texts', [])) != columns*rows:
-        raise ValueError('原生文字提取失败或超过 4 MiB 预算，请按章节导入；已有课件保留。')
-    # Capture screen CSS, canvas and SVG, including horizontal overflow; printing could hide content.
-    output.mkdir()
-    images, used = [], 0
-    for y in range(rows):
-        for x in range(columns):
-            left, top = x*1200, y*1500
-            loop = QEventLoop()
-            page.runJavaScript(f"window.scrollTo({{left:{left},top:{top},behavior:'instant'}})", lambda _: QTimer.singleShot(150, loop.quit))
-            QTimer.singleShot(5000, loop.quit)
-            loop.exec()
-            # The last scroll is clamped: crop the overlapping leading area, keeping every pixel.
-            position = []
-            loop = QEventLoop()
-            page.runJavaScript('JSON.stringify([scrollX,scrollY])', lambda value: (position.extend(json.loads(value) if value else []), loop.quit()))
-            QTimer.singleShot(5000, loop.quit)
-            loop.exec()
-            if len(position) != 2 or failures:
-                raise ValueError('网页滚动或资源加载失败，没有发布完整课件。')
-            image = view.grab().toImage().scaled(1200, 1500).copy(int(left-position[0]), int(top-position[1]),
-                min(1200, width-left), min(1500, height-top))
-            path = output / f'page-{len(images)+1:04d}.png'
-            if image.isNull() or not image.save(str(path), 'PNG') or path.stat().st_size > MAX_IMAGE_BYTES:
-                raise ValueError('网页页面图片生成失败或超出 4 MiB 预算。')
-            used += path.stat().st_size
-            if used > 256*1024**2:
-                raise ValueError('网页页面图片超过 256 MiB 预算，请按章节导入。')
-            images.append({'page': len(images)+1, 'path': path.name,
-                           'rectangle': {'x': left, 'y': top, 'width': image.width(), 'height': image.height()}})
-    view.close()
-    return {'pageCount': len(images), 'images': images, 'resources': assets, 'missingFonts': [],
-            'native_text': extracted[0]['texts'],
-            'viewport': {'width': 1200, 'height': 1500}, 'layoutVersion': WEB_RENDER_VERSION}
+    policy = '<meta http-equiv="Content-Security-Policy" content="connect-src \'none\'; frame-src \'none\'; object-src \'none\'; media-src \'none\'; form-action \'none\'; base-uri \'none\'; worker-src \'none\'">'
+    doctype = re.match(r'(?is)\s*<!doctype[^>]*>', markup)
+    split = doctype.end() if doctype else 0
+    entry.write_text(markup[:split] + policy + markup[split:], encoding='utf-8')
+    permitted = [str(entry.resolve()), *(str((snapshot / row['path']).resolve()) for row in assets)]
+    if image:
+        permitted.append(str(source.resolve()))
+    request = output.parent / 'electron-render.json'
+    request.write_text(json.dumps(dict(source=str(source), output=str(output), entry=str(entry),
+        kind='image' if image else 'web', limit=limit, assets=assets, permitted=permitted,
+        version=WEB_RENDER_VERSION)), encoding='utf-8')
+    return run_tool('render-tool.cjs', request)
+
+
+def render_image(source, output):
+    with source.open('rb') as stream:
+        header = stream.read(32)
+    signatures = {'.png': header.startswith(b'\x89PNG\r\n\x1a\n'),
+        '.jpg': header.startswith(b'\xff\xd8\xff'), '.jpeg': header.startswith(b'\xff\xd8\xff'),
+        '.gif': header.startswith((b'GIF87a', b'GIF89a')), '.bmp': header.startswith(b'BM'),
+        '.ico': header.startswith(b'\0\0\1\0'),
+        '.webp': header.startswith(b'RIFF') and header[8:12] == b'WEBP'}
+    if not signatures.get(source.suffix.lower()):
+        raise ValueError('图片内容与扩展名不符或无法解码，请重新导出后导入。')
+    return _render(source, output, 1, image=True)
+
+
+def render_web(source, output, limit, resource_source=None):
+    return _render(source, output, limit, resource_source)
 
 
 def main():
-    # No app window, no system audio, no persistent browser profile or downloads.
-    os.environ['QT_QPA_PLATFORM'] = 'offscreen'
-    # This isolated page converter uses CPU rasterization; avoid offscreen D3D failures and ASR GPU contention.
-    os.environ['QTWEBENGINE_CHROMIUM_FLAGS'] = ('--disable-gpu --disable-audio-input --disable-audio-output '
-                                             '--use-fake-device-for-media-stream')
-    os.environ['QT_OPENGL'] = 'software'
-    os.environ['QT_SCALE_FACTOR'] = '1'
     request = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
     source, output = Path(request['source']), Path(request['output'])
-    from PySide6.QtCore import QTimer
-    from PySide6.QtWidgets import QApplication
-    app = QApplication([])
-    timer = QTimer(app)
-    timer.timeout.connect(lambda: os._exit(1) if parent_disconnected(sys.stdin.fileno()) else None)
-    timer.start(100)
     try:
-        result = render_image(source, output) if source.suffix.lower() in ('.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.ico') \
-            else render_web(source, output, request['limit'], Path(request['resource_source']))
+        result = render_image(source, output) if source.suffix.lower() in ('.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.ico') else render_web(source, output, request['limit'], Path(request['resource_source']))
         (output / 'manifest.json').write_text(json.dumps(result, ensure_ascii=False), encoding='utf-8')
-    except ValueError as exc:
+    except (ValueError, OSError) as exc:
         (output.parent / 'error.json').write_text(json.dumps({'message': str(exc)}, ensure_ascii=False), encoding='utf-8')
 
 

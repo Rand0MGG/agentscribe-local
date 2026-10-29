@@ -71,7 +71,7 @@ with (original/'录音.wav').open('wb') as writer:
     assert w.workspace_title.text()=='课堂录音'
     assert w.library_rows[current_id].text(0)=='课堂录音'
     assert w.library.directory(current_id)==original and w.session is live
-    assert w.recording_lock.isLocked()
+    assert w.recording_lock.locked
     if os.environ.get('AGENTSCRIBE_SCREENSHOTS'):
         output=Path(os.environ['AGENTSCRIBE_SCREENSHOTS']);output.mkdir(parents=True,exist_ok=True)
         w.resize(900,650);settle_geometry(w,w.control_island)

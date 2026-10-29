@@ -18,7 +18,7 @@ from ..runtime_paths import (
 from .files import checked_path, file_path, local_path, material_cache, read_json, write_json
 
 RENDER_VERSION = 'libreoffice-kit-' + DOCUMENT_RENDERER_VERSION + '-144dpi-v1'
-WEB_RENDER_VERSION = 'qt-static-pages-v2'
+WEB_RENDER_VERSION = 'electron-static-pages-v3'
 MAX_IMAGE_BYTES = 4 * 1024**2
 MAX_RENDER_BYTES = 256 * 1024**2
 MAX_PIXELS = 4 * 1024**2
@@ -52,7 +52,7 @@ async def run_renderer(arguments):
 
 
 async def render_source(source, output, limit=1000, *, resource_source=None):
-    """Render Office/PDF with Kit, web/text/images with an isolated Qt helper."""
+    """Render Office/PDF with Kit, web/text/images with an isolated Electron helper."""
     source, output = file_path(source), file_path(output)
     if sys.platform != 'win32':
         return await _render_source(source, output, limit, resource_source=resource_source)

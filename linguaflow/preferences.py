@@ -1,5 +1,6 @@
 """Preference keys, defaults and codecs, independent of Qt and window layout."""
 import json
+from contextlib import nullcontext
 from dataclasses import dataclass
 
 from .translation_config import CONTEXT_COUNTS, context_count
@@ -54,10 +55,11 @@ def read_preferences(store):
 
 
 def write_preferences(store, values):
-    for pref in PREFERENCES:
-        store.setValue(pref.key, values[pref.key])
-    if values.get('audio_device') is not None:
-        store.setValue('audio_device', json.dumps(values['audio_device']))
+    with store.batch() if hasattr(store, 'batch') else nullcontext():
+        for pref in PREFERENCES:
+            store.setValue(pref.key, values[pref.key])
+        if values.get('audio_device') is not None:
+            store.setValue('audio_device', json.dumps(values['audio_device']))
 
 
 def read_audio_device(store):

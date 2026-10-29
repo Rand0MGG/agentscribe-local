@@ -5,9 +5,9 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from PySide6.QtCore import QCoreApplication
 
 from linguaflow.core import Caption
+from linguaflow.events import Dispatcher as QCoreApplication
 from linguaflow.knowledge.client import KnowledgeClient
 from linguaflow.knowledge.lifecycle import cancel_task
 from linguaflow.knowledge.session import read_manifest, write_manifest
@@ -172,7 +172,7 @@ def test_update_release_cancel_keeps_fence_until_owned_thread_finishes(desktop, 
     released.set()
     deadline = time.monotonic() + 5
     while desktop.native_updater.shutdown_job:
-        QCoreApplication.instance().processEvents()
+        QCoreApplication.instance().process()
         assert time.monotonic() < deadline
         time.sleep(.005)
     assert not desktop.update_fenced and desktop.runtime is None

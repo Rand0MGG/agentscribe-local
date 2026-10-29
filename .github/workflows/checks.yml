@@ -53,8 +53,12 @@ jobs:
         working-directory: desktop
       - run: npm run test:interaction
         working-directory: desktop
-      - run: npm run test:switch
+      - run: npm run test:audio-adapter
         working-directory: desktop
+      - run: .venv/bin/python scripts/test_no_audio.py tests/test_qt_free_backend.py -q
+        if: runner.os != 'Windows'
+      - run: .venv/Scripts/python.exe scripts/test_no_audio.py tests/test_qt_free_backend.py -q
+        if: runner.os == 'Windows'
 
   lint:
     name: Static checks
@@ -88,7 +92,12 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
           cache-dependency-path: pyproject.toml
-      - run: python -m pip install -e ".[dev]"
+      - run: python -m pip install -e ".[dev,legacy-qt]"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+      - run: npm ci && npx install-electron --no && npm run build
+        working-directory: desktop
       - run: python scripts/test_no_audio.py -q -rs
 
   knowledge:
@@ -110,7 +119,7 @@ jobs:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: pyproject.toml
-      - run: python -m pip install -e ".[dev,knowledge]"
+      - run: python -m pip install -e ".[dev,knowledge,legacy-qt]"
       - run: python -c "import deepagents, langchain_deepseek, pypdf"
       - run: >-
           python scripts/test_no_audio.py tests/test_knowledge.py tests/test_knowledge_api.py
@@ -142,7 +151,9 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
-      - run: python -m pip install -e ".[dev,knowledge]"
+      - run: python -m pip install -e ".[dev,knowledge,legacy-qt]"
+      - run: npm ci && npx install-electron --no && npm run build
+        working-directory: desktop
       # Install only the rendering dependency; ASR GPU eligibility is unrelated to these tests.
       - run: >-
           python -c "import subprocess, sys;

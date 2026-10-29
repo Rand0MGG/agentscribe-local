@@ -1,4 +1,4 @@
-"""Qt transport for one owned knowledge process; no API/SQLite work on the UI thread."""
+"""Backend transport for one owned knowledge process; no API/SQLite work on the UI thread."""
 import json
 import subprocess
 from collections import deque
@@ -6,14 +6,13 @@ from dataclasses import asdict
 from threading import Condition, Thread
 from uuid import uuid4
 
-from PySide6.QtCore import QEventLoop, QObject, Qt, QTimer, Signal, Slot
-
+from ..events import Connection, Owner, Signal, Timer, WaitLoop
 from ..process_platform import close_process_transport, start_worker, stop_worker
 from ..runtime_paths import knowledge_python, python_environment, resource_root
 from .lifecycle import KnowledgeState
 
 
-class KnowledgeClient(QObject):
+class KnowledgeClient(Owner):
     changed = Signal(dict)
     _received = Signal(str, dict)
     _closed = Signal(str)
@@ -35,10 +34,9 @@ class KnowledgeClient(QObject):
         self.close_job = None
         self.close_error = ''
         self.disconnected = False
-        self._received.connect(self._deliver, Qt.ConnectionType.QueuedConnection)
-        self._closed.connect(self._finish_close, Qt.ConnectionType.QueuedConnection)
+        self._received.connect(self._deliver, Connection.Queued)
+        self._closed.connect(self._finish_close, Connection.Queued)
 
-    @Slot(str, dict)
     def _deliver(self, epoch, value):
         if epoch == self.epoch:
             self.state.receive(value)
@@ -135,7 +133,7 @@ class KnowledgeClient(QObject):
         self.send('saved', captions=[asdict(caption) for caption in captions], final=final)
 
     def close(self):
-        """Reap resources off the UI thread; dispatch Qt events until safe to proceed.
+        """Reap resources off the UI thread; dispatch backend events until safe to proceed.
 
         Return False on reentry/timeout/error so callers cannot mutate files
         while the old worker may still use them. Closing invalidates replies first.
@@ -167,7 +165,7 @@ class KnowledgeClient(QObject):
             finally:
                 self._closed.emit(error)
         self.close_job = Thread(target=reap, daemon=True)
-        loop, timer = QEventLoop(), QTimer()
+        loop, timer = WaitLoop(), Timer()
         timer.setSingleShot(True)
         self.closed.connect(loop.quit)
         timer.timeout.connect(loop.quit)
@@ -186,7 +184,6 @@ class KnowledgeClient(QObject):
             timer.stop()
             self.closed.disconnect(loop.quit)
 
-    @Slot(str)
     def _finish_close(self, error):
         self.close_job.join()
         self.close_job = None

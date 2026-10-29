@@ -329,7 +329,8 @@ def test_actual_windows_builder_excludes_ignored_file_from_clean_source_payload(
     monkeypatch.setattr(builder, 'obtain', lambda item, base: base / item['filename'])
     monkeypatch.setattr(builder, 'extract', extract)
     monkeypatch.setattr(builder, 'run', run)
-    monkeypatch.setattr(builder, 'qt_subset', lambda _: [])
+    from scripts import package_electron
+    monkeypatch.setattr(package_electron, 'copy_electron', lambda *_: {})
     monkeypatch.setattr(builder, 'python_notices', lambda _archive, destination: destination.mkdir(parents=True))
     payload = builder.build(downloads)
     manifest = json.loads((payload / 'build-manifest.json').read_text())

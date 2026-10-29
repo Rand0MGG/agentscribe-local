@@ -10,9 +10,8 @@ import time
 from pathlib import Path
 from threading import Event, Lock, Thread
 
-from PySide6.QtCore import QObject, Qt, Signal
-
 from . import __version__
+from .events import Connection, Owner, Signal
 from .runtime_paths import packaged, resource_root
 from .update_config import bundle_version, update_identity
 
@@ -35,7 +34,7 @@ class UpdateEventRelay:
         self.notify(event)
 
 
-class NativeUpdater(QObject):
+class NativeUpdater(Owner):
     event = Signal(dict)
     request_install = Signal()
     shutdown_complete = Signal(str)
@@ -58,10 +57,10 @@ class NativeUpdater(QObject):
         self.recovery = None
         self.cancelled = Event()
         self.relay = UpdateEventRelay(self._adapter_event.emit)
-        self._adapter_event.connect(self._receive, Qt.ConnectionType.QueuedConnection)
+        self._adapter_event.connect(self._receive, Connection.Queued)
         self.event.connect(self._observe)
-        self.request_install.connect(self._requested, Qt.ConnectionType.QueuedConnection)
-        self._shutdown_finished.connect(self._shutdown_done, Qt.ConnectionType.QueuedConnection)
+        self.request_install.connect(self._requested, Connection.Queued)
+        self._shutdown_finished.connect(self._shutdown_done, Connection.Queued)
 
     def initialize(self):
         if not self.installed or self.adapter:

@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       with_electron:
-        description: 包含可切换的 Qt 与 Electron 界面并验证包内启动
+        description: 兼容旧调用参数；安装包始终包含 Electron
         type: boolean
-        default: false
+        default: true
   push:
     branches: [windows, mac]
 
@@ -40,15 +40,13 @@ jobs:
         with:
           python-version: '3.12'
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        if: inputs.with_electron
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: desktop/package-lock.json
       - name: Prepare locked frontend dependencies
-        if: inputs.with_electron
         working-directory: desktop
-        run: npm ci
+        run: npm ci && npx install-electron --no && npm run build
       - name: Verify source and build host
         env:
           CANDIDATE_SHA: ${{ github.sha }}
@@ -66,7 +64,7 @@ jobs:
           print('Candidate only: no Release, update-feed publication or production signing.')
           PY
       - name: Install build and test tools
-        run: python -m pip install -e ".[dev]" 'zstandard==0.25.0'
+        run: python -m pip install -e ".[dev,legacy-qt]" 'zstandard==0.25.0'
       - name: No-audio regression
         run: python scripts/test_no_audio.py -q -rs --tb=short --junitxml=.work/reports/candidate-tests.xml
       - name: Static checks
@@ -74,8 +72,8 @@ jobs:
       - name: Build Apple Silicon DMG
         if: matrix.target == 'macos-arm64'
         run: |
-          python scripts/build_macos.py --fetch ${{ inputs.with_electron && '--with-electron' || '' }}
-          python scripts/build_macos.py ${{ inputs.with_electron && '--with-electron' || '' }}
+          python scripts/build_macos.py --fetch --with-electron
+          python scripts/build_macos.py --with-electron
       - name: Build Windows payload and installer
         if: matrix.target == 'windows-x64'
         shell: pwsh
@@ -90,12 +88,11 @@ jobs:
           if ($LASTEXITCODE) { throw 'MSVC environment setup failed' }
           python scripts/test_no_audio.py -q tests/test_update_recovery.py --tb=short
           if ($LASTEXITCODE) { throw 'Recovery primitives failed' }
-          python scripts/build_windows.py --fetch ${{ inputs.with_electron && '--with-electron' || '' }}
+          python scripts/build_windows.py --fetch --with-electron
           if ($LASTEXITCODE) { throw 'Windows dependency preparation failed' }
-          python -c "import subprocess,sys; from pathlib import Path; from scripts.build_windows import build; from scripts.build_windows_installer import build as seal, prepare_compiler; downloads=Path('.work/packaging/windows-downloads'); compiler=prepare_compiler(downloads); subprocess.run([sys.executable,'scripts/test_no_audio.py','tests/test_windows_installer_paths.py','-q'],check=True); payload=build(downloads,with_electron=${{ inputs.with_electron && 'True' || 'False' }}); seal(payload, compiler, downloads, fetch=True)"
+          python -c "import subprocess,sys; from pathlib import Path; from scripts.build_windows import build; from scripts.build_windows_installer import build as seal, prepare_compiler; downloads=Path('.work/packaging/windows-downloads'); compiler=prepare_compiler(downloads); subprocess.run([sys.executable,'scripts/test_no_audio.py','tests/test_windows_installer_paths.py','-q'],check=True); payload=build(downloads,with_electron=True); seal(payload, compiler, downloads, fetch=True)"
           if ($LASTEXITCODE) { throw 'Windows installer build failed' }
-      - name: Verify installed dual-frontend package without audio
-        if: inputs.with_electron
+      - name: Verify installed Qt-free Electron package without audio
         shell: bash
         run: |
           python - <<'PY'

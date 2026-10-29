@@ -109,10 +109,6 @@ jobs:
           for selected in (old,tag):
               if selected==tag and os.environ['CANDIDATE_RUN']:
                   stem=f'AgentScribe-{tag[1:]}-{target}'
-                  if target=='macos-arm64':
-                      for ending in ('.dmg','.build.json'):
-                          source=work/(f'AgentScribe-{tag[1:]}-dual-ui-{target}'+ending)
-                          source.rename(work/(stem+ending))
                   (work/(stem+'.'+suffix+'.ed25519')).write_text(os.environ['CANDIDATE_SIGNATURE']+'\n')
                   manifest=json.loads((work/(stem+'.build.json')).read_text(encoding='utf-8'))
                   assert manifest['source_commit']==os.environ['CANDIDATE_COMMIT'] and manifest['source_modified'] is False

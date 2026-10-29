@@ -17,10 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.packaging_common import (
-    QT_MODULES,
-    QT_PLUGIN_GROUPS,
     copy_application,
-    copy_notices,
     digest,
     extract,
     obtain,
@@ -37,47 +34,12 @@ def run(*args, **options):
     return subprocess.run(list(map(str, args)), check=True, **options)
 
 
-def qt_subset(python):
-    """Keep actual PE dependencies, playback and WebEngine; exclude unused Qt."""
-    qt = python / 'Lib/site-packages/PySide6'
-
-    for path in qt.glob('Qt*.pyd'):
-        if path.stem not in QT_MODULES:
-            path.unlink()
-    for name in ('include', 'glue', 'typesystems', 'doc', 'QtAsyncio', 'scripts'):
-        if (qt / name).is_dir():
-            shutil.rmtree(qt / name)
-    for name in ('designer.exe', 'assistant.exe', 'linguist.exe', 'qml.exe'):
-        (qt / name).unlink(missing_ok=True)
-    plugins = qt / 'plugins'
-    for path in plugins.iterdir():
-        if path.name not in QT_PLUGIN_GROUPS:
-            shutil.rmtree(path)
-    pending = list(qt.glob('*.pyd')) + list(plugins.rglob('*.dll')) + [qt / 'QtWebEngineProcess.exe']
-    keep, examined = set(), set()
-    while pending:
-        path = pending.pop()
-        if path in examined:
-            continue
-        examined.add(path)
-        output = run('dumpbin', '/DEPENDENTS', path, capture_output=True, text=True).stdout
-        for name in re.findall(r'\b(Qt6\w+\.dll)\b', output, re.IGNORECASE):
-            dependency = next((p for p in qt.glob('Qt6*.dll') if p.name.lower() == name.lower()), None)
-            if dependency is None:
-                raise ValueError('Qt dependency missing: ' + name)
-            if dependency.name not in keep:
-                keep.add(dependency.name)
-                pending.append(dependency)
-    for path in qt.glob('Qt6*.dll'):
-        if path.name not in keep:
-            path.unlink()
-    return sorted(keep)
-
-
-def build(downloads, *, with_electron=False):
+def build(downloads, *, with_electron=True):
+    if not with_electron:
+        raise ValueError('正式安装包必须包含 Electron；Qt 界面已退役。')
     assets = json.loads((CONFIG / 'assets.json').read_text())
     archives = {name: obtain(item, downloads) for name, item in assets.items()}
-    notices = json.loads((ROOT / 'packaging/macos/licenses.json').read_text())
+    notices = []
     for notice in notices:
         obtain(notice, downloads / 'licenses')
     WORK.mkdir(parents=True, exist_ok=True)
@@ -100,7 +62,7 @@ def build(downloads, *, with_electron=False):
     run(executable, '-m', 'pip', 'install', '--no-index', '--find-links', downloads / 'wheels',
         '--require-hashes', '-r', CONFIG / 'desktop.lock')
     run(executable, '-m', 'pip', 'check')
-    frameworks = qt_subset(python)
+    frameworks = []
     trim_dependency_tests(python / 'Lib/site-packages')
     run('cl', '/nologo', '/O2', '/W4', '/DUNICODE', '/D_UNICODE',
         '/I' + str(python / 'include'), CONFIG / 'launcher.c', '/Fe:' + str(payload / 'AgentScribe.exe'),
@@ -119,15 +81,8 @@ def build(downloads, *, with_electron=False):
     for name in ('requirements-runtime.txt', 'requirements-mlx.txt', 'THIRD_PARTY_NOTICES.md'):
         shutil.copy2(ROOT / name, payload / name)
     shutil.copy2(CONFIG / 'desktop.lock', payload / 'desktop.lock')
-    copy_notices(notices, downloads / 'licenses', payload / 'Licenses/Qt-PySide')
     python_notices(archives['python-notices'], payload / 'Licenses/Python')
     shutil.copy2(payload / 'node/LICENSE', payload / 'Licenses/Node-LICENSE.txt')
-    credits = payload / 'Licenses/Qt-PySide/qtwebengine/documentation/qtwebengine-licensing.html'
-    if not credits.is_file():
-        raise ValueError('缺少同版 Qt WebEngine 第三方许可全文。')
-    text = re.sub(r'href="(qtwebengine-3rdparty-[^"/]+\.html)"',
-                  r'href="Qt-PySide/qtwebengine/documentation/\1"', credits.read_text(encoding='utf-8'))
-    (payload / 'Licenses/QtWebEngine-credits.html').write_text(text, encoding='utf-8')
     for path in payload.rglob('__pycache__'):
         shutil.rmtree(path)
     version = re.search(r'__version__ = "([^"]+)"', (ROOT / 'linguaflow/__init__.py').read_text())[1]
@@ -153,7 +108,7 @@ def build(downloads, *, with_electron=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--with-electron', action='store_true', help='Include the switchable Electron frontend')
+    parser.add_argument('--with-electron', action='store_true', default=True, help='Compatibility argument; Electron is required')
     parser.add_argument('--fetch', action='store_true', help='Only fetch and verify locked inputs')
     parser.add_argument('--downloads', type=Path, default=WORK / 'windows-downloads')
     args = parser.parse_args()
@@ -166,7 +121,7 @@ def main():
         assets = json.loads((CONFIG / 'assets.json').read_text())
         for item in assets.values():
             obtain(item, args.downloads, download=True)
-        for item in json.loads((ROOT / 'packaging/macos/licenses.json').read_text()):
+        for item in []:
             obtain(item, args.downloads / 'licenses', download=True)
         run(sys.executable, '-m', 'pip', 'download', '--only-binary=:all:', '--require-hashes',
             '--dest', args.downloads / 'wheels', '-r', CONFIG / 'desktop.lock')

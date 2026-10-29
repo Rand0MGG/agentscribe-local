@@ -48,7 +48,7 @@ Full-page PDF/Office rendering separately installs `@deepseek-ai/libreoffice-kit
 
 The DSH application at https://github.com/deepseek-ai/deepseek-harness is MIT, but its license does not replace the independent rendering component's MPL-2.0 or engine licenses. This integration does not copy or install the full DSH harness.
 
-`knowledge/render_web.py` adapts the relative-resource admission, finite asset packing, strict text decoding and static image normalization rules from DSH 0.2.0-rc.2: `packages/client/ui-sidebar-documentpreview/src/client/html/{pack,read-relative,bytes}.ts` and `packages/attachment/attachment-local`. The installed DSH distribution was inspected read-only. Python/Qt replaces browser/React/sharp/attachment-store implementations; CSS/static module dependencies, owned offline screenshots and AgentScribe provenance are application adaptations. Existing PySide6 supplies Qt image codecs and Qt WebEngine; its upstream Qt/Chromium notices and licenses remain applicable. No DSH runtime, Cordis framework, attachment database or extra Python/browser dependency is added.
+`knowledge/render_web.py` adapts the relative-resource admission, finite asset packing, strict text decoding and static image normalization rules from DSH 0.2.0-rc.2: `packages/client/ui-sidebar-documentpreview/src/client/html/{pack,read-relative,bytes}.ts` and `packages/attachment/attachment-local`. The installed DSH distribution was inspected read-only. Python and the existing Electron runtime replace React/sharp/attachment-store implementations; CSS/static module dependencies, owned offline screenshots and AgentScribe provenance are application adaptations. The existing Electron runtime supplies Chromium rendering and image codecs; Electron/Chromium notices ship with that runtime. Marked 18.1.2 (MIT), with no transitive runtime dependencies, supplies Markdown parsing. No DSH runtime, Cordis framework, attachment database or extra Python imaging/browser engine is added.
 
 The upstream MIT notice is retained for these adaptations:
 
@@ -86,6 +86,6 @@ Three small public legacy Office regression fixtures are adapted from Apache POI
 
 ## Electron 候选前端（源码开发依赖）
 
-`desktop/package-lock.json` 固定新增前端依赖：Electron、React、React DOM、Radix UI、Vite 使用 MIT；TypeScript 与 Playwright 使用 Apache-2.0。其完整许可保留于各安装包；Chromium、Node.js 等 Electron 随附组件另有第三方许可。该目录尚未接入正式安装包；将来发行必须将 Electron 的 LICENSE 与 LICENSES.chromium.html 等完整声明随包保留，不以本摘要替代分发许可。现有 Qt/Python 安装包声明仍适用。
+`desktop/package-lock.json` 固定新增前端依赖：Electron、React、React DOM、Radix UI、Vite 使用 MIT；TypeScript 与 Playwright 使用 Apache-2.0。其完整许可保留于各安装包；Chromium、Node.js 等 Electron 随附组件另有第三方许可。正式安装包包含 Electron 的 LICENSE 与 LICENSES.chromium.html 等完整声明，以及 Marked 的 MIT 许可，不以本摘要替代分发许可。PySide6/Qt 仅属于可选旧界面开发对照，不进入正式载荷。
 
 Electron 双前端包会附带 Electron 发行归档内的 LICENSE / LICENSES.chromium.html，以及锁定的 React、Radix 和生产依赖许可全文。`react-remove-scroll-bar` 2.3.8 的 npm 包遗漏 LICENSE，补充文本来自[上游许可](https://github.com/theKashey/react-remove-scroll-bar/blob/master/LICENSE)，保存在 `packaging/electron/react-remove-scroll-bar-LICENSE`，摘要随源码清单封存。Electron 两平台归档的固定 SHA-256 来自版本 45.0.0 的官方 SHASUMS256.txt，见 `packaging/electron/assets.json`。

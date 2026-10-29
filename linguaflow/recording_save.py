@@ -3,9 +3,8 @@ from collections import deque
 from dataclasses import dataclass, replace
 from threading import Thread
 
-from PySide6.QtCore import QEventLoop, QObject, Qt, QTimer, Signal, Slot
-
 from .core import Caption
+from .events import Connection, Owner, Signal, Timer, WaitLoop
 
 
 @dataclass(frozen=True)
@@ -40,7 +39,7 @@ class _SaveJob(Thread):
             self.notify()
 
 
-class RecordingSaver(QObject):
+class RecordingSaver(Owner):
     completed = Signal(object, str, str)
     idle = Signal()
     _job_finished = Signal()
@@ -50,7 +49,7 @@ class RecordingSaver(QObject):
         self.job = None
         self.pending = deque()
         self.waiting = False
-        self._job_finished.connect(self._finished, Qt.ConnectionType.QueuedConnection)
+        self._job_finished.connect(self._finished, Connection.Queued)
 
     @property
     def busy(self):
@@ -86,7 +85,7 @@ class RecordingSaver(QObject):
         if self.job is not None or not self.pending:
             return
         write, snapshot = self.pending.popleft()
-        # Disk IO needs no Qt thread object. Repeated QThread construction can
+        # Disk IO needs no Qt thread object. Repeated Worker construction can
         # crash in PySide on Windows; the saver owns and joins this Python job.
         self.job = _SaveJob(write, snapshot, self._job_finished.emit)
         try:
@@ -95,7 +94,6 @@ class RecordingSaver(QObject):
             self.job.error = f'无法启动后台保存线程：{exc}'
             self._job_finished.emit()
 
-    @Slot()
     def _finished(self):
         # A queued signal can arrive before run() returns. Idle/completed must
         # not release ownership until the writer has actually exited.
@@ -118,7 +116,7 @@ class RecordingSaver(QObject):
         if not self.busy:
             return True
         self.waiting = True
-        loop, timer = QEventLoop(), QTimer()
+        loop, timer = WaitLoop(), Timer()
         timer.setSingleShot(True)
         self.idle.connect(loop.quit)
         timer.timeout.connect(loop.quit)

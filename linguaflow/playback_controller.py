@@ -1,129 +1,158 @@
-"""Own playback resources without depending on the main window or audio discovery."""
-from PySide6.QtCore import QObject, QUrl, Signal
+"""Backend-owned playback state and bounded media delivery to the desktop adapter."""
+import math
+import secrets
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Thread
 
+from .events import Owner, Signal
 from .playback import PlaybackIndex
+from .playback_stream import PlaybackStream
 
 
-class PlaybackController(QObject):
+class PlaybackController(Owner):
     available_changed = Signal(bool)
-    duration_changed = Signal('qlonglong')
-    position_changed = Signal('qlonglong')
+    duration_changed = Signal(int)
+    position_changed = Signal(int)
     state_changed = Signal(str)
-    seeked = Signal('qlonglong')
+    seeked = Signal(int)
     failed = Signal(str)
     notice = Signal(str)
+    command = Signal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.player = self.stream = self.audio_output = None
+        self.stream = None
+        self.server = self.server_thread = None
         self.index = PlaybackIndex()
         self.duration_ms = 0
-        self.pending_seek = None
-
-    def close_stream(self):
-        if self.stream is not None:
-            self.stream.close()
-            self.stream.deleteLater()
-            self.stream = None
+        self.position = 0
+        self.epoch = ''
+        self.playing = False
 
     def release(self):
-        self.pending_seek = None
-        if self.player:
-            self.player.stop()
-            self.player.setSource(QUrl())
-        self.close_stream()
-        self.duration_ms = 0
+        self.command.emit({'operation': 'release', 'epoch': self.epoch})
+        self.epoch = ''
+        if self.server:
+            self.server.shutdown()
+            self.server.server_close()
+            self.server_thread.join(timeout=3)
+            self.server = self.server_thread = None
+        if self.stream:
+            self.stream.close()
+            self.stream = None
+        self.duration_ms = self.position = 0
+        self.playing = False
         self.available_changed.emit(False)
         self.duration_changed.emit(0)
         self.position_changed.emit(0)
+        self.state_changed.emit('StoppedState')
 
     def load(self, path, captions, *, recover_recording=False):
         self.release()
         self.index = PlaybackIndex(captions)
-        available = bool(path and path.exists() and path.stat().st_size > 44)
-        self.available_changed.emit(available)
-        if not available:
+        if not path or not path.is_file() or path.stat().st_size <= 44:
             return
-        # Import only on an explicit attempt to play an existing recording.
-        from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
-
-        from .playback_stream import PlaybackStream
         try:
-            if self.player is None:
-                self._create_player(QMediaPlayer, QAudioOutput)
-            self.stream = PlaybackStream(path, self.player, recover_recording=recover_recording)
-            self.player.setSourceDevice(self.stream, QUrl.fromLocalFile(str(path)))
-        except (OSError, ValueError, RuntimeError) as exc:
+            stream = self.stream = PlaybackStream(path, recover_recording=recover_recording)
+            self.duration_ms = stream.duration_ms
+            self.epoch = token = secrets.token_urlsafe(32)
+            controller = self
+
+            class Handler(BaseHTTPRequestHandler):
+                def setup(self):
+                    self.request.settimeout(2)
+                    super().setup()
+
+                def log_message(self, *_):
+                    pass
+
+                def do_GET(self):
+                    if self.path != '/' + token or controller.epoch != token:
+                        self.send_error(404)
+                        return
+                    size = stream.size()
+                    start, end, status = 0, size - 1, 200
+                    requested = self.headers.get('Range')
+                    if requested:
+                        import re
+                        match = re.fullmatch(r'bytes=(\d+)-(\d*)', requested)
+                        if not match:
+                            self.send_error(416)
+                            return
+                        start = int(match[1])
+                        end = min(size - 1, int(match[2])) if match[2] else size - 1
+                        if not 0 <= start <= end < size:
+                            self.send_error(416)
+                            return
+                        status = 206
+                    self.send_response(status)
+                    self.send_header('Content-Type', 'audio/wav')
+                    self.send_header('Content-Length', str(end - start + 1))
+                    self.send_header('Accept-Ranges', 'bytes')
+                    self.send_header('Cache-Control', 'no-store')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    if status == 206:
+                        self.send_header('Content-Range', f'bytes {start}-{end}/{size}')
+                    self.end_headers()
+                    try:
+                        position = start
+                        while position <= end and controller.epoch == token:
+                            with stream._lock:
+                                if not stream.seek(position):
+                                    return
+                                data = stream.readData(min(256*1024, end-position+1))
+                            if not data:
+                                return
+                            self.wfile.write(data)
+                            position += len(data)
+                    except (BrokenPipeError, ConnectionResetError, OSError):
+                        return
+
+            self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+            self.server.daemon_threads = True
+            self.server_thread = Thread(target=lambda: self.server.serve_forever(poll_interval=.02),
+                                        name='recording-playback', daemon=True)
+            self.server_thread.start()
+            self.command.emit({'operation': 'load', 'epoch': token,
+                               'url': f'http://127.0.0.1:{self.server.server_port}/{token}'})
+            self.available_changed.emit(True)
+            self.duration_changed.emit(self.duration_ms)
+            if stream.recovered:
+                self.notice.emit('已恢复可读取的完整音频采样；原文件未修改，未落盘的尾部无法恢复。')
+        except (OSError, ValueError) as exc:
             self.release()
             self.failed.emit(f'无法加载录音，请重新打开后重试：{exc}')
-            return
-        if self.stream.recovered:
-            self.notice.emit('已恢复可读取的完整音频采样；原文件未修改，未落盘的尾部无法恢复。')
-        if not self.stream.supports_gain:
-            self.notice.emit('该录音格式可正常回放，但暂不支持超过 100% 的放大。')
-
-    def _create_player(self, player_type, output_type):
-        player = output = None
-        try:
-            player = player_type(self)
-            output = output_type(self)
-            player.setAudioOutput(output)
-            player.durationChanged.connect(self.duration_changed)
-            player.positionChanged.connect(self.position_changed)
-            player.playbackStateChanged.connect(lambda state: self.state_changed.emit(state.name))
-            player.mediaStatusChanged.connect(self._apply_pending_seek)
-            player.seekableChanged.connect(self._apply_pending_seek)
-            player.errorOccurred.connect(self._playback_error)
-        except Exception:
-            if player is not None:
-                player.deleteLater()
-            if output is not None:
-                output.deleteLater()
-            raise
-        self.player, self.audio_output = player, output
-
-    def _playback_error(self, *_):
-        self.pending_seek = None
-        self.failed.emit(self.player.errorString())
 
     def seek(self, milliseconds, *, play=False):
-        if self.player is None:
+        if self.stream is None:
             return
-        # setSourceDevice loads asynchronously. Keep the latest requested target
-        # until the media is seekable, then position it before starting playback.
-        self.pending_seek = (round(milliseconds), play)
-        self._apply_pending_seek()
-
-    def _apply_pending_seek(self, *_):
-        if self.pending_seek is None or self.player is None:
-            return
-        if (self.player.mediaStatus().name not in ('LoadedMedia', 'BufferedMedia', 'BufferingMedia', 'EndOfMedia')
-                or not self.player.isSeekable()):
-            return
-        position, play = self.pending_seek
-        self.pending_seek = None
-        self.player.setPosition(position)
-        self.seeked.emit(position)
-        if play:
-            self.player.play()
+        self.position = max(0, min(round(milliseconds), self.duration_ms))
+        self.playing = self.playing or bool(play)
+        self.command.emit({'operation': 'seek', 'epoch': self.epoch, 'position': self.position, 'play': self.playing})
+        self.seeked.emit(self.position)
 
     def set_volume(self, value):
-        if self.audio_output is not None:
-            self.audio_output.setVolume(min(1., value / 100))
-        if self.stream is not None:
-            gain = max(1., value / 100)
-            previous = self.stream.gain
-            self.stream.set_gain(gain)
-            if gain != previous and self.player is not None:
-                self.player.setPosition(self.player.position())
+        if self.stream is None:
+            return
+        if value > 100 and not self.stream.supports_gain:
+            raise ValueError('该录音格式不支持增益放大。')
+        self.command.emit({'operation': 'volume', 'epoch': self.epoch, 'value': value})
 
     def toggle(self):
-        if self.pending_seek is not None:
-            position, play = self.pending_seek
-            self.pending_seek = (position, not play)
+        if self.stream is not None:
+            self.playing = not self.playing
+            self.command.emit({'operation': 'play' if self.playing else 'pause', 'epoch': self.epoch})
+
+    def receive(self, epoch, state, position=0, error=''):
+        if epoch != self.epoch or not self.stream:
             return
-        if self.player:
-            if self.player.playbackState().name == 'PlayingState':
-                self.player.pause()
-            else:
-                self.player.play()
+        if state not in ('PlayingState', 'PausedState', 'StoppedState', 'Error'):
+            raise ValueError('无效的播放器状态。')
+        if type(position) not in (int, float) or not math.isfinite(position) or position < 0:
+            raise ValueError('无效的播放位置。')
+        self.position = min(round(position), self.duration_ms)
+        self.playing = state == 'PlayingState'
+        self.position_changed.emit(self.position)
+        self.state_changed.emit('StoppedState' if state == 'Error' else state)
+        if state == 'Error':
+            self.failed.emit(str(error)[:500] or '录音播放失败，请重新打开录音。')

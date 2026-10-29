@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QApplication
 from linguaflow.caption_feed import CaptionFeed
 from linguaflow.core import Caption
 from linguaflow.library_browser import LibraryTree
-from linguaflow.playback_controller import PlaybackController
+from linguaflow.legacy_playback import PlaybackController
 from linguaflow.recording_controls import RecordingControls
 from linguaflow.transcript import Transcript
 assert 'linguaflow.app' not in sys.modules

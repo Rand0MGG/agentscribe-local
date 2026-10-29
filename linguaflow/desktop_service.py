@@ -1,7 +1,7 @@
 """Electron's local JSON-lines service. Owns business resources, never creates widgets.
 
-Requests and events are dispatched on the Qt core event loop so existing Session,
-RecordingSaver and process ownership rules remain usable during the UI migration.
+Requests and worker results are serialized by the standard-library dispatcher.
+Python owns recording, persistence and process lifecycle independently of the UI.
 stdin EOF requests the same orderly shutdown as the desktop close action.
 """
 import argparse
@@ -17,11 +17,10 @@ from pathlib import Path
 from threading import Thread
 from uuid import uuid4
 
-from PySide6.QtCore import QCoreApplication, QObject, QSettings, Qt, QThread, QTimer, Signal
-
 from . import diagnostic_log as diag
 from .application_lifecycle import Activity, ShutdownWorkflow
 from .core import LANGUAGES, Settings, translation_status
+from .events import Connection, Dispatcher, Owner, Signal, Timer, Worker
 from .library import default_recording_name
 from .library_access import (
     check_library_access,
@@ -48,6 +47,7 @@ from .recording_workflow import (
     recording_field,
 )
 from .runtime_paths import packaged, resource_root
+from .settings_store import SettingsStore
 from .source_preview import preview_captions
 from .transcript import Transcript
 from .translation_config import CONTEXT_COUNTS
@@ -56,7 +56,7 @@ PROTOCOL = 1
 MAX_REQUEST_BYTES = 1024 * 1024
 
 
-class _Task(QThread):
+class _Task(Worker):
     def __init__(self, action, parent):
         super().__init__(parent)
         self.action = action
@@ -74,7 +74,7 @@ def caption_value(caption):
     return {**asdict(caption), 'translation_status': translation_status(caption)}
 
 
-class DesktopService(QObject):
+class DesktopService(Owner):
     """IPC adapter for shared backend workflows; no widget or browser dependency."""
 
     preparation = property(lambda self: self.preparation_workflow.worker,
@@ -125,7 +125,7 @@ class DesktopService(QObject):
             runtime=lambda: self.runtime, released=self._runtime_released, parent=self)
         self.shutdown.retry.connect(self._continue_close)
         self.shutdown.failed.connect(self._shutdown_failed)
-        self.prefs = prefs if prefs is not None else QSettings('LinguaFlow', 'LocalCaptions')
+        self.prefs = prefs if prefs is not None else SettingsStore('LinguaFlow', 'LocalCaptions')
         self.no_audio = no_audio or bool(os.environ.get('AGENTSCRIBE_AUDIO_GUARD_LOG'))
         self.library = open_library(self.prefs, resource_root(), explicit_root=library_root,
                                     choose_directory=self._directory_failed,
@@ -182,7 +182,7 @@ class DesktopService(QObject):
         self.asset_selection = None
         self.missing_assets = None
         self.asset_check_cancelled = False
-        self.model_refresh = QTimer(self)
+        self.model_refresh = Timer(self)
         self.model_refresh.setSingleShot(True)
         self.model_refresh.timeout.connect(self._refresh_models)
         self.tasks = {}
@@ -230,13 +230,13 @@ class DesktopService(QObject):
         self.exporter.idle.connect(self._continue_close)
         self.autosave = self.recording.autosave
         self.autosave.setSingleShot(True)
-        self.incoming.connect(self.dispatch, Qt.ConnectionType.QueuedConnection)
-        self.disconnected.connect(self._disconnect, Qt.ConnectionType.QueuedConnection)
-        self.clock = QTimer(self)
+        self.incoming.connect(self.dispatch, Connection.Queued)
+        self.disconnected.connect(self._disconnect, Connection.Queued)
+        self.clock = Timer(self)
         self.clock.setInterval(500)
         self.clock.timeout.connect(self._clock)
         self.clock.start()
-        QTimer.singleShot(0, self._warm_runtime)
+        Timer.singleShot(0, self._warm_runtime)
         self.routes = {name: method for name, method in (
             ('bootstrap', self.bootstrap), ('settings.set', self.set_settings),
             ('library.refresh', self.refresh), ('recording.open', self.open_recording),
@@ -248,7 +248,7 @@ class DesktopService(QObject):
             ('recording.close_recovered', self.close_recovered),
             ('audio.refresh', self.refresh_devices), ('audio.select', self.select_device),
             ('recording.start', self.start), ('recording.stop', self.stop), ('recording.pause', self.pause),
-            ('playback.toggle', self.play), ('playback.seek', self.seek), ('playback.volume', self.volume),
+            ('playback.event', self.playback_event), ('playback.toggle', self.play), ('playback.seek', self.seek), ('playback.volume', self.volume),
             ('models.prepare', self.prepare), ('models.cancel', self.cancel_preparation),
             ('models.retry', self.retry_preparation),
             ('models.check', self.check_models), ('models.cancel_check', self.cancel_model_check),
@@ -354,7 +354,7 @@ class DesktopService(QObject):
             from .desktop_startup import frontend_healthy
             frontend_healthy(owner_pid)
             if not self.no_audio:
-                QTimer.singleShot(1500, lambda: self.check_updates(manual=False))
+                Timer.singleShot(1500, lambda: self.check_updates(manual=False))
 
     def cancel_frontend(self):
         self.frontend_handoff = None
@@ -667,7 +667,7 @@ class DesktopService(QObject):
             raise ValueError('课程后台尚未退出，设置未保存。')
         write_preferences(self.prefs, candidate)
         self.prefs.sync()
-        if self.prefs.status() != QSettings.Status.NoError:
+        if self.prefs.status().value != 0:
             raise OSError('设置写入失败，请检查配置目录权限。')
         selection_changed = any(candidate[key] != self.values[key] for key in (
             'backend', 'asr', 'qwen_model', 'translation_engine', 'translation', 'llama_model', 'translation_device', 'translate'))
@@ -798,8 +798,10 @@ class DesktopService(QObject):
 
     def _session_finished(self):
         session = self.session
-        if session is not None and (self.sender() is None or self.sender() is session):
-            QTimer.singleShot(0, lambda: self._finished(session))
+        # RecordingWorkflow.launch already rejects signals from stale sessions.
+        # Capture this owner before deferring until the worker has actually exited.
+        if session is not None:
+            Timer.singleShot(0, lambda: self._finished(session))
 
     def _ready(self):
         if self.session and not self.failure and self.state != RecordingState.STOPPING:
@@ -867,7 +869,7 @@ class DesktopService(QObject):
             return
         result = self.recording.finish(session, retain_preview=self._retain_preview, caption=self._caption)
         if result is None:
-            QTimer.singleShot(20, lambda: self._finished(session))
+            Timer.singleShot(20, lambda: self._finished(session))
             return
         self.status = '正在保存录音与字幕…'
         self._audio_metadata()
@@ -890,7 +892,7 @@ class DesktopService(QObject):
             self.status = '已取消 · 录音尚未开始' if state == 'draft' else '已保存录音与字幕'
             self.refresh()
             if self.pending_library and not self.closing:
-                QTimer.singleShot(0, self._begin_pending_migration)
+                Timer.singleShot(0, self._begin_pending_migration)
         self.changed()
 
     def retry_save(self):
@@ -978,7 +980,7 @@ class DesktopService(QObject):
         previous = self.prefs.value('electron_sidebar_width')
         self.prefs.setValue('electron_sidebar_width', width)
         self.prefs.sync()
-        if self.prefs.status() != QSettings.Status.NoError:
+        if self.prefs.status().value != 0:
             if previous is None:
                 self.prefs.remove('electron_sidebar_width')
             else:
@@ -1035,14 +1037,14 @@ class DesktopService(QObject):
         self.tasks[name] = task
         if completed:
             self.task_callbacks[name] = completed
-        task.finished.connect(lambda: QTimer.singleShot(0, lambda: self._task_finished(name, task)))
+        task.finished.connect(lambda: Timer.singleShot(0, lambda: self._task_finished(name, task)))
         task.start()
         self.emit(name, {'busy': True})
         return task
 
     def _task_finished(self, name, task):
         if task.isRunning():
-            QTimer.singleShot(20, lambda: self._task_finished(name, task))
+            Timer.singleShot(20, lambda: self._task_finished(name, task))
             return
         self.tasks.pop(name, None)
         if name == 'startup-updates':
@@ -1232,6 +1234,7 @@ class DesktopService(QObject):
         if self.player is None:
             from .playback_controller import PlaybackController
             self.player = PlaybackController(self)
+            self.player.command.connect(lambda value: self.emit('audio-command', value))
             self.player.position_changed.connect(lambda value: self.emit('playback', {
                 'position': value, 'caption_id': self.player.index.at(value / 1000)}))
             self.player.seeked.connect(lambda value: self.emit('playback', {
@@ -1248,6 +1251,10 @@ class DesktopService(QObject):
                 self.player.seek(self.located_position, play=False)
             self.player.set_volume(self.playback_volume)
         return self.player
+
+    def playback_event(self, epoch, state, position=0, error=''):
+        if self.player is not None:
+            self.player.receive(epoch, state, position, error)
 
     def play(self):
         self._player().toggle()
@@ -1448,7 +1455,7 @@ class DesktopService(QObject):
         self.closing = True
         self.cancel_model_check()
         self.changed()
-        QTimer.singleShot(0, self._continue_close)
+        Timer.singleShot(0, self._continue_close)
         return {'closing': True}
 
     def _shutdown_save(self):
@@ -1489,7 +1496,7 @@ class DesktopService(QObject):
                 return
         self.native_updater.close()
         self.emit('closed', {})
-        QTimer.singleShot(0, QCoreApplication.instance().quit)
+        Timer.singleShot(0, Dispatcher.instance().quit)
 
     def _disconnect(self):
         # The desktop may crash during capture. Stop and save through the normal
@@ -1506,7 +1513,7 @@ class DesktopService(QObject):
         self.cancel_model_check()
         self.cancel_migration()
         self._save()
-        QTimer.singleShot(0, self._continue_close)
+        Timer.singleShot(0, self._continue_close)
 
     def _recover_disconnected(self):
         from .recording_export import write_recovery
@@ -1537,19 +1544,14 @@ def main():
     diag.install_exception_hooks()
     from .process_platform import hold_installation_mutex
     hold_installation_mutex(installed=packaged())
+    app = Dispatcher([])
     if packaged() and sys.platform == 'darwin':
-        # Cocoa/Sparkle needs the GUI event dispatcher, but no QWidget or Qt window.
-        from PySide6.QtGui import QGuiApplication
-        app = QGuiApplication([])
-        app.setQuitOnLastWindowClosed(False)
-        from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
-        NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
-    else:
-        app = QCoreApplication([])
+        from .native_dispatch import cocoa_pump
+        app.native_pump = cocoa_pump()
     from .frontend_switch import context
     saved = context()
-    prefs = (QSettings(str(args.preferences), QSettings.Format.IniFormat) if args.preferences else
-             QSettings(saved['preferences'], QSettings.Format(saved.get('preferences_format', 1))) if saved.get('preferences') else None)
+    prefs = (SettingsStore(str(args.preferences), SettingsStore.Format.IniFormat) if args.preferences else
+             SettingsStore(saved['preferences'], SettingsStore.Format(saved.get('preferences_format', 1))) if saved.get('preferences') else None)
     service = DesktopService(library_root=args.library or saved.get('library'), prefs=prefs,
                              no_audio=args.no_audio or saved.get('no_audio', False))
     if args.persist_library:
@@ -1558,7 +1560,7 @@ def main():
         previous_root = service.prefs.value('library_directory')
         service.prefs.setValue('library_directory', str(service.library.root))
         service.prefs.sync()
-        if service.prefs.status() != QSettings.Status.NoError:
+        if service.prefs.status().value != 0:
             service.prefs.setValue('library_directory', previous_root)
             raise OSError('无法保存新位置，请检查配置目录权限。')
     if saved.get('recording'):

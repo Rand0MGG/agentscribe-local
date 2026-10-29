@@ -1,50 +1,52 @@
-"""Exercise asynchronous media ordering without importing an audio backend."""
-from PySide6.QtCore import QCoreApplication
+"""Real WAV transport and playback ownership, with no audio devices."""
+import subprocess
+import urllib.error
+import urllib.request
+import wave
+from pathlib import Path
+
+import pytest
 
 from linguaflow.playback_controller import PlaybackController
-from scripts.desktop_playback_fixture import Output, Player
 
 
-def test_seek_waits_for_ready_then_positions_before_playing():
-    app = QCoreApplication.instance() or QCoreApplication([])
+def test_delayed_seek_pause_error_and_release_use_real_desktop_adapter():
+    from linguaflow.runtime_paths import node_executable
+    result = subprocess.run([str(node_executable()), 'desktop/scripts/audio-adapter-checks.cjs'],
+        cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+
+
+def test_bounded_media_ranges_stale_events_and_release_preserve_original(tmp_path):
+    path = tmp_path/'recording.wav'
+    with wave.open(str(path),'wb') as output:
+        output.setparams((1,2,8000,0,'NONE','not compressed'))
+        output.writeframes(bytes(32000))
+    original = path.read_bytes()
     controller = PlaybackController()
-    controller._create_player(Player, Output)
-    player = controller.player
-    calls = []
-    player.log = lambda action: calls.append((action, player.position()))
-    player.status = 'LoadingMedia'
-    controller.seek(6000, play=True)
-    controller.seek(12000, play=True)
-    assert not calls
-    player.status = 'LoadedMedia'
-    player.mediaStatusChanged.emit(player.mediaStatus())
-    player.seekableChanged.emit(True)
-    assert calls == [('seek', 12000), ('play', 12000)]
-    assert controller.pending_seek is None
-    controller.release()
-    app.processEvents()
-
-
-def test_release_or_error_invalidates_pending_seek_and_toggle_can_cancel_autoplay():
-    app = QCoreApplication.instance() or QCoreApplication([])
-    controller = PlaybackController()
-    controller._create_player(Player, Output)
-    player = controller.player
-    calls = []
-    player.log = lambda action: calls.append((action, player.position()))
-    player.status = 'LoadingMedia'
-    controller.seek(6000, play=True)
-    controller.toggle()
-    player.status = 'LoadedMedia'
-    player.seekableChanged.emit(True)
-    assert calls == [('seek', 6000)]
-    for cancel in (controller.release, controller._playback_error):
-        calls.clear()
-        player.status = 'LoadingMedia'
-        controller.seek(9000, play=True)
-        cancel()
-        player.status = 'LoadedMedia'
-        player.mediaStatusChanged.emit(player.mediaStatus())
-        assert not calls and controller.pending_seek is None
-    controller.release()
-    app.processEvents()
+    commands, positions = [], []
+    controller.command.connect(commands.append)
+    controller.position_changed.connect(positions.append)
+    try:
+        controller.load(path, [])
+        load = commands[-1]
+        request = urllib.request.Request(load['url'],headers={'Range':'bytes=44-63'})
+        with urllib.request.urlopen(request,timeout=2) as response:
+            assert response.status == 206
+            assert response.headers['Content-Range'] == f'bytes 44-63/{len(original)}'
+            assert response.read() == original[44:64]
+        for url, headers, code in ((load['url']+'/other',{},404),(load['url'],{'Range':'bytes=9999999-'},416)):
+            with pytest.raises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(urllib.request.Request(url,headers=headers),timeout=2)
+            assert error.value.code == code
+        controller.seek(1000,play=True)
+        controller.receive(load['epoch'],'PlayingState',1000)
+        assert controller.playing and positions[-1] == 1000
+        controller.load(path,[])
+        controller.receive(load['epoch'],'PlayingState',1500)
+        assert not controller.playing and controller.position == 0
+        assert commands[-1]['epoch'] != load['epoch']
+    finally:
+        controller.release()
+    assert controller.server is None and controller.stream is None
+    assert path.read_bytes() == original

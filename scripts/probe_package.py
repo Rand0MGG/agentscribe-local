@@ -1,7 +1,6 @@
 """Exercise a sealed desktop package, without devices, models or personal data.
 
-Requires the macOS window service for offscreen Qt WebEngine; checks Quartz before
-creating QApplication. The native launcher, workers and all imports inherit an
+Requires the macOS window service for offscreen Electron rendering. The native launcher, workers and all imports inherit an
 audio guard. Never invokes the ordinary application entry point.
 """
 import argparse
@@ -36,7 +35,6 @@ def close_window(window, application, *, timeout=15):
 
 
 def probe(app_path, work, *, install_documents=False):
-    import importlib.metadata as metadata
     import ssl
 
     import deepagents
@@ -45,14 +43,13 @@ def probe(app_path, work, *, install_documents=False):
     import pypdf
     import scipy
     from langchain_deepseek import ChatDeepSeek
-    from PySide6.QtCore import QSettings
-    from PySide6.QtWidgets import QApplication
 
     import linguaflow
     from linguaflow import runtime_paths
-    from linguaflow.app import STYLE, Window
-    from linguaflow.library import Library
+    from linguaflow.desktop_service import DesktopService
+    from linguaflow.events import Dispatcher
     from linguaflow.process_platform import window_session_available
+    from linguaflow.settings_store import SettingsStore
     from linguaflow.updates import select_update, version_key
 
     mac = app_path.suffix == '.app'
@@ -119,19 +116,20 @@ def probe(app_path, work, *, install_documents=False):
     assert selected['version'] == next_version and selected['kind'] == 'package'
     if not window_session_available():
         raise RuntimeError('验证窗口需要目标系统的窗口服务。')
-    application = QApplication([])
-    application.setStyle('Fusion')
-    application.setStyleSheet(STYLE)
-    prefs = QSettings(str(work / '隔离设置.ini'), QSettings.Format.IniFormat)
-    window = Window(discover=False, prefs=prefs, library=Library(work / '录音库'), runtime=None)
-    window.resize(1000, 720)
-    window.show()
-    application.processEvents()
-    assert window.grab().save(str(work / 'window.png'))
-    assert window.session is None and window.player is None and window.runtime is None
-    close_window(window, application)
-    # Exercise the real renderer helper, which uses the bundled Python and Qt
-    # WebEngine process/resources. All inputs are generated in this probe.
+    application = Dispatcher()
+    events = []
+    service = DesktopService(library_root=work / '录音库', prefs=SettingsStore(work / 'preferences.json', 1), no_audio=True)
+    service.output.connect(lambda value: events.append((value.get('event'), value.get('data'))))
+    assert service.bootstrap()['no_audio']
+    service.close()
+    deadline = time.monotonic() + 15
+    while not any(event == 'closed' for event, _ in events):
+        application.process(.01)
+        if time.monotonic() > deadline:
+            raise RuntimeError('后台及自有子进程未完成退出。')
+    assert not any(name.startswith(('PySide6', 'shiboken6')) for name in sys.modules)
+    assert not list(resources.rglob('PySide6')) and not list(resources.rglob('shiboken6'))
+    # The native Electron UI has its own guarded installed-package probe.
     source = work / 'fixture.html'
     source.write_text('<html><meta charset="utf-8"><body><h1>AgentScribe 安装验证</h1>'
                       '<p>Local file rendering. 本地中文课件。</p></body></html>', encoding='utf-8')
@@ -152,12 +150,12 @@ def probe(app_path, work, *, install_documents=False):
         office_output = work / 'office-rendered'
         asyncio.run(render_source(fixture, office_output, limit=10))
         assert list(office_output.glob('*.png'))
-    summary = dict(version=version, python=sys.version, qt=metadata.version('PySide6'),
+    summary = dict(version=version, python=sys.version, qt_free=True,
                    numpy=numpy.__version__, scipy=scipy.__version__, pypdf=pypdf.__version__,
                    sdk_modules=[deepagents.__name__, keyring.__name__, ChatDeepSeek.__name__],
                    node=node_version, npm=npm_version, resource_root=str(resources),
                    interpreter=str(python), native_launcher=True, audio_access_attempted=False,
-                   window=True, web_render=True, venv=True, pip_check=True, update_selection=True,
+                   window=False, backend=True, web_render=True, venv=True, pip_check=True, update_selection=True,
                    document_install=install_documents, office_render=install_documents, shutdown_complete=True)
     (work / 'result.json').write_text(json.dumps(summary, indent=2, ensure_ascii=False) + '\n')
     print(json.dumps(summary, ensure_ascii=False), flush=True)

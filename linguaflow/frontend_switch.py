@@ -11,7 +11,7 @@ from pathlib import Path
 import psutil
 
 from .process_platform import spawn_options
-from .runtime_paths import knowledge_python, packaged, python_environment, resource_root
+from .runtime_paths import knowledge_python, python_environment, resource_root
 
 CONTEXT_ENV = 'AGENTSCRIBE_FRONTEND_CONTEXT'
 
@@ -19,8 +19,7 @@ CONTEXT_ENV = 'AGENTSCRIBE_FRONTEND_CONTEXT'
 def command_for(frontend):
     root = resource_root()
     if frontend == 'qt':
-        command = ([str(root.parent / 'MacOS/AgentScribe' if sys.platform == 'darwin' else root / 'AgentScribe.exe'), '--frontend', 'qt']
-                   if packaged() else [str(knowledge_python()), '-m', 'linguaflow', '--frontend', 'qt'])
+        raise ValueError('Qt 界面已退役，请使用 Electron 界面。')
     elif frontend == 'electron':
         suffix = ('Electron.app/Contents/MacOS/Electron' if sys.platform == 'darwin'
                   else 'electron.exe' if sys.platform == 'win32' else 'electron')
@@ -68,7 +67,7 @@ def prepare(frontend, *, library, prefs, recording=None, draft=None, no_audio=Fa
     prefs.sync()
     if prefs.status() != type(prefs.status()).NoError:
         raise OSError('设置未能保存，请检查配置文件权限后重试。')
-    value = dict(version=1, target=frontend, previous='qt' if frontend == 'electron' else 'electron',
+    value = dict(version=1, target=frontend, previous='electron',
                  library=str(library.root), preferences=prefs.fileName(), preferences_format=prefs.format().value,
                  recording=recording, draft=draft, no_audio=bool(no_audio), geometry=geometry, owners=owners, purpose=purpose)
     path.write_text(json.dumps(value, ensure_ascii=False), encoding='utf-8')

@@ -7,8 +7,7 @@ from pathlib import Path
 from threading import Event, Thread
 from uuid import uuid4
 
-from PySide6.QtCore import QObject, Qt, Signal
-
+from .events import Connection, Owner, Signal
 from .library import Library
 
 
@@ -29,7 +28,7 @@ def library_entries(root, cancelled):
             raise MigrationCancelled('迁移已取消，原录音保留。')
         if path.is_symlink() or (hasattr(path, 'is_junction') and path.is_junction()):
             raise ValueError('保存目录包含快捷映射，请移除映射后重试；原文件未修改。')
-        if path.name in ('.recording.lock', '.knowledge.lock', '.library-migration.lock', '.agentscribe-migration.json'):
+        if path.name.removesuffix('.guard') in ('.recording.lock', '.knowledge.lock', '.library-migration.lock', '.agentscribe-migration.json'):
             continue
         relative = path.relative_to(root)
         if path.is_dir():
@@ -218,7 +217,7 @@ def finish_migration(root, target, verified):
     return retained
 
 
-class LibraryMigration(QObject):
+class LibraryMigration(Owner):
     progress = Signal(float)
     copied = Signal(object, object, str)
     cleaned = Signal(object)
@@ -231,7 +230,7 @@ class LibraryMigration(QObject):
         self.result = None
         self.error = ''
         self.cleaning = False
-        self._finished.connect(self._deliver, Qt.ConnectionType.QueuedConnection)
+        self._finished.connect(self._deliver, Connection.Queued)
 
     @property
     def busy(self):

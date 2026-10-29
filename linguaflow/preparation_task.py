@@ -6,10 +6,9 @@ from collections import deque
 from threading import Event, Thread
 from uuid import uuid4
 
-from PySide6.QtCore import QThread, Signal
-
 from . import diagnostic_log as diag
 from .download_progress import PREFIX
+from .events import Signal, Worker
 from .process_platform import spawn_options, stop_tree
 from .runtime_paths import installation_command, python_environment, resource_root
 
@@ -36,7 +35,7 @@ def preparation_error_message(text):
     return f'准备未完成：{stage[:40]}；{reason[:120]} 已下载文件保留，可重新检查。'
 
 
-class Preparation(QThread):
+class Preparation(Worker):
     result = Signal(str)
     download = Signal(dict)
 

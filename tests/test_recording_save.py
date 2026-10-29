@@ -3,9 +3,10 @@ from dataclasses import replace
 from threading import Event, get_ident
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QTimer
 
 from linguaflow.core import Caption
+from linguaflow.events import Dispatcher as QCoreApplication
+from linguaflow.events import Timer as QTimer
 from linguaflow.library import Library
 from linguaflow.recording_save import RecordingSaver
 
@@ -50,7 +51,7 @@ def test_serial_save_coalesces_revisions_freezes_input_and_keeps_qt_responsive(t
     finally:
         release.set()
         saver.flush(3000)
-    app.processEvents()
+    app.process()
     assert ticks and calls == [('first', None), ('latest', 'complete')]
     assert results == [(1, 'draft', ''), (3, 'complete', '')]
     data, captions = library.load(item)
@@ -78,7 +79,7 @@ def test_save_failure_reports_error_retains_original_and_allows_explicit_retry(t
     saver.submit(library.save, (1, item['id']), 2, item, [replace(first, source='new')], 'complete')
     assert saver.flush(3000) and not results[-1][2]
     assert library.load(item)[1][0].source == 'new'
-    app.processEvents()
+    app.process()
 
 
 @pytest.mark.p1
@@ -100,7 +101,7 @@ def test_timeout_retains_job_and_ignores_older_revision_of_active_save(tmp_path)
     finally:
         release.set()
         assert saver.flush(3000)
-    app.processEvents()
+    app.process()
     assert len(results) == 1 and results[0][0].revision == 3
 
 
@@ -123,7 +124,7 @@ def test_rapid_saves_leave_no_writer_alive_when_idle(tmp_path):
         assert not saver.busy and not threads[-1].is_alive()
     assert len(results) == 100 and all(thread == main_thread for thread, _ in results)
     assert all(not job.is_alive() for job in threads)
-    app.processEvents()
+    app.process()
 
 
 @pytest.mark.p1
@@ -153,4 +154,4 @@ def test_writer_start_failure_reports_unsaved_snapshot_and_allows_retry(tmp_path
     saver.submit(library.save, (1, item['id']), 2, item, [requested], 'complete')
     assert saver.flush(3000) and not results[-1][2]
     assert library.load(item)[1][0].source == 'new'
-    app.processEvents()
+    app.process()

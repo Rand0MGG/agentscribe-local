@@ -6,12 +6,10 @@ from pathlib import Path
 from threading import RLock
 
 import numpy as np
-from PySide6.QtCore import QIODevice
 
 
-class PlaybackStream(QIODevice):
+class PlaybackStream:
     def __init__(self, path, parent=None, *, recover_recording=False):
-        super().__init__(parent)
         self._lock = RLock()
         self._file = Path(path).open('rb')
         self._size = os.fstat(self._file.fileno()).st_size
@@ -30,7 +28,6 @@ class PlaybackStream(QIODevice):
                     lock.unlock()
             self._inspect()
             self._file.seek(0)
-            self.open(QIODevice.OpenModeFlag.ReadOnly | QIODevice.OpenModeFlag.Unbuffered)
         except BaseException:
             self._file.close()
             raise
@@ -110,7 +107,7 @@ class PlaybackStream(QIODevice):
 
     def seek(self, position):
         with self._lock:
-            if self._file.closed or not 0 <= position <= self._size or not super().seek(position):
+            if self._file.closed or not 0 <= position <= self._size:
                 return False
             self._file.seek(position)
             return True
@@ -139,7 +136,7 @@ class PlaybackStream(QIODevice):
                 self._file.seek(end)
                 return raw[:first-start]+amplified[first-aligned:last-aligned]+raw[last-start:]
             except (OSError, ValueError) as exc:
-                self.setErrorString(str(exc))
+                self.error = str(exc)
                 logging.getLogger(__name__).exception('Could not read recording playback stream')
                 return b''
 
@@ -148,8 +145,19 @@ class PlaybackStream(QIODevice):
 
     def close(self):
         with self._lock:
-            super().close()
             self._file.close()
+
+    @property
+    def closed(self):
+        return self._file.closed
+
+    read = readData
+
+    def pos(self):
+        return self._file.tell()
+
+    def deleteLater(self):
+        self.close()
 
 
 def amplify(data, encoding, bits, gain):

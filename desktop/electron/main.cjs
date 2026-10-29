@@ -2,12 +2,13 @@ const { app, BrowserWindow, ipcMain, dialog, shell, session, Menu, screen, clipb
 const path = require('node:path');
 const fs = require('node:fs');
 const { pathToFileURL } = require('node:url');
+const { AudioHost } = require('./audio-host.cjs');
 const { Service } = require('./service.cjs');
 const { isSplitLayout } = require('./window-layout.cjs');
 const { PlatformHelpers } = require('./platform-helpers.cjs');
 const platformHelpers = new PlatformHelpers();
 
-let restartService;
+let restartService, audioHost;
 const root = path.resolve(__dirname, '../..');
 const page = path.resolve(__dirname, '../dist/index.html');
 const pageURL = pathToFileURL(page).href;
@@ -55,6 +56,7 @@ function quitAfterOwnedProcesses() {
   quitting = true;
   cancelMaterial(); clearInterval(materialRefresh);
   quitTask = (async () => {
+    audioHost?.close();
     await platformHelpers.close();
     const backend = await service?.finished;
     quitReady = true;
@@ -260,16 +262,6 @@ ipcMain.handle('desktop:request', async (event, request) => {
   }
   if (method === 'window.close') { window.close(); return; }
   if (method === 'updates.check') return checkUpdates();
-  if (method === 'frontend.switch') {
-    if (edited.size) throw new Error('请先保存或取消名称、术语及笔记编辑，再切换界面。');
-    if (switching) return;
-    switching = true;
-    try {
-      await service.request('frontend.prepare', { owner_pid: process.pid, geometry: window.getBounds() });
-      window.close();
-    } catch (error) { switching = false; throw error; }
-    return;
-  }
   if (method === 'overlay.toggle') return toggleOverlay();
   if (method === 'knowledge.window') return openKnowledge();
   if (method === 'captions.copy') {
@@ -373,6 +365,12 @@ else {
         ? path.join(root, '../MacOS/AgentScribe') : path.join(root, 'AgentScribe.exe')) : python;
       service = new Service(executable, launchArgs, { cwd: root, nativeHost });
     service.on('event', value => {
+      if (value.event === 'audio-command') {
+        audioHost.command(value.data).catch(error => service.request('playback.event', {
+          epoch: value.data.epoch, state: 'Error', error: error.message, position: 0,
+        }).catch(() => {}));
+        return;
+      }
       if (value.event === 'state') {
         const wasClosing = state?.closing;
         if (wasClosing && !value.data.closing) switching = false;
@@ -403,8 +401,9 @@ else {
         quitAfterOwnedProcesses();
       }
     });
-    service.on('exit', () => { if (quitting || state?.update_fenced) { quitting = true; quitAfterOwnedProcesses(); } });
+    service.on('exit', () => { audioHost?.reset(); if (quitting || state?.update_fenced) { quitting = true; quitAfterOwnedProcesses(); } });
     };
+    audioHost = new AudioHost(value => service.request('playback.event', value), args.includes('--no-audio'));
     restartService();
     Menu.setApplicationMenu(Menu.buildFromTemplate([
       ...(process.platform === 'darwin' ? [{ label: 'AgentScribe', submenu: [{ role: 'about' },
