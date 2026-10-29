@@ -1,8 +1,11 @@
 """Local SaT boundary predictions; returns original-text offsets, never rewritten text."""
 import re
+import time
 import unicodedata
 from contextlib import nullcontext
 from pathlib import Path
+
+from . import diagnostic_log as diag
 
 MODEL = "segment-any-text/sat-3l-sm"
 TOKENIZER = "facebookAI/xlm-roberta-base"
@@ -121,12 +124,20 @@ class SemanticModel:
         # The model predicts each character's boundary probability using context.
         cleaned, owners = _sat_input(text)
         if not cleaned.strip():
+            diag.detail('sat_model_skipped', reason='empty_cleaned_input', input_chars=len(text))
             return []
+        began = time.monotonic()
+        diag.detail('sat_model_start', input_chars=len(text), cleaned_chars=len(cleaned), threshold=.5,
+                    started_monotonic=began)
         try:
             pieces = list(self.model.split(cleaned, threshold=.5, strip_whitespace=False,
                                            split_on_input_newlines=False))
         except Exception as exc:
+            diag.detail('sat_model_end', outcome='failed', error_type=type(exc).__name__,
+                       elapsed_seconds=time.monotonic() - began)
             raise RuntimeError("SaT 分句推理失败：" + str(exc)) from exc
+        diag.detail('sat_model_end', outcome='completed', pieces=len(pieces),
+                   elapsed_seconds=time.monotonic() - began)
         if "".join(pieces) != cleaned:
             raise ValueError("分句模型改变了输入文本，已拒绝该结果。")
         offset, boundaries = 0, []

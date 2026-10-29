@@ -561,6 +561,7 @@ def test_desktop_real_stdio_unicode_and_eof_shutdown(tmp_path):
     assert any(row.get('event') == 'closed' for row in frames)
 
 
+@pytest.mark.p2
 def test_explicit_export_queue_keeps_all_paths_and_failures(desktop, tmp_path, monkeypatch):
     from linguaflow.recording_export import write_export
     desktop._create_recording(name='导出队列')
@@ -591,6 +592,7 @@ def test_explicit_export_queue_keeps_all_paths_and_failures(desktop, tmp_path, m
     assert len(final) == 1 and final[0]['error'] and 'B.txt' in final[0]['text']
 
 
+@pytest.mark.p1
 def test_model_selection_schedules_refresh_and_beta_cancels(desktop):
     class Task:
         beta_only = True
@@ -610,6 +612,7 @@ def test_model_selection_schedules_refresh_and_beta_cancels(desktop):
     desktop.model_refresh.stop()
 
 
+@pytest.mark.p1
 def test_runtime_release_failure_retains_owner_and_can_retry(desktop):
     class Runtime:
         calls = 0
@@ -629,6 +632,7 @@ def test_runtime_release_failure_retains_owner_and_can_retry(desktop):
     assert desktop.runtime is None and results[-1] == ''
 
 
+@pytest.mark.p2
 def test_recording_audio_metadata_is_ready_without_player(desktop):
     import wave
     desktop._create_recording(name='WAV metadata')
@@ -643,6 +647,7 @@ def test_recording_audio_metadata_is_ready_without_player(desktop):
     assert desktop.player is None
 
 
+@pytest.mark.p1
 def test_finished_session_populates_playback_after_saving_and_unlocking(desktop):
     import wave
     from types import SimpleNamespace
@@ -717,6 +722,7 @@ def test_worker_finished_signal_saves_recording_and_releases_stop_state(desktop,
         session.wait(5000)
 
 
+@pytest.mark.p1
 def test_failed_runtime_shutdown_cancels_handoff_but_keeps_owner(desktop):
     class Runtime:
         def close(self):
@@ -731,6 +737,7 @@ def test_failed_runtime_shutdown_cancels_handoff_but_keeps_owner(desktop):
     desktop.runtime = None
 
 
+@pytest.mark.p1
 def test_failed_runtime_release_cannot_start_a_new_recording(desktop):
     from types import SimpleNamespace
     desktop.runtime = SimpleNamespace(closed=True)

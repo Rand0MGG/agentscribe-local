@@ -6,6 +6,8 @@ Times are approximate audio coverage, not forced-aligned word timestamps.
 from threading import RLock
 from uuid import uuid4
 
+from . import diagnostic_log as diag
+
 
 class RevisionStore:
     def __init__(self, session_id=None, emit=None):
@@ -14,6 +16,7 @@ class RevisionStore:
         self.rows = {}
         self.times = {}
         self.lock = RLock()
+        self.source_version = 0
 
     def accept(self, row):
         with self.lock:
@@ -46,6 +49,11 @@ class RevisionStore:
                          for i in range(count))
             self.times[row['interval_id']] = times
             self.rows[row['interval_id']] = dict(row)
+            self.source_version += 1
+            diag.event('source_revision', source_stream=self.session_id, source_version=self.source_version,
+                       interval=row['interval_id'], interval_revision=row['revision'],
+                       audio_start=row['start'], audio_end=row['end'], chars=len(row['text']),
+                       stable_chars=row['stable_end'], closed=row['closed'])
             if self.emit:
                 self.emit({'type': 'model_result', 'data': dict(row)})
             return True
@@ -82,7 +90,9 @@ class RevisionStore:
                     stable_prefix = row['stable_end'] == len(value)
             snapshot.clear()
             snapshot.update(revision_text=text, stable_end=stable_end, revision_spans=spans,
-                            closed_ends=closed_ends)
+                            closed_ends=closed_ends,
+                            _diagnostic_source=dict(source_stream=self.session_id,
+                                                    source_version=self.source_version))
 
 
 def install_revision_bridge(online, emit=None):

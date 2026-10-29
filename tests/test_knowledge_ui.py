@@ -64,7 +64,9 @@ saved=w.library.load(w.current_item)[1]
 assert saved[0].source==caption.source and saved[0].translation==caption.translation
 assert not {'soundcard','PySide6.QtMultimedia'} & sys.modules.keys()
 assert not any(name.startswith(('linguaflow.knowledge.worker','linguaflow.knowledge.api','linguaflow.knowledge.harness')) for name in sys.modules)
-w.close();app.processEvents()
+w.close()
+from ui_support import wait_until
+wait_until(lambda: not w.knowledge_client.threads)
 assert not w.knowledge_client.threads
 '''
     run_ui_process(code, timeout=30,

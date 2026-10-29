@@ -582,9 +582,8 @@ def test_idle_expiry_releases_imports_and_active_lease_is_protected(monkeypatch,
     worker=runtime.worker
     try:
         deadline=time.monotonic()+3
-        while runtime.worker is not None and time.monotonic()<deadline:
+        while (runtime.worker is not None or worker.process.poll() is None) and time.monotonic()<deadline:
             time.sleep(.01)
-        worker.close()
         assert runtime.worker is None and worker.process.poll() is not None
         leased=runtime.acquire(Event())
         assert len(calls)==2
@@ -592,6 +591,7 @@ def test_idle_expiry_releases_imports_and_active_lease_is_protected(monkeypatch,
         assert runtime.worker is leased and leased.process.poll() is None
         runtime.release(leased,reusable=False)
     finally:
+        worker.close()
         runtime.close()
 
 

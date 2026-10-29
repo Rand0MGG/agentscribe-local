@@ -1,14 +1,39 @@
 """Context boundaries, mutable presentation rows and separately committed text."""
 import time
 from bisect import bisect_left, bisect_right
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from dataclasses import replace
 from difflib import SequenceMatcher
 
+from . import diagnostic_log as diag
 from .asr_stability import units
 from .core import Caption
 
 DIFF_CONTEXT_ROWS = 10
+
+
+def _sat_result(fields, began, details, candidates, rejected, **outcome):
+    """Each candidate once; rejected indexes explain all other dispositions.
+
+    First chunk belongs to the call result, with overflow explicitly continued.
+    Candidate order/duplicates survive; arrays never cross the logger's limit.
+    """
+    model = {**details.get('sat_model_start', {}), **details.get('sat_model_end', {})}
+    if 'sat_model_skipped' in details:
+        model = dict(outcome='skipped', **details['sat_model_skipped'])
+    for offset in range(0, max(1, len(candidates)), 32):
+        positions = candidates[offset:offset + 32]
+        chunk = dict(offset=offset, total=len(candidates), positions=positions)
+        for reason, indexes in rejected.items():
+            local = [index - offset for index in indexes if offset <= index < offset + 32]
+            if local:
+                chunk[reason] = local
+        if offset == 0:
+            diag.event('sat_call_end', **fields, **outcome, model=model,
+                       elapsed_seconds=time.monotonic() - began,
+                       candidate_count=len(candidates), boundaries=chunk)
+        else:
+            diag.event('sat_boundaries', sat_call_id=fields['sat_call_id'], **chunk)
 
 
 def _common_prefix_end(previous, current):
@@ -66,30 +91,70 @@ class BoundaryPolicy:
             raise TypeError("字幕分句需要 SaT 边界预测器。")
         self.predictor = predictor
         self.cache = OrderedDict()
+        self.cache_origins = {}
+        # At most reconsideration + mutable-tail splitting per mapper update.
+        # Cache reuse is evidence attached to a meaningful result, not an event
+        # for every poll. Keep standalone policy use bounded as well.
+        self.trace_uses = deque(maxlen=2)
 
-    def split(self, text):
+    def split(self, text, *, source_offset=0, purpose='tail'):
         if text in self.cache:
             self.cache.move_to_end(text)
+            self.trace_uses.append(dict(split_id=self.cache_origins[text], cache_hit=True,
+                                        input_chars=len(text), source_offset=source_offset, purpose=purpose))
             return list(self.cache[text])
+        split_id = diag.trace_id()
+        self.trace_uses.append(dict(split_id=split_id, cache_hit=False, input_chars=len(text),
+                                    source_offset=source_offset, purpose=purpose))
+        with diag.trace_scope(split_id=split_id):
+            return self._split(text, source_offset, purpose)
+
+    def _split(self, text, source_offset, purpose):
         proposals = set()
         for start in range(0, len(text), 1024):
             window_start = max(0, start - 128)
             window = text[window_start:start + 1152]
-            for offset in self.predictor(window):
-                if not isinstance(offset, int) or not 0 < offset <= len(window):
-                    raise ValueError("SaT 返回了无效的分句位置。")
-                absolute = window_start + offset
-                # A comma/colon/list separator joins clauses inside a sentence.
-                if (start < absolute <= start + 1024
-                        and not text[:absolute].rstrip().endswith((',', '，', ':', '：', ';', '；', '、'))):
-                    proposals.add(absolute)
+            call_id = diag.trace_id()
+            began = time.monotonic()
+            fields = dict(sat_call_id=call_id, input_chars=len(window),
+                          source_start=source_offset + window_start,
+                          source_end=source_offset + window_start + len(window),
+                          purpose=purpose)
+            diag.event('sat_call_start', **fields)
+            candidates = []
+            rejected = {'outside_core': [], 'separator': []}
+            details = {}
+            accepted_count = 0
+            try:
+                with diag.trace_scope(sat_call_id=call_id), diag.collect_details() as details:
+                    offsets = self.predictor(window)
+                for offset in offsets:
+                    if not isinstance(offset, int) or not 0 < offset <= len(window):
+                        raise ValueError("SaT 返回了无效的分句位置。")
+                    absolute = window_start + offset
+                    candidates.append(source_offset + absolute)
+                    if not start < absolute <= start + 1024:
+                        rejected['outside_core'].append(len(candidates) - 1)
+                    elif text[:absolute].rstrip().endswith((',', '，', ':', '：', ';', '；', '、')):
+                        rejected['separator'].append(len(candidates) - 1)
+                    else:
+                        proposals.add(absolute)
+                        accepted_count += 1
+            except BaseException as exc:
+                _sat_result(fields, began, details, candidates, rejected, outcome='failed',
+                            error_type=type(exc).__name__, accepted_count=accepted_count)
+                raise
+            _sat_result(fields, began, details, candidates, rejected, outcome='completed',
+                        accepted_count=accepted_count)
         boundaries = [(end, "上下文分句") for end in sorted(proposals)]
         if not boundaries or boundaries[-1][0] < len(text):
             boundaries.append((len(text), "等待后文"))
         # Context reconsideration and mutable-tail splitting alternate each tick.
         self.cache[text] = tuple(boundaries)
+        self.cache_origins[text] = diag.trace_fields()['split_id']
         if len(self.cache) > 2:
-            self.cache.popitem(last=False)
+            expired, _ = self.cache.popitem(last=False)
+            self.cache_origins.pop(expired, None)
         return boundaries
 
 
@@ -143,6 +208,25 @@ class CaptionMapper:
         self.boundary_observed = {}
 
     def update(self, snapshot, done=False):
+        fields = {**snapshot.get('_diagnostic_source', {}),
+                  'mapping_id': diag.trace_fields().get('mapping_id') or diag.trace_id()}
+        with diag.trace_scope(**fields):
+            began = time.monotonic()
+            self.policy.trace_uses.clear()
+            try:
+                events = self._update(snapshot, done)
+            except BaseException as exc:
+                diag.event('caption_mapping_end', outcome='failed', error_type=type(exc).__name__,
+                           elapsed_seconds=time.monotonic() - began, done=done,
+                           splits=list(self.policy.trace_uses))
+                raise
+            if events or done or any(not use['cache_hit'] for use in self.policy.trace_uses):
+                diag.event('caption_mapping_end', outcome='completed', changed_captions=len(events),
+                           elapsed_seconds=time.monotonic() - began, done=done,
+                           splits=list(self.policy.trace_uses))
+            return events
+
+    def _update(self, snapshot, done=False):
         text, spans, stable_end = source_snapshot(snapshot, self.language, done=done)
         closed_ends = list(snapshot.get('closed_ends', []))
         if 'closed_audio_time' in snapshot:
@@ -174,7 +258,7 @@ class CaptionMapper:
             _cid, end = self.fixed[keep-1]
             begin = self.fixed[keep-2][1] if keep > 1 else 0
             if text[end:].strip():
-                context_boundaries = self.policy.split(text[begin:])
+                context_boundaries = self.policy.split(text[begin:], source_offset=begin, purpose='reconsider')
                 cuts = [begin + p for p, reason in context_boundaries if reason == '上下文分句']
                 if (not any(text[:p].rstrip() == text[:end].rstrip() for p in cuts)
                         or any(begin < p < end and text[p:end].strip() for p in cuts)):
@@ -183,7 +267,7 @@ class CaptionMapper:
         self.fixed = self.fixed[:keep]
         offset = self.fixed[-1][1] if self.fixed else 0
         remainder = text[offset:]
-        boundaries = self.policy.split(remainder) if remainder else []
+        boundaries = self.policy.split(remainder, source_offset=offset) if remainder else []
         # Include ten unchanged caption rows as context, plus the entire mutable
         # suffix. Earlier corrections already reduced `keep`, moving this window
         # back with them; never discard a correction to enforce a fixed cutoff.
@@ -282,6 +366,24 @@ class CaptionMapper:
                 caption.boundary_reason, caption.asr_final, caption.boundary_final, caption.segmentation_revision)
             if not same:
                 caption.revision = old.revision + 1 if old else 1
+                changes = (['created'] if old is None else [name for name, changed in (
+                    ('source', old.source != source),
+                    ('boundary', structural_change),
+                    ('timing', (old.start, old.end) != (caption.start, caption.end)),
+                    ('confirmation', (old.stable_source, old.asr_final, old.boundary_final)
+                     != (caption.stable_source, asr_final, boundary_final)),
+                    ('readiness', old.ready != caption.ready)) if changed])
+                diag.event('caption_revision', caption_id=cid, revision=caption.revision,
+                           segmentation_revision=caption.segmentation_revision,
+                           start=caption.start, end=caption.end, chars=len(source),
+                           stable_chars=len(caption.stable_source), asr_final=asr_final,
+                           boundary_final=boundary_final, ready=caption.ready, reason=reason,
+                           source_start=start, source_end=end, previous_range=self.ranges.get(cid),
+                           changes=changes, boundary_observations=observations,
+                           unchanged_seconds=now - since, lookahead_seconds=self.lookahead,
+                           following_stable_units=len(units(text[end:stable_end])), done=done,
+                           ready_basis=('previous_ready' if old and old.ready else 'sat_lookahead'
+                                        if sat_ready else 'stable_source' if ready else 'waiting'))
                 self.previous[cid] = caption
                 events.append(caption)
             if final:
@@ -293,6 +395,8 @@ class CaptionMapper:
         for cid in self.active:
             if cid not in used and cid in self.previous:
                 old = self.previous.pop(cid)
+                diag.event('caption_removed', caption_id=cid, revision=old.revision + 1,
+                           previous_range=self.ranges.get(cid), reason='remapped_boundary')
                 events.append(replace(old, source="", translation="", final=True, revision=old.revision + 1))
         self.active = next_active
         self.observed = new_observed

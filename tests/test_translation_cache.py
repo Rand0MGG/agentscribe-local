@@ -1,10 +1,11 @@
 import json
 import sys
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pytest
 
-from linguaflow import model_cache
+from linguaflow import download_progress, model_cache
 from linguaflow.translation_models import HY_MODEL
 
 
@@ -27,7 +28,10 @@ def test_hy_incomplete_template_triggers_download_including_jinja(tmp_path, monk
     hub = SimpleNamespace(snapshot_download=snapshot,
                           HfApi=lambda: SimpleNamespace(list_repo_files=lambda _: ['model.safetensors']))
     monkeypatch.setitem(sys.modules, 'huggingface_hub', hub)
+    bar = object()
+    monkeypatch.setattr(download_progress, 'hub_progress', lambda: nullcontext(bar))
     assert model_cache.resolve_translation(HY_MODEL, lambda _: None, allow_download=True) == str(cache)
+    assert len(downloads) == 1 and downloads[0]['tqdm_class'] is bar
     assert '*.jinja' in downloads[0]['allow_patterns']
     (cache / 'chat_template.jinja').write_text('template')
     downloads.clear()

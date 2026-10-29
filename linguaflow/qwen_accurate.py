@@ -73,7 +73,8 @@ class QwenAccurateOnline:
 
     def _observe(self, text, stable, end, closed=False):
         if self.revisions is not None:
-            self.revisions.update(self.interval, self.utterance_start, end, text, stable, closed)
+            with diag.trace_scope(decode_id=self.decode_sequence):
+                self.revisions.update(self.interval, self.utterance_start, end, text, stable, closed)
 
     def observe_capture_event(self, kind, timestamp):
         """Record explicit PCM/VAD progress; no inference or buffer mutation."""
@@ -154,16 +155,31 @@ class QwenAccurateOnline:
         self.decoded_samples = count
         self.decoded_end = self.start + count / self.SAMPLING_RATE
         stable = self.agreement.observe(text, self.decoded_end)
+        candidate_stable = stable
+        limits = []
         if self.frozen_limit is not None and self.window_text_start > self.frozen_limit:
             # A backlog may provide only one decode before old PCM rolls out.
             # Copying those words into later hypotheses is not new recognition
             # evidence. Retain them as a draft until explicit utterance closure.
             stable = min(stable, self.frozen_limit)
+            limits.append('frozen_prefix')
         if not anchored:
             stable = min(stable, self.window_text_start)
+            limits.append('overlap_unmatched')
+        previous_stable = self.confirmed_end
         self.confirmed_end = stable
         diag.event('asr_revision', decode_id=self.decode_sequence, interval=self.interval,
-                   chars=len(text), stable_chars=stable, overlap_matched=anchored)
+                   chars=len(text), stable_chars=stable, overlap_matched=anchored,
+                   candidate_stable_chars=candidate_stable, previous_stable_chars=previous_stable,
+                   frozen_limit=self.frozen_limit, window_text_start=self.window_text_start,
+                   confirmation_limits=limits, confirmation_limited=stable < candidate_stable,
+                   agreement=self.agreement.diagnostic,
+                   agreement_observations=len(self.agreement.history),
+                   agreement_audio_span=(self.agreement.history[-1][0] - self.agreement.history[0][0]
+                                         if self.agreement.history else 0.),
+                   agreement_rounds=self.agreement.rounds, agreement_horizon=self.agreement.horizon,
+                   agreement_holdback=self.agreement.holdback,
+                   audio_start=self.utterance_start, audio_end=self.decoded_end)
         self.drafts[text] = (self.utterance_start, self.decoded_end, stable)
         self._observe(text, stable, self.decoded_end)
         self.drafts.move_to_end(text)
@@ -189,6 +205,8 @@ class QwenAccurateOnline:
         self.overlap = (self.text, self.window_text_start + local_start, self.window_text_start)
         self.frozen_limit = self.confirmed_end
         diag.event('asr_window_roll', reason='capacity_low_energy', interval=self.interval,
+                   decode_id=self.decode_sequence, frozen_limit=self.frozen_limit,
+                   chars=len(self.text), window_text_start=self.window_text_start,
                    old_start=self.start, cut_seconds=self.start + cut / self.SAMPLING_RATE,
                    new_start=self.start + drop / self.SAMPLING_RATE, dropped_seconds=drop / self.SAMPLING_RATE,
                    retained_seconds=(len(self.audio_buffer) - drop) / self.SAMPLING_RATE)
@@ -218,7 +236,7 @@ class QwenAccurateOnline:
         tokens = self._tokens(text, self.utterance_start, end)
         self._observe(text, len(text), end, closed=True)
         diag.event('asr_commit', interval=self.interval, reason=reason, audio_start=self.utterance_start,
-                   audio_end=end, chars=len(text))
+                   audio_end=end, chars=len(text), decode_id=self.decode_sequence)
         self.interval += 1
         self.finalized_until = end
         self._audio.discard(count)

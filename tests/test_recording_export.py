@@ -39,7 +39,9 @@ def test_all_formats_write_unicode(tmp_path, suffix):
     target = tmp_path / ('中文录音.' + suffix)
     item = dict(path=str(target), format=suffix)
     write_export(item, captions())
-    assert '你好' in target.read_text(encoding='utf-8-sig')
+    text = target.read_text(encoding='utf-8-sig')
+    assert '你好' in text and 'Final' in text
+    assert 'Draft' not in text and 'Unconfirmed' not in text
 
 
 @pytest.mark.p0

@@ -97,15 +97,28 @@ Qt 线程负责装配、呈现和发起操作，只有它更新 UI。耗时任�
 
 ## 诊断日志
 
-`diagnostic_log.py` 提供进程独立 JSONL 轮转日志与无用户正文的异常堆栈。桌面/worker 入口初始化；Session 生成会话 ID 并传给 worker。Qwen 记录解码序号、窗口及推进原因，通过已有协议回传耗时元数据，由桌面补采集侧积压估计。保存与翻译捕获异常分别在所属线程记录，日志不接管第三方原始 stdout/stderr，也不改变解码调度。
+`diagnostic_log.py` 提供进程独立 JSONL 轮转日志与无用户正文的异常堆栈；`diagnostic_archive.py` 管封存块压缩、完整性校验、跨进程历史预算和崩溃遗留恢复。桌面/worker 入口初始化；Session 生成会话 ID 并传给 worker。Qwen 记录解码序号、窗口及推进原因，通过已有协议回传耗时元数据，由桌面补采集侧积压估计。保存与翻译捕获异常分别在所属线程记录，日志不接管第三方原始 stdout/stderr，也不改变解码调度。
 
 Qwen 的 `asr_decode_start/end` 可按 `session + decode_id` 关联：窗口范围、输入长度、新增音频、耗时和触发原因；`asr_window_roll` 记录切点、移走/保留长度；`asr_commit` 记录收尾原因；`asr_revision` / `caption_revision` 记录字符数、稳定长度及定稿条件，不含正文。`asr_capture_lag` 是收到结果时采集进度减解码覆盖末端的估计，不是词级延迟；`pipeline_progress` 另记流水线积压和磁盘待送量。窗口重叠不算新增音频，空文本也保留本次解码耗时。Whisper 有公共会话/积压/字幕日志，但没有套用 Qwen 的内部窗口事件。
+
+处理链的关联与决策日志：
+
+- Qwen `asr_revision` 同时记录候选/最终/上次确认长度、`frozen_limit`、窗口文字起点、实际触发的限制和是否压低候选值，以及多轮一致性不足、音频推进不足、前缀不一致或尾部保留原因。`asr_commit` 关联最后一次 `decode_id`，收尾不一定产生新的解码。
+- `source_revision` 将 `decode_id` 连接到 `source_stream + source_version`；版本只在修订存储接受变化时增加，记录区间与区间版本。`_diagnostic_source` 随同一锁内生成的内部快照传递，不进入 Caption 或录音文件格式。处理快照可能跳过中间版本；需按 `source_revision` 顺序还原各区间元数据，不能假定一次识别恰好对应一次分句。
+- 每次字幕映射分配 `mapping_id`，但只在实际调用预测器、字幕发生变化、显式收尾或失败时写 `caption_mapping_end`；无变化的纯缓存轮询不写开始/结束或缓存命中事件。关键结果的 `splits` 附带本次最多两个分割用途、原 `split_id`、缓存状态和源文偏移，保留缓存来源关联。计时从本次映射开始计算，不需要每次入口另写一条记录。`sat_call_start/end` 记录每个真正执行的重叠文本窗口预测器调用；结束记录的 `model` 内嵌实际推理起点、耗时、阈值及成功/失败信息，嵌套调用不再单独写模型开始/结束。独立模型调用仍保留模型事件。即使结果没改变字幕，真实调用和失败也保留。每个候选位置仅记录一次：结束记录的 `boundaries` 包含首批最多 32 个源文字符偏移，其余以同一 call ID 的 `sat_boundaries` 接续；`offset/total` 标明完整性，候选顺序和重复值保留。`outside_core/separator` 是各块 `positions` 中被过滤项的局部索引，其余即采用项；空原因数组省略。不记录正文或概率数组。缓存重用时边界相对原分割的偏移按本次 `source_offset` 换算。
+- `caption_revision` 记录源文范围、旧范围、切分版本、改变类型（文字/边界/时间/确认/可翻译状态）、边界观察次数、等待时长和已确认后文量；`caption_removed` 表示被重新映射淘汰的字幕 ID。它们是应用处理后的结果，不能把任何一次修订都算成 SaT 改了句界。
+- `translation_planned` 记录初译/定稿触发与背景字幕版本；`translation_queued` 为每次入队分配 `translation_task_id`，携带源版本、`mapping_id`、字幕/切分版本与阶段。覆盖、删除、过期、取消和消费者退出分别留下终态。`translation_batch_start/compute_end/end` 每个批次各写一条（单条翻译也作为单成员批次），共同上下文数量、分句门等待、缓存与计算耗时只写一次。三个阶段的 `members` 均携带每个任务的完整关联字段，开始阶段另有各自等待时间，计算结束另有各自输出字符数和失败状态；批次通过 `translation_batch_id` 关联成员。重新排队是新任务，`retry_of` 指向旧任务。
+- `translation_publication` 在现有发布校验内记录 applied/rejected 及拒绝原因；单条任务可直接关联 task ID，批量按 batch ID 与字幕 ID 对应。`translation_batch_end=publication_returned` 仅表示发布回调正常返回，是否采用看 publication；错误状态也可能被成功发布。取消只表示消费者停止等待，已进入线程的推理可能仍在运行；强杀进程没有可靠终态，不能据缺少结束事件断言模型挂起。
+
+日志 schema 3 使用紧凑 JSON 分隔符，保留可读字段名以及每行自己的时间、进程、线程、会话和关联信息；不依赖可能先被轮转删除的首行字典。schema 2 旧文件不改写。关联上下文使用 ContextVar，传入 `asyncio.to_thread`，退出作用域恢复；只包含 ID 与元数据。默认记录关键节点和真实变化，不把高频轮询次数当作诊断信息；缓存计数不另设周期日志。原有低频进度日志仍约 5 秒限频，资源约 10 秒采样；实际推理、字幕变化、任务生命周期和异常不按该频率丢弃。日志仍有队列与轮转上限，检查 `dropped_events` 及轮转文件后才能判断链路是否完整；不通过扩大轮转预算掩盖噪声。这些事件不证明前端已显示，也不能在没有录音和对应版本正文时判定词错误、分句质量或翻译准确率；本轮不增加正文追踪或前端回执。
 
 `ui_action` 与 `ui_dispatch` 按操作 ID 关联同步派发；`handled` 仅表示回调返回，异步任务的成功以独立结果事件为准。准备任务使用 task ID，保存/打开录音使用 recording ID，会话结束清除默认 session。明确绑定关键命令，不安装全局鼠标/键盘追踪器。`resource_monitor.py` 在桌面后台线程用 psutil 采样系统与本进程树；Windows NVIDIA 与 Mac `ioreg` 查询均有超时和失败退避，Mac 仅解析根加速器的 `PerformanceStatistics` 利用率白名单字段；不解析子树、不保留注册表原文。采样异常只在首次失败及恢复时记录。资源采样不枚举音频设备。
 
 写盘使用有界队列与独立线程，空闲线程由队列唤醒，退出发送哨兵排空；字段深度、数组长度和单条大小均有上限。异常、坏字段、协议回传和日志故障不传播到业务；队列溢出报告丢弃数量，不能将日志视作无损审计。耗时回传仍走原协议，不依赖写盘完成。
 
 开发回放可用 `AGENTSCRIBE_LOG_DIR` 指定独立证据目录。日志参数不改变模型、窗口、刷新或定稿策略。
+
+轮转将当前文件关闭并改为唯一 `.pending` 封存块，再打开新的活跃文件。归档先流式 gzip 写临时文件并同步磁盘，读回校验 SHA-256/CRC 后原子发布，最后删除原件；归档时间沿用原始最后写入时间。目录 OS 锁在 Mac/Linux 使用 `flock`，Windows 使用字节区间锁，序列化恢复、发布和预算清理；锁文件持久存在，进程退出自动释放锁。只有已发布 `.gz` 计入共享预算，活跃文件、失败原件及临时文件不计入；正常尾部在写线程退出时归档，失败重试不阻断录音。原始文件恢复需要确认 PID 不存活，封存块是不可变数据，可由任一持锁进程恢复。保留参数和失败边界见下列使用指南。
 
 日志目录、轮转保留、隐私及故障反馈方法统一见[使用指南](WORKSPACE.md#诊断日志与问题反馈)。字段用于解释运行过程，不构成真实设备性能或异常退出恢复的验收证明。Mac 驱动字段口径参照 [Stats 的原始采样实现](https://github.com/exelban/stats/blob/master/Modules/GPU/reader.swift)，命令选项核对 [Apple ioreg 源码](https://github.com/apple-oss-distributions/IOKitTools/blob/main/ioreg.tproj/ioreg.c)；这些参考不替代本项目 Mac 实机验证。
 

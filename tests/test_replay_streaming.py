@@ -3,12 +3,14 @@ import json
 from dataclasses import asdict
 
 import numpy as np
+import pytest
 
 from linguaflow import wlk_session
 from linguaflow.core import Caption, Settings
 from scripts.replay_streaming import replay, sha256
 
 
+@pytest.mark.p1
 def test_replay_records_threaded_results_and_preview_with_backend_dispatcher(tmp_path, monkeypatch):
     text = 'Exact replay result.'
 

@@ -70,7 +70,7 @@ R4、R17 及 R6 尚待评估的成本不代表已确认的优化方案；参数�
 
 ## Electron 迁移对照
 
-基线与差异判定归 [UI_DESIGN](UI_DESIGN.md#设计决定的归属)，执行方法归 [TESTING](TESTING.md#electron-候选入口)，结果归 [VALIDATION](VALIDATION.md)。下表是迁移缺口清单，不修改原行为要求；“已接入”不等于已完成真实设备或发行验收。
+基线与差异判定归 [UI_DESIGN](UI_DESIGN.md#设计决定的归属)，执行方法归 [TESTING](TESTING.md#electron-正式入口)，结果归 [VALIDATION](VALIDATION.md)。下表是迁移缺口清单，不修改原行为要求；“已接入”不等于已完成真实设备或发行验收。
 
 | 范围 / 契约 | v0.10.2 对照入口 | 候选入口与剩余工作 |
 | --- | --- | --- |

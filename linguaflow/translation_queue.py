@@ -2,9 +2,26 @@
 import asyncio
 import time
 
+from . import diagnostic_log as diag
 from .core import source_is_final
 
 _EMPTY = object()
+
+
+class TranslationItem(tuple):
+    """Keep the existing (caption, queued_at) contract; IDs are diagnostic only."""
+    def __new__(cls, caption, queued_at):
+        item = super().__new__(cls, (caption, queued_at))
+        item.trace = {**diag.trace_fields(), 'translation_task_id': diag.trace_id(),
+                      'caption_id': caption.id, 'caption_revision': caption.revision,
+                      'segmentation_revision': caption.segmentation_revision,
+                      'phase': caption.translation_phase}
+        return item
+
+
+def trace_item(name, item, **fields):
+    if item is not None:
+        diag.event(name, **{**getattr(item, 'trace', {}), **fields})
 
 
 def translation_is_current(current, requested):
@@ -41,13 +58,19 @@ class TranslationQueue:
             self.queue.put_nowait(None)
             return
         fresh = caption.id not in self.pending
-        self.pending[caption.id] = (caption, time.monotonic())
+        item = TranslationItem(caption, time.monotonic())
+        if not fresh:
+            trace_item('translation_task_end', self.pending[caption.id], outcome='superseded',
+                       replaced_by=item.trace['translation_task_id'])
+        self.pending[caption.id] = item
+        trace_item('translation_queued', item, pending=len(self.pending), source_chars=len(caption.source))
         if fresh:
             self.queue.put_nowait(caption.id)
 
     def discard(self, caption_id):
         """Invalidate a removed source span without waiting for HY to consume it."""
-        self.pending.pop(caption_id, None)
+        item = self.pending.pop(caption_id, None)
+        trace_item('translation_task_end', item, outcome='source_removed')
 
     async def get(self):
         while True:

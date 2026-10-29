@@ -79,7 +79,7 @@ w.close()
 ''', tmp_path)
 
 
-@pytest.mark.p2
+@pytest.mark.p0
 def test_course_disconnect_disables_actions_and_keeps_unsaved_terms_for_reconnect(tmp_path):
     run_ui('''
 from types import SimpleNamespace
@@ -115,7 +115,7 @@ p.close();w.close()
 ''', tmp_path)
 
 
-@pytest.mark.p2
+@pytest.mark.p0
 def test_real_course_worker_exit_and_reconnect_preserve_draft(tmp_path):
     run_ui('''
 from unittest.mock import patch

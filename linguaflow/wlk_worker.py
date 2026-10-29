@@ -221,6 +221,10 @@ async def _run_session(settings, emit, read_message, config, engine, online, sem
     closed_audio_time = -1.
 
     async def publish(snapshot, done=False):
+        with diag.trace_scope(mapping_id=diag.trace_id()):
+            await publish_mapped(snapshot, done)
+
+    async def publish_mapped(snapshot, done=False):
         async with caption_lock:
             # Only active SaT work blocks HY. Counting lock waiters can keep
             # the gate closed for an entire live recording under steady input.
@@ -251,18 +255,15 @@ async def _run_session(settings, emit, read_message, config, engine, online, sem
                 if rebased is not None:
                     emit({'type': 'source_preview', 'data': rebased})
                 for caption in captions:
-                    diag.event('caption_revision', caption_id=caption.id, revision=caption.revision,
-                               start=caption.start, end=caption.end, chars=len(caption.source),
-                               stable_chars=len(caption.stable_source), asr_final=caption.asr_final,
-                               boundary_final=caption.boundary_final, ready=caption.ready, reason=caption.boundary_reason)
                     emit({"type": "caption", "data": asdict(caption)})
                 emit({'type': 'source_preview_done', 'sequence': sequence})
                 if settings.get('translate'):
                     for caption in captions:
                         if not caption.source:
                             translation_queue.discard(caption.id)
-                    for caption in context_planner.update_changes(captions):
-                        translation_queue.put_nowait(caption)
+                    with diag.trace_scope(**snapshot.get('_diagnostic_source', {})):
+                        for caption in context_planner.update_changes(captions):
+                            translation_queue.put_nowait(caption)
                 if cancelled:
                     raise asyncio.CancelledError
             finally:

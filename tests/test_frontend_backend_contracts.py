@@ -3,9 +3,8 @@ import pytest
 
 from tests.ui_support import run_ui_process
 
-pytestmark = pytest.mark.p1
 
-
+@pytest.mark.p2
 def test_shared_backend_imports_without_a_widget_or_electron_frontend():
     import subprocess
     import sys
@@ -22,7 +21,7 @@ recording = RecordingWorkflow()
 preparation = PreparationWorkflow()
 assert not any(name in sys.modules for name in (
     'PySide6.QtWidgets', 'linguaflow.app', 'linguaflow.management', 'linguaflow.qt_controls'))
-'''], capture_output=True, text=True)
+'''], capture_output=True, text=True, timeout=15)
     assert result.returncode == 0, result.stderr
 
 
@@ -71,6 +70,7 @@ module.Session = fail
 
 @pytest.mark.parametrize('adapter', ['qt', 'electron'])
 @pytest.mark.parametrize('save_fails', [False, True])
+@pytest.mark.p1
 def test_start_failure_is_durable_and_retains_lock_until_saved(tmp_path, adapter, save_fails):
     run_ui_process(f'ADAPTER = {adapter!r}\nSAVE_FAILS = {save_fails!r}\n' + ADAPTER + '''
 original = w.library.save
@@ -103,6 +103,7 @@ else:
 
 
 @pytest.mark.parametrize('adapter', ['qt', 'electron'])
+@pytest.mark.p1
 def test_switch_gate_observes_busy_and_idle_without_a_new_view(tmp_path, adapter):
     run_ui_process(f'ADAPTER = {adapter!r}\n' + ADAPTER + '''
 if ADAPTER == 'qt':

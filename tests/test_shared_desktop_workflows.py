@@ -17,10 +17,9 @@ from linguaflow.update_workflow import UpdateActivity
 from tests.test_desktop_service import desktop as desktop
 from tests.test_desktop_service import drain
 
-pytestmark = pytest.mark.p1
-
 
 @pytest.mark.parametrize('enabled,consent,expected', [(True, True, 1), (True, False, 0), (False, True, 0)])
+@pytest.mark.p0
 def test_saved_consent_attaches_without_opening_course_window(desktop, monkeypatch, enabled, consent, expected):
     desktop._create_recording(name='自动连接')
     manifest = read_manifest(desktop.library, desktop.item['id'])
@@ -34,6 +33,7 @@ def test_saved_consent_attaches_without_opening_course_window(desktop, monkeypat
     assert opened.call_count == expected
 
 
+@pytest.mark.p1
 def test_cancel_import_uses_owned_cleanup_not_queued_command(desktop, monkeypatch):
     desktop._create_recording(name='取消导入')
     desktop.values['beta_features'] = True
@@ -51,6 +51,7 @@ def test_cancel_import_uses_owned_cleanup_not_queued_command(desktop, monkeypatc
     client.process = None
 
 
+@pytest.mark.p1
 def test_cancel_cleanup_failure_is_not_success():
     client = SimpleNamespace(close=lambda: False, send=Mock(), report_disconnected=Mock())
     with pytest.raises(ValueError, match='仍在退出'):
@@ -61,6 +62,7 @@ def test_cancel_cleanup_failure_is_not_success():
 @pytest.mark.parametrize('failure,audio,caption,expected', [
     ('', False, False, 'draft'), ('failed', False, False, 'incomplete'),
     ('', True, False, 'complete'), ('', False, True, 'complete')])
+@pytest.mark.p1
 def test_final_save_classification(desktop, failure, audio, caption, expected):
     desktop._create_recording(name='录音收尾')
     desktop.library.begin(desktop.item, {})
@@ -79,12 +81,14 @@ def test_final_save_classification(desktop, failure, audio, caption, expected):
     assert desktop.library.load(desktop.item)[0]['session']['state'] == expected
 
 
+@pytest.mark.p1
 def test_final_translation_errors_are_shared(desktop):
     desktop._create_recording(name='未定稿翻译')
     rows = [Caption(1, 0, 1, 'original', 'en', 'initial', final=True, translation_phase='initial')]
     assert completion_state(desktop.library, desktop.item, rows, translating=True, failure='') == ('incomplete', True)
 
 
+@pytest.mark.p2
 def test_locate_checks_owner_and_generation_before_seeking(desktop):
     desktop._create_recording(name='定位')
     desktop.captions[5] = Caption(5, 10, 12, 'find', 'en', final=True)
@@ -107,6 +111,7 @@ def test_locate_checks_owner_and_generation_before_seeking(desktop):
     desktop.player = None
 
 
+@pytest.mark.p2
 def test_text_location_does_not_create_audio_player(desktop):
     desktop._create_recording(name='只定位文字')
     desktop.captions[1] = Caption(1, 7, 8, 'find', 'en', final=True)
@@ -116,6 +121,7 @@ def test_text_location_does_not_create_audio_player(desktop):
     assert desktop.located_position is None
 
 
+@pytest.mark.p1
 def test_document_preparation_does_not_block_capture(desktop, monkeypatch):
     desktop.values['beta_features'] = True
     desktop.state = RecordingState.LISTENING
@@ -134,6 +140,7 @@ def test_document_preparation_does_not_block_capture(desktop, monkeypatch):
 
 
 @pytest.mark.parametrize('gate', list(UpdateActivity.__dataclass_fields__))
+@pytest.mark.p0
 def test_each_update_gate_prevents_release(desktop, monkeypatch, gate):
     release = Mock()
     monkeypatch.setattr(desktop.native_updater, 'release_runtime', release)
@@ -145,6 +152,7 @@ def test_each_update_gate_prevents_release(desktop, monkeypatch, gate):
     assert not desktop.native_updater.pending
 
 
+@pytest.mark.p0
 def test_update_checks_work_while_recording_and_never_handoff(desktop, monkeypatch):
     desktop.native_updater.installed = True
     checked = Mock(return_value=True)
@@ -156,6 +164,7 @@ def test_update_checks_work_while_recording_and_never_handoff(desktop, monkeypat
     desktop.state = RecordingState.IDLE
 
 
+@pytest.mark.p1
 def test_update_release_cancel_keeps_fence_until_owned_thread_finishes(desktop, monkeypatch):
     from threading import Event
     released = Event()
@@ -179,6 +188,7 @@ def test_update_release_cancel_keeps_fence_until_owned_thread_finishes(desktop, 
     assert not desktop.native_updater.ready.is_set()
 
 
+@pytest.mark.p0
 def test_update_rechecks_edits_after_runtime_release(desktop, monkeypatch):
     install = Mock()
     monkeypatch.setattr(desktop.native_updater, 'install', install)
@@ -195,6 +205,7 @@ def test_update_rechecks_edits_after_runtime_release(desktop, monkeypatch):
     desktop.update_workflow.resume()
 
 
+@pytest.mark.p2
 def test_reference_location_returns_matching_caption(desktop):
     desktop._create_recording(name='引用定位')
     desktop.captions[1] = Caption(1, 7, 9, 'reference', 'en', final=True)
@@ -202,6 +213,7 @@ def test_reference_location_returns_matching_caption(desktop):
     assert result['identifier'] == 1 and desktop.located_position == 8000
 
 
+@pytest.mark.p0
 def test_cancelled_update_rejects_late_download_and_install(desktop):
     updater = desktop.native_updater
     updater.adapter = SimpleNamespace(cancel=Mock(), download=Mock(), install=Mock())
@@ -215,6 +227,7 @@ def test_cancelled_update_rejects_late_download_and_install(desktop):
     updater.adapter = None
 
 
+@pytest.mark.p0
 def test_cancel_wait_requires_new_install_confirmation(desktop, monkeypatch):
     install = Mock()
     monkeypatch.setattr(desktop.native_updater, 'install', install)

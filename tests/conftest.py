@@ -4,6 +4,24 @@ import os
 import pytest
 
 
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(items):
+    """Validate before -m filtering: missing priorities must not disappear."""
+    priorities = {'p0', 'p1', 'p2', 'p3'}
+    invalid = []
+    for item in items:
+        levels = [mark.name for mark in item.iter_markers() if mark.name in priorities]
+        own = [mark.name for mark in item.own_markers if mark.name in priorities]
+        if len(levels) != 1 or len(own) != 1:
+            invalid.append(f'{item.nodeid}: {levels or "missing"}')
+    if invalid:
+        raise pytest.UsageError('Each test needs exactly one function-level P0-P3 marker:\n'
+                                + '\n'.join(invalid))
+    # Stable within each level; the default still runs every collected test.
+    items.sort(key=lambda item: next(int(mark.name[1]) for mark in item.own_markers
+                                     if mark.name in priorities))
+
+
 @pytest.fixture(autouse=True)
 def backend_events_in_legacy_qt_tests(monkeypatch):
     """Legacy UI comparisons pump the same backend dispatcher as the Electron host.

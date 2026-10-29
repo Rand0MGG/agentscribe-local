@@ -7,11 +7,11 @@ import math
 import os
 import platform
 import queue
-import re
 import sys
 import threading
 import time
 import traceback
+from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from functools import wraps
@@ -20,6 +20,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from . import __version__
+from .diagnostic_archive import HISTORY_BYTES, maintain
 from .runtime_paths import user_data_root
 
 _logger = logging.getLogger('agentscribe.support')
@@ -37,6 +38,51 @@ _throttled = {}
 _dropped = 0
 _role = None
 _operation = ContextVar('support_operation', default=None)
+_trace = ContextVar('support_trace', default=None)
+_details = ContextVar('support_call_details', default=None)
+
+
+def trace_fields():
+    """Copy only diagnostic IDs/metadata; never put captions or text in this scope."""
+    return dict(_trace.get() or {})
+
+
+@contextmanager
+def trace_scope(**fields):
+    token = _trace.set({**trace_fields(), **fields})
+    try:
+        yield
+    finally:
+        _trace.reset(token)
+
+
+def trace_id():
+    return uuid4().hex[:16]
+
+
+@contextmanager
+def collect_details():
+    """Fold nested model timing into its owning call's result, without extra IO."""
+    details = {}
+    token = _details.set(details)
+    try:
+        yield details
+    finally:
+        _details.reset(token)
+
+
+def detail(name, **fields):
+    details = _details.get()
+    if details is None:
+        event(name, **fields)  # Standalone model calls still have diagnostics.
+    else:
+        details[name] = fields
+
+
+def encode_record(row):
+    # Preserve readable field names and every record's own time/session/process
+    # identity. No dictionary/header file is needed after rotation.
+    return json.dumps(row, ensure_ascii=False, allow_nan=False, separators=(',', ':'))
 
 
 def _report_error(message):
@@ -59,6 +105,59 @@ def log_error():
 
 
 class SupportHandler(RotatingFileHandler):
+    def __init__(self, filename, max_bytes, history_bytes):
+        super().__init__(filename, maxBytes=max_bytes, backupCount=0, encoding='utf-8')
+        self.history_bytes = history_bytes
+        self.maintenance_due = True
+        self.next_maintenance = 0.
+
+    def _open(self):
+        # Keep byte accounting and JSONL bytes identical on Windows and macOS.
+        return self._builtin_open(self.baseFilename, self.mode, encoding=self.encoding,
+                                  errors=self.errors, newline='\n')
+
+    def shouldRollover(self, record):
+        if self.stream is None:
+            self.stream = self._open()
+        self.stream.seek(0, 2)
+        size = self.stream.tell()
+        # Measure UTF-8 bytes, not characters; never split a JSONL record.
+        incoming = len((self.format(record) + self.terminator).encode('utf-8'))
+        return self.maxBytes > 0 and size > 0 and size + incoming > self.maxBytes
+
+    def _seal(self):
+        if self.stream is not None:
+            self.stream.close()
+            self.stream = None
+        source = Path(self.baseFilename)
+        if source.exists() and source.stat().st_size:
+            pending = source.with_name(f'{source.name}.{time.time_ns():020d}-{uuid4().hex[:8]}.pending')
+            source.rename(pending)
+            self.maintenance_due = True
+            self.next_maintenance = 0.
+
+    def maintain_history(self, *, wait_seconds=0.):
+        if self.maintenance_due and (wait_seconds or time.monotonic() >= self.next_maintenance):
+            self.maintenance_due = not maintain(Path(self.baseFilename).parent, self.history_bytes,
+                                                _report_error, wait_seconds=wait_seconds)
+            self.next_maintenance = time.monotonic() + 5.
+
+    def doRollover(self):
+        try:
+            self._seal()
+        finally:
+            self.stream = self._open()
+        self.maintain_history()
+
+    def finish(self):
+        try:
+            self._seal()
+            self.maintain_history(wait_seconds=1.)
+            if self.maintenance_due:
+                _report_error('诊断日志归档尚未完成，原始记录已保留，下次启动将重试。')
+        finally:
+            self.close()
+
     def handleError(self, record):
         _report_error('诊断日志写入失败，请检查日志目录权限和剩余空间。')
 
@@ -74,12 +173,18 @@ class _Writer(threading.Thread):
 
     def run(self):
         try:
+            self.handler.maintain_history()
             while not self.stopping.is_set() or not self.pending.empty():
-                row = self.pending.get()
+                try:
+                    row = self.pending.get(timeout=5. if self.handler.maintenance_due else None)
+                except queue.Empty:
+                    self.handler.maintain_history()
+                    continue
                 try:
                     if row is None:
                         break
-                    elif isinstance(row, threading.Event):
+                    self.handler.maintain_history()
+                    if isinstance(row, threading.Event):
                         row.set()
                     else:
                         self.handler.handle(logging.LogRecord(
@@ -90,46 +195,12 @@ class _Writer(threading.Thread):
                     self.pending.task_done()
         finally:
             try:
-                self.handler.close()
+                self.handler.finish()
             except Exception:
                 _report_error('诊断日志关闭失败，部分记录可能未写入。')
 
 
-def _clean_logs(root):
-    """Only expired/over-budget inactive application logs; never delete a live writer."""
-    try:
-        import psutil
-    except ImportError:
-        # Model runtimes need not install desktop telemetry dependencies. The
-        # desktop performs directory cleanup; missing probes never disable logs.
-        return
-    cutoff = time.time() - 14 * 86400
-    owned = []
-    pattern = re.compile(r'support-[a-z-]+-\d{8}T\d{6}-(\d+)-[a-f0-9]{8}\.jsonl(?:\.\d+)?$')
-    for path in root.glob('support-*.jsonl*'):
-        match = pattern.fullmatch(path.name)
-        if not match or path.is_symlink():
-            continue
-        try:
-            stat = path.stat()
-            if path.is_file():
-                owned.append((stat.st_mtime, stat.st_size, path, int(match[1])))
-        except OSError:
-            continue
-    total = sum(item[1] for item in owned)
-    for modified, size, path, pid in sorted(owned):
-        if modified >= cutoff and total <= 128 * 1024 * 1024:
-            continue
-        if psutil.pid_exists(pid):
-            continue
-        try:
-            path.unlink()
-            total -= size
-        except OSError:
-            continue  # Another process or OS file protection may own this file.
-
-
-def start_logging(role, directory=None, *, max_bytes=8 * 1024 * 1024, backups=3):
+def start_logging(role, directory=None, *, max_bytes=8 * 1024 * 1024, history_bytes=HISTORY_BYTES):
     """One file per process launch; never rotate a different live process's file."""
     global _handler, _error, _writer, _role, _dropped
     with _lifecycle_lock:
@@ -138,17 +209,16 @@ def start_logging(role, directory=None, *, max_bytes=8 * 1024 * 1024, backups=3)
         try:
             root = Path(directory) if directory is not None else log_directory()
             root.mkdir(parents=True, exist_ok=True)
-            _clean_logs(root)
             name = f'support-{role}-{datetime.now(timezone.utc):%Y%m%dT%H%M%S}-{os.getpid()}-{uuid4().hex[:8]}.jsonl'
-            _handler = SupportHandler(root / name, maxBytes=max_bytes, backupCount=backups, encoding='utf-8')
+            _handler = SupportHandler(root / name, max_bytes, history_bytes)
             _handler.setFormatter(logging.Formatter('%(message)s'))
             _writer = _Writer(_handler)
+            _error = ''
             _writer.start()
             _role = role
             _dropped = 0
             _throttled.clear()
             os.environ['AGENTSCRIBE_LOG_DIR'] = str(root)
-            _error = ''
             event('process_start', version=__version__, python=platform.python_version(),
                   system=platform.system(), release=platform.release(), machine=platform.machine())
             return root / name
@@ -234,18 +304,18 @@ def _enqueue(name, fields, level):
     if writer is None or writer.stopping.is_set():
         return
     try:
-        row = dict(schema=2, utc=datetime.now(timezone.utc).isoformat(timespec='milliseconds'),
+        row = dict(schema=3, utc=datetime.now(timezone.utc).isoformat(timespec='milliseconds'),
                    monotonic=round(time.monotonic(), 6), level=level,
                    pid=os.getpid(), role=_role, thread=threading.current_thread().name,
                    session=_session, operation=_operation.get(), event=name)
-        row.update(_metadata(fields))
+        row.update(_metadata({**trace_fields(), **fields}))
         if _dropped:
             row['dropped_events'] = _dropped
-        payload = json.dumps(row, ensure_ascii=False, allow_nan=False)
+        payload = encode_record(row)
         if len(payload.encode('utf-8')) > 16384:
             row = {key: row[key] for key in ('schema', 'utc', 'monotonic', 'level', 'pid', 'role', 'session', 'event')}
             row['metadata_omitted'] = True
-            payload = json.dumps(row, ensure_ascii=False)
+            payload = encode_record(row)
         writer.pending.put_nowait(payload)
         _dropped = 0
     except queue.Full:

@@ -2,6 +2,7 @@
 from bisect import bisect_left, bisect_right, insort
 from dataclasses import dataclass, replace
 
+from . import diagnostic_log as diag
 from .core import source_is_final
 from .translation_config import (
     DEFAULT_CONTEXT_AFTER,
@@ -126,6 +127,16 @@ class ContextPlanner:
             request = replace(caption, translation='', error='',
                               translation_phase='final' if caption.final else 'initial',
                               translation_source=caption.source)
+            diag.event('translation_planned', caption_id=caption.id, caption_revision=caption.revision,
+                       segmentation_revision=caption.segmentation_revision, phase=request.translation_phase,
+                       trigger='first_request' if old is None else 'phase_changed' if old.final != caption.final
+                       else 'source_or_segmentation_changed',
+                       context_before=[dict(caption_id=cid, revision=self._rows[cid].revision,
+                                            chars=min(len(self._rows[cid].source), MAX_CONTEXT_CHARACTERS))
+                                       for _, cid in before],
+                       context_after=[dict(caption_id=cid, revision=self._rows[cid].revision,
+                                           chars=min(len(self._rows[cid].source), MAX_CONTEXT_CHARACTERS))
+                                      for _, cid in after])
             self.requests[caption.id] = request
             self.contexts[caption.id] = context
             changed.append(request)

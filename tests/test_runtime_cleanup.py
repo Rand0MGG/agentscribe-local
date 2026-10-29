@@ -90,8 +90,10 @@ def test_environment_cleanup_preserves_user_changes_and_unconfirmed_ownership(tm
         def fail():
             raise subprocess.TimeoutExpired('fixture-process-inspection', 15)
         monkeypatch.setattr(runtime, 'process_commands', fail)
+    before = {p.relative_to(protected): p.read_bytes() for p in protected.rglob('*') if p.is_file()}
     runtime.clean_environments('wlk')
     assert protected.exists()
+    assert {p.relative_to(protected): p.read_bytes() for p in protected.rglob('*') if p.is_file()} == before
 
 
 @pytest.mark.p0

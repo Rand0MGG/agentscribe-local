@@ -116,6 +116,7 @@ from linguaflow.events import Owner as QObject, Signal
 from PySide6.QtWidgets import QApplication
 from linguaflow.app import Window
 from linguaflow.core import Caption
+from ui_support import wait_until
 app = QApplication([])
 w = Window(discover=False, prefs=QSettings(os.environ['AGENTSCRIBE_LIBRARY']+'/prefs.ini', QSettings.Format.IniFormat))
 assert w.new_recording(name='finish ordering')
@@ -134,32 +135,37 @@ def write(*args):
 w.library.save = write
 class Session(QObject):
     finished = Signal()
+    def start(self):
+        pass
     def deleteLater(self):
         assert saved.is_set(), 'Signal sender disposed before the nested save loop'
         assert not w.recording_saver.busy
         super().deleteLater()
 session = Session(w)
-w.session = session
-session.finished.connect(w.on_finished)
+w.recording.launch(None, runtime=None, factory=lambda *args, **kwargs: session,
+                   callbacks={'finished': w.on_finished})
 emitting = True
 session.finished.emit()
 session.finished.emit()  # Duplicate completion cannot dispose/save twice.
 emitting = False
 assert not saved.is_set() and w.session is session
 assert not w.start_button.isEnabled()
-app.processEvents()
+wait_until(lambda: w.session is None)
 assert saved.is_set() and not w.session_dirty and w.session is None
 assert w.start_button.isEnabled()
 assert w.new_recording(name='next session')
 w.on_caption(Caption(1, 0, 1, 'new source', 'en'))
 next_session = Session(w)
-w.session = next_session
-next_session.finished.connect(w.on_finished)
-session.finished.emit()  # A late sender cannot finish the replacement session.
+saved.clear()
+w.recording.launch(None, runtime=None, factory=lambda *args, **kwargs: next_session,
+                   callbacks={'finished': w.on_finished})
+previous_state = w.recording_state
+session.finished.emit()  # The real workflow must reject the obsolete owner immediately.
+assert w.recording_state == previous_state and not saved.is_set()
 app.processEvents()
 assert w.session is next_session and w.captions[1].source == 'new source'
 next_session.finished.emit()
-app.processEvents()
+wait_until(lambda: w.session is None)
 assert w.session is None and w.library.load(w.current_item)[1][0].source == 'new source'
 w.close()
 """

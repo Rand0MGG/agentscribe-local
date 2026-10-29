@@ -6,11 +6,14 @@ import sys
 import threading
 from pathlib import Path
 
+import pytest
+
 from linguaflow.events import Dispatcher, Owner, Signal, Timer, Worker
 from linguaflow.file_lock import FileLock
 from linguaflow.settings_store import SettingsStore
 
 
+@pytest.mark.p1
 def test_backend_bootstrap_settings_library_and_exit_without_qt(tmp_path):
     program = r'''
 import importlib.abc, json, sys, time
@@ -40,6 +43,7 @@ print('qt-free')
     assert 'qt-free' in result.stdout
 
 
+@pytest.mark.p1
 def test_worker_results_are_ordered_on_owner_and_disposed_callbacks_cancel():
     app = Dispatcher()
     calls = []
@@ -66,6 +70,7 @@ def test_worker_results_are_ordered_on_owner_and_disposed_callbacks_cancel():
     assert len(calls) == 3
 
 
+@pytest.mark.p0
 def test_preferences_migrate_and_merge_without_replacing_old_file(tmp_path):
     old = tmp_path/'prefs.ini'
     old.write_text('[General]\ntarget=简体中文\ntranslate=false\ngeometry=@ByteArray(\\x1\\x2\\0)\npath=C:\\\\recordings\\\\课程\n', encoding='utf-8')
@@ -85,6 +90,7 @@ def test_preferences_migrate_and_merge_without_replacing_old_file(tmp_path):
     assert not SettingsStore(old, 1).contains('target')
 
 
+@pytest.mark.p0
 def test_failed_preference_commit_retains_original_and_pending_changes(tmp_path, monkeypatch):
     settings = SettingsStore(tmp_path/'settings.json', 1)
     settings.setValue('saved', 1)
@@ -99,6 +105,7 @@ def test_failed_preference_commit_retains_original_and_pending_changes(tmp_path,
     assert SettingsStore(settings.path, 1).value('saved') == 2
 
 
+@pytest.mark.p0
 def test_live_legacy_lock_and_concurrent_stale_reclaim(tmp_path):
     import socket
     lock_path = tmp_path/'.recording.lock'
@@ -124,6 +131,7 @@ else: raise RuntimeError('lock timeout')
     assert not lock_path.exists()
 
 
+@pytest.mark.p2
 def test_packaged_source_inventory_excludes_all_qt_imports():
     import ast
 
@@ -145,6 +153,7 @@ def test_packaged_source_inventory_excludes_all_qt_imports():
     assert 'marked' in json.loads((root/'desktop/package.json').read_text())['dependencies']
 
 
+@pytest.mark.p1
 def test_native_cocoa_dispatches_timer_without_qt(tmp_path):
     import pytest
     if sys.platform != 'darwin':
@@ -166,6 +175,7 @@ assert not any(n.startswith('PySide6') for n in sys.modules)
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.p2
 def test_legacy_windows_registry_geometry_codec_preserves_embedded_nuls():
     geometry = bytes.fromhex('01d9d0cb00030000') + bytes(40)
     registry = ('@ByteArray(' + geometry.decode('latin1') + ')').encode('utf-16-le')
@@ -174,6 +184,7 @@ def test_legacy_windows_registry_geometry_codec_preserves_embedded_nuls():
     assert SettingsStore._qt_value('@String(a\0b)') == 'a\0b'
 
 
+@pytest.mark.p1
 def test_qt_free_native_update_probe_uses_real_backend(tmp_path):
     from scripts.update_probe_host import HOST_IMPORTS
     program = 'import sys\n' + HOST_IMPORTS + '''

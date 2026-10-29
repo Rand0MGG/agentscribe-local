@@ -75,9 +75,9 @@
 
 独立基础 Python、兼容环境链、启动观察器和归属校验由共享恢复逻辑维护；原生更新器不保证业务级回滚。安装前备份旧程序，新版登记身份并显示主窗口后才报桌面健康；无法确认自有进程或安全替换时保留备份，不自动覆盖。Windows 安装器只清理由旧清单确认且未变化的失效程序文件。
 
-## 当前状态
+## 发行状态与证据
 
-2026-10-17 已发布 `v0.10.0`，标签固定 `95fa8c3`，Windows/Mac 安装包、清单和摘要均核对。Mac 使用既有更新私钥签署原 DMG，真实 0.9.2→0.10.0 的升级、故障恢复与数据保留通过，经既有 `release-updates` 审批部署 stable/beta 订阅；原始 0.9.2 包通过真实线上地址再验成功。Mac 仍为 ad-hoc、未公证；录音门禁用模拟状态，Windows 原生升级与真实采集尚未同等验收。证据见 [VALIDATION](VALIDATION.md)，剩余范围见 [ROADMAP](ROADMAP.md)。
+已发布版本以 [GitHub Releases](https://github.com/Rand0MGG/agentscribe-local/releases) 为准；源码版本号不代表安装包或订阅已更新。平台验收证据见 [VALIDATION](VALIDATION.md) 及其历史归档，剩余范围见 [ROADMAP](ROADMAP.md)，不要将旧版验收外推到新包。
 
 依据：[GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages)、[Actions 触发限制](https://docs.github.com/en/actions/how-tos/trigger-workflows)、[Sparkle](https://sparkle-project.org/documentation/)、[WinSparkle](https://winsparkle.org/guides/getting-started/)、[Inno Setup](https://jrsoftware.org/ishelp.php)。
 

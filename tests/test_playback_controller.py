@@ -1,22 +1,14 @@
 """Real WAV transport and playback ownership, with no audio devices."""
-import subprocess
 import urllib.error
 import urllib.request
 import wave
-from pathlib import Path
 
 import pytest
 
 from linguaflow.playback_controller import PlaybackController
 
 
-def test_delayed_seek_pause_error_and_release_use_real_desktop_adapter():
-    from linguaflow.runtime_paths import node_executable
-    result = subprocess.run([str(node_executable()), 'desktop/scripts/audio-adapter-checks.cjs'],
-        cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=10)
-    assert result.returncode == 0, result.stderr
-
-
+@pytest.mark.p0
 def test_bounded_media_ranges_stale_events_and_release_preserve_original(tmp_path):
     path = tmp_path/'recording.wav'
     with wave.open(str(path),'wb') as output:

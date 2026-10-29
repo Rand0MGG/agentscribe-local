@@ -52,6 +52,7 @@ def main():
         return response
     translator.request = capture_response
     translated, error = None, None
+    process, reader = translator.process, translator.reader
     started = time.monotonic()
     try:
         context = TranslationContext(tuple(args.before_text))
@@ -71,8 +72,8 @@ def main():
               'background': args.before_text, 'batch_size': len(args.batch_text) or 1,
               'translation': translated, 'seconds': elapsed,
               'error': error, 'responses': responses,
-              'helper_exit_code': translator.process.returncode,
-              'log_reader_alive': translator.reader.is_alive(),
+              'helper_exit_code': process.returncode,
+              'log_reader_alive': reader.is_alive(),
               'binary_sha256': digest(binary), 'model_sha256': digest(weights),
               'audio_access_attempted': (output/'blocked-audio.log').exists()}
     (output/'summary.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')

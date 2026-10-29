@@ -27,6 +27,7 @@ class StablePrefix:
     def __init__(self, rounds=3, horizon=4., holdback=4):
         self.rounds, self.horizon, self.holdback = rounds, horizon, holdback
         self.history = []
+        self.diagnostic = {}
 
     def observe(self, text, audio_end):
         value = (audio_end, text)
@@ -43,6 +44,8 @@ class StablePrefix:
         self.history = self.history[-64:]
         if (len(self.history) < self.rounds
                 or audio_end - self.history[0][0] < self.horizon):
+            self.diagnostic = dict(reason='insufficient_observations' if len(self.history) < self.rounds
+                                   else 'insufficient_audio_progress')
             return 0
         current = units(text)
         count = len(current)
@@ -53,6 +56,8 @@ class StablePrefix:
                 if current[index].group() != prior[index].group():
                     count = index
                     break
+        self.diagnostic = dict(reason='agreement_prefix' if count > self.holdback else
+                               'tail_holdback' if count else 'prefix_disagreement', common_units=count)
         count = max(0, count - self.holdback)
         return current[count - 1].end() if count else 0
 
