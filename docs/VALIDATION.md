@@ -4,6 +4,12 @@
 
 ## 最近可核对的证据
 
+2026-10-29 **CI Python 路径与 Electron 前置准备修复**（Windows 本机，`main` 基线 `5f376b0`，未提交/推送）：
+
+- 普通无音频、课程 SDK、原生文档渲染任务在测试前准备 Electron，构建显式使用 `setup-python` 输出的解释器。没有改依赖版本、产品代码、测试断言或集成跳过门禁。
+- 在不含 `.venv` 的 `main` 源码 `5f376b0` 隔离副本中复现两项原始失败：默认构建找不到 `.venv/Scripts/python.exe`（ENOENT）；未准备 Electron 时课程图片预览失败。指定已准备的 Python 后 TypeScript/Vite 构建通过；准备 Electron 后原 `test_new_format_import_filter_and_local_preview_without_cloud` **1 passed / 4.62s**，零原生音频导入尝试。Windows 11 x64、Python 3.12.8、PySide6 6.11.2、Node 24.13.0、Electron 45.0.0。
+- 两个分支版本的 YAML、解释器输出引用及前置顺序检查、Ruff 和差异检查通过。`npm ci` 成功；Electron 首次联网下载失败，随后用已有同版本归档缓存经原安装器校验解包成功。最初受限临时目录导致的无效测试日志保留，课程前后对照使用正常 Windows 临时目录。修复现统一保留在原项目的 `main`，测试源码副本及其压缩包已按用户要求删除，日志保留于 `.work/reports/ci-python-electron-20261029/`。没有重跑远程 CI、完整测试矩阵或 Mac 原生检查，不代表其他失败已解决。
+
 2026-10-29 **同录音、同设置的去 Qt 前后对照**（本地 `mac`，未提交、未发行）：
 
 - 基线为去 Qt 前的 `0def977`，从 Git 归档到隔离目录，不切换工作分支或覆盖当前改动。两边读取同一份 49 秒 WAV，输入文件、解码 PCM、完整设置摘要均相同；保持原保存设置：Qwen3-MLX 1.7B 4-bit、中文、48k 单声道、30 秒窗口、1 秒更新、关闭翻译，以及原增益/限幅配置。共执行旧版两遍、新版一遍真实 Apple GPU/MLX 文件推理，没有访问音频设备或修改原录音。

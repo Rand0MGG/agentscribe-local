@@ -122,6 +122,8 @@ UI 改动须按 [Demo 一致性契约](UI_DESIGN.md#demo-一致性与优先复�
 - 动画中途反向须在渲染帧内同时读取当前尺寸并激活反向动作，保留真实中间帧与最终尺寸断言；历史采样不能保证下一次跨进程读取仍处于动画中途。
 - 跨进程中文断言同时指定子进程输出和父进程解码的 UTF-8，不能依赖机器区域设置。通知等待实际收起，字幕定位等待目标卡片进入视口；窗口尺寸稳定不能代替业务完成。
 - `.github/workflows/checks.yml` 是 CI 矩阵的执行权威：两端 Python 3.11–3.13 无音频回归，Python 3.12 另做课程 SDK 和原生文档渲染，Ruff 独立执行。专用集成设置 `AGENTSCRIBE_REQUIRE_INTEGRATIONS=1`，选中用例有跳过即失败。
+- 普通无音频、课程 SDK 和原生文档渲染任务均在测试前安装并构建 Electron；构建通过 `AGENTSCRIBE_DESKTOP_PYTHON` 使用 `setup-python` 输出的完整解释器路径，不假定这些任务存在 `.venv`。独立 Electron 任务仍使用其专门创建的 `.venv`。
+- 修改上述准备步骤时，在不含 `.venv` 的隔离源码目录验证前端构建，并通过无音频入口运行 `tests/test_knowledge_ui.py::test_new_format_import_filter_and_local_preview_without_cloud`，检查真实本地图片预览；YAML 检查不能代替运行验证。
 - 普通回归列出跳过原因：平台不适用、缺组件、缺权限或尚未部署分别说明。模拟链接不能证明真实映射保护；另一平台模拟不能替代实机。
 - Cocoa 原生预览须有窗口服务，受限环境用 offscreen。预览入口 `scripts/preview_workspace.py --capture --output .work/browser/ui-design-<平台>` 使用示例库/设置，不能代替原生框架、权限、真实音频或 GPU 验收。
 
