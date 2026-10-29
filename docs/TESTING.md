@@ -285,3 +285,5 @@ UI 测试统一从 `ui_support` 导入：`run_ui` 创建无设备发现的正式
 
 
 `npm test` 还运行 `helper-lifetime-checks.cjs`：使用真实 Electron 辅助进程，检查大结果完整写入、输出流提前关闭与父进程先退出。辅助进程不得因 EPIPE 弹出错误框或遗留；错误须交回 owner。这个测试不访问设备，不替代安装态更新验证。
+
+`tests/test_desktop_startup.py` 另走真实 Python 启动器 → Electron → renderer → Python 后台，检查实际就绪后窗口仍存活，并在终止自建测试启动器后等待其窗口及后台进程退出。错误连接令牌或只有存活连接而没有前端回执不能确认健康。测试使用独立录音库、偏好和 profile，显式无音频；Windows 虚拟环境的重定向进程与实际 Python 连接所有者分别识别，不放宽就绪回执的 Electron PID 校验。直接打开 Electron 的 `npm test` 不能替代这个启动器检查。

@@ -28,17 +28,22 @@
 
 ### Windows 源码安装
 
-下载 [Windows 分支](https://github.com/Rand0MGG/agentscribe-local/archive/refs/heads/windows.zip)，安装 Python 3.12，在项目目录执行：
+下载 [Windows 分支](https://github.com/Rand0MGG/agentscribe-local/archive/refs/heads/windows.zip)，安装 Python 3.12 和 Node.js（当前 CI 使用 24），在项目目录执行：
 
 ```powershell
 py -3.12 -m linguaflow.hardware
 py -3.12 -m venv .venv
 .venv\Scripts\python.exe -m pip install -e ".[dev]"
 .venv\Scripts\python.exe scripts\install_runtime.py
+Push-Location desktop
+npm ci
+npx install-electron --no
+npm run build
+Pop-Location
 .venv\Scripts\python.exe -m linguaflow
 ```
 
-本指南使用 Python 3.12，支持范围以 [pyproject.toml](../pyproject.toml) 为准。完整推理环境要求 Windows x64 和兼容的 NVIDIA GPU/驱动；最低计算能力与驱动要求由 [硬件检查](../linguaflow/hardware.py) 维护，以上首条命令会给出检查结果。检查失败先解决提示，不继续安装或回退 CPU。之后可用 `run-windows.cmd`；无需 WSL 或手动启动服务。
+本指南使用 Python 3.12，支持范围以 [pyproject.toml](../pyproject.toml) 为准。完整推理环境要求 Windows x64 和兼容的 NVIDIA GPU/驱动；最低计算能力与驱动要求由 [硬件检查](../linguaflow/hardware.py) 维护，以上首条命令会给出检查结果。检查失败先解决提示，不继续安装或回退 CPU。之后可用 `run-windows.cmd`；无需 WSL 或手动启动服务。拉取涉及前端的源码更新后，重新执行上面的 `desktop` 准备与构建步骤，避免继续加载旧界面。
 
 ### macOS 源码安装
 
@@ -50,10 +55,11 @@ python3.12 -m venv .venv
 .venv/bin/python -m pip install -e '.[dev]'
 .venv/bin/python scripts/install_runtime.py
 .venv/bin/python scripts/install_mlx.py
+(cd desktop && npm ci && npx install-electron --no && npm run build)
 .venv/bin/python -m linguaflow
 ```
 
-之后用 `run-macos.command`。源码桌面使用 `.venv`；WLK 和 MLX 由安装器独立管理，应用通过 `runtime_paths.py` 定位，仍兼容已有 `.venv-wlk` / `.venv-mlx`。不需重复安装已兼容组件，也不要手动搬动环境目录。
+前端准备需 Node.js（当前 CI 使用 24）；涉及前端的源码更新后也须重新准备并构建。之后用 `run-macos.command`。源码桌面使用 `.venv`；WLK 和 MLX 由安装器独立管理，应用通过 `runtime_paths.py` 定位，仍兼容已有 `.venv-wlk` / `.venv-mlx`。不需重复安装已兼容组件，也不要手动搬动环境目录。
 
 ## 模型与首次录音
 

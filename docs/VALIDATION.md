@@ -4,6 +4,14 @@
 
 ## 最近可核对的证据
 
+2026-10-29 **Windows 源码启动即退出修复**（`main` 基线 `cee7b86`，本地未提交/推送）：
+
+- 用户三次启动日志只有开始和结束，没有后台或窗口就绪。正常 Windows 桌面下独立无音频复现启动器立即以 0 退出；原生 Electron 管道探针确认：父进程仍持有输入管道时，GUI 子进程的 `process.stdin` 已触发 EOF，普通和 `CREATE_NO_WINDOW` 两种启动方式均如此，误触发了启动器失联关闭。
+- 改为本机随机端口、随机令牌校验的存活连接，保留原就绪令牌/PID 校验、窗口关闭保护及后台释放。未增加依赖或更改模型。原项目依赖按锁文件同步并重新构建，未再复制源码；Electron 复用已有同版本归档缓存。
+- 定向无音频回归 **14 passed / 14 skipped / 3.59s**，包含真实启动器/前端/后台就绪、仅终止自建启动器后的所属进程退出和错误令牌拒绝；跳过为 13 项缺少原生恢复编译器、1 项 Cocoa 专项。首次定向运行的替身测试因 Windows venv 重定向器导致 PID 不同而失败，改用基础 Python 模拟直接原生子进程；实际 venv 启动链另由真实桌面回归覆盖，未放宽产品 PID 校验。旧失败日志保留。
+- 实际 `run-windows.cmd` 在独立库/偏好/profile、音频导入阻断下保持窗口打开超过 12 秒，关闭自有测试窗口后完整链退出码 **0**；原生音频导入尝试为零。TypeScript/Vite、Ruff、JavaScript 语法及差异检查通过。Windows 11 x64 / Python 3.12.8 / Node 24.13.0 / Electron 45.0.0；证据 `.work/reports/windows-launch-20261029/`。未验证 Mac 原生、真实录音/回听、签名安装包或远程 CI。
+- 后续完整无音频回归 **1215 passed / 2 failed / 28 skipped / 363.26s**，零原生音频导入尝试。失败为旧 Qt 的 `test_missing_agent_sdk_corrupt_course_and_worker_exit_leave_local_recording_usable`（关闭后仅一次事件处理即断言清理线程为空）和 `test_finish_does_not_dispose_signal_sender_while_background_save_is_pending`（手动连接旧完成信号后，迟到信号影响替换会话）；两项单独复跑仍失败，对应 Qt 实现和用例本轮未改，保留 `full.*`、`legacy-recheck.*`，仍待独立处理，不宣称整套回归通过。Electron **11 组全链路、27 组交互**及无设备音频适配器通过，见 `chain.log`、`interaction.log`；这些不替代安装态升级或真实录音验收。
+
 2026-10-29 **CI Python 路径与 Electron 前置准备修复**（Windows 本机，`main` 基线 `5f376b0`，未提交/推送）：
 
 - 普通无音频、课程 SDK、原生文档渲染任务在测试前准备 Electron，构建显式使用 `setup-python` 输出的解释器。没有改依赖版本、产品代码、测试断言或集成跳过门禁。

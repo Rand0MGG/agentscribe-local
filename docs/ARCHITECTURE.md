@@ -6,6 +6,8 @@
 
 `desktop/` 是唯一正式桌面入口。旧 Qt 界面源码仅保留为开发对照，通过 `legacy-qt` 可选依赖运行旧回归，不进入正式安装包。Electron 主进程拥有窗口、原生文件选择、剪贴板和本地 Python 子进程；沙箱 renderer 通过受限 preload 请求业务，不获得 Node、任意路径打开或进程执行能力。主窗口、非模态课程窗口及悬浮字幕各有 IPC 白名单；请求同时校验本应用窗口、顶层 frame 与本地页面 URL。
 
+`desktop_startup.py` 与 `desktop/electron/launcher-lifetime.cjs` 用仅监听 `127.0.0.1` 随机端口、校验本次随机令牌的连接绑定启动器存活状态，不依赖 Windows GUI 进程不可用的标准输入管道。建立连接不等于启动成功，仍须收到令牌及 Electron PID 均匹配的真实前端就绪回执。启动器退出或崩溃导致连接断开时，Electron 请求原有窗口关闭流程，保留编辑确认、录音保存与后台释放门禁。
+
 `linguaflow/desktop_service.py` 使用标准库 `events.Dispatcher`，复用 Session、RecordingSaver、LibraryReader、Preparation、BackgroundCheck、KnowledgeClient 和 PlaybackController；正式后台及课件子进程不导入 Qt。后台线程结果按顺序回到 owner 线程，计时器取消与对象释放使旧回调失效，退出等待真实线程/进程结束。UTF-8 JSONL v1 使用请求编号与有界消息；超时只报告等待失败，不假定后台操作已取消。stdout 专用于协议，诊断日志保持原隐私边界。
 
 Qt `Window` 和 Electron `DesktopService` 组合相同的后台流程；后者另负责 JSONL 请求和事件适配。共享模块不导入 QWidget、Qt 控件或 React：

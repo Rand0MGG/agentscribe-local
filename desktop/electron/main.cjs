@@ -6,6 +6,7 @@ const { AudioHost } = require('./audio-host.cjs');
 const { Service } = require('./service.cjs');
 const { isSplitLayout } = require('./window-layout.cjs');
 const { PlatformHelpers } = require('./platform-helpers.cjs');
+const { watchLauncher } = require('./launcher-lifetime.cjs');
 const platformHelpers = new PlatformHelpers();
 
 let restartService, audioHost;
@@ -425,9 +426,8 @@ else {
   app.on('window-all-closed', () => { if (quitting || !service || service.closed) quitAfterOwnedProcesses(); });
 }
 
-// A native launcher owns this liveness pipe. Its death must not leave a second
+// A native launcher owns this connection. Its death must not leave a second
 // desktop holding an installation that recovery is trying to restore.
-if (process.env.AGENTSCRIBE_DESKTOP_READY) {
-  process.stdin.once('end', () => { if (window && !window.isDestroyed()) window.close(); else app.quit(); });
-  process.stdin.resume();
-}
+const launcherChannel = watchLauncher(process.env.AGENTSCRIBE_DESKTOP_LIFETIME,
+  () => { if (window && !window.isDestroyed()) window.close(); else app.quit(); });
+app.once('quit', () => launcherChannel?.destroy());
