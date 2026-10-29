@@ -1,5 +1,4 @@
 """Model preparation lives outside the listening flow."""
-import json
 import time
 
 from PySide6.QtCore import Qt, QUrl, Signal, Slot
@@ -25,7 +24,8 @@ from PySide6.QtWidgets import (
 from . import __version__
 from . import diagnostic_log as diag
 from .model_options import asr_backends, asr_devices, qwen_models, translation_devices
-from .preparation_task import Preparation, preparation_error_message
+from .preparation_task import preparation_error_message
+from .preparation_workflow import PreparationWorkflow, preparation_command
 from .qt_controls import text_label
 from .runtime_paths import installation_command, packaged
 from .translation_config import CONTEXT_COUNTS
@@ -35,6 +35,9 @@ from .ui_components import set_download_progress
 
 
 class ModelManager(QDialog):
+    worker = property(lambda self: self.preparation_workflow.worker,
+                      lambda self, value: setattr(self.preparation_workflow, 'worker', value))
+
     selection_changed = Signal(dict)
     diagnostic = Signal(str)
     session_changed = Signal(bool)
@@ -46,6 +49,10 @@ class ModelManager(QDialog):
 
     def __init__(self, parent=None, *, compute_device=lambda: "cpu", start_check=None):
         super().__init__(parent)
+        self.preparation_workflow = PreparationWorkflow(self)
+        self.preparation_workflow.result.connect(self.on_preparation_result)
+        self.preparation_workflow.download.connect(self.show_download)
+        self.preparation_workflow.finished.connect(self.prepared)
         self.compute_device = compute_device
         self.setWindowTitle("模型管理 · 准备一次，随后直接聆听")
         self.resize(660, 640)
@@ -385,7 +392,8 @@ class ModelManager(QDialog):
     def start_block_reason(self):
         if self.inventory_busy:
             return '模型管理', '正在删除模型，请完成后再开始聆听。'
-        if self.worker is not None and self.worker.affects_runtime:
+        from .recording_workflow import preparation_blocks_recording
+        if preparation_blocks_recording(self.worker):
             return '模型准备中', '请等待模型准备完成，或在设置中取消准备。'
         return None
 
@@ -506,17 +514,11 @@ class ModelManager(QDialog):
 
     def prepare(self, action, *, message='正在准备，可返回录音或修改下次设置；已有文件会复用。',
                 affects_runtime=False, beta_only=False, location="models"):
-        if self.update_fenced:
-            self.preparation_message.emit('正在准备重启更新，完成后可继续准备模型。')
-            return
-        if self.inventory_busy:
-            self.preparation_status("正在删除模型，请稍后再准备。")
-            return
-        if self.worker is not None:
-            self.preparation_status('已有准备任务正在运行，可查看进度或取消后再准备。')
-            return
-        if affects_runtime and self.session_active:
-            self.preparation_status('运行环境修复请在本次录音结束后进行；设置仍可修改，下次生效。')
+        try:
+            self.preparation_workflow.check_start(affects_runtime=affects_runtime, recording=self.session_active,
+                                                  fenced=self.update_fenced, inventory=self.inventory_busy)
+        except ValueError as exc:
+            self.preparation_status(str(exc))
             return
         self.retry_request = (action, dict(message=message, affects_runtime=affects_runtime,
                                            beta_only=beta_only, location=location))
@@ -542,12 +544,7 @@ class ModelManager(QDialog):
         self.status.setText(message)
         self.preparation_started = time.monotonic()
         self.preparation_result = None
-        self.worker = Preparation(action, self, affects_runtime=affects_runtime, beta_only=beta_only)
-        self.worker.result.connect(self.on_preparation_result)
-        # Raw download logs stay in the worker tail, never resize the UI.
-        self.worker.download.connect(self.show_download)
-        self.worker.finished.connect(self.prepared)
-        self.worker.start()
+        self.preparation_workflow.start(action, affects_runtime=affects_runtime, beta_only=beta_only)
         self.preparation_changed.emit(True)
         self.preparation_message.emit(message)
 
@@ -607,12 +604,10 @@ class ModelManager(QDialog):
                      message='正在准备课件渲染组件；首次安装需要联网，可以取消。',
                      affects_runtime=False, beta_only=True, location="runtime")
 
-    def prepared(self):
+    def prepared(self, task):
         failed = bool(self.preparation_result and self.preparation_result.startswith('准备未完成：'))
-        cancelled = self.worker.cancelled
-        may_retry = not (self.worker.beta_only and self.install_documents_button.isHidden())
-        self.worker.deleteLater()
-        self.worker = None
+        cancelled = task.cancelled
+        may_retry = not (task.beta_only and self.install_documents_button.isHidden())
         self.retry_button.setText('继续准备' if cancelled else '重试')
         self.retry_button.setVisible(may_retry and (failed or cancelled))
         if not may_retry or not (failed or cancelled):
@@ -650,7 +645,7 @@ class ModelManager(QDialog):
 
     def cancel_preparation(self):
         if self.worker and not self.worker.cancelled:
-            self.worker.cancel()
+            self.preparation_workflow.cancel()
             self.cancel_button.setEnabled(False)
             self.download_title.setText('正在取消准备')
             self.download_stats.setText('等待后台任务结束；已完成文件保留')
@@ -674,16 +669,16 @@ class ModelManager(QDialog):
                     translation_device=self.translation_device.currentData())
 
     def install_runtime(self):
-        selection = json.dumps(self.preparation_selection(), ensure_ascii=False)
-        command = installation_command('linguaflow.runtime_install', 'all', '--maintain', '--selection', selection)
+        command = preparation_command(self.preparation_selection(), kind='runtime')
         self.prepare(lambda: self.run_preparation(command), affects_runtime=True, location="runtime",
                      message="正在检查 / 修复运行环境；已有可用组件会复用，可随时取消。")
 
     def prepare_selected(self, selection, *, only=None):
-        arguments = ['--selection', json.dumps(selection, ensure_ascii=False)]
-        if only:
-            arguments += ['--only', only]
-        command = installation_command('linguaflow.recommended_prepare', *arguments)
+        try:
+            command = preparation_command(selection, only=only)
+        except ValueError as exc:
+            self.preparation_status(str(exc))
+            return
         self.prepare(lambda: self.run_preparation(command), affects_runtime=True,
                      message='检查环境并准备所选模型；可离开此页，取消保留已下载缓存。')
 

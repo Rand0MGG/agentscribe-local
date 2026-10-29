@@ -25,10 +25,11 @@ def desktop(tmp_path):
     service.model_refresh.stop()
     service.cancel_model_check()
     deadline = time.monotonic() + 5
-    while service.saver.busy or service.exporter.busy or service.migration.busy or service.tasks or service.reader.busy or service.asset_check:
+    while service.saver.busy or service.exporter.busy or service.migration.busy or service.tasks or service.reader.busy or service.asset_check or service.shutdown.release_job:
         app.processEvents()
         assert time.monotonic() < deadline
         time.sleep(.005)
+    service.shutdown.timer.stop()
     service.clock.stop()
     service.autosave.stop()
     if service.recording_lock:
@@ -39,7 +40,7 @@ def desktop(tmp_path):
 
 def drain(service):
     deadline = time.monotonic() + 5
-    while service.saver.busy or service.exporter.busy or service.migration.busy or service.tasks or service.reader.busy:
+    while service.saver.busy or service.exporter.busy or service.migration.busy or service.tasks or service.reader.busy or service.shutdown.release_job:
         QCoreApplication.instance().processEvents()
         assert time.monotonic() < deadline
         time.sleep(.005)
@@ -590,6 +591,7 @@ def test_explicit_export_queue_keeps_all_paths_and_failures(desktop, tmp_path, m
 def test_model_selection_schedules_refresh_and_beta_cancels(desktop):
     class Task:
         beta_only = True
+        affects_runtime = False
         cancelled = False
 
         def cancel(self):

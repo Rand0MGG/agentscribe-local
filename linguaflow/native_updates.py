@@ -147,15 +147,23 @@ class NativeUpdater(QObject):
         self.event.emit({'stage': 'waiting', 'text': '录音与文件保存完成后可重启更新。'})
 
     def confirm_install(self):
-        if self.shutdown_job is not None:
-            return
-        self.cancelled.clear()
+        if (self.shutdown_job is not None or self.cancelled.is_set()
+                or (self.last_event or {}).get('stage') not in ('ready', 'waiting')):
+            return False
         self.pending = True
         self.request_install.emit()
+        return True
+
+    def download(self):
+        if (not self.adapter or self.cancelled.is_set()
+                or (self.last_event or {}).get('stage') != 'available'):
+            return False
+        self.adapter.download()
+        return True
 
     def install(self):
         """Called only after shared shutdown preparation has completed."""
-        if self.adapter and self.pending:
+        if self.adapter and self.pending and not self.cancelled.is_set():
             self.ready.set()
             self.installing = True
             self.adapter.install()
@@ -189,6 +197,9 @@ class NativeUpdater(QObject):
         self.shutdown_complete.emit(error)
 
     def cancel(self):
+        if self.installing:
+            self.event.emit({'stage': 'busy', 'text': '已经开始安装更新，请等待重启完成。'})
+            return False
         self.cancelled.set()
         if self.recovery:
             self.recovery.cancel()

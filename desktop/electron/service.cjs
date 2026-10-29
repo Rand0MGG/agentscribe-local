@@ -15,8 +15,9 @@ class Service extends EventEmitter {
     this.closed = false;
     this.ready = false;
     this.stderr = '';
-    this.child = spawn(python, ['-u', '-m', 'linguaflow.desktop_service', ...args], {
-      ...options, shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
+    const { nativeHost = false, ...spawnOptions } = options;
+    this.child = spawn(python, [...(nativeHost ? ['--python'] : []), '-u', '-m', 'linguaflow.desktop_service', ...args], {
+      ...spawnOptions, shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, ...options.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
     });
     this.finished = new Promise(resolve => this.child.once('close', (code, signal) => resolve({ code, signal })));

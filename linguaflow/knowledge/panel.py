@@ -229,6 +229,8 @@ class KnowledgePanel(QDialog):
         return True
 
     def receive(self, value):
+        if value.get('operation'):
+            self.operation = value['operation']
         kind = value['type']
         if kind == 'view':
             self.render(value)

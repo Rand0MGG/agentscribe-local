@@ -259,3 +259,15 @@ UI 测试统一从 `ui_support` 导入：`run_ui` 创建无设备发现的正式
 范围包括录音工作区、六个设置页、模型弹窗、课程三个页签和悬浮字幕，深浅主题 × 1280×797 / 900×650 / 640×480；大窗口高度根据本轮 macOS 原生内容区可用高度选取。清单记录实际尺寸与小岛矩形，不把系统约束后的截图冒充请求尺寸。Electron 另测正常/反向小岛和音量动画、开关中间帧、减少动态效果、弹窗/切页时长和字幕追加/修订。几何与动画使用正式组件，不请求真实采集。
 
 两份清单完成后执行 `.venv/bin/python scripts/compare_desktop_ui.py`，生成 `.work/browser/ui-parity/index.html`，可按页面双栏/叠加比较，并查看动画轨迹与小岛几何差值。图片和显示数据留在 `.work/`，不写入个人录音或源码图例。原生业务交互仍另跑 `npm --prefix desktop test`；截图夹具不替代服务端回执、平台设备与模型验收。
+
+### 双前端共享流程回归
+
+`python scripts/test_no_audio.py -q tests/test_shared_desktop_workflows.py tests/test_desktop_startup.py tests/test_knowledge_client.py tests/test_update_recovery.py` 覆盖自动连接许可、阻塞导入的实际进程树退出、录音结束持久化分类、定位身份/代次、文档准备并行、更新各门禁及取消、启动健康和存活桌面下的恢复保护。`cd desktop && npm run test:migration` 使用真实 Electron/IPC、隔离库与模拟媒体，检查搜索只定位不播放、忙碌授权按钮和 Mac 更新菜单；不授权真实云端访问。
+
+完整无音频套件仍通过默认安全入口执行。原生 GUI 探针需要登录的图形会话；全量/模拟回归与安装版原生更新器初始化不等于真实下载、签名校验、安装或 Windows 验收。
+
+### 双前端后台契约回归
+
+`tests/test_frontend_backend_contracts.py` 对 Qt 和 Electron 适配器执行同一故障契约：构造失败必须持久化为未完成，写盘失败必须保留锁与失败终态、重试成功才能释放，课程 status/idle/disconnected 必须即时影响切换门禁。单独子进程验证共用后台可在 QCoreApplication 下导入及创建，不依赖 QtWidgets 或前端模块。
+
+使用 `.venv/bin/python scripts/test_no_audio.py -q tests/test_frontend_backend_contracts.py tests/test_shared_desktop_workflows.py`；涉及共享保存、迁移、准备或退出时还须运行全量无音频回归及 Electron `test:chain`、`test:interaction`、`test:switch`。异步退出测试等待资源实际终态，不以单次处理事件代替退出完成；不会放宽文件状态、锁或失败保存断言。

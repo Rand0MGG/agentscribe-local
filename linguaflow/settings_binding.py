@@ -1,6 +1,4 @@
 """Adapt explicitly supplied controls to preferences and an immutable session snapshot."""
-from .audio_processing.config import automatic_audio_config
-from .core import Settings
 from .preferences import PREFERENCES
 from .qt_controls import data_index
 from .translation_config import CONTEXT_COUNTS
@@ -41,18 +39,5 @@ class SettingsBinding:
         return values
 
     def session_settings(self, device):
-        values = self.snapshot()
-        if values['translation_engine'] == 'llama':
-            from .llama_assets import normalize_model_reference
-            values['llama_model'] = normalize_model_reference(values['llama_model'])
-        source, source_nllb = self.controls['source'].currentData()
-        return Settings(
-            device_id=device[0], loopback=device[1], asr_model=values['asr'].strip(),
-            asr_device=self.controls['compute'].currentData(),
-            translation_model=values['translation'].strip(), source=source, source_nllb=source_nllb,
-            target=self.controls['target'].currentData(), input_sample_rate=48000,
-            audio_processing=automatic_audio_config(),
-            **{key: values[key] for key in ('translate', 'backend', 'translation_device',
-               'translation_engine', 'llama_model',
-               'qwen_model', 'update_seconds', 'draft_seconds', 'endpoint_seconds',
-               'translation_before', 'translation_after', 'translation_initial_before')})
+        from .session_settings import session_settings
+        return session_settings(self.snapshot(), device)

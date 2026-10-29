@@ -202,6 +202,23 @@ library.save(item, [
     await overlay.mouse.move(grip.x+10,grip.y+10); await overlay.mouse.down();
     await overlay.mouse.move(grip.x+50,grip.y+30,{steps:4}); await overlay.mouse.up();
     await overlay.waitForFunction(()=>innerWidth===640&&innerHeight===280);
+    // Synthetic Playwright moves do not relocate the OS pointer. After a
+    // native resize macOS can send its real position back into this window,
+    // legitimately keeping controls visible. Isolate this owned test window
+    // from that pointer before checking the leave behaviour.
+    await desktop.evaluate(({ BrowserWindow, screen }) => {
+      const target = BrowserWindow.getAllWindows().find(window => window.webContents.getURL().endsWith('#overlay'));
+      const bounds = target.getBounds(), area = screen.getDisplayMatching(bounds).workArea;
+      const cursor = screen.getCursorScreenPoint();
+      const positions = [[area.x, area.y], [area.x + area.width - bounds.width, area.y],
+        [area.x, area.y + area.height - bounds.height],
+        [area.x + area.width - bounds.width, area.y + area.height - bounds.height]];
+      const position = positions.find(([x, y]) => cursor.x < x - 40 || cursor.x > x + bounds.width + 40 ||
+        cursor.y < y - 40 || cursor.y > y + bounds.height + 40);
+      if (!position) throw new Error('No isolated position for the overlay pointer test');
+      target.setPosition(...position);
+    });
+    await overlay.mouse.move(40,30);
     await overlay.mouse.move(-20,-20);
     await overlay.getByRole('button',{name:'关闭悬浮字幕',exact:true}).waitFor({state:'hidden'});
     await overlay.mouse.move(40,30);

@@ -336,7 +336,7 @@ from linguaflow.inference_startup import start_problem
 # Model validation belongs to the background session, after capture starts.
 assert start_problem(w.settings_binding.session_settings(('fixture',True)))[0] == '模型为空'
 w.asr.setCurrentText('small')
-from linguaflow.management import Preparation
+from linguaflow.preparation_task import Preparation
 w.model_manager.worker = Preparation(lambda: 'ready', w.model_manager)
 w.start(models_checked=True)
 assert w.notifications.notices['session'].text == '模型准备中 · 请等待模型准备完成，或在设置中取消准备。'

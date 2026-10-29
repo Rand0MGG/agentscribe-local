@@ -4,7 +4,7 @@ import { bridge, request, type Bootstrap } from './types';
 
 type Term = { canonical: string; aliases: string[]; aliasesText?: string; evidence_ids: string[]; approved: boolean; origin: string };
 const courseDrafts = new Map<string, Term[]>();
-export function Knowledge({ onClose, active, onSeek }: { onClose: () => void; active: boolean; onSeek: (seconds: number) => void }) {
+export function Knowledge({ onClose, active, onSeek }: { onClose: () => void; active: boolean; onSeek: (seconds: number, identifier: string) => void }) {
   const [view, setView] = useState<any>({}), [message, setMessage] = useState('正在打开课程…'), [taskBusy, setBusy] = useState(false), [connected, setConnected] = useState(false);
   const busy = taskBusy || !connected;
   const [tab, setTab] = useState('课件'), [page, setPage] = useState(''), [question, setQuestion] = useState('');
@@ -108,7 +108,7 @@ export function Knowledge({ onClose, active, onSeek }: { onClose: () => void; ac
     return <div className="reference-list">{rows.map((ref: any, index: number) => {
       const source = sources?.[ref.id];
       return <Button key={`${ref.id}-${index}`} variant="quiet" disabled={!source || active && source.kind === 'caption'} onClick={() => {
-        if (source.kind === 'caption') onSeek(source.start || 0);
+        if (source.kind === 'caption') onSeek(source.start || 0, view.manifest?.session_id);
         else { setPage(ref.id.replace(/^block:/, '').replace(/:visual$/, '')); setTab('课件'); }
       }}>{source?.title || ref.id}{source?.page ? ` · 第 ${source.page} 页` : ''}</Button>;
     })}</div>;
@@ -126,7 +126,7 @@ export function Knowledge({ onClose, active, onSeek }: { onClose: () => void; ac
       <div className="material-reading" ref={reading}>{image && <img className="material-image" src={image} alt={`课件原页 ${block?.page || ''}`} />}
       {visual && <><h3>页面视觉解读（模型生成，需核对）</h3><div className="document-text">{visual.text}</div>{visual.preview_truncated && <p className="muted">文字预览；完整解读用于检索和笔记。</p>}</>}
       {block && <h3>原生文字</h3>}<div className="document-text">{block?.text || '先导入本课程课件。'}</div></div>
-      <label className="knowledge-permission"><input type="checkbox" aria-label="允许云端读取课件图像" disabled={busy} checked={!!view.course?.material_images_cloud} onChange={event => command('permission', { materials: event.target.checked, notes: !!view.manifest?.notes_cloud })} />允许将本课程的页面图像和文字发送给 DeepSeek，完整阅读课件</label>
+      <label className="knowledge-permission"><input type="checkbox" aria-label="允许云端读取课件图像" disabled={!connected || !view.course} checked={!!view.course?.material_images_cloud} onChange={event => command('permission', { materials: event.target.checked, notes: !!view.manifest?.notes_cloud })} />允许将本课程的页面图像和文字发送给 DeepSeek，完整阅读课件</label>
       <Button disabled={active || busy || !view.course?.material_images_cloud} onClick={() => command('extract')}>完整阅读并提取术语</Button>
     </>}
     {tab === '识别术语' && <><p>完整阅读会逐页查看课件，包括图表、公式和无文字页。模型解读仍需核对；候选术语勾选并保存后才用于 Qwen。</p>
@@ -150,7 +150,7 @@ export function Knowledge({ onClose, active, onSeek }: { onClose: () => void; ac
       <p>已审核 {view.manifest?.asr_context?.terms?.length || 0} 个术语/别名，用于下一次 Qwen 录音。录音开始后固定，不保证识别准确率提升。</p>
     </>}
     {tab === '课堂笔记' && <>{view.automatic_paused && <p className="error">自动笔记已暂停，请检查上方提示，处理后点击更新笔记重试。</p>}
-      <label className="knowledge-permission"><input type="checkbox" aria-label="允许云端处理已保存文字" disabled={busy} checked={!!view.manifest?.notes_cloud} onChange={event => command('permission', { materials: !!view.course?.material_images_cloud, notes: event.target.checked })} />允许 DeepSeek 处理本段录音的文字，生成笔记与回答</label>
+      <label className="knowledge-permission"><input type="checkbox" aria-label="允许云端处理已保存文字" disabled={!connected} checked={!!view.manifest?.notes_cloud} onChange={event => command('permission', { materials: !!view.course?.material_images_cloud, notes: event.target.checked })} />允许 DeepSeek 处理本段录音的文字，生成笔记与回答</label>
       <p>发送已保存定稿、相关课件和笔记文字；允许课件页面上传时，可重新查看相关页图像。不上传录音。关闭许可后停止后续请求；已发送内容无法撤回。</p>
       <div className="knowledge-row"><span>课后整理范围</span><Choice label="课后整理范围" value={section || '__all'} options={[{ value: '__all', label: '全课（过长时请选章节）' }, ...[...new Set<string>((view.notes || []).map((note: any) => note.section).filter(Boolean))].map(value => ({ value, label: value }))]} onChange={value => setSection(value === '__all' ? '' : value)} /></div>
       {!!view.notes?.length && <div className="note-list" role="listbox" aria-label="课堂笔记列表">{view.notes.map((row: any) => <button key={row.id} role="option" aria-selected={row.id === note?.id} className={row.id === note?.id ? 'selected' : ''} onClick={() => { setSelectedNote(row.id); setAnswer(null); }}>{row.section} · {{valid:'已核对',pending:'待核对新讲述',stale:'来源已变化'}[row.status as string]}{row.user_locked ? ' · 个人编辑' : ''}<br />{row.text.slice(0,75)}</button>)}</div>}
@@ -195,5 +195,5 @@ export function KnowledgeWindow() {
     });
   }, []);
   return <>{error && <p className="error" role="alert">{error}</p>}<Knowledge active={active} onClose={() => request('knowledge.dismiss').catch(error => setError(error.message))}
-    onSeek={seconds => request('knowledge.locate', { seconds }).catch(error => setError(error.message))} /></>;
+    onSeek={(seconds, identifier) => request('knowledge.locate', { seconds, identifier, generation: generation.current }).catch(error => setError(error.message))} /></>;
 }

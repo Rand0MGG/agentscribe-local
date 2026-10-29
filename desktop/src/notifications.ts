@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
-export type Notice = { text: string; error?: boolean; busy?: boolean; key?: string; expires?: number };
+export type Notice = { text: string; error?: boolean; busy?: boolean; persistent?: boolean; key?: string; expires?: number };
 /** Same lifetime and priority rules as the Qt NotificationCenter. */
 export function useNotifications() {
   const [entries, setEntries] = useState<Map<string, Notice>>(new Map());
@@ -19,8 +19,8 @@ export function useNotifications() {
       const next = new Map(old), previous = old.get(key);
       if (!value) { next.delete(key); return next; }
       if (key === 'operation' && previous?.error && !value.error) return old;
-      if (previous && previous.text === value.text && !!previous.busy === !!value.busy && !!previous.error === !!value.error) return old;
-      const persistent = value.busy || value.error && ['save', 'updates', 'session', 'knowledge', 'preparation-result'].includes(key);
+      if (previous && previous.text === value.text && !!previous.busy === !!value.busy && !!previous.error === !!value.error && !!previous.persistent === !!value.persistent) return old;
+      const persistent = value.persistent || value.busy || value.error && ['save', 'updates', 'session', 'knowledge', 'preparation-result'].includes(key);
       const expires = previous?.busy && value.busy ? previous.expires : persistent ? Infinity : Date.now() + (value.error ? 8000 : 5000);
       next.delete(key); next.set(key, { ...value, key, expires });
       return next;

@@ -46,9 +46,9 @@ def context():
     return value
 
 
-def prepare(frontend, *, library, prefs, recording=None, draft=None, no_audio=False, owner_pid=None, geometry=None, purpose=None):
-    command_for(frontend)  # Fail before closing any window.
-    owner_pid = owner_pid or os.getpid()
+def validate_owner(owner_pid):
+    if type(owner_pid) is not int:
+        raise ValueError('界面进程归属无效。')
     if owner_pid not in (os.getpid(), os.getppid()):
         # Windows venv python.exe redirects to a child interpreter. Only accept
         # its direct launcher when the intervening parent is this interpreter.
@@ -56,6 +56,12 @@ def prepare(frontend, *, library, prefs, recording=None, draft=None, no_audio=Fa
         if (sys.platform != 'win32' or parent.ppid() != owner_pid
                 or Path(parent.exe()).resolve() != Path(sys.executable).resolve()):
             raise ValueError('界面进程归属无效。')
+
+
+def prepare(frontend, *, library, prefs, recording=None, draft=None, no_audio=False, owner_pid=None, geometry=None, purpose=None):
+    command_for(frontend)  # Fail before closing any window.
+    owner_pid = owner_pid or os.getpid()
+    validate_owner(owner_pid)
     directory = Path(tempfile.mkdtemp(prefix='agentscribe-frontend-'))
     path = directory / 'context.json'
     owners = [{'pid': pid, 'created': psutil.Process(pid).create_time()} for pid in {owner_pid, os.getpid()}]

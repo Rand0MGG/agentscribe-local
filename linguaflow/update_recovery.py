@@ -223,6 +223,22 @@ def startup():
         return
 
 
+def register_desktop_child(pid):
+    """Retain Electron ownership before allowing a failed startup to be restored."""
+    ticket = os.environ.get('AGENTSCRIBE_STARTUP_TICKET')
+    if not ticket:
+        return
+    directory = Path(ticket)
+    _, native = read_state(directory)
+    record = json.loads((directory / 'startup.json').read_text())
+    if record['pid'] != os.getpid():
+        raise ValueError('更新启动进程不一致。')
+    stamp = NativeRecovery(native).stamp(pid)
+    if not stamp:
+        raise ValueError('无法确认桌面启动进程。')
+    write_json(directory / 'desktop.json', {'owner': record, 'pid': pid, 'stamp': stamp})
+
+
 def mark_startup_healthy():
     """The desktop has shown successfully, before model/environment preparation."""
     ticket = os.environ.pop('AGENTSCRIBE_STARTUP_TICKET', '')
@@ -304,6 +320,21 @@ def watch(directory, *, startup_timeout=90, exit_timeout=900, relaunch=True):
             time.sleep(.1)
         if implementation.stamp(startup_record['pid']) == startup_record['stamp']:
             raise RuntimeError('本次启动进程尚未退出，旧版保留，未恢复应用。')
+    # A secondary desktop may still hold executable files after its launcher
+    # failed. Never restore underneath it; retain both packages if it cannot exit.
+    desktop_file = directory / 'desktop.json'
+    if desktop_file.exists():
+        desktop = json.loads(desktop_file.read_text())
+        if desktop.get('owner') != startup_record:
+            raise ValueError('桌面进程归属不一致，未自动恢复应用。')
+        deadline = time.monotonic() + 10
+        while implementation.stamp(desktop['pid']) == desktop['stamp'] and time.monotonic() < deadline:
+            time.sleep(.1)
+        if implementation.stamp(desktop['pid']) == desktop['stamp']:
+            state['status'] = 'manual-recovery'
+            write_json(directory / 'state.json', state)
+            clear_pending(directory)
+            return 'manual-recovery'
     installed, backup, failed = (Path(state[key]) for key in ('installed', 'backup', 'failed'))
     if inventory(backup) != (state['files'], state['links']) or failed.exists():
         raise ValueError('旧版保留文件已变化，未自动恢复；候选版与数据仍保留。')

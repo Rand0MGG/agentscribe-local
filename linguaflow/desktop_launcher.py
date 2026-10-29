@@ -1,7 +1,6 @@
 """Shared explicit Qt/Electron entry, retaining the last successfully opened UI."""
 import argparse
 import os
-import subprocess
 
 from .runtime_paths import knowledge_python, python_environment, resource_root
 
@@ -24,10 +23,7 @@ def main():
         os.environ['AGENTSCRIBE_NO_AUDIO'] = '1'
     prefs = (QSettings(saved['preferences'], QSettings.Format(saved.get('preferences_format', 1)))
              if saved.get('preferences') else QSettings('LinguaFlow', 'LocalCaptions'))
-    # The existing native updater must validate the actual installed launcher
-    # and bundle before handing control to a secondary runtime.
-    frontend = ('qt' if os.environ.get('AGENTSCRIBE_STARTUP_TICKET') else
-                args.frontend or prefs.value('desktop_frontend', 'qt'))
+    frontend = args.frontend or prefs.value('desktop_frontend', 'qt')
     if frontend == 'electron':
         try:
             command = command_for('electron')
@@ -38,6 +34,7 @@ def main():
                 command.append('--no-audio')
             environment = python_environment()
             environment['AGENTSCRIBE_DESKTOP_PYTHON'] = str(knowledge_python())
-            return subprocess.call(command, cwd=resource_root(), env=environment)
+            from .desktop_startup import run_desktop
+            return run_desktop(command, cwd=resource_root(), env=environment)
     from .app import main as qt_main
     return qt_main()

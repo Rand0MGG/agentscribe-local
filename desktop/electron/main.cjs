@@ -14,15 +14,14 @@ const pageURL = pathToFileURL(page).href;
 const methods = new Set([
   'bootstrap', 'frontend.ready', 'settings.set', 'library.refresh', 'recording.open', 'recording.new', 'folder.create',
   'item.rename', 'item.move', 'item.trash', 'trash.list', 'trash.restore', 'trash.purge',
-  'captions.page', 'captions.search', 'recording.save', 'audio.refresh', 'audio.select',
+  'captions.locate', 'captions.page', 'captions.search', 'recording.save', 'audio.refresh', 'audio.select',
   'recording.start', 'recording.stop', 'recording.pause', 'playback.toggle', 'playback.seek',
   'playback.volume', 'models.prepare', 'models.cancel', 'models.retry', 'knowledge.open', 'knowledge.command',
-  'models.inventory', 'models.delete', 'updates.check', 'library.cancel_migration',
+  'models.inventory', 'models.delete', 'updates.check', 'updates.action', 'library.cancel_migration',
   'models.check', 'models.cancel_check', 'layout.sidebar',
   'recording.close_recovered', 'knowledge.image',
 ]);
 let window, overlay, knowledge, service, quitting = false, state, preferences, overlayRows = [];
-let installed = false;
 let fault = process.env.AGENTSCRIBE_FRONTEND_RECOVERY || '';
 app.setName('AgentScribe');
 const edited = new Set();
@@ -98,6 +97,11 @@ function publish(value) {
   for (const target of [window, overlay, knowledge]) {
     if (target && !target.isDestroyed()) target.webContents.send('desktop:event', value);
   }
+}
+
+function checkUpdates() {
+  publish({ event: 'updates-reveal', data: null });
+  return service.request('updates.check');
 }
 
 function windowLayout() {
@@ -239,10 +243,8 @@ ipcMain.handle('desktop:request', async (event, request) => {
       knowledge.hide(); return;
     }
     if (method === 'knowledge.locate') {
-      const result = await service.request('captions.page', { seconds: params.seconds });
-      if (state?.state !== 'IDLE') throw new Error('录音结束后可定位课堂来源。');
-      const row = result.rows.find(row => row.start <= params.seconds && row.end > params.seconds);
-      window.webContents.send('desktop:event', { event: 'caption-location', data: { page: result, identifier: row?.id ?? null } });
+      const result = await service.request('captions.locate', { seconds: params.seconds, identifier: params.identifier, generation: params.generation });
+      window.webContents.send('desktop:event', { event: 'caption-location', data: result });
       window.show(); window.focus(); return;
     }
   }
@@ -253,15 +255,17 @@ ipcMain.handle('desktop:request', async (event, request) => {
     if (!['name', 'knowledge'].includes(params.owner) || typeof params.dirty !== 'boolean') throw new Error('无效的编辑状态。');
     if (params.dirty) edited.add(params.owner); else edited.delete(params.owner);
     if (process.platform === 'darwin') window.setDocumentEdited(edited.size > 0);
+    await service.request('app.edited', { dirty: edited.size > 0 });
     return;
   }
   if (method === 'window.close') { window.close(); return; }
-  if (method === 'frontend.switch' || method === 'updates.check' && installed) {
+  if (method === 'updates.check') return checkUpdates();
+  if (method === 'frontend.switch') {
     if (edited.size) throw new Error('请先保存或取消名称、术语及笔记编辑，再切换界面。');
     if (switching) return;
     switching = true;
     try {
-      await service.request('frontend.prepare', { owner_pid: process.pid, geometry: window.getBounds(), updates: method === 'updates.check' });
+      await service.request('frontend.prepare', { owner_pid: process.pid, geometry: window.getBounds() });
       window.close();
     } catch (error) { switching = false; throw error; }
     return;
@@ -321,10 +325,9 @@ ipcMain.handle('desktop:request', async (event, request) => {
     return service.request(method, { operation: 'import', values: { path: result.filePaths[0] } });
   }
   if (!methods.has(method)) throw new Error('不支持的桌面操作。');
-  const result = await service.request(method, params);
+  const result = await service.request(method, method === 'frontend.ready' ? { owner_pid: process.pid } : params);
   if (method === 'frontend.ready') bootstrapped = true;
   if (method === 'bootstrap') {
-    installed = result.installed;
     preferences = result.settings;
     updateWindowControls();
     requestMaterial();
@@ -364,7 +367,11 @@ else {
         if (index >= 0) launchArgs.splice(index, 2);
         launchArgs.push('--library', library, '--persist-library');
       }
-      fault = ''; service = new Service(python, launchArgs, { cwd: root });
+      fault = '';
+      const nativeHost = process.env.AGENTSCRIBE_PACKAGED === '1';
+      const executable = nativeHost ? (process.platform === 'darwin'
+        ? path.join(root, '../MacOS/AgentScribe') : path.join(root, 'AgentScribe.exe')) : python;
+      service = new Service(executable, launchArgs, { cwd: root, nativeHost });
     service.on('event', value => {
       if (value.event === 'state') {
         const wasClosing = state?.closing;
@@ -396,11 +403,14 @@ else {
         quitAfterOwnedProcesses();
       }
     });
-    service.on('exit', () => { if (quitting) quitAfterOwnedProcesses(); });
+    service.on('exit', () => { if (quitting || state?.update_fenced) { quitting = true; quitAfterOwnedProcesses(); } });
     };
     restartService();
     Menu.setApplicationMenu(Menu.buildFromTemplate([
-      ...(process.platform === 'darwin' ? [{ label: 'AgentScribe', submenu: [{ role: 'about' }, { type: 'separator' }, { role: 'hide' }, { role: 'quit' }] }] : []),
+      ...(process.platform === 'darwin' ? [{ label: 'AgentScribe', submenu: [{ role: 'about' },
+        { label: '版本与更新…', click: () => { window?.show(); window?.webContents.send('desktop:event', { event: 'settings-page', data: '运行环境' }); } },
+        { label: '检查更新…', click: () => checkUpdates().catch(error => publish({ event: 'notice', data: { text: error.message, error: true } })) },
+        { type: 'separator' }, { role: 'hide' }, { role: 'quit' }] }] : []),
       { label: '编辑', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
       { label: '窗口', submenu: [{ role: 'minimize' }, { role: 'close' }] },
     ]));
@@ -414,4 +424,11 @@ else {
     else quitAfterOwnedProcesses();
   });
   app.on('window-all-closed', () => { if (quitting || !service || service.closed) quitAfterOwnedProcesses(); });
+}
+
+// A native launcher owns this liveness pipe. Its death must not leave a second
+// desktop holding an installation that recovery is trying to restore.
+if (process.env.AGENTSCRIBE_DESKTOP_READY) {
+  process.stdin.once('end', () => { if (window && !window.isDestroyed()) window.close(); else app.quit(); });
+  process.stdin.resume();
 }

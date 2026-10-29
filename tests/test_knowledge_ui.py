@@ -245,7 +245,9 @@ for width,height in [(860,680),(640,540)]:
   output=Path(os.environ['AGENTSCRIBE_SCREENSHOTS']);output.mkdir(parents=True,exist_ok=True)
   p.grab().save(str(output/f'course-local-preview-{width}.png'))
 process=w.knowledge_client.process
-p.close();w.close();app.processEvents()
+p.close();w.close()
+from tests.ui_support import wait_until
+wait_until(lambda: process.poll() is not None)
 assert process.poll() is not None
 '''
     run_ui_process(code, timeout=40,

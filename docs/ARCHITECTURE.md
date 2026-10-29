@@ -8,6 +8,21 @@
 
 `linguaflow/desktop_service.py` 使用 QtCore 事件循环复用 Session、RecordingSaver、LibraryReader、Preparation、BackgroundCheck、KnowledgeClient 和 PlaybackController；暂未移除后端 QtCore 依赖，但不创建隐藏 QWidget 窗口。UTF-8 JSONL v1 使用请求编号与有界消息；超时只报告等待失败，不假定后台操作已取消。stdout 专用于协议，诊断日志保持原隐私边界。
 
+Qt `Window` 和 Electron `DesktopService` 组合相同的后台流程；后者另负责 JSONL 请求和事件适配。共享模块不导入 QWidget、Qt 控件或 React：
+
+- `recording_workflow.RecordingWorkflow` 持有唯一的录音领域状态、Session、保存器和自动保存计时器，负责启动事务、启动失败持久化、暂停/继续、字幕修订、预览、结束分类、保存回执和锁释放。保存失败保留终态、脏数据和锁；旧 Session 的迟到信号不能写入新录音。Qt 的旧属性名只转发到此状态，字幕卡片保留独立显示副本。
+- `library_workflow.LibraryWorkflow` 统一活动录音的文件操作门禁、迁移锁、复制完成后的偏好提交及旧目录清理。新目录偏好未成功写入前，不清理旧副本。
+- `session_settings.session_settings` 统一不可变会话快照、语言/设备映射及模型引用规范化；`SettingsBinding` 仅采集 Qt 控件值。
+- `preparation_workflow.PreparationWorkflow` 统一准备任务所有权、冲突校验、取消与真实线程结束回执；`preparation_command` 统一准备命令和选择校验。Qt 模型面板保留控件、下载反馈和重试展示。
+- `application_lifecycle.Activity/ShutdownWorkflow` 统一切换门禁和退出顺序。取消自有任务、等待录音/保存、关闭课程与回听、异步释放推理环境后才允许退出；失败保留资源所有者。原生窗口关闭确认、动画和界面交接呈现由适配层负责。
+- `knowledge/lifecycle.KnowledgeState` 保存当前课程任务状态，除部分 view 外也消费 status/idle/disconnected；命令提交即标忙碌，切换门禁不依赖课程窗口是否打开或旧显示快照。自动连接和导入取消仍共用同一实现。
+
+Qt 和 Electron 继续复用 Session、Library、RecordingSaver、Preparation、PlaybackController 和课程 worker。业务共享不要求 Qt 也经过进程通信；Qt 直接调用这些服务，Electron 经受限 IPC 调用。保留 QtCore/Qt Multimedia 等后台依赖与移除 Qt 界面是两件事。
+
+`update_workflow.py` 共用安装等待、未保存编辑/录音/文件/准备/检查门禁、后台释放、取消和恢复；Qt 直连、Electron 通过受限 IPC 调用。释放前及完成后复查状态，取消释放期间不提前解除操作限制。Electron 的未保存名称、术语和笔记由宿主汇总后交后台门禁。Mac 安装后台只创建 QGuiApplication 的 Cocoa 事件循环，不创建 Qt 窗口，且隐藏额外 Dock 身份；业务规则不依赖 QWidget。
+
+`captions.locate` 携带录音 ID 和代次；后台验证后同时返回字幕位置和不自动播放的定位结果。播放器尚未创建时只保存待定位时间，首次主动播放才打开音频。课程引用携带其原录音身份，迟到的旧录音结果不能定位当前录音。文档组件准备与录音可并行，模型/推理环境准备仍禁止开始录音。
+
 React 组合共享 Radix 基础控件，`Playback.tsx` 同时用于实际回听与演示。Vite 从 `ui_theme.THEMES` 生成颜色；布局仍须按 v0.10.2 校准。课程窗口隐藏时保留本次运行的各课程草稿；原生关闭请求先交给编辑保护，主程序退出仍等实际录音保存、子进程和任务终态。音频只通过已有 Python 平台适配，浏览器媒体权限拒绝，`--no-audio` 阻断设备与回听入口。
 
 Windows 窗口控制使用 Electron 原生 `titleBarOverlay`，与 36px 拖动栏同高、背景透明；构造、bootstrap 及 settings 共用颜色选项，避免已保存深色启动仍用浅色按钮。按钮动作保持系统行为，原生关闭仍交给既有编辑/保存保护，不新增 renderer 窗口控制权限。
@@ -20,9 +35,11 @@ Windows 窗口控制使用 Electron 原生 `titleBarOverlay`，与 36px 拖动�
 
 Electron 服务拥有可复用的 `RuntimePreparation`，会话只借用；环境维护及退出在独立任务中等待释放，失败保留 owner 以便重试。回听元数据通过原 `PlaybackStream` 只读 WAV 获取，不为显示时长创建音频设备；首次定位由 `PlaybackController` 等待异步媒体就绪并可定位后，先定位再播放；释放/错误清除待执行请求，成功定位回执恢复前端跟随。保存结束并释放录音锁后刷新，建立播放器时重新应用音量。两前端共享悬浮窗逻辑坐标，旧 Qt 二进制几何继续作为兼容回退。启动库失败时，宿主只在原后台已退出、尚未完成启动的情况下允许重新选目录；新后台验证库后才持久化选择。
 
-源码入口、验证方法见 [TESTING](TESTING.md#electron-候选入口)，实现缺口见 [ROADMAP](ROADMAP.md#electron-迁移对照)。双前端构建仍复用现有原生启动器和平台锁；安装版更新明确切到 Qt，以保留已验收的签名与恢复链路，未引入 electron-updater。不要把本地构建或逻辑回归理解为跨平台发行验收。
+源码入口、验证方法见 [TESTING](TESTING.md#electron-候选入口)，实现缺口见 [ROADMAP](ROADMAP.md#electron-迁移对照)。双前端构建仍复用现有原生启动器和平台锁；安装版 Electron 后台由外层原生启动器以 `--python -m linguaflow.desktop_service` 承载，保留 Sparkle 的应用身份；检查更新不再切换界面，仍使用 Sparkle/WinSparkle，未引入 electron-updater。不要把本地构建或逻辑回归理解为跨平台发行验收。
 
 `desktop_launcher.py` 统一原 `python -m linguaflow` 与 console-script 入口；`frontend_switch.py` 先检查目标组件，再记录私有临时交接文件，等待原 GUI / 业务进程退出后启动目标。交接只传库路径、偏好格式、录音 ID / 内存草稿、窗口几何和无音频约束。主界面实际挂载后的 `frontend.ready` 回执才确认 Electron 启动成功；Qt 在 show 后确认。目标未就绪即退出时回退，既不杀死仍在保存的旧进程，也不同时运行两个录音 owner。安装态切回 Qt 必须使用原生启动器，不能把 portable Python 当作原生应用身份。
+
+`desktop_startup.py` 在私有临时目录接收当前 Electron 子进程的实际界面就绪回执，由原生启动进程确认更新健康；启动 Electron 进程本身不算成功，更新后也不强制改用 Qt。子进程不继承原启动恢复票据。Windows 原生父进程继续持有安装互斥量到 Electron 退出；父进程存活管道断开时 Electron 请求正常关闭。恢复另核对已登记的 Electron PID/创建时间；仍存活则保留新旧包，交人工恢复，不在其下方替换程序。
 
 切换归属通常只接受当前进程或直接父进程；Windows venv 的 Python redirector 会多出一层启动器，仅当直接父进程的可执行路径与 `sys.executable` 解析后相同、其父进程正是请求的 owner 时接受该宿主，不接受任意祖先进程。交接 JSON 的生产与测试读写均明确使用 UTF-8。
 
@@ -92,7 +109,7 @@ Qwen 的 `asr_decode_start/end` 可按 `session + decode_id` 关联：窗口范�
 
 ### 桌面模块边界
 
-主窗口保留录音、保存、模型准备与退出之间的协调，以及对外操作入口；以下模块不导入 `app`，也不通过持有整个 Window 或动态代理来访问业务状态：
+主窗口保留对外操作入口、控件绑定和显示反馈；录音、保存、模型准备、迁移与退出事务由上文的共享后台流程负责。以下显示与数据模块不导入 `app`，也不通过持有整个 Window 或动态代理访问业务状态：
 
 | 模块 | 独立职责与接口 |
 | --- | --- |
@@ -103,7 +120,7 @@ Qwen 的 `asr_decode_start/end` 可按 `session + decode_id` 关联：窗口范�
 | `recording_controls.py` | 录音/播放控制区的布局与控件；不发现设备，不启动会话，操作由窗口连接 |
 | `window_chrome.py` | 窗口按钮、外框和图标；正式窗口与组件 Demo 共用 |
 
-Window 的薄转发入口和控件引用用于现有调用方组合，不复制模块内部状态。跨模块的保存资格、录音锁、迟到结果与退出门禁仍由协调层判断，不分散到纯显示组件。
+Window 的薄转发入口和控件引用用于现有调用方组合；旧录音属性直接指向 RecordingData，不保留第二套业务状态。跨模块的保存资格、录音锁、迟到结果与退出门禁由共享后台流程判断，不分散到纯显示组件。
 
 ### 高频路径
 

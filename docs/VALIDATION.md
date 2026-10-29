@@ -319,3 +319,30 @@
 ## 已发布产物
 
 2026-10-16 [v0.9.2](https://github.com/Rand0MGG/agentscribe-local/releases/tag/v0.9.2) 已发布 Mac arm64 DMG、构建清单、SHA256 和原公钥 Ed25519 签名，四个附件均核对摘要。DMG 为 312067290 字节，SHA256 `1dcb9c7b33bfd2b76452c022c30b8b9363aa68e11cbd35a51fe87bd7598ca3e3`；[部署 38887341353](https://github.com/Rand0MGG/agentscribe-local/actions/runs/38887341353) 已完成，固定 stable/beta 地址无认证返回 200。证据保留于 `.work/reports/update-e2e-20261016/`。此前 v0.9.1 的“未推进订阅”仅指该历史批次；本轮未发布 Windows 包，Apple 公证未完成。
+
+## 2026-10-29 双前端共享业务与迁移修复（本地 mac）
+
+基于 `cb30564`，工作区改动未提交、未推送、未发布。界面沿用原组件、布局、主题和动画；本轮未修改 CSS。共用录音收尾/未完成翻译、准备任务门禁、定位身份、课程连接/取消及更新安装状态机；Electron 安装态使用原生宿主，检查更新不切换到 Qt。仍保留各界面的显示适配和后台 QtCore；不是移除全部 Qt 依赖。
+
+- 原始隔离环境基线为 **1163 passed / 22 failed / 4 skipped**；失败涉及图形服务、本地通信或进程查询权限。开放这些测试所需能力后，最终一轮完整无音频回归 **1217 passed / 4 skipped**（261.66 秒），零原生音频导入尝试。跳过项分别为 Windows venv redirector、8.3 临时路径、Job Object 与安装器编译；没有删除或放宽原测试断言。证据：`.work/reports/electron-migration-audit-20261029/full-final.log`。
+- 全量运行后最后补充了活动录音只定位文字、旧搜索结果绑定原录音的边界；相关后台最终 **60 passed**，零原生音频尝试（`location-final.log`）；TypeScript/Vite 构建、Ruff 与差异空白检查通过。其他专项与全量有重叠，不累加数量。
+- 实际 Electron/IPC 回归：基础桌面、录音保存链路 **11 项**、既有交互 **26 项**及 Electron→Qt→Electron 往返通过。隔离临时库、偏好及 profile，不访问用户音频设备；播放和云端边界使用替身。对应 `electron-base.log`、`electron-chain.log`、`electron-interaction.log`、`electron-switch.log`。
+- 新增原生迁移探针 **5 项通过**：搜索只定位不播放、忙碌时权限开关可撤销、Mac 更新菜单、更新确认保留及重新显示、切换录音后相同字幕编号的旧搜索结果被拒绝。最后一项冻结前端查询防抖，保留旧结果，走实际切换和 IPC；不是只测后台参数。证据：`migration-final.log` 与 `output/playwright/migration-workflows/comparisons.json`。授权按钮采用显示用快照，未授予真实云端权限。
+- 真实独立子进程验证阻塞导入取消会收回所属进程树和通信线程；共享更新测试覆盖各等待门禁、释放期间取消、释放后新增未保存编辑、迟到安装/下载操作、取消等待后的再次确认，以及旧启动进程/存活 Electron 下的恢复保护。
+- Mac 包内验证使用已发布 DMG 的只读挂载副本，在独立临时副本替换待测源码并 ad-hoc 重签，未改原 DMG。真实 Electron→外层 AgentScribe 原生启动器→QGuiApplication 后台中，Sparkle 初始化成功，`NSBundle.mainBundle` 确认为外层 AgentScribe.app，IPC 和退出通过，零音频尝试。原包挂载已卸载。证据：`packaged-update-host-final.log`、`packaged-update-host.json`。这仅证明原生宿主与初始化，不证明下载安装升级；该带探针副本不是交付安装包。
+- 新构建尝试因本机缺少锁定的 `cpython-3.12.15+20261003-aarch64-apple-darwin-install_only.tar.gz` 构建缓存而未执行；保留 `macos-candidate-build.log`，没有绕过固定依赖。未运行真实麦克风/系统音频、生产云端、Windows 原生 GUI、真实旧版→新版安装/回退或本轮发行签名验收。
+
+上述日志除单独注明的输出目录外均位于 `.work/reports/electron-migration-audit-20261029/`。历史审计反例与旧日志保留，不将之前失败的日志改写成通过。
+
+## 2026-10-29 双前端后台分离复核与修复（本地 mac）
+
+在前述未提交工作区上继续修改，仍基于 `cb30564`，没有提交、推送、打包或发布。Qt 与 Electron 接入相同的录音状态/启动事务/保存回执、文件操作与迁移、设置快照、准备任务和退出流程；删除原适配器中的重复事务与无调用旧回调。界面布局、CSS、主题、动画及产品 renderer 本轮未改动。
+
+- 两个复核反例已修复：构造失败不会留下 recording 持久状态；课程 status/idle/disconnected 会更新权威忙碌状态，提交任务到收到 worker 回报的间隙也标忙碌。新增双适配器契约验证写盘同时失败时保留锁、失败终态和重试能力。
+- 最终全量无音频回归 **1224 passed / 4 skipped**，277.78 秒，零原生音频导入尝试。跳过项为 Windows redirector、8.3 临时路径、Job Object 和原生安装器编译。证据：`.work/reports/backend-separation-20261029/full-second.log`。完整回归后的最后清理仅删除无调用旧更新回调、调整类说明和维护文档，Ruff 与差异空白检查通过。
+- 第一轮全量为 **1218 passed / 5 failed / 4 skipped**；修复取消无工作线程的启动退出、只准备单侧模型时的空字段校验、异步退出前的编辑确认问题后重跑；旧日志 `full-first.log` 保留。没有删除原测试断言。
+- TypeScript/Vite 构建通过；真实 Electron 基础窗口、菜单、输入法、受限浮窗及正常退出通过（`build.log`、`electron-base-final.log`）。保存链路 **11 项**、交互 **26 项**、Electron→Qt→Electron 往返、迁移探针 **5 项**均通过，分别见 `electron-chain.log`、`electron-interaction.log`、`electron-switch.log`、`electron-migration.log`。
+- 悬浮窗隐藏检查的两次超时经原生事件追踪确认：模拟鼠标移出后，真实系统鼠标又移入同一测试窗，控件正常保持显示。测试改为先把自有浮窗放到真实鼠标之外，再执行相同移入/移出与隐藏断言；未修改产品浮窗逻辑、等待判定或样式。追踪证据保存在 `output/playwright/electron/overlay-pointer-debug.json`，原失败日志保留。
+- 异步退出测试现等待所属释放线程或课程进程的真实终态；准备任务测试从新的后台模块导入任务类型。新增独立 QCoreApplication 导入测试确认共享后台不加载 QtWidgets 或前端模块。
+
+上述日志均在 `.work/reports/backend-separation-20261029/`。这些是本机无音频与隔离窗口/进程证据，不包含真实麦克风/系统音频、Windows 原生运行、生产云端或正式签名安装包升级验收；不能据此宣布 Qt 已可删除或新版本已经发布。

@@ -20,11 +20,10 @@ from uuid import uuid4
 from PySide6.QtCore import QCoreApplication, QObject, QSettings, Qt, QThread, QTimer, Signal
 
 from . import diagnostic_log as diag
+from .application_lifecycle import Activity, ShutdownWorkflow
 from .core import LANGUAGES, Settings, translation_status
 from .library import default_recording_name
 from .library_access import (
-    acquire_library_migration_lock,
-    acquire_recording_lock,
     check_library_access,
     check_library_migration,
 )
@@ -39,8 +38,15 @@ from .model_options import (
     translation_devices,
 )
 from .preferences import PREFERENCES, read_audio_device, read_preferences, write_preferences
+from .preparation_workflow import PreparationWorkflow, preparation_command
 from .recording_save import RecordingSaver
 from .recording_state import RecordingState
+from .recording_workflow import (
+    RecordingWorkflow,
+    locate_seconds,
+    preparation_blocks_recording,
+    recording_field,
+)
 from .runtime_paths import packaged, resource_root
 from .source_preview import preview_captions
 from .transcript import Transcript
@@ -69,13 +75,56 @@ def caption_value(caption):
 
 
 class DesktopService(QObject):
-    """One recording owner. No Window object, UI control proxy or browser dependency."""
+    """IPC adapter for shared backend workflows; no widget or browser dependency."""
+
+    preparation = property(lambda self: self.preparation_workflow.worker,
+                           lambda self, value: setattr(self.preparation_workflow, 'worker', value))
+
+    closing = property(lambda self: self.shutdown.closing,
+                       lambda self, value: setattr(self.shutdown, 'closing', value))
+
+    @property
+    def migration_locks(self):
+        return self.library_workflow.locks
+
+    library = recording_field('library')
+    item = recording_field('item')
+    pending_source_revision = recording_field('pending_source_revision')
+    session = recording_field('session')
+    recording_lock = recording_field('lock')
+    state = recording_field('state')
+    failure = recording_field('failure')
+    save_error = recording_field('save_error')
+    dirty = recording_field('dirty')
+    generation = recording_field('generation')
+    revision = recording_field('revision')
+    save_target = recording_field('save_target')
+    translating = recording_field('translating')
+    captions = recording_field('captions')
+    preview = recording_field('preview')
+    preview_sequence = recording_field('preview_sequence')
+    knowledge = property(lambda self: self.recording.knowledge,
+        lambda self, value: setattr(self.recording, "knowledge", value))
+
     incoming = Signal(object)
     disconnected = Signal()
     output = Signal(dict)
 
     def __init__(self, *, library_root=None, prefs=None, no_audio=False):
         super().__init__()
+        self.recording = RecordingWorkflow(self)
+        self.shutdown = ShutdownWorkflow(recording=self.recording, activity=self.activity_snapshot,
+            cancel={
+                'checks': self.cancel_model_check,
+                'reader': lambda: self.reader.cancel(),
+                'migration': self.cancel_migration,
+                'preparation': self.cancel_preparation,
+                'recording': self.stop,
+                'update_release': lambda: self.native_updater.cancel()},
+            save=self._shutdown_save, resources=self._shutdown_resources,
+            runtime=lambda: self.runtime, released=self._runtime_released, parent=self)
+        self.shutdown.retry.connect(self._continue_close)
+        self.shutdown.failed.connect(self._shutdown_failed)
         self.prefs = prefs if prefs is not None else QSettings('LinguaFlow', 'LocalCaptions')
         self.no_audio = no_audio or bool(os.environ.get('AGENTSCRIBE_AUDIO_GUARD_LOG'))
         self.library = open_library(self.prefs, resource_root(), explicit_root=library_root,
@@ -104,6 +153,7 @@ class DesktopService(QObject):
         self.has_audio = False
         self.playback_metadata = {"duration": 0, "supports_gain": False}
         self.playback_volume = 100
+        self.located_position = None
         self.captions = Transcript()
         self.preview = None
         self.preview_sequence = 0
@@ -122,7 +172,10 @@ class DesktopService(QObject):
         self.connection_lost = False
         self.frontend_handoff = None
         self.frontend_ready = False
-        self.preparation = None
+        self.preparation_workflow = PreparationWorkflow(self)
+        self.preparation_workflow.result.connect(self._preparation_result)
+        self.preparation_workflow.download.connect(self._progress)
+        self.preparation_workflow.finished.connect(self._preparation_finished)
         self.preparation_command = None
         self.preparation_recovery = ''
         self.asset_check = None
@@ -140,32 +193,43 @@ class DesktopService(QObject):
         self.read_request = None
         self.reader.completed.connect(self._read_completed)
         self.pending_library = None
-        self.migration_locks = []
-        self.migration_source = None
-        from .library_migration import LibraryMigration
-        self.migration = LibraryMigration(self)
+        from .library_workflow import LibraryWorkflow
+        self.library_workflow = LibraryWorkflow(self.recording, self.prefs, self)
+        self.migration = self.library_workflow.worker
         self.migration.progress.connect(lambda value: self.emit('migration', {'busy': True, 'progress': value}))
-        self.migration.copied.connect(self._library_copied)
-        self.migration.cleaned.connect(self._library_migrated)
+        self.library_workflow.adopted.connect(self._library_adopted)
+        self.library_workflow.finished.connect(self._library_migrated)
         self.preparation_status = ''
         self.progress = None
         self.knowledge = None
         self.player = None
-        self.saver = RecordingSaver(self)
-        self.saver.completed.connect(self._saved)
-        self.saver.idle.connect(self._release_lock)
+        self.saver = self.recording.saver
+        self.recording.saved.connect(self._saved)
+        self.recording.lock_released.connect(self._after_lock_released)
         self.saver.idle.connect(self._continue_close)
         self.exporter = RecordingSaver(self)
         self.export_sequence = 0
         self.export_errors = []
         self.recovery_receipt = None
-        self.knowledge_view = {}
+        from .knowledge.lifecycle import KnowledgeState
+        self.knowledge_state = KnowledgeState()
+        self.knowledge_view = self.knowledge_state.view
+        self.unsaved_edits = False
+        self.update_fenced = False
+        from .native_updates import NativeUpdater
+        from .update_workflow import UpdateWorkflow
+        self.native_updater = NativeUpdater(self)
+        self.update_workflow = UpdateWorkflow(self.native_updater, activity=self.update_activity_snapshot,
+            close_knowledge=self.close_update_knowledge, runtime=lambda: self.runtime,
+            fence=self.fence_for_update, restore=self.restore_after_update,
+            notify=lambda text, busy: self.emit('updates', {'stage': 'waiting', 'text': text, 'releasing': busy}))
+        self.native_updater.event.connect(self.on_native_update)
+        self.native_updater.shutdown_complete.connect(lambda _: self._continue_close())
         self.exporter.completed.connect(self._exported)
         self.exporter.idle.connect(self._exports_finished)
         self.exporter.idle.connect(self._continue_close)
-        self.autosave = QTimer(self)
+        self.autosave = self.recording.autosave
         self.autosave.setSingleShot(True)
-        self.autosave.timeout.connect(self._save)
         self.incoming.connect(self.dispatch, Qt.ConnectionType.QueuedConnection)
         self.disconnected.connect(self._disconnect, Qt.ConnectionType.QueuedConnection)
         self.clock = QTimer(self)
@@ -179,7 +243,7 @@ class DesktopService(QObject):
             ('recording.new', self.new_recording), ('folder.create', self.create_folder),
             ('item.rename', self.rename), ('item.move', self.move), ('item.trash', self.trash),
             ('trash.list', self.deleted), ('trash.restore', self.restore), ('trash.purge', self.purge),
-            ('captions.page', self.page), ('captions.search', self.search),
+            ('captions.locate', self.locate), ('captions.page', self.page), ('captions.search', self.search),
             ('recording.save', self.retry_save), ('recording.export', self.export),
             ('recording.close_recovered', self.close_recovered),
             ('audio.refresh', self.refresh_devices), ('audio.select', self.select_device),
@@ -189,7 +253,7 @@ class DesktopService(QObject):
             ('models.retry', self.retry_preparation),
             ('models.check', self.check_models), ('models.cancel_check', self.cancel_model_check),
             ('models.inventory', self.model_inventory), ('models.delete', self.delete_model),
-            ('updates.check', self.check_updates), ('library.migrate', self.migrate_library),
+            ('updates.check', self.check_updates), ('updates.action', self.update_action), ('app.edited', self.set_edited), ('library.migrate', self.migrate_library),
             ('library.cancel_migration', self.cancel_migration),
             ('knowledge.open', self.open_knowledge), ('knowledge.command', self.knowledge_command),
             ('knowledge.image', self.knowledge_image),
@@ -220,6 +284,8 @@ class DesktopService(QObject):
                 raise ValueError('不支持的桌面操作。')
             if self.closing and operation != 'app.close':
                 raise ValueError('正在退出，请等待当前任务结束。')
+            if self.update_fenced and operation not in ('bootstrap', 'app.close', 'updates.action', 'app.edited', 'updates.check'):
+                raise ValueError('正在准备重启更新，请等待完成或取消更新。')
             params = request.get('params', {})
             if not isinstance(params, dict):
                 raise ValueError('操作参数必须是对象。')
@@ -246,6 +312,8 @@ class DesktopService(QObject):
                 'saving': self.saver.busy, 'dirty': self.dirty, 'generation': self.generation,
                 'revision': self.revision, 'count': len(self.captions), 'preview': self.preview,
                 'preparing': self.preparation is not None or self.runtime_action is not None, 'preparation_status': self.preparation_status,
+                'preparation_kind': self.preparation_command[1] if self.preparation_command else None,
+                'preparation_blocks_recording': preparation_blocks_recording(self.preparation) or self.runtime_action is not None,
                 'preparation_cancelling': bool(self.preparation and self.preparation.cancelled),
                 'preparation_recovery': self.preparation_recovery,
                 'checking_models': self.asset_check is not None,
@@ -254,7 +322,7 @@ class DesktopService(QObject):
                                              and any(row.startswith('翻译') for row in self.missing_assets)),
                 'progress': self.progress, 'closing': self.closing, 'has_audio': self.has_audio, 'playback': {**self.playback_metadata, 'volume': self.playback_volume}, 'translating': self.translating,
                 'migrating': self.migration.busy or bool(self.pending_library),
-                'recovery_ready': self._recovery_ready()}
+                'update_fenced': self.update_fenced, 'recovery_ready': self._recovery_ready()}
 
     def changed(self):
         self.emit('state', self.snapshot())
@@ -275,19 +343,37 @@ class DesktopService(QObject):
                             'generation': {'hy': f"HY-MT2 生成参数 · 最大 {HY_GENERATION['max_new_tokens']} tokens · 温度 {HY_GENERATION['temperature']} · top-p {HY_GENERATION['top_p']} · top-k {HY_GENERATION['top_k']} · 重复惩罚 {HY_GENERATION['repetition_penalty']}\n初译参考前后各 1 段；定稿参考前 5 段、后 1 段。仅使用已有的定稿原文。",
                                            'nllb': f"NLLB 生成参数 · 最大 {NLLB_GENERATION['max_new_tokens']} tokens · beams {NLLB_GENERATION['num_beams']}\n逐段翻译；单段输入最多 512 tokens，超长时保留原文并提示。"}}}
 
-    def mark_frontend_ready(self):
+    def mark_frontend_ready(self, owner_pid=None):
+        if owner_pid is not None:
+            from .frontend_switch import validate_owner
+            validate_owner(owner_pid)
         if not self.frontend_ready:
             from .frontend_switch import ready
             ready('electron', self.prefs)
             self.frontend_ready = True
+            from .desktop_startup import frontend_healthy
+            frontend_healthy(owner_pid)
+            if not self.no_audio:
+                QTimer.singleShot(1500, lambda: self.check_updates(manual=False))
 
     def cancel_frontend(self):
         self.frontend_handoff = None
 
+    def activity_snapshot(self):
+        return Activity(recording=self.session is not None or self.state.active,
+            saving=self.saver.busy or self.exporter.busy, unsaved=self.dirty or bool(self.save_error),
+            reader=self.reader.busy, migration=self.migration.busy or bool(self.pending_library),
+            preparation=self.preparation is not None or self.runtime_action is not None,
+            checks=bool(self.tasks) or self.asset_check is not None,
+            fenced=self.update_fenced, update_release=self.native_updater.shutdown_job is not None,
+            update_pending=self.update_fenced or self.native_updater.pending,
+            knowledge=self.knowledge_state.busy, edits=self.unsaved_edits)
+
     def prepare_frontend(self, owner_pid, geometry, updates=False):
+        reason = self.activity_snapshot().switch_reason()
+        if reason or self.closing:
+            raise ValueError(reason or '正在退出，请稍候。')
         self._idle()
-        if self.preparation or self.tasks or self.closing or self.knowledge_view.get('busy'):
-            raise ValueError('请先完成或取消当前后台任务，再切换界面。')
         from .frontend_switch import prepare
         self.frontend_handoff = prepare('qt', library=self.library, prefs=self.prefs,
             recording=self.item['id'] if self.item else None, draft=self.draft,
@@ -295,6 +381,8 @@ class DesktopService(QObject):
         return {'ready': True}
 
     def _idle(self):
+        if self.update_fenced:
+            raise ValueError('正在准备重启更新，请等待完成或取消更新。')
         if 'runtime-release' in self.tasks:
             raise ValueError('正在释放推理环境，请稍候。')
         if self.reader.busy:
@@ -378,6 +466,7 @@ class DesktopService(QObject):
             self.playback_volume = min(self.playback_volume, 300 if self.playback_metadata['supports_gain'] else 100)
 
     def _select(self, item, captions=(), translating=None):
+        self.located_position = None
         self.audio_stage = ''
         self.generation += 1
         self.revision = 0
@@ -393,6 +482,7 @@ class DesktopService(QObject):
         self.translating = self.values['translate'] if translating is None else translating
         self.changed()
         self.emit('captions', self.page())
+        self.attach_knowledge()
 
     def open_recording(self, identifier):
         self._idle()
@@ -454,14 +544,8 @@ class DesktopService(QObject):
             return
         item = self._find(identifier)
         active_current = bool(self.session and self.item and identifier == self.item['id'])
-        if active_current:
-            if not self.recording_lock or self.saver.waiting or self.migration.busy:
-                raise ValueError('当前录音正在处理文件，请稍后重试。')
-            self._save()
-            if not self.saver.flush() or self.dirty or self.save_error:
-                raise ValueError('请等待字幕成功保存后再改名。')
-        else:
-            self._edit_item(item)
+        self.library_workflow.ensure_edit(item, activity=self.activity_snapshot(),
+            close_resources=self._close_resources, rename_current=True)
         self.library.rename(item, name, defer_directory=active_current)
         if self.item and self.item['id'] == identifier:
             self.item = item
@@ -491,17 +575,9 @@ class DesktopService(QObject):
         return token
 
     def _edit_item(self, item):
-        if self.migration.busy or self.closing or self.reader.busy:
-            raise ValueError('正在迁移或退出，请稍后重试。')
-        check_library_migration(self.library.root)
-        if self.session and self.item:
-            current, target = self.library.directory(self.item['id']), self.library.directory(item['id'])
-            if current == target or target in current.parents:
-                raise ValueError('请先停止录音再移动或删除当前录音及其文件夹。')
-        else:
-            self._idle()
-            self._close_resources()
-        check_library_access(self.library, item)
+        if self.closing:
+            raise ValueError('正在退出，请稍后重试。')
+        self.library_workflow.ensure_edit(item, activity=self.activity_snapshot(), close_resources=self._close_resources)
 
     def deleted(self):
         return self.library.deleted()
@@ -605,20 +681,8 @@ class DesktopService(QObject):
         return candidate
 
     def settings(self):
-        from .audio_processing.config import automatic_audio_config
-        values = self.values
-        language = next((row for row in LANGUAGES if row[0] == values['source']), (None, None, None))
-        target = next((row[2] for row in LANGUAGES if row[0] == values['target']), 'zho_Hans')
-        compute = {'CPU（通用）': 'cpu', 'NVIDIA GPU · 半精度': 'cuda',
-                   'Apple GPU · Metal / MLX': 'mlx'}.get(values['compute'], values['compute'])
-        device = self.device or ('', False)
-        return Settings(device_id=device[0], loopback=device[1], asr_model=values['asr'].strip(),
-                        asr_device=compute, translation_model=values['translation'].strip(),
-                        source=language[1], source_nllb=language[2], target=target, input_sample_rate=48000,
-                        audio_processing=automatic_audio_config(), **{key: values[key] for key in (
-                            'translate', 'backend', 'qwen_model', 'llama_model', 'translation_engine',
-                            'translation_device', 'translation_before', 'translation_after',
-                            'translation_initial_before', 'update_seconds', 'draft_seconds', 'endpoint_seconds')})
+        from .session_settings import session_settings
+        return session_settings(self.values, self.device or ('', False))
 
     def _audio_allowed(self):
         if self.no_audio:
@@ -696,14 +760,13 @@ class DesktopService(QObject):
     def start(self):
         self._audio_allowed()
         self._idle()
-        if self.preparation or self.runtime_action or 'inventory' in self.tasks:
+        if preparation_blocks_recording(self.preparation) or self.runtime_action or 'inventory' in self.tasks:
             raise ValueError('模型准备中，请完成或取消后再开始。')
         if self.runtime is not None and self.runtime.closed:
             raise ValueError('推理环境尚未安全释放，请重试修复运行环境或关闭应用。')
         if not self.device or not any(row['id'] == self.device[0] and row['loopback'] == self.device[1] for row in self.devices):
             raise ValueError('请刷新并选择音频来源。')
         self.cancel_model_check()
-        from .wlk_session import Session
         if not self.item or self.item['state'] != 'draft':
             draft = self.draft or {'name': default_recording_name(), 'folder': self.item['folder']}
             self._create_recording(folder_id=draft['folder'], name=draft['name'])
@@ -717,33 +780,26 @@ class DesktopService(QObject):
         if self.values['beta_features'] and settings.backend in ('qwen3-streaming', 'qwen3-mlx'):
             from .knowledge.session import session_context
             settings = replace(settings, asr_context=session_context(self.library, self.item['id']))
-        self.recording_lock = acquire_recording_lock(self.library.directory(self.item['id']))
+        self._select(self.item)
         try:
-            self.library.begin(self.item, asdict(settings))
-            self._select(self.item)
-            self.translating = settings.translate
-            self.state = RecordingState.STARTING
-            session = Session(settings, self, runtime=self.runtime, recording_path=self.library.directory(self.item['id']) / '录音.wav')
-            self.session = session
-            session.status.connect(self._status)
-            session.stage.connect(self._stage)
-            session.ready.connect(self._ready)
-            session.paused.connect(self._paused)
-            session.caption.connect(self._caption)
-            session.source_preview.connect(self._preview)
-            session.source_changed.connect(self._source_changed)
-            session.level.connect(self._level)
-            session.failure.connect(self._failed)
-            session.finished.connect(lambda: QTimer.singleShot(0, lambda: self._finished(session)))
-            session.start()
+            self.recording.start(settings, self._launch_session)
         except Exception:
-            self.session = None
-            self.state = RecordingState.IDLE
-            self.recording_lock.unlock()
-            self.recording_lock = None
+            self._failed(self.failure or '无法启动录音，请检查保存位置及运行环境。')
             raise
         self.changed()
         return self.snapshot()
+
+    def _launch_session(self, settings):
+        self.recording.launch(settings, runtime=self.runtime, callbacks={
+            'status': self._status, 'stage': self._stage, 'ready': self._ready,
+            'paused': self._paused, 'caption': self._caption, 'source_preview': self._preview,
+            'source_changed': self._source_changed, 'level': self._level, 'failure': self._failed,
+            'finished': self._session_finished})
+
+    def _session_finished(self):
+        session = self.session
+        if session is not None and (self.sender() is None or self.sender() is session):
+            QTimer.singleShot(0, lambda: self._finished(session))
 
     def _ready(self):
         if self.session and not self.failure and self.state != RecordingState.STOPPING:
@@ -752,16 +808,11 @@ class DesktopService(QObject):
             self.changed()
 
     def _source_changed(self, revision):
-        changed = False
-        if self.session and self.state == RecordingState.STARTING and not self.failure:
-            self.state = RecordingState.LISTENING
+        started, matched = self.recording.source_changed(revision)
+        if started:
             self.status = '录音已开始' if not self.session.model_ready.is_set() else '正在聆听'
             self.emit('model-loading', {'busy': not self.session.model_ready.is_set()})
-            changed = True
-        if revision == self.pending_source_revision:
-            self.pending_source_revision = None
-            changed = True
-        if changed:
+        if started or matched:
             self.audio_stage = '连续采集'
             self.changed()
 
@@ -769,24 +820,16 @@ class DesktopService(QObject):
         self.emit('level', value if self.state == RecordingState.LISTENING and self.pending_source_revision is None else 0)
 
     def stop(self):
-        if self.session and self.state.can_stop:
-            self.state = RecordingState.STOPPING
+        if self.recording.stop():
             self.emit('model-loading', {'busy': False})
-            self.session.stop()
             self.changed()
 
     def pause(self):
-        if self.session and not self.failure:
-            if self.state == RecordingState.LISTENING and self.session.pause():
-                self.state = RecordingState.PAUSING
-            elif self.state == RecordingState.PAUSED and self.session.resume():
-                self.state = RecordingState.RESUMING
+        if self.recording.pause():
             self.changed()
 
     def _paused(self, paused):
-        expected = RecordingState.PAUSING if paused else RecordingState.RESUMING
-        if self.state == expected and self.session and not self.failure:
-            self.state = RecordingState.PAUSED if paused else RecordingState.LISTENING
+        if self.recording.paused(paused):
             self.status = '已暂停聆听' if paused else '正在聆听'
             if paused:
                 self.emit('level', 0)
@@ -810,102 +853,44 @@ class DesktopService(QObject):
         self.changed()
 
     def _caption(self, caption):
-        previous = self.captions.get(caption.id)
-        if previous and (caption.revision < previous.revision or
-                         caption.revision == previous.revision and caption.source != previous.source):
-            return
-        if (caption.source and previous and previous.source == caption.source
-                and previous.language == caption.language and not caption.translation and (caption.ready or caption.final)):
-            caption = replace(caption, translation=previous.translation, translation_source=previous.translation_source,
-                              translation_phase=previous.translation_phase)
-        if caption.source:
-            self.captions[caption.id] = caption
-        elif caption.id in self.captions:
-            del self.captions[caption.id]
-        self.revision += 1
-        self.dirty = True
-        self.emit('caption', {'generation': self.generation, 'revision': self.revision,
-                              'caption': caption_value(caption), 'total': len(self.captions)})
-        if self.knowledge and self.item and self.knowledge.identifier == self.item['id']:
-            self.knowledge.observe(caption)
-        if not self.autosave.isActive():
-            self.autosave.start(1500)
+        caption = self.recording.caption(caption)
+        if caption is not None:
+            self.emit('caption', {'generation': self.generation, 'revision': self.revision,
+                                 'caption': caption_value(caption), 'total': len(self.captions)})
 
     def _preview(self, event):
-        if not self.session or not self.state.active:
-            return
-        sequence = event['sequence']
-        if event.get('done'):
-            if self.preview is None or sequence != self.preview_sequence:
-                return
-            self.preview = None
-        else:
-            if sequence <= self.preview_sequence:
-                return
-            self.preview, self.preview_sequence = event, sequence
-        self.revision += 1
-        self.dirty = True
-        self._save()
-        self.changed()
+        if self.recording.preview(event):
+            self.changed()
 
     def _finished(self, session):
         if self.session is not session:
             return
-        if session.isRunning():
+        result = self.recording.finish(session, retain_preview=self._retain_preview, caption=self._caption)
+        if result is None:
             QTimer.singleShot(20, lambda: self._finished(session))
             return
-        if self.preview:
-            rows = preview_captions(self.captions, self.preview)
-            self.captions = Transcript((row.id, row) for row in rows)
-            self.preview = None
-            self._failed('原文分句未完成，最新识别结果已作为草稿保留，请对照录音。')
-        if self.translating:
-            for row in list(self.captions.values()):
-                if row.final and (not row.translation or row.translation_phase == 'initial') and not row.error:
-                    self._caption(replace(row, error='会话已结束，此条翻译未完成'))
-        incomplete = self.failure or self.translating and any(
-            row.source and (row.error or not row.translation or row.translation_phase == 'initial')
-            for row in self.captions.values())
-        self.session = None
-        session.deleteLater()
-        audio = self.library.directory(self.item['id']) / '录音.wav'
-        self.has_audio = audio.is_file() and audio.stat().st_size > 44
-        self.state = RecordingState.IDLE
         self.status = '正在保存录音与字幕…'
-        self.revision += 1
-        self.dirty = True
-        self._save('incomplete' if incomplete else 'complete')
+        self._audio_metadata()
         self.emit('captions', self.page())
         self.changed()
 
+    def _retain_preview(self):
+        if self.preview:
+            self.captions = Transcript((row.id, row) for row in preview_captions(self.captions, self.preview))
+            self.preview = None
+            self._failed('原文分句未完成，最新识别结果已作为草稿保留，请对照录音。')
+
     def _save(self, state=None):
-        if not self.item or not self.dirty and state is None:
-            return
-        if state is not None:
-            self.save_target = state
-        self.saver.submit(self.library.save, (self.generation, self.item['id']), self.revision, self.item,
-                          preview_captions(self.captions, self.preview), self.save_target)
+        self.recording.save(state)
 
     def _saved(self, snapshot, state, error):
-        if not self.item or snapshot.token != (self.generation, self.item['id']):
-            return
         if error:
-            self.save_error = error
-            self.dirty = True
             self.status = '保存失败，请重试保存；已有文字仍保留。'
-        else:
-            self.item['state'] = state
-            if self.knowledge and self.knowledge.identifier == self.item['id']:
-                self.knowledge.saved(snapshot.captions, final=state in ('complete', 'incomplete'))
-            if snapshot.revision == self.revision and (self.save_target is None or self.save_target == state):
-                self.dirty = False
-                self.save_error = ''
-                self.save_target = None
-                if not self.session:
-                    self.status = '已保存录音与字幕'
-                    self.refresh()
-                    if self.pending_library and not self.closing:
-                        QTimer.singleShot(0, self._begin_pending_migration)
+        elif not self.dirty and not self.session:
+            self.status = '已取消 · 录音尚未开始' if state == 'draft' else '已保存录音与字幕'
+            self.refresh()
+            if self.pending_library and not self.closing:
+                QTimer.singleShot(0, self._begin_pending_migration)
         self.changed()
 
     def retry_save(self):
@@ -913,19 +898,18 @@ class DesktopService(QObject):
         self.changed()
 
     def _release_lock(self):
-        if self.recording_lock and not self.session and not self.saver.busy and not self.dirty and not self.save_error:
-            self.recording_lock.unlock()
-            self.recording_lock = None
-            if self.item and 'pending_name' in self.item:
-                try:
-                    self._close_resources()
-                    self.library.rename(self.item, self.item['pending_name'])
-                    self.refresh()
-                    self.changed()
-                except (OSError, ValueError) as exc:
-                    self.emit('notice', {'text': '名称已保存，文件夹名暂未同步：' + str(exc), 'error': True})
-            self._audio_metadata()
-            self.changed()
+        self.recording.release_lock()
+
+    def _after_lock_released(self):
+        if self.item and 'pending_name' in self.item:
+            try:
+                self._close_resources()
+                self.library.rename(self.item, self.item['pending_name'])
+                self.refresh()
+            except (OSError, ValueError) as exc:
+                self.emit('notice', {'text': '名称已保存，文件夹名暂未同步：' + str(exc), 'error': True})
+        self._audio_metadata()
+        self.changed()
 
     def export(self, path, format='srt', recovery=False):
         from .recording_export import FORMATS, write_export, write_recovery
@@ -1014,16 +998,7 @@ class DesktopService(QObject):
             return
         self._idle()
         self._close_resources()
-        try:
-            self.migration_locks.append(acquire_library_migration_lock(self.library.root))
-            self.library.refresh()
-            for item in self.library.index['sessions']:
-                self.migration_locks.append(acquire_recording_lock(self.library.directory(item['id'])))
-            self.migration_source = self.library
-            self.migration.start(self.library, path)
-        except Exception:
-            self._release_migration_locks()
-            raise
+        self.library_workflow.start(path)
         self.changed()
 
     def cancel_migration(self):
@@ -1041,39 +1016,15 @@ class DesktopService(QObject):
         except (OSError, ValueError) as exc:
             self.emit('notice', {'text': str(exc), 'error': True})
 
-    def _release_migration_locks(self):
-        for lock in self.migration_locks:
-            lock.unlock()
-        self.migration_locks = []
-        self.migration_source = None
 
-    def _library_copied(self, library, verified, error):
-        if error:
-            self.emit('notice', {'key': 'migration', 'text': '迁移未完成，原录音保留：' + error, 'error': True})
-            self._release_migration_locks()
-            self.changed()
-            self._continue_close()
-            return
-        old_root = self.library.root
-        self.prefs.setValue('library_directory', str(library.root))
-        self.prefs.sync()
-        if self.prefs.status() != QSettings.Status.NoError:
-            self.prefs.setValue('library_directory', str(old_root))
-            self.emit('notice', {'key': 'migration', 'text': '新位置无法保存到设置，原录音保留；新位置已有校验副本。', 'error': True})
-            self._release_migration_locks()
-            self.changed()
-            self._continue_close()
-            return
-        self.library = library
-        if self.item:
-            self.item = self._find(self.item['id'], folders=False)
+
+    def _library_adopted(self, library):
         self.emit('library-root', str(library.root))
         self.refresh()
-        self.migration.cleanup(old_root, verified)
 
-    def _library_migrated(self, retained):
-        self._release_migration_locks()
-        self.emit('notice', {'key': 'migration', 'text': '录音已迁移；部分发生变化的旧文件仍保留。' if retained else '录音已迁移到新位置。'})
+    def _library_migrated(self, retained, error=''):
+        self.emit('notice', {'key': 'migration', 'text': error or (
+            '录音已迁移；部分发生变化的旧文件仍保留。' if retained else '录音已迁移到新位置。'), 'error': bool(error)})
         self.changed()
         self._continue_close()
 
@@ -1094,7 +1045,10 @@ class DesktopService(QObject):
             QTimer.singleShot(20, lambda: self._task_finished(name, task))
             return
         self.tasks.pop(name, None)
-        if task.error:
+        if name == 'startup-updates':
+            if not self.closing and not task.error and isinstance(task.value, dict) and task.value.get('kind') in ('source', 'package'):
+                self.emit('updates', {'busy': False, 'result': task.value})
+        elif task.error:
             self.emit(name, {'busy': False, 'error': task.error})
             self.emit('notice', {'text': task.error, 'error': True})
         else:
@@ -1121,7 +1075,7 @@ class DesktopService(QObject):
                     translation_device=values['translation_device'])
 
     def _refresh_models(self):
-        if self.closing:
+        if self.closing or self.update_fenced:
             return
         if self.preparation or self.asset_check:
             self.model_refresh.start(100)
@@ -1189,9 +1143,86 @@ class DesktopService(QObject):
             return inventory(selected)
         self._start_task('inventory', remove)
 
-    def check_updates(self):
+    def update_activity_snapshot(self):
+        from .update_workflow import UpdateActivity
+        return UpdateActivity(unsaved_edits=self.unsaved_edits,
+            recording=self.session is not None or self.state.active,
+            unsaved_recording=bool(self.dirty or self.save_error),
+            files=any((self.saver.busy, self.exporter.busy, self.migration.busy, self.reader.busy)),
+            preparation=self.preparation is not None or self.runtime_action is not None,
+            knowledge_closing=bool(self.knowledge and self.knowledge.closing),
+            checks=bool(self.tasks or self.asset_check))
+
+    def set_edited(self, dirty):
+        if type(dirty) is not bool:
+            raise ValueError('无效的编辑状态。')
+        self.unsaved_edits = dirty
+
+    def close_update_knowledge(self):
+        return self.knowledge is None or self.knowledge.close()
+
+    def fence_for_update(self):
+        self.update_fenced = True
+        self.model_refresh.stop()
+        self.changed()
+
+    def restore_after_update(self):
+        if self.runtime is not None and self.runtime.closed:
+            self.runtime = None
+        self.update_fenced = False
+        if not self.closing:
+            self._warm_runtime()
+        self.changed()
+
+    def on_native_update(self, event):
+        if event.get('stage') == 'quit':
+            self.close()
+        elif event.get('stage') not in ('waiting', 'dismissed'):
+            self.emit('updates', event)
+
+    def update_action(self, action):
+        if action == 'cancel':
+            self.native_updater.cancel()
+        elif action == 'cancel_wait':
+            self.update_workflow.cancel_wait()
+        elif action == 'download':
+            if not self.native_updater.download():
+                raise ValueError('更新状态已变化，请重新检查。')
+        elif action == 'install':
+            if not self.native_updater.confirm_install():
+                raise ValueError('更新状态已变化，请重新检查。')
+        else:
+            raise ValueError('更新状态已变化，请重新检查。')
+
+    def check_updates(self, manual=True):
+        if self.closing:
+            return
+        if self.native_updater.installed:
+            return self.native_updater.check(manual=manual)
         from .updates import check_updates
-        self._start_task('updates', check_updates)
+        if manual:
+            self._start_task('updates', check_updates)
+        else:
+            self._start_task('startup-updates', check_updates)
+
+    def locate(self, identifier, generation, caption_id=None, seconds=None):
+        if type(generation) is not int or generation != self.generation:
+            raise ValueError('录音内容已变化，请重新查找。')
+        seconds = locate_seconds(self.item, self.captions, identifier, caption_id=caption_id, seconds=seconds)
+        if self.state.active or self.session:
+            if caption_id is None:
+                raise ValueError('录音结束后可定位课堂来源。')
+            # Searching live captions remains available, without seeking or
+            # changing the future replay position of an active recording.
+            return {'page': self.page(locate=caption_id), 'identifier': caption_id}
+        if caption_id is None:
+            caption_id = next((row.id for row in self.captions.values() if row.start <= seconds < row.end), None)
+        self.located_position = round(seconds * 1000)
+        # Position an existing player only. Navigating text must not open audio devices.
+        if self.player is not None:
+            self.player.seek(round(seconds * 1000), play=False)
+        self.emit('playback', {'position': round(seconds * 1000), 'caption_id': caption_id, 'seek': True})
+        return {'page': self.page(seconds=seconds), 'identifier': caption_id}
 
     def _player(self):
         self._audio_allowed()
@@ -1213,6 +1244,8 @@ class DesktopService(QObject):
             check_library_access(self.library, self.item)
             self.player.load(self.library.directory(self.item['id']) / '录音.wav', self.captions.values(),
                              recover_recording=self.item['state'] in ('incomplete', 'recording'))
+            if self.located_position is not None:
+                self.player.seek(self.located_position, play=False)
             self.player.set_volume(self.playback_volume)
         return self.player
 
@@ -1234,14 +1267,16 @@ class DesktopService(QObject):
         self.playback_volume = value
 
     def prepare(self, only=None, kind='models', selection=None):
-        self._idle()
+        if kind != 'documents':
+            self._idle()
+        elif self.update_fenced or self.migration.busy or self.pending_library or self.closing:
+            raise ValueError('请等待当前文件操作完成。')
         if self.preparation or self.runtime_action or 'inventory' in self.tasks:
             raise ValueError('已有准备任务正在运行。')
         if only not in (None, 'all', 'asr', 'translation'):
             raise ValueError('无效的准备范围。')
         if kind not in ('models', 'runtime', 'documents') or (kind == 'documents' and not self.values['beta_features']):
             raise ValueError('无效的准备任务，请先启用对应功能。')
-        from .runtime_paths import installation_command
         settings = self.settings()
         current = dict(backend=settings.backend,
                          asr_model=settings.asr_model if settings.backend == 'wlk-whisper' else settings.qwen_model,
@@ -1250,36 +1285,20 @@ class DesktopService(QObject):
                          translation_device=settings.translation_device)
         if selection is None:
             selection = current
-        elif kind != 'models' or not isinstance(selection, dict) or set(selection) != set(current):
+        elif kind != 'models':
             raise ValueError('无效的模型下载快照。')
-        else:
-            if (any(not isinstance(value, str) or not value.strip() or len(value) > 4096 for value in selection.values())
-                    or selection['backend'] not in asr_backends()
-                    or selection['translation_engine'] not in ('llama', 'pytorch')
-                    or selection['translation_device'] not in translation_devices(selection['translation_engine'])):
-                raise ValueError('模型或计算设备不适用于当前平台。')
-            if selection['backend'] == 'qwen3-streaming' and selection['asr_model'].startswith('mlx-community/'):
-                raise ValueError('MLX 权重需要 Apple Silicon Mac 的 MLX 引擎。')
-            if selection['translation_engine'] == 'llama' and selection['translation_model'].startswith('hf://'):
-                from .llama_assets import hub_gguf
-                hub_gguf(selection['translation_model'])
-            selection = dict(selection)
         if kind == 'models' and only is None and not settings.translate:
             only = 'asr'
-        if kind == 'runtime':
-            command = installation_command('linguaflow.runtime_install', 'all', '--maintain', '--selection', json.dumps(selection))
-        elif kind == 'documents':
-            command = installation_command('linguaflow.document_install')
-        else:
-            command = installation_command('linguaflow.recommended_prepare', '--selection', json.dumps(selection))
-        if only in ('asr', 'translation') and kind == 'models':
-            command += ['--only', only]
+        command = preparation_command(selection, kind=kind, only=only)
         self.cancel_model_check()
         self.preparation_command = command, kind
         self._start_preparation(command, kind)
 
     def retry_preparation(self):
-        self._idle()
+        if not self.preparation_command or self.preparation_command[1] != 'documents':
+            self._idle()
+        elif self.update_fenced or self.migration.busy or self.pending_library or self.closing:
+            raise ValueError('请等待当前文件操作完成。')
         if self.preparation or not self.preparation_command or not self.preparation_recovery:
             raise ValueError('没有可恢复的准备任务。')
         command, kind = self.preparation_command
@@ -1288,7 +1307,7 @@ class DesktopService(QObject):
         self._start_preparation(command, kind)
 
     def _warm_runtime(self):
-        if self.no_audio or self.closing or self.preparation or self.runtime_action:
+        if self.no_audio or self.closing or self.update_fenced or self.preparation or self.runtime_action:
             return
         if self.runtime is None:
             from .runtime_preparation import RuntimePreparation
@@ -1318,16 +1337,10 @@ class DesktopService(QObject):
             self._retire_runtime(released)
             self.changed()
             return
-        from .preparation_task import Preparation
-        task = Preparation(lambda: task.run_command(command), self,
-                           affects_runtime=kind != 'documents', beta_only=kind == 'documents')
-        self.preparation = task
         self.preparation_recovery = ''
         self.preparation_status = '正在准备所选模型与组件…'
-        task.download.connect(self._progress)
-        task.result.connect(self._preparation_result)
-        task.finished.connect(lambda: QTimer.singleShot(0, lambda: self._preparation_finished(task)))
-        task.start()
+        self.preparation_workflow.start(lambda: self.preparation.run_command(command),
+                                        affects_runtime=kind != 'documents', beta_only=kind == 'documents')
         self.changed()
 
     def _progress(self, value):
@@ -1343,19 +1356,13 @@ class DesktopService(QObject):
         self.changed()
 
     def _preparation_finished(self, task):
-        if task.isRunning():
-            QTimer.singleShot(20, lambda: self._preparation_finished(task))
-            return
-        if self.preparation is task:
-            self.preparation_recovery = '继续准备' if task.cancelled else ('重试' if self.preparation_status.startswith('准备未完成：') else '')
-            self.preparation = None
-            self.progress = None
-            if not self.closing:
-                self._warm_runtime()
-                self.model_refresh.start(100)
-                if 'inventory' not in self.tasks:
-                    self.model_inventory()
-        task.deleteLater()
+        self.preparation_recovery = '继续准备' if task.cancelled else ('重试' if self.preparation_status.startswith('准备未完成：') else '')
+        self.progress = None
+        if not self.closing:
+            self._warm_runtime()
+            self.model_refresh.start(100)
+            if 'inventory' not in self.tasks:
+                self.model_inventory()
         self.changed()
         self._continue_close()
 
@@ -1366,9 +1373,17 @@ class DesktopService(QObject):
             self.preparation_recovery = '继续准备'
             self.changed()
         if self.preparation:
-            self.preparation.cancel()
+            self.preparation_workflow.cancel()
             self.preparation_status = '正在取消，已完成文件保留…'
             self.changed()
+
+    def attach_knowledge(self):
+        from .knowledge.lifecycle import should_attach
+        try:
+            if should_attach(self.library, self.item, enabled=self.values['beta_features']):
+                self.open_knowledge()
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.emit('notice', {'text': f'课程资料未就绪：{exc}', 'error': True})
 
     def open_knowledge(self):
         if not self.values['beta_features']:
@@ -1377,19 +1392,14 @@ class DesktopService(QObject):
             raise ValueError('请先新建或打开录音。')
         if self.knowledge is None:
             from .knowledge.client import KnowledgeClient
-            self.knowledge = KnowledgeClient(self)
+            self.knowledge = KnowledgeClient(self, state=self.knowledge_state)
             self.knowledge.changed.connect(self._knowledge_event)
         if self.knowledge.identifier != self.item['id']:
-            self.knowledge_view = {}
-        self.knowledge.open(self.library, self.item, self.captions.values() if self.session else None)
+            self.knowledge_state.reset()
+        self.knowledge.open(self.library, self.item, self.captions.values())
 
     def _knowledge_event(self, value):
-        if value.get('type') == 'view':
-            self.knowledge_view.update(value)
-            # The existing worker emits partial views after the initial
-            # snapshot. A newly mounted renderer still needs the full course.
-            value = dict(self.knowledge_view)
-        self.emit('knowledge', value)
+        self.emit('knowledge', self.knowledge_state.receive(value))
 
     def knowledge_image(self, identifier):
         if not self.values['beta_features'] or not self.knowledge or not self.knowledge.connected:
@@ -1421,9 +1431,14 @@ class DesktopService(QObject):
             raise ValueError('请等待字幕保存完成，再处理笔记。')
         if (values or {}).keys() & {'operation', 'root', 'identifier', 'epoch'}:
             raise ValueError('课程操作不能更改后台归属。')
+        if operation == 'cancel':
+            from .knowledge.lifecycle import cancel_task
+            return cancel_task(self.knowledge, self.knowledge.operation)
         return self.knowledge.send(operation, **(values or {}))
 
     def _clock(self):
+        if self.native_updater.pending and not self.closing:
+            self.update_workflow.try_install()
         if self.session:
             self.emit('clock', {'seconds': self.session.recorded_seconds})
 
@@ -1431,47 +1446,34 @@ class DesktopService(QObject):
         if self.dirty and not self.session and not self.saver.busy and self.save_error:
             raise ValueError('保存失败，不能退出。请先重试保存或备份全部文字。')
         self.closing = True
-        self.reader.cancel()
-        self.stop()
-        self.cancel_preparation()
         self.cancel_model_check()
-        self.cancel_migration()
-        self._save()
         self.changed()
         QTimer.singleShot(0, self._continue_close)
         return {'closing': True}
 
+    def _shutdown_save(self):
+        if self.connection_lost and (self.dirty or self.save_error) and not self.saver.busy and self.save_error:
+            self._recover_disconnected()
+            self.dirty = False
+            self.save_error = ''
+        self._save()
+        return not self.saver.busy and not self.dirty and not self.save_error
+
+    def _shutdown_resources(self):
+        self._close_resources()
+        return True
+
+    def _runtime_released(self, runtime):
+        if self.runtime is runtime:
+            self.runtime = None
+
+    def _shutdown_failed(self, error):
+        self.status = error
+        self.cancel_frontend()
+        self.changed()
+
     def _continue_close(self):
-        if (not self.closing or self.session or self.saver.busy or self.exporter.busy
-                or self.preparation or self.tasks or self.migration.busy or self.reader.busy or self.asset_check):
-            return
-        if self.dirty or self.save_error:
-            if self.connection_lost:
-                self._recover_disconnected()
-                self.dirty = False
-                self.save_error = ''
-                self._continue_close()
-                return
-            self.closing = False
-            self.cancel_frontend()
-            self.changed()
-            return
-        try:
-            self._close_resources()
-        except ValueError as exc:
-            self.closing = False
-            self.status = str(exc)
-            self.cancel_frontend()
-            self.changed()
-            return
-        if self.runtime is not None:
-            def released(error):
-                if error:
-                    self.closing = False
-                    self.cancel_frontend()
-                    self.status = '推理环境未能退出，请重试关闭：' + error
-                    self.changed()
-            self._retire_runtime(released)
+        if not self.closing or not self.shutdown.advance():
             return
         self.model_refresh.stop()
         self._release_lock()
@@ -1485,6 +1487,7 @@ class DesktopService(QObject):
                 self.emit('notice', {'text': f'无法切换界面：{exc}', 'error': True})
                 self.changed()
                 return
+        self.native_updater.close()
         self.emit('closed', {})
         QTimer.singleShot(0, QCoreApplication.instance().quit)
 
@@ -1494,6 +1497,8 @@ class DesktopService(QObject):
         if self.connection_lost:
             return
         self.connection_lost = True
+        if self.native_updater.shutdown_job is not None:
+            self.native_updater.cancel()
         self.closing = True
         self.reader.cancel()
         self.stop()
@@ -1532,7 +1537,15 @@ def main():
     diag.install_exception_hooks()
     from .process_platform import hold_installation_mutex
     hold_installation_mutex(installed=packaged())
-    app = QCoreApplication([])
+    if packaged() and sys.platform == 'darwin':
+        # Cocoa/Sparkle needs the GUI event dispatcher, but no QWidget or Qt window.
+        from PySide6.QtGui import QGuiApplication
+        app = QGuiApplication([])
+        app.setQuitOnLastWindowClosed(False)
+        from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
+        NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+    else:
+        app = QCoreApplication([])
     from .frontend_switch import context
     saved = context()
     prefs = (QSettings(str(args.preferences), QSettings.Format.IniFormat) if args.preferences else

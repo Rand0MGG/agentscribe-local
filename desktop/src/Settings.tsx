@@ -7,8 +7,8 @@ const categories = ['常规', '聆听', '模型管理', '字幕与延迟', '运�
 const backendNames: Record<string, string> = { 'wlk-whisper': 'WhisperLiveKit · Whisper / AlignAtt', 'qwen3-streaming': 'WhisperLiveKit · Qwen3-ASR 流式', 'qwen3-mlx': 'Qwen3-ASR · MLX（试验）' };
 const deviceNames: Record<string, string> = { cpu: 'CPU（通用）', cuda: 'NVIDIA GPU · 半精度', mlx: 'Apple GPU · Metal / MLX', metal: 'Apple GPU · Metal' };
 
-export function SettingsPage({ data, values, state, switchDisabled, updatesBusy, audioBusy, audioMessage, onClose, onDeleted, perform, onPatch, onCategory, initialCategory = '常规' }: {
-  audioBusy: boolean; audioMessage: string; data: Bootstrap; values: Settings; state: State; switchDisabled: boolean; updatesBusy: boolean; onClose: () => void; onDeleted: () => void;
+export function SettingsPage({ data, values, state, switchDisabled, updatesBusy, update, audioBusy, audioMessage, onClose, onDeleted, perform, onPatch, onCategory, initialCategory = '常规' }: {
+  audioBusy: boolean; audioMessage: string; data: Bootstrap; values: Settings; state: State; switchDisabled: boolean; updatesBusy: boolean; update?: { text?: string }; onClose: () => void; onDeleted: () => void;
   perform: (method: string, params?: Record<string, unknown>) => Promise<any>;
   onPatch: (values: Settings) => void; onCategory?: (category: string) => void; initialCategory?: string;
 }) {
@@ -97,14 +97,14 @@ export function SettingsPage({ data, values, state, switchDisabled, updatesBusy,
     </div>}
     {category === '运行环境' && <div className="settings-form"><h3>本地推理组件</h3><p>统一检查识别与翻译所需组件；缺失或损坏时自动修复。</p>
       <Button disabled={active || state.preparing} onClick={() => perform('models.prepare', { kind: 'runtime' })}>检查 / 修复运行环境</Button>
-      {!!values.beta_features && <Button disabled={active || state.preparing} onClick={() => perform('models.prepare', { kind: 'documents' })}>安装 / 修复课件渲染组件</Button>}
+      {!!values.beta_features && <Button disabled={state.preparing || state.closing || state.migrating} onClick={() => perform('models.prepare', { kind: 'documents' })}>安装 / 修复课件渲染组件</Button>}
       <p>桌面界面与模型推理使用独立环境。无需手动启动服务。统一检查所需组件，补齐或重建损坏环境，并清理未发布的残留环境。模型在模型管理中准备。</p>
-      <h3>版本与更新</h3><p>当前版本：{data.version}</p><Button disabled={updatesBusy} onClick={() => perform('updates.check')}>{updatesBusy ? '正在检查…' : data.installed ? '切换到 Qt 检查更新' : '检查软件更新'}</Button>
+      <h3>版本与更新</h3><p>当前版本：{data.version}{update?.text ? ` · ${update.text}` : ''}</p><Button disabled={updatesBusy} onClick={() => perform('updates.check')}>{updatesBusy ? '正在检查…' : '检查软件更新'}</Button>
       <p className="muted">{data.installed ? '检查适用于此平台的新版本；录音结束并保存后，再确认重启安装。' : '当前为源码运行，请到发行页查看对应源码；更新前保留本地修改。'}</p>{updateAvailable && <Button className="fit-button" variant="quiet" onClick={() => perform('app.releases')}>查看发行页</Button>}
       <h3>界面</h3><Button disabled={switchDisabled} onClick={() => perform('frontend.switch')}>切换到 Qt 界面</Button>
     </div>}
     {['运行环境', '模型管理'].includes(category) && (state.preparation_status || state.preparing) && <div className="preparation" role="status">
-      <div className="settings-actions"><h3>准备本地模型</h3>{state.preparing && <Button disabled={state.preparation_cancelling} onClick={() => perform('models.cancel')}>取消准备</Button>}{state.preparation_recovery && <Button disabled={active || state.preparing} onClick={() => perform('models.retry')}>{state.preparation_recovery}</Button>}</div>
+      <div className="settings-actions"><h3>准备本地模型</h3>{state.preparing && <Button disabled={state.preparation_cancelling} onClick={() => perform('models.cancel')}>取消准备</Button>}{state.preparation_recovery && <Button disabled={active && state.preparation_kind !== 'documents' || state.preparing} onClick={() => perform('models.retry')}>{state.preparation_recovery}</Button>}</div>
       <p>{state.preparation_status}</p>{state.preparing && <progress {...(Number(state.progress?.total) > 0 ? { value: Number(state.progress?.completed || 0), max: Number(state.progress?.total) } : {})} />}{state.progress && <p>{progressText(state.progress)}</p>}
     </div>}
     {category === '使用指南' && <><h3>第一次使用</h3><div className="settings-group">{[

@@ -10,6 +10,7 @@ from PySide6.QtCore import QEventLoop, QObject, Qt, QTimer, Signal, Slot
 
 from ..process_platform import close_process_transport, start_worker, stop_worker
 from ..runtime_paths import knowledge_python, python_environment, resource_root
+from .lifecycle import KnowledgeState
 
 
 class KnowledgeClient(QObject):
@@ -19,12 +20,14 @@ class KnowledgeClient(QObject):
     closed = Signal()
     closing_changed = Signal(bool)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, state=None):
         super().__init__(parent)
+        self.state = state if state is not None else KnowledgeState()
         self.process = None
         self.worker_job = None
         self.epoch = ''
         self.identifier = ''
+        self.operation = ''
         self.pending = deque()
         self.condition = Condition()
         self.threads = []
@@ -38,6 +41,9 @@ class KnowledgeClient(QObject):
     @Slot(str, dict)
     def _deliver(self, epoch, value):
         if epoch == self.epoch:
+            self.state.receive(value)
+            if value.get('operation'):
+                self.operation = value['operation']
             if value['type'] == 'disconnected':
                 self.disconnected = True
             self.changed.emit(value)
@@ -48,6 +54,7 @@ class KnowledgeClient(QObject):
 
     def report_disconnected(self):
         self.disconnected = True
+        self.state.receive({'type': 'disconnected', 'busy': False})
         self.changed.emit({'type': 'disconnected', 'message': '课程后台已停止，请重新连接；未保存的术语仍保留。',
                            'busy': False})
 
@@ -58,6 +65,7 @@ class KnowledgeClient(QObject):
         if not self.close():
             return
         epoch = self.epoch = uuid4().hex
+        self.state.reset()
         self.disconnected = False
         self.identifier = item['id']
         self.process, self.worker_job = start_worker(
@@ -108,6 +116,9 @@ class KnowledgeClient(QObject):
             if operation not in ('caption', 'saved', 'view'):
                 self.report_disconnected()
             return False
+        if operation in ('import', 'preview', 'extract', 'notes', 'organize', 'question'):
+            self.operation = operation
+            self.state.receive({'type': 'status', 'busy': True})
         command = {'operation': operation, **value}
         with self.condition:
             if operation in ('caption', 'saved', 'view'):
@@ -135,10 +146,11 @@ class KnowledgeClient(QObject):
         threads = self.threads
         job = self.worker_job
         with self.condition:
-            self.epoch = self.identifier = ''
+            self.epoch = self.identifier = self.operation = ''
             self.pending.clear()
             self.condition.notify_all()
         if process is None and not threads and job is None:
+            self.state.reset()
             return True
         # Keep one resource owner throughout cleanup, including failures/retries.
         self.disconnected = True
@@ -180,6 +192,7 @@ class KnowledgeClient(QObject):
         self.close_job = None
         self.closing, self.close_error = False, error
         if not error:
+            self.state.reset()
             self.process, self.threads = None, []
             self.worker_job = None
         self.closing_changed.emit(False)

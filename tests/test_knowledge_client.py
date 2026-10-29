@@ -8,7 +8,8 @@ import pytest
 
 @pytest.mark.p1
 @pytest.mark.parametrize('launcher_exits', [False, True])
-def test_close_reaps_descendant_holding_transport(tmp_path, launcher_exits):
+@pytest.mark.parametrize('operation', ['close', 'cancel_import'])
+def test_close_reaps_descendant_holding_transport(tmp_path, launcher_exits, operation):
     child = tmp_path / 'course_worker.py'
     child.write_text('''import subprocess, sys, time, json, os
 from pathlib import Path
@@ -48,7 +49,11 @@ try:
     if sys.argv[2] == 'True':
         Path(sys.argv[1]).with_suffix('.exit').touch()
         process.wait(timeout=8)
-    assert client.close(), client.close_error or 'course cleanup remained blocked'
+    if sys.argv[3] == 'cancel_import':
+        from linguaflow.knowledge.lifecycle import cancel_task
+        assert cancel_task(client, 'import')
+    else:
+        assert client.close(), client.close_error or 'course cleanup remained blocked'
     descendant.wait(timeout=3)
     assert process.poll() is not None and not client.threads
     assert process.stdin.closed and process.stdout.closed
@@ -65,7 +70,7 @@ finally:
         app.processEvents()
         time.sleep(.01)
 '''
-    result = subprocess.run([sys.executable, '-c', code, str(child), str(launcher_exits)],
+    result = subprocess.run([sys.executable, '-c', code, str(child), str(launcher_exits), operation],
                             capture_output=True, text=True, encoding='utf-8', timeout=30,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen'})
     assert result.returncode == 0, result.stdout + result.stderr

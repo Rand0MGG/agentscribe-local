@@ -25,6 +25,8 @@
 - 导航、移动、删除、退出先取消并回收自有后台，拒绝旧代次结果；被其他录音（含垃圾桶）引用的课程不得永久删除。关闭 Beta 隐藏入口并停后台，保留材料/笔记，重新开启仍需原有用途许可。
 - 后台回收包含渲染等后代进程，即使主进程已退出；通信线程结束后才关闭管道。清理失败保留资源归属并允许重试，不把超时视为关闭成功。
 
+课程任务提交后即应阻止切换桌面前端；任务开始、完成、取消或断开产生的状态事件均应即时更新后台门禁，不能等待下一个完整课程视图，也不能依赖课程窗口是否可见。关闭应用仍须先处理未保存编辑并回收所属后台。
+
 ## 当前策略与实现定位
 
 Office 当前由独立 Kit 渲染，课程代理使用 Deep Agents。材料与本地快照见 [`knowledge/materials.py`](../../linguaflow/knowledge/materials.py)、[`rendering.py`](../../linguaflow/knowledge/rendering.py)；全页覆盖见 [`readings.py`](../../linguaflow/knowledge/readings.py)，逐轮外发与发布校验见 [`worker.py`](../../linguaflow/knowledge/worker.py)。文本/网页提取可见原生文字；PDF/PPTX 可单独准备本地原页，不触发云端阅读。实现和验收状态见 [计划](../ROADMAP.md#实现缺口)。

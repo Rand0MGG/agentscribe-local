@@ -96,6 +96,25 @@ def test_healthy_bootstrap_preserves_new_and_backup(tmp_path, native):
 
 
 @pytest.mark.p0
+def test_failed_launcher_does_not_restore_under_live_electron(tmp_path, native):
+    directory, state, _ = fixture(tmp_path, native)
+    record = dict(pid=2**30, stamp=5, version='0.8.0')
+    recovery.write_json(directory / 'startup.json', record)
+    child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+    try:
+        stamp = recovery.NativeRecovery(native).stamp(child.pid)
+        assert stamp
+        recovery.write_json(directory / 'desktop.json', {'owner': record, 'pid': child.pid, 'stamp': stamp})
+        assert recovery.watch(directory, startup_timeout=1, relaunch=False) == 'manual-recovery'
+        assert child.poll() is None
+        assert (Path(state['installed']) / 'version').read_text() == 'new'
+        assert (Path(state['backup']) / 'version').read_text() == 'old'
+    finally:
+        child.terminate()
+        child.wait(timeout=5)
+
+
+@pytest.mark.p0
 def test_missing_ownership_does_not_replace_a_potentially_running_app(tmp_path, native):
     directory, state, _ = fixture(tmp_path, native)
     assert recovery.watch(directory, startup_timeout=0, relaunch=False) == 'manual-recovery'

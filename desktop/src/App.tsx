@@ -29,7 +29,7 @@ export function App() {
   const [playback, setPlayback] = useState<{ position: number; duration: number; state: string; caption_id: number | null }>({ position: 0, duration: 0, state: 'StoppedState', caption_id: null }), [volume, setVolume] = useState(100);
   const scrubbing = useRef(false);
   const [deleted, setDeleted] = useState<any[] | null>(null), [moving, setMoving] = useState<Item | null>(null), [moveTo, setMoveTo] = useState('');
-  const [search, setSearch] = useState<string | null>(null), [matches, setMatches] = useState<Caption[]>([]), [locate, setLocate] = useState<number | null>(null);
+  const [search, setSearch] = useState<string | null>(null), [searchMatches, setSearchMatches] = useState<{ rows: Caption[]; identifier: string | null; generation: number }>({ rows: [], identifier: null, generation: -1 }), [locate, setLocate] = useState<number | null>(null);
   const [searchPage, setSearchPage] = useState(0), [searchTotal, setSearchTotal] = useState(0);
   const [diagnostics, setDiagnostics] = useState<string[]>([]), [showDiagnostics, setShowDiagnostics] = useState(false);
   const [loadingModel, setLoadingModel] = useState(false), [loadingHidden, setLoadingHidden] = useState(false), [preparationHidden, setPreparationHidden] = useState(false);
@@ -41,7 +41,9 @@ export function App() {
   const dataRef = useRef(data), tail = useRef(true), searchGeneration = useRef(0), commands = useRef(new Set<string>());
   const stateGeneration = useRef(0);
   const [seekRevision, setSeekRevision] = useState(0);
+  const matches = searchMatches.rows;
   const [updatesBusy, setUpdatesBusy] = useState(false);
+  const [updateEvent, setUpdateEvent] = useState<any>(null), [updateNotes, setUpdateNotes] = useState(false);
   dataRef.current = data;
 
   async function perform(method: string, params: Record<string, unknown> = {}) {
@@ -88,7 +90,15 @@ export function App() {
       }
       if (event === 'library') setData(old => old ? { ...old, library: value } : old);
       if (event === 'library-root') setData(old => old ? { ...old, root: value } : old);
-      if (event === 'updates') { setUpdatesBusy(!!value.busy); setNotice({ text: value.busy ? '正在检查更新…' : value.error || value.result?.message || '', error: !!value.error || value.result?.kind === 'error', busy: value.busy }, 'updates'); }
+      if (event === 'updates-reveal') setNotice(null, 'updates');
+      if (event === 'settings-page') { setSettingsCategory(value); setSection('settings'); }
+      if (event === 'updates' && value.stage) {
+        setUpdateEvent(value);
+        const busy = ['checking', 'downloading', 'verifying', 'installing'].includes(value.stage) || !!value.releasing;
+        setUpdatesBusy(busy);
+        setNotice({ text: value.text || '', error: value.stage === 'error', busy, persistent: ['available', 'ready', 'waiting'].includes(value.stage) }, 'updates');
+      }
+      if (event === 'updates' && !value.stage) { setUpdatesBusy(!!value.busy); setNotice({ text: value.busy ? '正在检查更新…' : value.error || value.result?.message || '', error: !!value.error || value.result?.kind === 'error', busy: value.busy }, 'updates'); }
       if (event === 'settings') setData(old => old ? { ...old, settings: value } : old);
       if (event === 'devices') {
         const previous = dataRef.current?.device;
@@ -120,7 +130,7 @@ export function App() {
         offeredGuidance.current = true;
         if (value.missing.some((row: string) => row.startsWith('识别模型：') || row.startsWith('翻译模型：'))) setGuidance(value.missing);
       }
-      if (event === 'caption-location') { tail.current = false; setSection('recording'); setPage(value.page); setLocate(value.identifier); }
+      if (event === 'caption-location' && value.page.generation === dataRef.current?.state.generation) { tail.current = false; setSection('recording'); setPage(value.page); setLocate(value.identifier); }
       if (event === 'clock') setSeconds(value.seconds);
       if (event === 'level') setLevel(value);
       if (event === 'playback') {
@@ -156,8 +166,9 @@ export function App() {
     if (search === null) return;
     const ticket = ++searchGeneration.current;
     const timer = setTimeout(() => {
+      const owner = dataRef.current?.state;
       request<{ rows: Caption[]; generation: number; total: number }>('captions.search', { query: search, start: searchPage * 100 }).then(result => {
-        if (ticket === searchGeneration.current && result.generation === dataRef.current?.state.generation) { setMatches(result.rows); setSearchTotal(result.total); }
+        if (owner && ticket === searchGeneration.current && result.generation === owner.generation && result.generation === dataRef.current?.state.generation) { setSearchMatches({ rows: result.rows, identifier: owner.item?.id ?? null, generation: result.generation }); setSearchTotal(result.total); }
       }).catch(e => setNotice({ text: e.message, error: true }));
     }, 150);
     return () => clearTimeout(timer);
@@ -167,7 +178,7 @@ export function App() {
   const state = data.state, active = state.state !== 'IDLE';
   const canExport = !!state.item && !active && page.rows.some(row => row.final && row.asr_final !== false
     && row.boundary_final !== false && row.source.trim() && (!state.preview || state.preview.keep_ids.includes(row.id)));
-  const blocked = active || busy || state.saving || state.dirty || state.closing || state.migrating;
+  const blocked = active || busy || state.saving || state.dirty || state.closing || state.migrating || !!state.update_fenced;
   const languages = data.options.languages.map(row => ({ value: row[0], label: row[0] }));
   const setSettings = (values: Settings) => { perform('settings.set', { values }); };
   const sourceAvailable = !!data.device && data.devices.some(row => row.id === data.device![0] && row.loopback === data.device![1]);
@@ -203,14 +214,14 @@ export function App() {
   }
   return <Tooltip.Provider delayDuration={550}><div className={`app ${data.platform}`} style={material}>
     <header className="titlebar" aria-label="窗口拖动区域" />
-    <div className="page-stack" ref={pageTransition}>{section === 'settings' && <SettingsPage audioBusy={audioBusy} audioMessage={audioMessage} updatesBusy={updatesBusy} switchDisabled={blocked || state.preparing} initialCategory={settingsCategory} data={data} values={data.settings} state={state} onClose={() => setSection('recording')} onDeleted={async () => { const result = await perform('trash.list'); if (result) setDeleted(result); }} perform={perform} onPatch={setSettings} onCategory={setSettingsCategory} />}<div className="workspace-layout" hidden={section !== 'recording'}>
+    <div className="page-stack" ref={pageTransition}>{section === 'settings' && <SettingsPage audioBusy={audioBusy} audioMessage={audioMessage} updatesBusy={updatesBusy} update={updateEvent} switchDisabled={blocked || state.preparing} initialCategory={settingsCategory} data={data} values={data.settings} state={state} onClose={() => setSection('recording')} onDeleted={async () => { const result = await perform('trash.list'); if (result) setDeleted(result); }} perform={perform} onPatch={setSettings} onCategory={setSettingsCategory} />}<div className="workspace-layout" hidden={section !== 'recording'}>
       <ResizableSidebar preferred={data.layout?.sidebar_width} onCommit={async width => {
         try { const saved = await request<number>('layout.sidebar', { width }); setData(old => old ? { ...old, layout: { sidebar_width: saved } } : old); }
         catch (error) { setNotice({ text: (error as Error).message, error: true }); throw error; }
       }}><div className="brand">AgentScribe</div><Button className="navigation sidebar-action" variant="quiet" aria-label="新录音" title="新录音" disabled={blocked} onClick={() => newRecording()}><Icon name="new" /><span className="sidebar-label">新录音</span></Button>
         <SidebarToggle /><div className="folder-heading"><span className="sidebar-label">文件夹</span><Tip label="新建文件夹" side="right"><Button className="sidebar-action sidebar-icon-action" variant="quiet" aria-label="新建文件夹" disabled={blocked} onClick={() => setEditor({ title: '新建文件夹', save: name => request('folder.create', { name }) })}><Icon name="folder-add" /></Button></Tip></div>
         <LibraryTree library={data.library} current={state.item?.id} folder={folder} blocked={blocked} onOpen={open} onFolder={setFolder} actions={actions} folderActions={folderActions} /><div className="sidebar-bottom"><Button className="sidebar-action" variant="quiet" aria-label="最近删除" title="最近删除" onClick={async () => { const result = await perform('trash.list'); if (result) setDeleted(result); }}><Icon name="trash" /><span className="sidebar-label">最近删除</span></Button>
-        <Button className="sidebar-action" variant="quiet" aria-label={updatesBusy ? '正在检查…' : data.installed ? '切换到 Qt 检查更新' : '检查更新'} title={data.installed ? '切换到 Qt 检查更新' : '检查更新'} disabled={updatesBusy} onClick={() => perform('updates.check')}><Icon name="download" /><span className="sidebar-label">{updatesBusy ? '正在检查…' : data.installed ? '切换到 Qt 检查更新' : '检查更新'}</span></Button><Button className="sidebar-action" variant="quiet" aria-label="设置" title="设置" onClick={() => setSection('settings')}><Icon name="settings" /><span className="sidebar-label">设置</span></Button></div>
+        <Button className="sidebar-action" variant="quiet" aria-label={updatesBusy ? '正在检查…' : '检查更新'} title={'检查更新'} disabled={updatesBusy} onClick={() => perform('updates.check')}><Icon name="download" /><span className="sidebar-label">{updatesBusy ? '正在检查…' : '检查更新'}</span></Button><Button className="sidebar-action" variant="quiet" aria-label="设置" title="设置" onClick={() => setSection('settings')}><Icon name="settings" /><span className="sidebar-label">设置</span></Button></div>
       </ResizableSidebar><main className="workspace"><header className="workspace-header"><InlineTitle key={state.generation} value={state.item?.name || state.draft?.name || '新录音'} disabled={busy || state.migrating || state.closing || !!state.save_error} onSave={name => request('item.rename', { identifier: state.item?.id ?? null, name })} />
         <div className="header-actions">{data.settings.beta_features && <Button className="knowledge-header" variant="quiet" disabled={!state.item} onClick={() => perform('knowledge.window')}>课程资料与笔记 · Beta</Button>}
           <ActionMenu actions={[
@@ -247,12 +258,12 @@ export function App() {
               <ControlPopover label="语言设置" icon="language"><label>原文语言</label><Choice label="原文语言" value={String(data.settings.source)} options={[...(data.settings.backend === 'wlk-whisper' ? [{ value: '自动检测', label: '自动检测' }] : []), ...languages]} onChange={value => setSettings({ source: value })} /><label>翻译为</label><Choice label="翻译语言" value={String(data.settings.target)} options={languages} onChange={value => setSettings({ target: value })} /><label>启用翻译</label><Toggle label="启用翻译" disabled={!state.translation_available} value={!!data.settings.translate && state.translation_available} onChange={value => setSettings({ translate: value })} />{active && <p>语言变化在下次录音生效。</p>}</ControlPopover>
               {!active && <IconMenu label="保存文件夹" icon="folder" disabled={blocked} value={state.draft?.folder || folder} options={data.library.folders.map(row => ({ value: row.id, label: row.name }))} onChange={value => { setFolder(value); perform('recording.new', { folder_id: value, name: state.draft?.name }); }} />}
               {active ? <><Tip label={state.state === 'PAUSED' ? '继续录音' : '暂停'}><Button className="icon-button" aria-label={state.state === 'PAUSED' ? '继续录音' : '暂停'} disabled={!['LISTENING', 'PAUSED'].includes(state.state) || !!state.failure} onClick={() => perform('recording.pause')}><Icon name={state.state === 'PAUSED' ? 'play' : 'pause'} /></Button></Tip><Tip label="停止"><Button variant="primary" className="transport-button" aria-label="停止" disabled={state.state === 'STOPPING'} onClick={() => perform('recording.stop')}><Icon name="stop" /></Button></Tip></> :
-                <Tip label="开始聆听"><Button variant="primary" className="transport-button" aria-label="开始聆听" disabled={busy || state.preparing || state.saving || state.closing || data.no_audio || !sourceAvailable} onClick={() => perform('recording.start')}><Icon name="play" /></Button></Tip>}
+                <Tip label="开始聆听"><Button variant="primary" className="transport-button" aria-label="开始聆听" disabled={busy || (state.preparation_blocks_recording ?? state.preparing) || state.saving || state.closing || state.update_fenced || data.no_audio || !sourceAvailable} onClick={() => perform('recording.start')}><Icon name="play" /></Button></Tip>}
           </RecordingIsland>}
           {(state.failure || state.save_error || state.closing) && <p className="status error" role="alert">{state.save_error || state.failure || '正在保存并退出…'}</p>}
         </>}</Transport>
       </main></div></div>
-    {notice && <aside className={`notification ${notice.error ? 'error' : ''}`} role={notice.error ? 'alert' : 'status'}><span>{notice.text}</span>{notice.busy && <span className="notice-progress" role="progressbar" aria-label="正在处理"><i /></span>}{['preparation', 'preparation-result'].includes(notice.key || '') && <><Button onClick={() => { setSettingsCategory('模型管理'); setSection('settings'); }}>查看准备</Button>{!state.preparing && state.preparation_recovery && <Button onClick={() => perform('models.retry')}>{state.preparation_recovery}</Button>}{state.preparing && <Button disabled={state.preparation_cancelling} onClick={() => perform('models.cancel')}>取消准备</Button>}</>}{notice.key === 'migration' && state.migrating && <Button onClick={() => perform('library.cancel_migration')}>取消迁移</Button>}<Button variant="quiet" aria-label="收起通知" onClick={() => { if (notice.key === 'preparation') setPreparationHidden(true); else if (notice.key === 'model-loading') setLoadingHidden(true); dismiss(notice.key!); }}>×</Button></aside>}
+    {notice && <aside className={`notification ${notice.error ? 'error' : ''}`} role={notice.error ? 'alert' : 'status'}><span>{notice.text}</span>{notice.key === 'updates' && updateEvent?.stage === 'available' && <Button onClick={() => setUpdateNotes(true)}>查看更新</Button>}{notice.key === 'updates' && updateEvent?.stage === 'ready' && <Button onClick={() => perform('updates.action', { action: 'install' })}>重启更新</Button>}{notice.key === 'updates' && ['checking', 'downloading', 'waiting'].includes(updateEvent?.stage) && <Button onClick={() => perform('updates.action', { action: updateEvent.stage === 'waiting' ? 'cancel_wait' : 'cancel' })}>{updateEvent.stage === 'waiting' ? '取消等待' : '取消'}</Button>}{notice.busy && <span className="notice-progress" role="progressbar" aria-label="正在处理"><i /></span>}{['preparation', 'preparation-result'].includes(notice.key || '') && <><Button onClick={() => { setSettingsCategory('模型管理'); setSection('settings'); }}>查看准备</Button>{!state.preparing && state.preparation_recovery && <Button onClick={() => perform('models.retry')}>{state.preparation_recovery}</Button>}{state.preparing && <Button disabled={state.preparation_cancelling} onClick={() => perform('models.cancel')}>取消准备</Button>}</>}{notice.key === 'migration' && state.migrating && <Button onClick={() => perform('library.cancel_migration')}>取消迁移</Button>}<Button variant="quiet" aria-label="收起通知" onClick={() => { if (notice.key === 'preparation') setPreparationHidden(true); else if (notice.key === 'model-loading') setLoadingHidden(true); dismiss(notice.key!); }}>×</Button></aside>}
     {guidance && <Modal modal={false} title="准备本地模型" description="指定的模型尚未准备好。模型在本机运行，录音保存在你选择的位置。" open onClose={() => setGuidance(null)} actions={<>
       <Button onClick={() => setGuidance(null)}>稍后</Button><Button variant="primary" disabled={state.preparing || state.checking_models || !state.model_missing || state.model_missing.length > 0} onClick={() => setGuidance(null)}>开始使用</Button>
     </>}><h3>1  录音保存位置</h3><p>{data.root}</p><Button onClick={() => perform('library.migrate')}>更改保存位置…</Button>
@@ -267,7 +278,8 @@ export function App() {
       try { await request('item.move', { identifier: moving.id, folder_id: moveTo }); setMoving(null); } catch (e) { setNotice({ text: (e as Error).message, error: true }); }
     }}>移动</Button></>}><Choice label="目标文件夹" value={moveTo} options={data.library.folders.filter(row => row.id !== moving.id).map(row => ({ value: row.id, label: row.name }))} onChange={setMoveTo} /></Modal>}
     {deleted && <Deleted rows={deleted} disabled={blocked} onChange={setDeleted} onClose={() => setDeleted(null)} />}
-    {search !== null && <Modal title="查找字幕" description="搜索原文或译文，选择结果定位，不会自动播放。" open onClose={() => { setSearch(null); searchGeneration.current++; }}><input aria-label="搜索当前录音字幕" placeholder="搜索原文或译文…" value={search} onChange={event => { setSearchPage(0); setSearch(event.target.value); }} autoFocus /><div className="search-results">{matches.map(row => <button key={row.id} onClick={async () => { await loadPage(undefined, row.id); setSearch(null); }}>{clock(row.start).slice(row.start >= 3600 ? 0 : 3)}　{row.source}<span>{row.translation}</span></button>)}{!matches.length && <p>没有匹配内容。</p>}</div><div className="settings-actions"><span>共 {searchTotal} 条，显示 {matches.length ? searchPage * 100 + 1 : 0}–{searchPage * 100 + matches.length}</span><Button disabled={searchPage === 0} onClick={() => setSearchPage(searchPage - 1)}>上一页</Button><Button disabled={(searchPage + 1) * 100 >= searchTotal} onClick={() => setSearchPage(searchPage + 1)}>下一页</Button></div></Modal>}
+    {updateNotes && <Modal title={'更新到 ' + (updateEvent?.version || '')} description="更新保留录音、模型与设置。录音中可以下载，结束并保存后才能安装。" open onClose={() => { setUpdateNotes(false); perform('updates.action', { action: 'cancel' }); }} actions={<><Button onClick={() => { setUpdateNotes(false); perform('updates.action', { action: 'cancel' }); }}>稍后</Button><Button variant="primary" onClick={() => { setUpdateNotes(false); perform('updates.action', { action: 'download' }); }}>下载更新</Button></>}><p>{String(updateEvent?.notes || '此版本未提供更新说明。').replace(/<[^>]+>/g, '')}</p></Modal>}
+    {search !== null && <Modal title="查找字幕" description="搜索原文或译文，选择结果定位，不会自动播放。" open onClose={() => { setSearch(null); searchGeneration.current++; }}><input aria-label="搜索当前录音字幕" placeholder="搜索原文或译文…" value={search} onChange={event => { setSearchPage(0); setSearch(event.target.value); }} autoFocus /><div className="search-results">{matches.map(row => <button key={row.id} onClick={async () => { const result = await perform('captions.locate', { identifier: searchMatches.identifier, generation: searchMatches.generation, caption_id: row.id }); if (result && result.page.generation === dataRef.current?.state.generation) { setPage(result.page); setLocate(row.id); setSearch(null); } }}>{clock(row.start).slice(row.start >= 3600 ? 0 : 3)}　{row.source}<span>{row.translation}</span></button>)}{!matches.length && <p>没有匹配内容。</p>}</div><div className="settings-actions"><span>共 {searchTotal} 条，显示 {matches.length ? searchPage * 100 + 1 : 0}–{searchPage * 100 + matches.length}</span><Button disabled={searchPage === 0} onClick={() => setSearchPage(searchPage - 1)}>上一页</Button><Button disabled={(searchPage + 1) * 100 >= searchTotal} onClick={() => setSearchPage(searchPage + 1)}>下一页</Button></div></Modal>}
 
   </div></Tooltip.Provider>;
 }

@@ -85,6 +85,6 @@
 
 现有 Qt 构建命令不变。需要包含对照界面时，先准备 `desktop/` 中锁定的依赖与 Electron 二进制（见 TESTING），再为对应平台构建脚本增加 `--with-electron`；`--fetch --with-electron` 只获取固定版本输入。Electron 45.0.0 的 Mac arm64 / Windows x64 归档 SHA-256 维护于 `packaging/electron/assets.json`，构建拒绝版本不符、缺许可或未纳入版本控制的前端源码。
 
-Mac：`python scripts/build_macos.py --with-electron`，候选 DMG 名包含 `-dual-ui-`，不会覆盖普通 Qt 产物。Windows：`python scripts/build_windows.py --with-electron` 后仍由原 `build_windows_installer.py` 封存。两者保留原 launcher、更新配置、公钥、用户数据边界及默认 Qt 入口；不把新增 runtime 当作新的发行身份。Electron 检查更新通过明确按钮切回原生 Qt 窗口。
+Mac：`python scripts/build_macos.py --with-electron`，候选 DMG 名包含 `-dual-ui-`，不会覆盖普通 Qt 产物。Windows：`python scripts/build_windows.py --with-electron` 后仍由原 `build_windows_installer.py` 封存。两者保留原 launcher、更新配置、公钥、用户数据边界及默认 Qt 入口；不把新增 runtime 当作新的发行身份。Electron 通过原生应用宿主调用共用更新流程，检查更新不再切换到 Qt 窗口；新的多进程链路仍须分别完成安装态升级验收。
 
 前端包只带编译产物、受限主进程/桥、经校验的 Electron runtime 和生产依赖许可，不带 node_modules、开发服务器、浏览器 profile 或个人数据。`frontend-manifest.json` 记录源码、原始归档及最终文件摘要；Mac 原生签名后重算文件摘要，再重新封存外层应用。构建成功后还须验证包内双向切换、退出、真实设备和旧版升级，平台分别记录；本地候选不自动发布或推进更新订阅。

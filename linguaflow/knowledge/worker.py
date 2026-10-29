@@ -193,7 +193,7 @@ class KnowledgeWorker:
                 raise ValueError('请先取消当前课程任务。')
             folder = next(row for row in self.library.index['folders']
                           if self.library.directory(row['id']) == local_path(self.course_path.parent.parent))
-            self.notify({'type': 'status', 'message': '正在本地读取课件，可取消。', 'busy': True})
+            self.notify({'type': 'status', 'message': '正在本地读取课件，可取消。', 'busy': True, 'operation': 'import'})
             self.task = asyncio.create_task(self.import_task(folder['id'], value['path']))
         elif operation == 'terms':
             if value.get('course_id', self.course['id']) != self.course['id']:
@@ -257,7 +257,7 @@ class KnowledgeWorker:
             if self.material_error or not self.blocks:
                 raise ValueError('课件资料不可用，请恢复原件或重新导入；已有内容保留。')
             self.task = asyncio.create_task(self.preview_task())
-            self.notify({'type': 'status', 'message': '正在本机准备原页，不上传课件，可取消。', 'busy': True})
+            self.notify({'type': 'status', 'message': '正在本机准备原页，不上传课件，可取消。', 'busy': True, 'operation': 'preview'})
         elif operation in ('extract', 'notes', 'organize', 'question'):
             self.start_task(operation, value.get('question', ''), value.get('section', ''))
         elif operation == 'view':
@@ -283,7 +283,7 @@ class KnowledgeWorker:
         if operation == 'notes':
             self.automatic = True
         self.task = asyncio.create_task(self.cloud_task(operation, question, section))
-        self.notify({'type': 'status', 'message': '正在处理课程资料，可取消。', 'busy': True})
+        self.notify({'type': 'status', 'message': '正在处理课程资料，可取消。', 'busy': True, 'operation': operation})
 
     async def import_task(self, folder_id, path):
         try:
