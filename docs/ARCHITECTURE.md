@@ -85,7 +85,7 @@ Qt 线程负责装配、呈现和发起操作，只有它更新 UI。耗时任�
 | 轻量数据、设置 | `core.py`、`preferences.py`、`model_options.py`、`translation_config.py`；集中格式、默认值、迁移和选择，无 Qt/模型依赖 |
 | 桌面装配 | `app.py`、`management.py`、`workspace_widgets.py`、`settings_binding.py`；显式快照/信号连接，不把窗口传入业务 |
 | 呈现与系统窗口 | `ui_theme.py`、`ui_components.py`、`ui_backdrop.py`、`caption_view.py`、`playback_controls.py`、`ui_tooltips.py`、`subtitles_overlay.py`；回放音量控件只发出数值，由窗口绑定应用音频输出；系统调用收敛 `window_platform.py` / 按需 `ui_macos.py` |
-| 原文即时预览 | `source_preview.py` 从完整 ASR 快照投影未分句的可修订尾部；WLK worker 在 SaT 之前发布，Qwen 修订通道可在 SaT 工作期间独立更新。预览版本与已映射前文分开校验，桌面/悬浮窗立即显示；不进入翻译规划或改变 mapper 定稿状态；`preview_captions` 将最新预览投影为保存草稿，后台队列按版本合并，正常异常收尾共用该投影 |
+| 原文即时预览 | `source_preview.py` 从完整 ASR 快照将文字修订投影到已有卡片，未变化卡片及译文沿用原身份，跨边界改写仅调整受影响区域；WLK worker 在 SaT 之前发布，Qwen 修订通道可在 SaT 工作期间独立更新。预览版本与已映射前文分开校验，桌面/悬浮窗立即显示；不进入翻译规划或改变 mapper 定稿状态；`preview_captions` 将最新预览投影为保存草稿，后台队列按版本合并，正常异常收尾共用该投影 |
 | 录音与传输 | `recording_state.py`、`wlk_session.py`、`capture_control.py`、`journal.py`；会话、采集代次、PCM 次序、停止边界 |
 | 回放增益 | `playback_stream.py` 将原始 WAV 作为可随机定位的只读流提供给媒体播放器，按读取块处理 PCM 增益并限制峰值，不生成文件副本；未完成录音经锁检查后仅在读取视图修复固定 PCM WAV 的长度，原件不变；`playback_controller.py` 拥有输入流并在切换/关闭时释放 |
 | 系统音频 | `audio.py`、按需 `audio_macos.py`；Windows WASAPI，Mac CoreAudio 输入 / ScreenCaptureKit 电脑声音，只回传 PCM，复用公共保存/字幕流程 |
@@ -101,13 +101,18 @@ Qt 线程负责装配、呈现和发起操作，只有它更新 UI。耗时任�
 
 ## 诊断日志
 
+Qwen 确认按当前窗口直接输出累计，可靠换窗裁剪并继承已有观察，失配重建基准；`RevisionStore` 传递可不连续的 `stable_ranges`，兼容字段 `stable_end` 仍只代表连续前缀。字幕逐段检查覆盖范围与相邻已确认后文，前方存疑不会屏蔽后方字幕。显式收尾只关闭当前直接假设，挂起/复制的存疑历史不补成已确认；音频释放与 SaT 候选规则不由此改变。
+
+`qwen_audio.NonzeroPCM` 在窗口前逐 10 ms 帧拦截全零输入；零段标记让解码队列先处理短尾音，失败保留标记以便重试。`KeptAudioClock` 映射保留采样与原录音时间：容量、新增量和确认推进不计零段，修订、字幕、调度 token 与日志仍用原时间；VAD 释放参考仍按原录音标签选择。原始 WAV 和采集/VAD 流不经此过滤，零段不清窗或强制定稿。
+
 `diagnostic_log.py` 提供进程独立 JSONL 轮转日志与无用户正文的异常堆栈；`diagnostic_archive.py` 管封存块压缩、完整性校验、跨进程历史预算和崩溃遗留恢复。桌面/worker 入口初始化；Session 生成会话 ID 并传给 worker。Qwen 记录解码序号、窗口及推进原因，通过已有协议回传耗时元数据，由桌面补采集侧积压估计。保存与翻译捕获异常分别在所属线程记录，日志不接管第三方原始 stdout/stderr，也不改变解码调度。
 
 Qwen 的 `asr_decode_start/end` 可按 `session + decode_id` 关联：窗口范围、输入长度、新增音频、耗时和触发原因；`admitted_audio_seconds` 单列不含恢复保护音的新增预算，`asr_audio_policy` 记录有效上下限；`asr_window_roll` 记录参考点/低能量/积压保护原因、切点及移走/保留长度；`asr_idle_start/end` 记录长静音等待和携带的原声长度；`asr_commit` 记录收尾原因；`asr_revision` / `caption_revision` 记录字符数、稳定长度及定稿条件，不含正文。`asr_capture_lag` 是收到结果时采集进度减解码覆盖末端的估计，不是词级延迟；`pipeline_progress` 另记流水线积压和磁盘待送量。窗口重叠不算新增音频，空文本也保留本次解码耗时。Whisper 有公共会话/积压/字幕日志，但没有套用 Qwen 的内部窗口事件。
 
 处理链的关联与决策日志：
 
-- Qwen `asr_revision` 同时记录候选/最终/上次确认长度、`frozen_limit`、窗口文字起点、实际触发的限制和是否压低候选值，以及多轮一致性不足、音频推进不足、前缀不一致或尾部保留原因。`asr_commit` 关联最后一次 `decode_id`，收尾不一定产生新的解码。
+- Qwen `asr_revision` 区分连续前缀、当前直接输出及全部区段的确认字符数、范围数量与窗口文字起点；`unconfirmed_history` 仅表示前缀存在缺口，不限制后方区段。`asr_confirmation_reset` 只在对应失效时记录原因并关联 `decode_id`；多轮一致性不足、推进不足及尾部保留仍留证据。`asr_commit` 关联最后一次解码，收尾不一定产生新解码，也不代表所有历史文字已确认。
+- `asr_zero_start/end` 仅记录进入/恢复及跳过的原时间范围；`zero_input` 标明短尾音解码原因，`skipped_zero_seconds` 区分窗口原时间跨度与实际送入模型的长度。持续零输入不逐包落盘。
 - `source_revision` 将 `decode_id` 连接到 `source_stream + source_version`；版本只在修订存储接受变化时增加，记录区间与区间版本。`_diagnostic_source` 随同一锁内生成的内部快照传递，不进入 Caption 或录音文件格式。处理快照可能跳过中间版本；需按 `source_revision` 顺序还原各区间元数据，不能假定一次识别恰好对应一次分句。
 - 每次字幕映射分配 `mapping_id`，但只在实际调用预测器、字幕发生变化、显式收尾或失败时写 `caption_mapping_end`；无变化的纯缓存轮询不写开始/结束或缓存命中事件。关键结果的 `splits` 附带本次最多两个分割用途、原 `split_id`、缓存状态和源文偏移，保留缓存来源关联。计时从本次映射开始计算，不需要每次入口另写一条记录。`sat_call_start/end` 记录每个真正执行的重叠文本窗口预测器调用；结束记录的 `model` 内嵌实际推理起点、耗时、阈值及成功/失败信息，嵌套调用不再单独写模型开始/结束。独立模型调用仍保留模型事件。即使结果没改变字幕，真实调用和失败也保留。每个候选位置仅记录一次：结束记录的 `boundaries` 包含首批最多 32 个源文字符偏移，其余以同一 call ID 的 `sat_boundaries` 接续；`offset/total` 标明完整性，候选顺序和重复值保留。`outside_core/separator` 是各块 `positions` 中被过滤项的局部索引，其余即采用项；空原因数组省略。不记录正文或概率数组。缓存重用时边界相对原分割的偏移按本次 `source_offset` 换算。
 - `caption_revision` 记录源文范围、旧范围、切分版本、改变类型（文字/边界/时间/确认/可翻译状态）、边界观察次数、等待时长和已确认后文量；`caption_removed` 表示被重新映射淘汰的字幕 ID。它们是应用处理后的结果，不能把任何一次修订都算成 SaT 改了句界。
@@ -145,7 +150,7 @@ Window 的薄转发入口和控件引用用于现有调用方组合；旧录音�
 
 ### 高频路径
 
-- 预览原文直接显示，不先筛选完整字幕；确需筛选保留 ID 时使用集合，避免列表嵌套查找。已有字幕内容修订不重建分页，分页查询复用 Transcript 的 ID 顺序。
+- 预览原文直接显示，通过 ID 映射复用字幕卡片；以未变化整卡锚定局部差异，限制大幅改写的字符比较规模，避免每次重算整段历史。已有字幕内容修订不重建分页，分页查询复用 Transcript 的 ID 顺序。
 - 分句的时间和语言定位在有序字符片段上二分查找，保留时间定位的左边界与语言选择的右边界语义；分句、ID 修订及确认规则不变。
 - Qwen 通过 `ContinuousQwenPCM` 复用 WLK 串行队列和积压合并，替换其丢弃自然静音的入口；VAD 标签保留检测时刻及原始采样时间，不能借用尚未到达的检测结果。原声窗口规则见 [字幕 spec](specs/captions-translation.md)。长静音只暂停模型输入；被挂起的旧假设不伪装为已确认，新段使用原录音时间，SaT 与翻译策略不变。
 - Qwen PCM 使用 `audio_processing.buffer.PCMBuffer` 的连续存储，追加只写新采样，容量不足时增长或压紧，消费窗口只移动起点。临时积压结束后缩回合理容量；推理输入仍单独复制，避免共享可变缓冲。预留容量减少复制，但不承诺空闲时比零长度数组占用更少内存。

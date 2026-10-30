@@ -7,6 +7,7 @@ from threading import RLock
 from uuid import uuid4
 
 from . import diagnostic_log as diag
+from .asr_stability import confirmation_ranges, confirmed_until
 
 
 class RevisionStore:
@@ -17,6 +18,10 @@ class RevisionStore:
         self.times = {}
         self.lock = RLock()
         self.source_version = 0
+        self.audio_clock = None
+
+    def _time(self, value, *, end=False):
+        return self.audio_clock.source_time(value, end=end) if self.audio_clock else value
 
     def accept(self, row):
         with self.lock:
@@ -52,27 +57,31 @@ class RevisionStore:
             self.source_version += 1
             diag.event('source_revision', source_stream=self.session_id, source_version=self.source_version,
                        interval=row['interval_id'], interval_revision=row['revision'],
-                       audio_start=row['start'], audio_end=row['end'], chars=len(row['text']),
-                       stable_chars=row['stable_end'], closed=row['closed'])
+                       audio_start=self._time(row['start']), audio_end=self._time(row['end'], end=True),
+                       chars=len(row['text']),
+                       stable_chars=row['stable_end'], closed=row['closed'],
+                       confirmed_chars=sum(b-a for a, b in row.get('stable_ranges', [(0, row['stable_end'])])))
             if self.emit:
-                self.emit({'type': 'model_result', 'data': dict(row)})
+                self.emit({'type': 'model_result', 'data': dict(row, start=self._time(row['start']),
+                           end=self._time(row['end'], end=True))})
             return True
 
-    def update(self, interval, start, end, text, stable, closed=False):
+    def update(self, interval, start, end, text, stable, closed=False, *, stable_ranges=None):
         with self.lock:
             old = self.rows.get(interval, {})
             row = dict(session_id=self.session_id, interval_id=interval,
                        revision=old.get('revision', 0) + 1, start=start, end=end,
                        text=text, stable_end=stable, closed=closed)
-            if old and all(old[k] == row[k] for k in row if k != 'revision'):
+            if stable_ranges is not None:
+                row['stable_ranges'] = confirmation_ranges(text, stable_ranges)
+            if old and all(old.get(k) == row[k] for k in row if k != 'revision'):
                 return
             self.accept(row)
 
     def augment_snapshot(self, snapshot, language='en'):
         with self.lock:
-            text, spans, stable_end = '', [], 0
+            text, spans, ranges = '', [], []
             closed_ends = []
-            stable_prefix = True
             for _, row in sorted(self.rows.items()):
                 value = row['text']
                 if not value:
@@ -83,13 +92,14 @@ class RevisionStore:
                 text += value
                 if row['closed']:
                     closed_ends.append(len(text))
-                spans.extend((lo+i, lo+i+1, a, b, language)
+                spans.extend((lo+i, lo+i+1, self._time(a), self._time(b, end=True), language)
                              for i, (a, b) in enumerate(self.times[row['interval_id']]))
-                if stable_prefix:
-                    stable_end = lo + row['stable_end']
-                    stable_prefix = row['stable_end'] == len(value)
+                ranges.extend((lo + a, lo + b) for a, b in
+                              row.get('stable_ranges', [(0, row['stable_end'])]) if b > a)
+            ranges = confirmation_ranges(text, ranges)
             snapshot.clear()
-            snapshot.update(revision_text=text, stable_end=stable_end, revision_spans=spans,
+            snapshot.update(revision_text=text, stable_end=confirmed_until(text, ranges),
+                            stable_ranges=ranges, revision_spans=spans,
                             closed_ends=closed_ends,
                             _diagnostic_source=dict(source_stream=self.session_id,
                                                     source_version=self.source_version))

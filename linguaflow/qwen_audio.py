@@ -1,9 +1,106 @@
 """Original PCM routing and advisory VAD labels for full-window Qwen."""
+from bisect import bisect_left, bisect_right
+from dataclasses import dataclass
 from threading import RLock
 
 import numpy as np
 
 from . import diagnostic_log as diag
+
+
+@dataclass(frozen=True)
+class ZeroAudioGap:
+    start: float
+    end: float
+
+
+class NonzeroPCM:
+    """Drop whole 10 ms zero frames, never individual waveform zero crossings.
+
+    A partial frame waits for the next packet (or explicit flush), so queue
+    coalescing and packet boundaries cannot change which samples are retained.
+    """
+    def __init__(self, rate):
+        self.rate, self.frame = rate, rate // 100
+        self.pending = np.empty(0, np.float32)
+        self.pending_start = 0
+        self.input_end = None
+
+    def feed(self, audio, start):
+        audio = np.asarray(audio, dtype=np.float32)
+        if audio.ndim != 1:
+            raise ValueError('PCM 音频必须为一维单声道采样。')
+        start = round(start * self.rate)
+        if self.input_end is not None and start != self.input_end:
+            raise ValueError('Qwen 原声音频时间不连续，已停止而不是补零或跳过音频')
+        self.input_end = start + len(audio)
+        if len(self.pending):
+            audio = np.concatenate((self.pending, audio))
+            start = self.pending_start
+        count = len(audio) // self.frame * self.frame
+        self.pending = audio[count:].copy()
+        self.pending_start = start + count
+        if not count:
+            return []
+        active = np.any(audio[:count].reshape(-1, self.frame), axis=1)
+        cuts = np.r_[0, np.flatnonzero(active[1:] != active[:-1]) + 1, len(active)] * self.frame
+        return [(start + int(a), audio[a:b].copy() if active[a // self.frame]
+                 else ZeroAudioGap((start + a) / self.rate, (start + b) / self.rate))
+                for a, b in zip(cuts, cuts[1:])]
+
+    def flush(self):
+        if not len(self.pending):
+            return []
+        start, audio = self.pending_start, self.pending
+        self.pending = np.empty(0, np.float32)
+        return [(start, audio if np.any(audio) else ZeroAudioGap(start / self.rate,
+                                                              (start + len(audio)) / self.rate))]
+
+
+class KeptAudioClock:
+    """Compact model-sample coordinates mapped to the untouched recording."""
+    def __init__(self, rate):
+        self.rate = rate
+        self.starts, self.ends, self.sources = [], [], []
+        self.count = self.source_end = 0
+        self.lock = RLock()
+
+    def append(self, source, count):
+        # EOF can flush a partial frame on the decoder thread while the event
+        # loop reads revision times. Publish the three indexes together.
+        with self.lock:
+            start = self.count
+            if count:
+                if self.ends and self.sources[-1] + self.ends[-1] - self.starts[-1] == source:
+                    self.ends[-1] += count
+                else:
+                    self.starts.append(start)
+                    self.ends.append(start + count)
+                    self.sources.append(source)
+                self.count += count
+            self.source_end = source + count
+            return start / self.rate
+
+    def source_time(self, seconds, *, end=False):
+        if seconds is None:
+            return None
+        with self.lock:
+            if not self.starts:
+                return self.source_end / self.rate
+            sample = seconds * self.rate
+            index = (min(bisect_left(self.ends, sample), len(self.ends)-1) if end else
+                     max(0, bisect_right(self.starts, sample)-1))
+            offset = min(max(0, sample - self.starts[index]), self.ends[index] - self.starts[index])
+            return (self.sources[index] + offset) / self.rate
+
+    def model_time(self, seconds):
+        with self.lock:
+            if not self.sources:
+                return 0.
+            sample = seconds * self.rate
+            index = max(0, bisect_right(self.sources, sample)-1)
+            offset = min(max(0, sample - self.sources[index]), self.ends[index] - self.starts[index])
+            return (self.starts[index] + offset) / self.rate
 
 
 class VADTimeline:
@@ -90,4 +187,5 @@ class ContinuousQwenPCM:
                    window_seconds=self.transcription.window_seconds, margin_seconds=5,
                    reference_points=5, resume_context_seconds=1.,
                    min_new_seconds=self.transcription.update_seconds,
-                   max_new_seconds=self.transcription.MAX_NEW_SECONDS)
+                   max_new_seconds=self.transcription.MAX_NEW_SECONDS,
+                   zero_frame_ms=10, zero_input='skip_and_flush_tail')

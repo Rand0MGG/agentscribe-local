@@ -6,7 +6,7 @@ from dataclasses import replace
 from difflib import SequenceMatcher
 
 from . import diagnostic_log as diag
-from .asr_stability import units
+from .asr_stability import confirmation_ranges, confirmed_until, units
 from .core import Caption
 
 DIFF_CONTEXT_ROWS = 10
@@ -240,6 +240,7 @@ class CaptionMapper:
         # Authoritative revision snapshots already express this in stable_end.
         if 'revision_text' not in snapshot and closed_ends:
             stable_end = max(stable_end, max(closed_ends))
+        ranges = confirmation_ranges(text, snapshot.get('stable_ranges', [(0, stable_end)]))
 
         def at(pos):
             index = bisect_left(spans, pos, key=lambda row: row[1])
@@ -310,10 +311,12 @@ class CaptionMapper:
             new_ranges[cid] = (start, end)
             if cid == self.next_id:
                 self.next_id += 1
-            key = (start, end, source, stable_end >= end)
+            local_stable_end = confirmed_until(text, ranges, start)
+            stable = end <= local_stable_end or not text[local_stable_end:end].strip()
+            following_stable_units = len(units(text[end:local_stable_end])) if stable else 0
+            key = (start, end, source, stable)
             since, count = self.observed.get(key, (now, 0))
             new_observed[key] = (since, count + 1)
-            stable = end <= stable_end or not text[stable_end:end].strip()
             boundary_key = (start, end, source)
             observations = self.boundary_observed.get(boundary_key, 0)
             if reason == '上下文分句' and text != self.last_text:
@@ -326,7 +329,7 @@ class CaptionMapper:
             # count as independent boundary observations.
             boundary_final = asr_final and (done or (
                 reason == '上下文分句' and observations >= 2
-                and len(units(text[end:stable_end])) >= 4))
+                and following_stable_units >= 4))
             final = asr_final and boundary_final
             old = self.previous.get(cid)
             # A rollover can retain unconfirmed words outside the current PCM
@@ -336,7 +339,7 @@ class CaptionMapper:
             # lookahead can be submitted as a draft, never as confirmed source.
             sat_ready = (reason == '上下文分句' and observations >= 2
                          and now - since >= self.lookahead)
-            ready = bool(old and old.ready) or sat_ready or (stable and (
+            ready = done or bool(old and old.ready) or sat_ready or (stable and (
                 reason != '等待后文' or now - since >= self.lookahead))
             span_index = bisect_right(spans, start, key=lambda row: row[1])
             language = spans[span_index][4] if span_index < len(spans) else self.language
@@ -344,7 +347,7 @@ class CaptionMapper:
             visible_start = start + len(raw) - len(raw.lstrip())
             visible_end = end - len(raw) + len(raw.rstrip())
             caption = Caption(cid, at(visible_start), at(visible_end), source, language, final=final,
-                              stable_source=text[start:min(end, stable_end)].strip(),
+                              stable_source=text[start:min(end, local_stable_end)].strip(),
                               ready=ready or final, boundary_reason=reason,
                               asr_final=asr_final, boundary_final=boundary_final)
             # Position-only timestamp updates do not change segmentation.
@@ -381,12 +384,14 @@ class CaptionMapper:
                            source_start=start, source_end=end, previous_range=self.ranges.get(cid),
                            changes=changes, boundary_observations=observations,
                            unchanged_seconds=now - since, lookahead_seconds=self.lookahead,
-                           following_stable_units=len(units(text[end:stable_end])), done=done,
-                           ready_basis=('previous_ready' if old and old.ready else 'sat_lookahead'
+                           following_stable_units=following_stable_units, done=done,
+                           ready_basis=('session_end' if done else 'previous_ready' if old and old.ready else 'sat_lookahead'
                                         if sat_ready else 'stable_source' if ready else 'waiting'))
                 self.previous[cid] = caption
                 events.append(caption)
-            if final:
+            # Only the contiguous fixed prefix can be skipped on later passes.
+            # A confirmed row after a gap stays addressable for SaT/corrections.
+            if final and not next_active:
                 self.fixed.append((cid, end))
             else:
                 next_active.append(cid)

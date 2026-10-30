@@ -10,9 +10,9 @@ from collections import OrderedDict, deque
 from types import SimpleNamespace
 
 from . import diagnostic_log as diag
-from .asr_stability import StablePrefix, stitch_window
+from .asr_stability import StablePrefix, confirmation_ranges, confirmed_until, stitch_window
 from .audio_processing.buffer import PCMBuffer
-from .qwen_audio import VADTimeline, fallback_cut, reference_cut
+from .qwen_audio import KeptAudioClock, NonzeroPCM, VADTimeline, ZeroAudioGap, fallback_cut, reference_cut
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +45,10 @@ class QwenAccurateOnline:
         self.finalized_until = -1.
         self.vad = VADTimeline()
         self._queued_audio = deque()
+        self._nonzero = NonzeroPCM(self.SAMPLING_RATE)
+        self._clock = KeptAudioClock(self.SAMPLING_RATE)
+        self._zero_start = None
+        self._zero_end = 0.
         self._idle_start = None
         self._idle_tail = PCMBuffer(self.SAMPLING_RATE)
         self._suspended = []
@@ -54,13 +58,15 @@ class QwenAccurateOnline:
         self.force_endpoint = False
         self.force_endpoint_time = None
         self.agreement = StablePrefix()
+        self._agreement_prefix = ''
+        self._agreement_window_start = 0.
+        self.confirmed_ranges = []
         self.utterance_start = None
         self.window_text = ''
         self.window_text_start = 0
         self.overlap = None
         self.decoded_end = 0.
         self.confirmed_end = 0
-        self.frozen_limit = None
         self.decode_sequence = 0
         self.progress_end = 0.
         self._input_floor = 0.
@@ -69,6 +75,7 @@ class QwenAccurateOnline:
     def set_revision_store(self, store):
         """Use the same full-hypothesis store as the streaming Qwen backend."""
         self.revisions = store
+        store.audio_clock = self._clock
 
     @property
     def audio_buffer(self):
@@ -77,7 +84,8 @@ class QwenAccurateOnline:
     def _observe(self, text, stable, end, closed=False):
         if self.revisions is not None:
             with diag.trace_scope(decode_id=self.decode_sequence):
-                self.revisions.update(self.interval, self.utterance_start, end, text, stable, closed)
+                self.revisions.update(self.interval, self.utterance_start, end, text, stable, closed,
+                                      stable_ranges=self.confirmed_ranges)
 
     def observe_capture_event(self, kind, timestamp, observed_at=None):
         """Capture annotations do not close source text or mutate decoder PCM."""
@@ -107,8 +115,30 @@ class QwenAccurateOnline:
             self.force_endpoint = False
             self.force_endpoint_time = None
         if len(audio):
-            self._queued_audio.append((audio_stream_end_time - len(audio) / self.SAMPLING_RATE, audio.copy()))
+            self._queue_nonzero(self._nonzero.feed(audio,
+                                audio_stream_end_time - len(audio) / self.SAMPLING_RATE))
         self.end = audio_stream_end_time
+
+    def _queue_nonzero(self, parts):
+        for source, audio in parts:
+            if isinstance(audio, ZeroAudioGap):
+                self._clock.source_end = round(audio.end * self.SAMPLING_RATE)
+                start = self._clock.count / self.SAMPLING_RATE
+                if self._queued_audio and isinstance(self._queued_audio[-1][1], ZeroAudioGap):
+                    previous_start, previous = self._queued_audio.pop()
+                    self._queued_audio.append((previous_start, ZeroAudioGap(previous.start, audio.end)))
+                else:
+                    self._queued_audio.append((start, audio))
+            else:
+                start = self._clock.append(source, len(audio))
+                self._queued_audio.append((start, audio))
+
+    def _silences(self, start, end):
+        source_start = self._clock.source_time(start)
+        source_end = self._clock.source_time(end, end=True)
+        return [(self._clock.model_time(a), self._clock.model_time(b))
+                for a, b in self.vad.snapshot(source_start, source_end)
+                if self._clock.model_time(b) > self._clock.model_time(a)]
 
     def _append(self, audio, start):
         if not len(audio):
@@ -125,14 +155,17 @@ class QwenAccurateOnline:
         self.text = self.window_text = ''
         self.decoded_samples = self.window_text_start = self.confirmed_end = 0
         self.agreement = StablePrefix()
-        self.overlap = self.frozen_limit = self.utterance_start = None
+        self._agreement_prefix = ''
+        self._agreement_window_start = 0.
+        self.confirmed_ranges = []
+        self.overlap = self.utterance_start = None
 
     def _resume(self, at):
         # Preserve the old draft as an OPEN source row; SaT still owns sentence
         # boundaries. New word times start at real resumed audio, never the gap.
         if self.utterance_start is not None and self.text:
             self._suspended.append((self.interval, self.utterance_start, self.decoded_end,
-                                    self.text, self.decode_sequence))
+                                    self.text, self.decode_sequence, list(self.confirmed_ranges)))
             self.interval += 1
         self._reset_acoustics()
         # The original pre-speech protection is context, not newly admitted speech.
@@ -140,8 +173,9 @@ class QwenAccurateOnline:
         tail = self._idle_tail.samples.copy()
         self._append(tail, at - len(tail) / self.SAMPLING_RATE)
         self._idle_tail.discard(len(self._idle_tail.samples))
-        diag.event('asr_idle_end', interval=self.interval, audio_seconds=at,
-                   skipped_start=self._idle_start + self.window_seconds, retained_seconds=len(tail) / self.SAMPLING_RATE)
+        diag.event('asr_idle_end', interval=self.interval, audio_seconds=self._clock.source_time(at),
+                   skipped_start=self._clock.source_time(self._idle_start + self.window_seconds),
+                   retained_seconds=len(tail) / self.SAMPLING_RATE)
         self._idle_start = None
 
     def _fresh_samples(self, end=None):
@@ -153,10 +187,24 @@ class QwenAccurateOnline:
         minimum = round(self.update_seconds * rate)
         maximum = round(self.MAX_NEW_SECONDS * rate)
         while self._queued_audio:
+            _, head = self._queued_audio[0]
+            if isinstance(head, ZeroAudioGap):
+                # Flush even a sub-minimum tail once. Leave the marker queued on
+                # failure so retry cannot bypass unrecognized nonzero samples.
+                self._update_window(final=True, reason='zero_input')
+                self._queued_audio.popleft()
+                if self._zero_start is None:
+                    self._zero_start = head.start
+                    diag.event('asr_zero_start', audio_seconds=head.start,
+                               decode_id=self.decode_sequence,
+                               retained_seconds=len(self.audio_buffer) / rate)
+                self._zero_end = head.end
+                continue
             fresh = self._fresh_samples() if self._idle_start is None else 0
             # Keep a short tail queued until there is enough useful new audio.
             # Idle still consumes capture/VAD data, without requiring a decode.
             if (not final and self._idle_start is None
+                    and not any(isinstance(a, ZeroAudioGap) for _, a in self._queued_audio)
                     and fresh + sum(len(a) for _, a in self._queued_audio) < minimum):
                 break
             budget = maximum - fresh
@@ -166,12 +214,18 @@ class QwenAccurateOnline:
                 self._update_window()
                 continue
             start, audio = self._queued_audio.popleft()
+            if self._zero_start is not None:
+                diag.event('asr_zero_end', audio_seconds=self._clock.source_time(start),
+                           skipped_start=self._zero_start, skipped_end=self._zero_end,
+                           skipped_seconds=self._zero_end - self._zero_start,
+                           retained_seconds=len(self.audio_buffer) / rate)
+                self._zero_start = None
             if len(audio) > budget:
                 self._queued_audio.appendleft((start + budget / rate, audio[budget:]))
                 audio = audio[:budget]
             end = start + len(audio) / self.SAMPLING_RATE
             # Keep the original silence start for the long-idle threshold.
-            silences = self.vad.snapshot(0., end)
+            silences = self._silences(0., end)
             cursor = 0
             if self._idle_start is not None:
                 if any(a == self._idle_start and b <= start for a, b in silences):
@@ -195,8 +249,9 @@ class QwenAccurateOnline:
                     # Protect the first resumed packet even if it contains less
                     # than one second of pre-speech silence.
                     self._idle_tail.append(self.audio_buffer[-self.SAMPLING_RATE:])
-                    diag.event('asr_idle_start', interval=self.interval, audio_seconds=stop,
-                               silence_start=quiet_start)
+                    diag.event('asr_idle_start', interval=self.interval,
+                               audio_seconds=self._clock.source_time(stop, end=True),
+                               silence_start=self._clock.source_time(quiet_start))
                 self._idle_tail.append(audio[lo:hi])
                 self._idle_tail.discard(max(0, len(self._idle_tail.samples) - self.SAMPLING_RATE))
                 cursor = hi
@@ -205,7 +260,8 @@ class QwenAccurateOnline:
                 else:
                     break
             self._append(audio[cursor:], start + cursor / self.SAMPLING_RATE)
-            self.vad.prune(min(self.start, self._idle_start if self._idle_start is not None else self.start))
+            self.vad.prune(self._clock.source_time(min(self.start,
+                           self._idle_start if self._idle_start is not None else self.start)))
             if self._idle_start is None:
                 self._update_window()
 
@@ -216,8 +272,11 @@ class QwenAccurateOnline:
         self.decode_sequence += 1
         end = self.start + count / self.SAMPLING_RATE
         fresh = max(0., end - max(self.start, self.progress_end))
+        source_start = self._clock.source_time(self.start)
+        source_end = self._clock.source_time(end, end=True)
         fields = dict(decode_id=self.decode_sequence, interval=self.interval, reason=reason,
-                      window_start=self.start, window_end=end, audio_seconds=count / self.SAMPLING_RATE,
+                      window_start=source_start, window_end=source_end, audio_seconds=count / self.SAMPLING_RATE,
+                      skipped_zero_seconds=max(0., source_end - source_start - count / self.SAMPLING_RATE),
                       new_audio_seconds=fresh, admitted_audio_seconds=self._fresh_samples(end) / self.SAMPLING_RATE,
                       buffered_seconds=len(self.audio_buffer) / self.SAMPLING_RATE,
                       received_audio_end=self.end, vad_audio_end=self.capture_time)
@@ -236,6 +295,32 @@ class QwenAccurateOnline:
                     count / self.SAMPLING_RATE, compute_seconds, len(text))
         return text
 
+    def _current_agreement(self, local, text, anchored):
+        """Only direct model output votes; copied history is never observed."""
+        prefix = text[:self.window_text_start]
+        reset = None
+        if not anchored and self.start != self._agreement_window_start:
+            reset = 'overlap_unmatched'
+        elif prefix != self._agreement_prefix:
+            removed = prefix[len(self._agreement_prefix):]
+            if (anchored and prefix.startswith(self._agreement_prefix)
+                    and all(value.startswith(removed) for _, value in self.agreement.history)):
+                # Matching overlap keeps genuine observations, in current local
+                # coordinates. No duration-to-word estimate grants evidence.
+                self.agreement.history = [(end, value[len(removed):])
+                                          for end, value in self.agreement.history]
+            else:
+                reset = 'prefix_changed'
+        if reset:
+            self.agreement.history.clear()
+            diag.event('asr_confirmation_reset', interval=self.interval,
+                       decode_id=self.decode_sequence, reason=reset,
+                       window_start=self._clock.source_time(self.start), window_text_start=self.window_text_start,
+                       previous_confirmed_chars=sum(b-a for a, b in self.confirmed_ranges))
+        self._agreement_prefix = prefix
+        self._agreement_window_start = self.start
+        return self.agreement.observe(local, self.decoded_end)
+
     def _recognize(self, count, reason='update'):
         local = self._decode(count, reason)
         self.window_text = local
@@ -246,27 +331,34 @@ class QwenAccurateOnline:
             text, self.window_text_start, anchored = stitch_window(prior, local, expected, floor)
         else:
             text, self.window_text_start = local, 0
+        previous_text = self.text
         self.text = text
         self.decoded_samples = count
         self.decoded_end = self.start + count / self.SAMPLING_RATE
-        stable = self.agreement.observe(text, self.decoded_end)
-        candidate_stable = stable
-        limits = []
-        if self.frozen_limit is not None and self.window_text_start > self.frozen_limit:
-            # A backlog may provide only one decode before old PCM rolls out.
-            # Copying those words into later hypotheses is not new recognition
-            # evidence. Retain them as a draft until explicit utterance closure.
-            stable = min(stable, self.frozen_limit)
-            limits.append('frozen_prefix')
-        if not anchored:
-            stable = min(stable, self.window_text_start)
-            limits.append('overlap_unmatched')
+        local_stable = self._current_agreement(local, text, anchored)
+        # Preserve only unchanged evidence outside the directly decoded tail.
+        common = 0
+        for old, new in zip(previous_text, text):
+            if old != new:
+                break
+            common += 1
+        copied_end = min(common, self.window_text_start if local else len(text))
+        ranges = [(a, min(b, copied_end)) for a, b in self.confirmed_ranges if a < copied_end]
+        if local_stable:
+            ranges.append((self.window_text_start, self.window_text_start + local_stable))
+        self.confirmed_ranges = confirmation_ranges(text, ranges)
+        stable = confirmed_until(text, self.confirmed_ranges)
+        candidate_stable = self.window_text_start + local_stable if local_stable else 0
+        limits = ['unconfirmed_history'] if stable < candidate_stable else []
         previous_stable = self.confirmed_end
         self.confirmed_end = stable
         diag.event('asr_revision', decode_id=self.decode_sequence, interval=self.interval,
                    chars=len(text), stable_chars=stable, overlap_matched=anchored,
                    candidate_stable_chars=candidate_stable, previous_stable_chars=previous_stable,
-                   frozen_limit=self.frozen_limit, window_text_start=self.window_text_start,
+                   window_text_start=self.window_text_start,
+                   current_stable_chars=local_stable,
+                   confirmed_chars=sum(b-a for a, b in self.confirmed_ranges),
+                   confirmed_range_count=len(self.confirmed_ranges),
                    confirmation_limits=limits, confirmation_limited=stable < candidate_stable,
                    agreement=self.agreement.diagnostic,
                    agreement_observations=len(self.agreement.history),
@@ -274,7 +366,8 @@ class QwenAccurateOnline:
                                          if self.agreement.history else 0.),
                    agreement_rounds=self.agreement.rounds, agreement_horizon=self.agreement.horizon,
                    agreement_holdback=self.agreement.holdback,
-                   audio_start=self.utterance_start, audio_end=self.decoded_end)
+                   audio_start=self._clock.source_time(self.utterance_start),
+                   audio_end=self._clock.source_time(self.decoded_end, end=True))
         self.drafts[text] = (self.utterance_start, self.decoded_end, stable)
         self._observe(text, stable, self.decoded_end)
         self.drafts.move_to_end(text)
@@ -290,11 +383,11 @@ class QwenAccurateOnline:
         index = min(len(matches) - 1, int(len(matches) * offset / count)) if matches else 0
         local_start = matches[index].start() if matches else 0
         self.overlap = (self.text, self.window_text_start + local_start, self.window_text_start)
-        self.frozen_limit = self.confirmed_end
         diag.event('asr_window_roll', reason=reason, interval=self.interval,
-                   decode_id=self.decode_sequence, frozen_limit=self.frozen_limit,
+                   decode_id=self.decode_sequence, stable_chars=self.confirmed_end,
                    chars=len(self.text), window_text_start=self.window_text_start,
-                   old_start=self.start, new_start=self.start + drop / self.SAMPLING_RATE,
+                   old_start=self._clock.source_time(self.start),
+                   new_start=self._clock.source_time(self.start + drop / self.SAMPLING_RATE),
                    dropped_seconds=drop / self.SAMPLING_RATE,
                    retained_seconds=(len(self.audio_buffer) - drop) / self.SAMPLING_RATE)
         self._audio.discard(drop)
@@ -309,7 +402,14 @@ class QwenAccurateOnline:
         forced = False
         while len(self.audio_buffer) >= target:
             end = self.start + len(self.audio_buffer) / rate
-            point = reference_cut(self.vad.snapshot(self.start, end), self.start, end)
+            # Rank VAD gaps on the original recording clock. A removed zero
+            # gap still supplies a reference point, but consumes no PCM space.
+            source_start = self._clock.source_time(self.start)
+            source_end = self._clock.source_time(end, end=True)
+            point = reference_cut(self.vad.snapshot(source_start, source_end), source_start, source_end)
+            point = self._clock.model_time(point) if point is not None else None
+            if point is not None and point <= self.start + 1 / rate:
+                point = None
             reason = 'vad_reference'
             if point is None:
                 if not forced and len(self.audio_buffer) <= cap:
@@ -343,7 +443,7 @@ class QwenAccurateOnline:
                 forced = True
             # Once forced, stay in this loop until strictly below target.
 
-    def _update_window(self, final=False):
+    def _update_window(self, final=False, reason='update'):
         if self.start + len(self.audio_buffer) / self.SAMPLING_RATE <= self.decoded_end + 1e-6:
             return
         if not final and self._fresh_samples() < round(self.update_seconds * self.SAMPLING_RATE):
@@ -351,7 +451,7 @@ class QwenAccurateOnline:
         self._prepare_window()
         fresh = self._fresh_samples()
         if len(self.audio_buffer) and fresh > 0 and (final or fresh >= round(self.update_seconds * self.SAMPLING_RATE)):
-            self._recognize(len(self.audio_buffer))
+            self._recognize(len(self.audio_buffer), reason)
 
     def _tokens(self, text, start, end):
         matches = list(re.finditer(r'\S+', text))
@@ -361,8 +461,8 @@ class QwenAccurateOnline:
             value = text[lo:match.end()]
             if index == 0 and self.any_emitted and value and not value[0].isspace():
                 value = ' ' + value
-            output.append(self.token_type(start=start + (end-start)*index/len(matches),
-                end=start + (end-start)*(index+1)/len(matches), text=value,
+            output.append(self.token_type(start=self._clock.source_time(start + (end-start)*index/len(matches)),
+                end=self._clock.source_time(start + (end-start)*(index+1)/len(matches), end=True), text=value,
                 detected_language=self.language))
             self.any_emitted = True
         return output
@@ -371,22 +471,31 @@ class QwenAccurateOnline:
         text = self.text
         end = self.decoded_end
         tokens = self._tokens(text, self.utterance_start, end)
-        self._observe(text, len(text), end, closed=True)
-        diag.event('asr_commit', interval=self.interval, reason=reason, audio_start=self.utterance_start,
-                   audio_end=end, chars=len(text), decode_id=self.decode_sequence)
+        # Retain the explicit pause/EOF contract for the last direct hypothesis.
+        # Closure cannot confirm copied history that the model no longer heard.
+        if self.window_text:
+            self.confirmed_ranges = confirmation_ranges(text, [*self.confirmed_ranges,
+                (self.window_text_start, len(text))])
+            self.confirmed_end = confirmed_until(text, self.confirmed_ranges)
+        self._observe(text, self.confirmed_end, end, closed=True)
+        diag.event('asr_commit', interval=self.interval, reason=reason,
+                   audio_start=self._clock.source_time(self.utterance_start),
+                   audio_end=self._clock.source_time(end, end=True), chars=len(text), decode_id=self.decode_sequence)
         self.interval += 1
-        self.finalized_until = end
+        self.finalized_until = self._clock.source_time(end, end=True)
         self._audio.discard(count)
         self.start = end
         self.text = ''
         self.decoded_samples = 0
         self.agreement = StablePrefix()
+        self._agreement_prefix = ''
+        self._agreement_window_start = 0.
+        self.confirmed_ranges = []
         self.overlap = None
         self.window_text = ''
         self.window_text_start = 0
         self.utterance_start = None
         self.confirmed_end = 0
-        self.frozen_limit = None
         return tokens
 
     def process_iter(self):
@@ -398,10 +507,11 @@ class QwenAccurateOnline:
     def get_buffer(self):
         # Called from WLK's event loop too: never run inference here. Explicit
         # pause has its own ordered queue marker and counted worker-thread call.
-        if self._forced_endpoint_ready() and not self._queued_audio and not len(self.audio_buffer):
+        if (self._forced_endpoint_ready() and not self._queued_audio and not len(self.audio_buffer)
+                and not len(self._nonzero.pending)):
             self.force_endpoint = False
             self.force_endpoint_time = None
-        return self.transcript_type(start=self.start, end=self.end, text=self.text)
+        return self.transcript_type(start=self._clock.source_time(self.start), end=self.end, text=self.text)
 
     def start_silence(self):
         if self._forced_endpoint_ready():
@@ -410,27 +520,30 @@ class QwenAccurateOnline:
         return self.process_iter()
 
     def _drain(self, reason='finish'):
+        self._queue_nonzero(self._nonzero.flush())
         self._consume_audio(final=True)
         self._update_window(final=True)
         tokens = []
-        for interval, start, end, text, decode_id in self._suspended:
+        for interval, start, end, text, decode_id, ranges in self._suspended:
             if self.revisions is not None:
                 with diag.trace_scope(decode_id=decode_id):
-                    self.revisions.update(interval, start, end, text, len(text), closed=True)
+                    self.revisions.update(interval, start, end, text, confirmed_until(text, ranges),
+                                          closed=True, stable_ranges=ranges)
             tokens.extend(self._tokens(text, start, end))
-            self.finalized_until = max(self.finalized_until, end)
+            self.finalized_until = max(self.finalized_until, self._clock.source_time(end, end=True))
             diag.event('asr_commit', interval=interval, reason=reason, decode_id=decode_id,
-                       audio_start=start, audio_end=end, chars=len(text))
+                       audio_start=self._clock.source_time(start),
+                       audio_end=self._clock.source_time(end, end=True), chars=len(text))
         self._suspended.clear()
-        # An idle window is frozen. EOF confirms its last hypothesis without
-        # appending the skipped long silence or decoding the same PCM again.
+        # Close the last direct hypothesis without replaying unchanged PCM.
+        # Suspended/copied uncertain history stays uncertain at EOF as well.
         if self.utterance_start is not None and self.text:
             count = max(0, round((self.decoded_end - self.start) * self.SAMPLING_RATE))
             tokens.extend(self._commit(count, reason))
         self._reset_acoustics()
         self._idle_start = None
         self._idle_tail.discard(len(self._idle_tail.samples))
-        self.start = self.end
+        self.start = self._clock.count / self.SAMPLING_RATE
         return tokens
 
     def finish(self, reason='finish'):
@@ -456,13 +569,14 @@ class QwenAccurateOnline:
             return snapshot
         start, end, offset = draft
         # Keep timestamps for speculative text too, instead of a zero-time tail.
-        snapshot['draft_span'] = {'start': start, 'end': end}
+        snapshot['draft_span'] = {'start': self._clock.source_time(start),
+                                  'end': self._clock.source_time(end, end=True)}
         if offset:
             stable_end = start + (end-start) * offset / len(text)
-            snapshot['lines'].append({'text': text[:offset], 'start': start,
-                'end': stable_end, 'detected_language': self.language})
+            snapshot['lines'].append({'text': text[:offset], 'start': self._clock.source_time(start),
+                'end': self._clock.source_time(stable_end, end=True), 'detected_language': self.language})
             snapshot['buffer_transcription'] = text[offset:].strip()
-            snapshot['draft_span']['start'] = stable_end
+            snapshot['draft_span']['start'] = self._clock.source_time(stable_end)
         return snapshot
 
 

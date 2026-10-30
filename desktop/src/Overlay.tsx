@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Button, Range } from './components';
 import { CaptionText } from './CaptionText';
+import { projectCaptionRows } from './captionPreview';
 import { bridge, request, type Caption, type Settings, type State } from './types';
 
 export function Overlay() {
@@ -30,12 +31,15 @@ export function Overlay() {
     return () => { unsubscribe?.(); clearTimeout(hide.current); };
   }, []);
   const preview = state?.preview;
-  const caption = rows.filter(row => !preview || preview.keep_ids.includes(row.id)).sort((a,b)=>a.start-b.start || a.id-b.id).at(-1);
-  const source = preview?.source || caption?.source || '等待语音…';
+  const projected = projectCaptionRows(rows, preview).views.filter(row => !row.hidden);
+  const last = preview?.rows?.filter(row => row.source).at(-1);
+  const caption = (last ? projected.find(row => row.caption.id === last.id) : projected.at(-1))?.caption;
+  const pending = preview?.rows ? last && !caption ? last.source : '' : preview?.source;
+  const source = pending || caption?.source || '等待语音…';
   const stale = !!caption?.translation_source && caption.translation_source !== caption.source;
   const prefix = stale ? caption?.error ? '译文更新失败 · ' : '正在更新译文 · ' : caption?.translation_phase === 'initial' ? '初译 · ' : '';
   const translating = state?.state !== 'IDLE' ? state?.translating ?? translate : translate;
-  const target = !preview?.source && translating && caption?.translation ? prefix + caption.translation : '';
+  const target = !pending && translating && caption?.translation ? prefix + caption.translation : '';
   return <div className="overlay-shell" style={{'--overlay-opacity':opacity/100,'--caption-size':`${font}px`} as CSSProperties}
     onPointerEnter={() => {clearTimeout(hide.current);setControls(true);}}
     onPointerLeave={() => {clearTimeout(hide.current);hide.current=setTimeout(()=>{if(!resizing.current)setControls(false);},400);}}>
@@ -44,7 +48,7 @@ export function Overlay() {
         <label>背景</label><Range label="字幕背景不透明度" max={100} value={opacity} onChange={value=>update({opacity:value})} /><span>{opacity}%</span>
         <Button variant="quiet" aria-label="关闭悬浮字幕" onClick={()=>request('overlay.close').catch(e=>setError(e.message))}>×</Button></div>}
       {error && <p role="alert">{error}</p>}
-      <div className="overlay-text"><p className={preview?.source || !caption?.final ? 'draft' : ''}><CaptionText text={source} animate={animate && !preview?.source} /></p>{target && <p className="translation"><CaptionText text={target} animate={animate} /></p>}</div>
+      <div className="overlay-text"><p className={pending || !caption?.final ? 'draft' : ''}><CaptionText text={source} animate={animate && !preview} /></p>{target && <p className="translation"><CaptionText text={target} animate={animate && !preview} /></p>}</div>
       {controls && <div className="overlay-resize" role="separator" aria-label="调整字幕窗口大小" title="拖动调整字幕窗口宽高"
         onPointerDown={event=>{resizing.current={x:event.screenX,y:event.screenY,width:innerWidth,height:innerHeight};event.currentTarget.setPointerCapture(event.pointerId);}}
         onPointerMove={event=>{const start=resizing.current;if(start) request('overlay.resize',{width:Math.round(start.width+event.screenX-start.x),height:Math.round(start.height+event.screenY-start.y)}).catch(e=>setError(e.message));}}

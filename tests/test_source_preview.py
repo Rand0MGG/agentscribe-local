@@ -8,13 +8,56 @@ from test_shared_qwen_worker import stub_worker
 from ui_support import run_ui
 
 from linguaflow.core import Settings
-from linguaflow.source_preview import SourcePreview
+from linguaflow.source_preview import SourcePreview, preview_captions
 from linguaflow.wlk_captions import CaptionMapper
 
 
 def snapshot(text):
     return dict(revision_text=text, stable_end=len(text),
         revision_spans=[(i, i+1, i/10, (i+1)/10, 'en') for i in range(len(text))])
+
+
+@pytest.mark.p1
+def test_punctuation_preview_preserves_three_cards_and_unaffected_translations():
+    mapper = CaptionMapper('en', predictor=lambda text: [i+1 for i, c in enumerate(text) if c in '.!'])
+    preview = SourcePreview('en')
+    old = snapshot('First sentence. Second sentence. Third sentence.')
+    preview.begin(old)
+    mapper.update(old, done=True)
+    for caption in mapper.previous.values():
+        caption.translation = f'translation {caption.id}'
+        caption.translation_source = caption.source
+        caption.translation_phase = 'final'
+    preview.complete(mapper)
+    before = {key: asdict(value) for key, value in mapper.previous.items()}
+    _, event = preview.begin(snapshot('First sentence! Second sentence. Third sentence.'))
+    assert [row['source'] for row in event['rows']] == ['First sentence!', 'Second sentence.', 'Third sentence.']
+    saved = preview_captions(mapper.previous, event)
+    assert [row.id for row in saved] == [1, 2, 3]
+    assert not saved[0].final and saved[0].translation == 'translation 1'
+    assert saved[0].translation_source == 'First sentence.'
+    assert asdict(saved[1]) == before[2] and asdict(saved[2]) == before[3]
+    assert {key: asdict(value) for key, value in mapper.previous.items()} == before
+
+
+@pytest.mark.p1
+@pytest.mark.parametrize('new', ['Changed. Second. Third.', 'First. Third.',
+                                'First. Second. Third. More words', '',
+                                '全部重写，现在是中文。'])
+def test_projected_preview_covers_latest_text_once_without_inventing_semantic_boundaries(new):
+    mapper = CaptionMapper('en', predictor=lambda text: [i+1 for i, c in enumerate(text) if c=='.'])
+    preview = SourcePreview('en')
+    old = snapshot('First. Second. Third.')
+    preview.begin(old)
+    mapper.update(old, done=True)
+    preview.complete(mapper)
+    before = {key: asdict(value) for key, value in mapper.previous.items()}
+    _, event = preview.begin(snapshot(new))
+    saved = preview_captions(mapper.previous, event)
+    assert ''.join(c.source for c in saved).replace(' ', '') == new.replace(' ', '')
+    assert len({c.id for c in saved}) == len(saved)
+    assert len(saved) <= 3
+    assert {key: asdict(value) for key, value in mapper.previous.items()} == before
 
 
 @pytest.mark.p1

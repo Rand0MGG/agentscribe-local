@@ -289,11 +289,12 @@ def test_margin_window_is_not_released_again_without_new_audio_even_at_eof():
 @pytest.mark.p1
 def test_genuine_agreement_keeps_advancing_across_many_context_rollovers():
     def decode(audio):
-        return ' '.join(f'w{int(i)}' for i in np.unique(audio))
+        return ' '.join(f'w{int(i)-1}' for i in np.unique(audio))
     asr = QwenAccurateOnline(decode, 'en', token_type=SimpleNamespace, transcript_type=SimpleNamespace)
     store = install_revision_bridge(asr)
     for end in range(2, 91, 2):
-        asr.insert_audio_chunk(np.repeat(np.arange(end-2, end, dtype=np.float32), RATE), end)
+        # Every encoded word is nonzero audio, including w0.
+        asr.insert_audio_chunk(np.repeat(np.arange(end-1, end+1, dtype=np.float32), RATE), end)
         asr.process_iter()
     assert asr.text == ' '.join(f'w{i}' for i in range(90))
     assert asr.confirmed_end >= len(' '.join(f'w{i}' for i in range(75)))

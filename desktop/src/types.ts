@@ -2,7 +2,8 @@ export type Item = { id: string; name: string; folder?: string; parent?: string 
 export type Caption = { id: number; start: number; end: number; source: string; translation: string;
   final: boolean; revision: number; language: string; error: string; translation_phase: string;
   translation_status: string; translation_source: string; asr_final?: boolean; boundary_final?: boolean };
-export type Preview = { source: string; start: number; keep_ids: number[]; sequence: number };
+export type PreviewRow = { id: number | null; index: number; source: string; start: number; end: number };
+export type Preview = { source: string; start: number; end?: number; keep_ids: number[]; sequence: number; rows?: PreviewRow[] };
 export type RecordingState = 'IDLE' | 'STARTING' | 'LISTENING' | 'PAUSING' | 'PAUSED' | 'RESUMING' | 'STOPPING';
 export type State = { item: Item | null; draft: { name: string; folder: string } | null; state: RecordingState; status: string; failure: string; save_error: string;
   update_fenced?: boolean; capture?: { label: string; volume_label: string; waiting: string; model_loading: boolean };

@@ -1,10 +1,38 @@
 """Shared text agreement and bounded-window stitching for ASR adapters."""
 import re
+from bisect import bisect_right
 from difflib import SequenceMatcher
 
 
 def units(text):
     return list(re.finditer(r'[\u3400-\u9fff]|[^\s\u3400-\u9fff]+', text))
+
+
+def confirmation_ranges(text, ranges):
+    """Normalize character evidence; whitespace between ranges needs no vote."""
+    result = []
+    for lo, hi in sorted(ranges):
+        lo, hi = max(0, lo), min(len(text), hi)
+        if hi <= lo:
+            continue
+        if result and not text[result[-1][1]:lo].strip():
+            result[-1] = (result[-1][0], max(hi, result[-1][1]))
+        else:
+            result.append((lo, hi))
+    return result
+
+
+def confirmed_until(text, ranges, start=0):
+    """End of contiguous evidence starting here, never across uncertain words."""
+    index = max(0, bisect_right(ranges, start, key=lambda row: row[0]) - 1)
+    end = start
+    for lo, hi in ranges[index:]:
+        if hi < end:
+            continue
+        if text[end:lo].strip():
+            break
+        end = max(end, hi)
+    return end
 
 
 class StablePrefix:

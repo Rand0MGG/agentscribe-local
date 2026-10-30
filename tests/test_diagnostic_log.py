@@ -310,7 +310,7 @@ def test_pipeline_trace_links_audio_source_sat_and_translation_without_content(l
     asr = QwenAccurateOnline(lambda _: source, 'en',
                             token_type=SimpleNamespace, transcript_type=SimpleNamespace)
     store = install_revision_bridge(asr)
-    asr.insert_audio_chunk(np.zeros(32000), 2.)
+    asr.insert_audio_chunk(np.ones(32000), 2.)
     asr.process_iter()
     asr.finish()
     snapshot = {}
@@ -370,7 +370,7 @@ def test_pipeline_trace_links_audio_source_sat_and_translation_without_content(l
 
 
 @pytest.mark.p1
-def test_trace_explains_frozen_prefix_without_changing_confirmation(logs):
+def test_trace_distinguishes_unconfirmed_history_from_current_confirmation(logs):
     path = diag.start_logging('test')
     values = iter(['', 'one two three four five six seven eight nine ten eleven twelve'] +
                   ['three four five six seven eight nine ten eleven twelve thirteen'] * 3)
@@ -381,9 +381,41 @@ def test_trace_explains_frozen_prefix_without_changing_confirmation(logs):
         asr.process_iter()
     row = [r for r in read_rows(path) if r['event'] == 'asr_revision'][-1]
     assert row['candidate_stable_chars'] > 0 and row['stable_chars'] == asr.confirmed_end == 0
-    assert row['confirmation_limited'] and row['confirmation_limits'] == ['frozen_prefix']
-    assert row['frozen_limit'] == 0 and row['window_text_start'] > 0
+    assert row['confirmation_limited'] and row['confirmation_limits'] == ['unconfirmed_history']
+    assert row['window_text_start'] > 0
+    assert row['confirmed_chars'] == row['current_stable_chars'] > 0
+    assert row['confirmed_range_count'] == 1
     assert row['agreement']['reason'] == 'agreement_prefix'
+
+
+@pytest.mark.p2
+def test_zero_audio_trace_records_transitions_and_original_clock_not_every_packet(logs):
+    from linguaflow.qwen_revisions import install_revision_bridge
+    path = diag.start_logging('test')
+    asr = QwenAccurateOnline(lambda _: 'PRIVATE_ZERO_TEST words remain private', 'en',
+                            token_type=SimpleNamespace, transcript_type=SimpleNamespace)
+    install_revision_bridge(asr)
+    def feed(audio):
+        asr.insert_audio_chunk(audio, asr.end + len(audio) / 16000)
+        asr.process_iter()
+    feed(np.zeros(16000))
+    feed(np.ones(4000))
+    for _ in range(20):
+        feed(np.zeros(4000))
+    feed(np.ones(16000))
+    asr.finish()
+    rows = read_rows(path)
+    transitions = [r for r in rows if r['event'] in ('asr_zero_start', 'asr_zero_end')]
+    assert [r['event'] for r in transitions] == ['asr_zero_start', 'asr_zero_end'] * 2
+    assert transitions[-1]['skipped_seconds'] == 5
+    decodes = [r for r in rows if r['event'] == 'asr_decode_end']
+    assert len(decodes) == 2 and decodes[0]['reason'] == 'zero_input'
+    assert decodes[-1]['window_start'] == 1 and decodes[-1]['window_end'] == 7.25
+    assert decodes[-1]['audio_seconds'] == 1.25 and decodes[-1]['skipped_zero_seconds'] == 5
+    assert decodes[-1]['admitted_audio_seconds'] == 1
+    source = [r for r in rows if r['event'] == 'source_revision'][-1]
+    assert source['audio_start'] == 1 and source['audio_end'] == 7.25
+    assert 'PRIVATE_ZERO_TEST' not in path.read_text(encoding='utf-8')
 
 
 @pytest.mark.p0
