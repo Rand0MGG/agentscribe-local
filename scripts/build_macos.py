@@ -230,6 +230,7 @@ def build(downloads, *, without_updater=False, with_electron=True):
         application_files.update(copy_electron(ROOT, resources / 'desktop', downloads, 'macos-arm64'))
     for name in ('requirements-runtime.txt', 'requirements-mlx.txt', 'THIRD_PARTY_NOTICES.md'):
         shutil.copy2(ROOT / name, resources / name)
+    (resources / 'Licenses').mkdir(exist_ok=True)
     # The standalone archive includes the CPython license in its stdlib.
     shutil.copy2(python / 'lib/python3.12/LICENSE.txt', resources / 'Licenses/Python-LICENSE.txt')
     python_notices(paths['python-notices'], resources / 'Licenses/Python-build')
