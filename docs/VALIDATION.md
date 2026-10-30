@@ -7,7 +7,7 @@
 - 固定来源 `b808577`，最终 DMG **232,120,686 字节**，SHA256 `77d3029d1cb8462794d68615b0a60009717b70c5e784bcb421ebcafffde84a2e`；仅发布 Apple Silicon/macOS 15+，Windows 安装包保持 v0.11.0。应用 ad-hoc、未公证，DMG 使用原 Sparkle Ed25519 身份签署并复验。
 - 99 项打包/更新回归、前端构建、最终映像校验及隔离无音频包探针通过。[原生升级验收](https://github.com/Rand0MGG/agentscribe-local/actions/runs/41087381972) 用实际 v0.11.0 包验证篡改拒绝、断流、取消、正常升级和启动失败恢复，五项均通过，录音/模型/运行组件/偏好保留。录音及保存门禁采用模拟状态，不替代真实采集和长会话验收。
 - [订阅部署](https://github.com/Rand0MGG/agentscribe-local/actions/runs/41088689344) 成功，Mac stable/beta 均为 0.12.1；部署前后对比确认 Windows 两份 XML 及索引条目完全不变。
-- [真实 HTTPS 订阅升级](https://github.com/Rand0MGG/agentscribe-local/actions/runs/41089054072) 通过：未修改的 v0.11.0 客户端安装同一封存包并报告健康，测试数据保留。相同产品源码的 [CI](https://github.com/Rand0MGG/agentscribe-local/actions/runs/41087326557) 12 项通过（包含全部 Mac 项目）；Windows Python 3.11 的旧锁并发回收用例失败，另行排查，不宣称全矩阵通过。
+- [真实 HTTPS 订阅升级](https://github.com/Rand0MGG/agentscribe-local/actions/runs/41089054072) 通过：未修改的 v0.11.0 客户端安装同一封存包并报告健康，测试数据保留。相同产品源码的 [CI](https://github.com/Rand0MGG/agentscribe-local/actions/runs/41087326557) 12 项通过（包含全部 Mac 项目）；Windows Python 3.11 的双进程日志归档用例等待 ready 超时，另行排查；此前一轮还出现旧锁并发回收失败，不宣称全矩阵通过。
 
 ## 2026-10-30 Mac 回听初始化阻塞
 
