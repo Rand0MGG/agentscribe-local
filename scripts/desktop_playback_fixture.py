@@ -1,4 +1,5 @@
 """Run the real Electron audio adapter against inert media devices in Node."""
+import faulthandler
 import json
 import os
 import subprocess
@@ -38,9 +39,12 @@ def install():
             def player():
                 no_audio = service.no_audio
                 service.no_audio = False
+                # A blocked first load otherwise leaves CI with only a UI timeout.
+                faulthandler.dump_traceback_later(5)
                 try:
                     return original_player()
                 finally:
+                    faulthandler.cancel_dump_traceback_later()
                     service.no_audio = no_audio
             def bootstrap():
                 value = original_bootstrap()
