@@ -7,6 +7,7 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const closeWorkspace = require('./close-workspace.cjs');
 const clickWhileBusy = require('./caption-click-checks.cjs');
+const playbackDiagnostics = require('./playback-diagnostics.cjs');
 const root = path.resolve(__dirname, '../..');
 const output = path.join(root, 'output/playwright/interaction-fixes');
 fs.mkdirSync(output, { recursive: true });
@@ -44,6 +45,7 @@ async function main() {
   AGENTSCRIBE_DESKTOP_PREFERENCES:path.join(fixture,'prefs.ini'),AGENTSCRIBE_CHAIN_FIXTURE:fixture,AGENTSCRIBE_INTERACTION_FIXTURE:fixture,
   AGENTSCRIBE_AUDIO_GUARD_LOG:path.join(fixture,'blocked.log'),AGENTSCRIBE_LOG_DIR:path.join(fixture,'logs'),PYTHONPATH:[fixture,root,process.env.PYTHONPATH||''].join(path.delimiter)}});
  const page=await app.firstWindow();page.setDefaultTimeout(10000);page.on('pageerror',e=>errors.push(e.message));
+ await playbackDiagnostics.install(app,root);
  await page.locator('.notification').getByRole('button',{name:'收起通知'}).click();
  await page.getByRole('button',{name:'音频来源',exact:true}).click();
  await page.getByRole('menuitemradio',{name:'隔离输入',exact:true}).waitFor();
@@ -83,6 +85,7 @@ async function main() {
  const target=page.locator('[data-caption="3"] .source');
  await clickWhileBusy(target);
  await page.getByRole('button',{name:'暂停回听',exact:true}).waitFor();
+ await playbackDiagnostics.capture(app,page,fixture,output,'first-caption-playing');
  const media=()=>fs.readFileSync(path.join(fixture,'media.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
  assert.deepEqual(media().map(row=>[row.action,row.position]),[['seek',6000],['play',6000]]);
  await page.locator('[data-caption="3"].playing').waitFor();
@@ -162,4 +165,4 @@ async function main() {
  fs.writeFileSync(path.join(output,'result.json'),JSON.stringify({fixture,passed,highlight,motion,errors,native_audio_attempts:0},null,2));
  await closeWorkspace(app,page);app=null;console.log(JSON.stringify({passed,motion},null,2));
 }
-main().catch(async error=>{console.error(error);if(app){for(const page of app.windows())await page.screenshot({path:path.join(output,'failure.png')}).catch(()=>{});await app.evaluate(({app})=>app.exit(1)).catch(()=>{});}process.exitCode=1;});
+main().catch(async error=>{console.error(error);if(app){for(const page of app.windows()){await playbackDiagnostics.capture(app,page,fixture,output,'failed').catch(console.error);await page.screenshot({path:path.join(output,'failure.png')}).catch(()=>{});}await app.evaluate(({app})=>app.exit(1)).catch(()=>{});}process.exitCode=1;});
