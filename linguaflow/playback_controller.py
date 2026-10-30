@@ -2,11 +2,21 @@
 import math
 import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from socketserver import TCPServer
 from threading import Thread
 
 from .events import Owner, Signal
 from .playback import PlaybackIndex
 from .playback_stream import PlaybackStream
+
+
+class _LoopbackHTTPServer(ThreadingHTTPServer):
+    def server_bind(self):
+        # Playback uses a numeric loopback URL. HTTPServer's reverse DNS lookup
+        # is unnecessary and can block the backend owner thread on macOS.
+        TCPServer.server_bind(self)
+        self.server_name = self.server_address[0]
+        self.server_port = self.server_address[1]
 
 
 class PlaybackController(Owner):
@@ -108,7 +118,7 @@ class PlaybackController(Owner):
                     except (BrokenPipeError, ConnectionResetError, OSError):
                         return
 
-            self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+            self.server = _LoopbackHTTPServer(('127.0.0.1', 0), Handler)
             self.server.daemon_threads = True
             self.server_thread = Thread(target=lambda: self.server.serve_forever(poll_interval=.02),
                                         name='recording-playback', daemon=True)

@@ -2,12 +2,18 @@
 
 仅记录当前可核对的证据与限制；测试规则见 [TESTING](TESTING.md)，功能缺口见 [ROADMAP](ROADMAP.md)。历史逐轮记录已移至 [验证归档](archive/testing/VALIDATION_THROUGH_20261030.md)，不把旧通过数或“本地未提交”当作当前状态。
 
+## 2026-10-30 Mac 回听初始化阻塞
+
+- 远程诊断确认点击命中且 `playback.seek` 已发出，但初始化未返回、媒体未加载。[Mac 调用栈](https://github.com/Rand0MGG/agentscribe-local/actions/runs/41080209950/job/124149709266) 明确停在 `PlaybackController.load → HTTPServer.server_bind → socket.getfqdn`；这是产品后台线程被反向主机名查询阻塞，与此前修复的点击计时问题独立。
+- 本地回环媒体服务改为直接绑定数字地址，取消不必要的反向查询。新增 P2 回归在解析器不可用时验证实际 HTTP 文件读取、定位与释放；修复前失败，修复后通过，原随机令牌、范围读取和旧回执拒绝保持不变。没有延长交互测试的 10 秒等待或绕过播放流程。
+- macOS 回听控制器、媒体流、桌面服务与 Qt-free 后台回归 **59 passed**，完整 Electron `test:interaction`、`test:audio-adapter`、Ruff 和差异格式检查通过。隔离合成录音与设备替身，无原生音频导入；证据位于 `.work/reports/ci-analysis-20261030/`。修复后的远程 CI 需独立核对。
+
 ## 2026-10-30 回听点击计时与侧栏动画测试
 
 - 基于 `e6da89e`：原文和译文的短按时长改用输入事件时间，排除界面处理延迟。正式交互探针加入真实浏览器单击及 500ms 主线程阻塞；修复前在等待回听开始处超时，修复后通过，长按、拖选、双击不定位的保护仍有效。
 - 旧 Qt 动画测试改为同步推进中间帧，验证收拢、当前位置反向展开及减少动态效果；最终状态仍等待真实事件循环完成。该纯动画用例按 P3 分级，不再用采样次数推断动画尚未结束，产品动画未修改。
 - macOS：侧栏回归 **17 passed**；Electron 构建、完整 `test:interaction`、Ruff 与差异格式检查通过。使用隔离库和模拟媒体，无原生音频导入尝试，未播放、采集或改音量。证据在 `.work/reports/ci-analysis-20261030/` 和 `output/playwright/interaction-fixes/`。
-- 以上证明本地缺陷与修复；未证明远程 Electron 超时只有这一原因，Windows 与新 CI 尚未验证。双进程日志归档的远程失败根因仍未确定，本轮未改归档实现或其测试。
+- 以上证明点击计时缺陷与本地修复；后续 CI 的独立回听初始化阻塞见上节。双进程日志归档的远程失败根因仍未确定，本轮未改归档实现或其测试。
 
 ## 2026-10-30 课程客户端测试的 PID 发布竞态
 

@@ -39,6 +39,8 @@ Windows 窗口控制使用 Electron 原生 `titleBarOverlay`，与 36px 拖动�
 
 Electron 服务拥有可复用的 `RuntimePreparation`，会话只借用；环境维护及退出在独立任务中等待释放，失败保留 owner 以便重试。回听元数据通过原 `PlaybackStream` 只读 WAV 获取，不为显示时长创建音频设备；`PlaybackController` 持有文件、随机令牌本机媒体流、录音代次、播放状态和命令，Electron 音频适配器等待媒体就绪后先定位再播放；释放/错误清除待执行请求，成功定位回执恢复前端跟随。保存结束并释放录音锁后刷新，建立播放器时重新应用音量。两前端共享悬浮窗逻辑坐标，旧 Qt 二进制几何继续作为兼容回退。启动库失败时，宿主只在原后台已退出、尚未完成启动的情况下允许重新选目录；新后台验证库后才持久化选择。
 
+回听媒体服务只绑定 `127.0.0.1` 的随机端口，直接使用数字地址，不进行反向主机名查询；避免系统解析器阻塞后台 owner 线程。令牌校验、范围读取及旧录音代次拒绝仍由 `PlaybackController` 负责。
+
 源码入口、验证方法见 [TESTING](TESTING.md#electron-正式入口)，实现缺口见 [ROADMAP](ROADMAP.md#electron-迁移对照)。Qt-free 构建仍复用现有原生启动器和平台锁；安装版 Electron 后台由外层原生启动器以 `--python -m linguaflow.desktop_service` 承载，保留 Sparkle 的应用身份；检查更新不再切换界面，仍使用 Sparkle/WinSparkle，未引入 electron-updater。不要把本地构建或逻辑回归理解为跨平台发行验收。
 
 `desktop_launcher.py` 统一原 `python -m linguaflow` 与 console-script 入口，始终启动 Electron；显式 Qt 启动返回退役提示。`frontend_switch.py` 保留旧交接上下文及 Electron 重启支持，等待旧 owner 结束才启动目标；界面已移除 Qt 切换按钮。

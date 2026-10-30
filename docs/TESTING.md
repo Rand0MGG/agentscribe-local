@@ -91,6 +91,8 @@ git diff --check
 
 Python 的 `test_qt_free_backend.py` 在拒绝 Qt 导入的条件下验证后台、设置迁移、竞争锁与退出；`test_playback_controller.py` 验证合成 WAV 的 HTTP 范围读取、旧代次拒绝及原件保护。Node 音频适配器由独立入口验证，不再通过 Python 包装重复运行。Qt 仅作为保留行为的对照及部分图像夹具，不进入正式依赖或安装载荷；不能仅因测试使用 Qt 就删除其独有保护。
 
+回听回归还验证主机名解析不可用时，真实本地 HTTP 加载、文件读取及定位仍完成。Electron 交互探针记录点击命中、播放请求/回执和媒体动作；初始化超过 5 秒仅输出 Python 调用栈，不改变原超时或断言。诊断仅用于隔离测试库，不进入正式用户日志。
+
 共享保存、迁移、准备或退出修改需完整无音频回归及 Electron `test:chain`、`test:interaction`、`test:audio-adapter`。原生探针等待窗口和记录的自有辅助进程实际退出；不能终止其他实例或强制卸载映像掩盖退出问题。
 
 按需外观对照使用 `scripts/preview_parity.py --capture`、`node desktop/scripts/parity.cjs` 和 `scripts/compare_desktop_ui.py`，同主题、尺寸、内容及动作核对。截图任务不并行争用焦点；记录实际窗口尺寸和 DPR，不把系统尺寸舍入或截图生成当作业务通过。
