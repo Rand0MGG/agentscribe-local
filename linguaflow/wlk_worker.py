@@ -133,7 +133,13 @@ async def _run_session(settings, emit, read_message, config, engine, online, sem
     stream_events = asyncio.Queue()
     # All model loading has finished before VAD's tensor state is initialized.
     # Concurrent Transformers loading can temporarily change Torch's dtype.
-    processor = AudioProcessor(transcription_engine=engine, stream_event_queue=stream_events)
+    if qwen:
+        from .qwen_audio import ContinuousQwenPCM
+        class QwenAudioProcessor(ContinuousQwenPCM, AudioProcessor):
+            pass
+        processor = QwenAudioProcessor(transcription_engine=engine, stream_event_queue=stream_events)
+    else:
+        processor = AudioProcessor(transcription_engine=engine, stream_event_queue=stream_events)
     from .runtime_compat import configure_vad_float32
     configure_vad_float32(processor)
     if qwen:
@@ -155,13 +161,10 @@ async def _run_session(settings, emit, read_message, config, engine, online, sem
                  await asyncio.to_thread(frontend.process, np.frombuffer(pcm, "<i2").astype(np.float32) / 32767))
         if len(audio):
             await processor.process_audio((np.clip(audio, -1, 1) * 32767).astype("<i2").tobytes())
-    # WLK's pause_segmentation_seconds only marks presentation boundaries.
-    # Its Silero iterator otherwise ends speech after just 100 ms, invoking
-    # Qwen start_silence(), which flushes and resets the decoder. Configure
-    # the detector itself so a short hesitation retains acoustic context.
     from .runtime_compat import configure_vad_pause
     if qwen:
-        configure_vad_pause(processor, settings.get("endpoint_seconds", .5))
+        configure_vad_pause(processor, .5)
+        processor.begin_continuous_pcm()
     if not qwen:
         # AlignAtt otherwise chooses CUDA from global availability even when
         # the user selected a CPU model. Translation can still use that GPU.
@@ -325,8 +328,6 @@ async def _run_session(settings, emit, read_message, config, engine, online, sem
             ended = False
             try:
                 event = await asyncio.wait_for(stream_events.get(), .25)
-                if qwen:
-                    processor.transcription.observe_capture_event(event.kind, event.timestamp)
                 if event.kind == 'silence_transcription_ready':
                     # WLK emits this only after final decoding and its snapshot,
                     # unlike silence_started, which can precede pending inference.

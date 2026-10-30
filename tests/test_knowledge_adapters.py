@@ -110,6 +110,10 @@ def test_pytorch_and_mlx_adapters_share_revision_finalization_and_translation_po
                 asr.observe_capture_event('audio_advanced', 4)
                 asr.get_buffer()
                 assert publish() == []
+                assert not store.rows[0]['closed']
+                asr.force_next_endpoint(1)
+                asr.start_silence()
+                assert publish() == []
                 clock[0] = 4
                 first, = publish()
                 assert first.translation_phase == 'initial'
@@ -126,7 +130,7 @@ def test_pytorch_and_mlx_adapters_share_revision_finalization_and_translation_po
                 assert len(applied) == 1
                 asyncio.run(translate(final, '最终译文'))
                 assert applied[-1]['final'] and applied[-1]['translation'] == '最终译文'
-                outcomes.append((history, applied, asr.window_seconds, asr.pause_context_seconds))
+                outcomes.append((history, applied, asr.window_seconds))
             finally:
                 for resource in resources:
                     resource.close()

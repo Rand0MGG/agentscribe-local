@@ -4,7 +4,6 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from linguaflow.mlx_asr import choose_cut
 from linguaflow.qwen_accurate import QwenAccurateOnline
 from linguaflow.qwen_revisions import install_revision_bridge
 from linguaflow.translation_context import ContextPlanner
@@ -12,8 +11,8 @@ from linguaflow.wlk_captions import CaptionMapper
 
 
 def online(decode, window=12):
-    return QwenAccurateOnline(decode, choose_cut, 'en', window_seconds=window,
-                             pause_context_seconds=3, token_type=SimpleNamespace,
+    return QwenAccurateOnline(decode, 'en', window_seconds=window,
+                             token_type=SimpleNamespace,
                              transcript_type=SimpleNamespace)
 
 
@@ -32,10 +31,12 @@ def test_short_pause_retains_pcm_and_later_speech_corrects_original_phrase():
     assert snapshot['lines'] == []
     assert snapshot['buffer_transcription'] == 'This is soft mass.'
     assert asr.start_silence()[0] == [] and len(calls) == 1
-    asr.end_silence(.75, 1)
+    asr.observe_capture_event('silence_started', 1)
+    asr.observe_capture_event('speech_started', 1.75)
+    asr.insert_audio_chunk(np.full(12000, .01), 1.75)
     asr.insert_audio_chunk(second, 2.75)
     assert asr.process_iter()[0] == []
-    np.testing.assert_array_equal(calls[-1], np.concatenate((first, np.zeros(12000), second)))
+    np.testing.assert_array_equal(calls[-1], np.concatenate((first, np.full(12000, .01, np.float32), second)))
     assert asr.text == 'This is softmax of the vector.'
     tokens, end = asr.finish()
     assert ''.join(t.text for t in tokens) == 'This is softmax of the vector.'
@@ -44,29 +45,35 @@ def test_short_pause_retains_pcm_and_later_speech_corrects_original_phrase():
 
 
 @pytest.mark.p1
-def test_long_pause_starts_new_window_and_preserves_token_delivery_and_clock():
-    asr = online(lambda audio: 'first phrase' if audio[0] == 1 else 'next phrase')
+def test_four_second_pause_keeps_the_window_and_does_not_commit():
+    asr = online(lambda audio: 'first phrase' if len(audio) == 16000 else 'first phrase and next phrase')
+    store = install_revision_bridge(asr)
     asr.insert_audio_chunk(np.ones(16000), 1)
-    assert asr.start_silence()[0] == []
-    asr.end_silence(4, 1)
+    asr.process_iter()
+    asr.observe_capture_event('silence_started', 1)
+    asr.observe_capture_event('speech_started', 5)
+    asr.insert_audio_chunk(np.full(4 * 16000, .01), 5)
     asr.insert_audio_chunk(np.full(16000, 2), 6)
-    tokens, _ = asr.process_iter()
-    assert ''.join(t.text for t in tokens) == 'first phrase'
-    assert tokens[0].start == 0 and tokens[-1].end == 1
-    rest, _ = asr.finish()
-    assert ''.join(t.text for t in rest).strip() == 'next phrase'
-    assert rest[0].start == 5 and rest[-1].end == 6
+    assert asr.process_iter()[0] == []
+    assert not store.rows[0]['closed'] and list(store.rows) == [0]
+    rest, end = asr.finish()
+    assert ''.join(t.text for t in rest) == 'first phrase and next phrase'
+    assert rest[0].start == 0 and rest[-1].end == end == 6
     assert asr.finish()[0] == []
 
 
 @pytest.mark.p1
-def test_eof_during_trailing_silence_does_not_extend_word_timestamps():
+def test_eof_during_trailing_silence_keeps_existing_word_estimates():
     asr = online(lambda audio: 'Last sentence.')
+    store = install_revision_bridge(asr)
     asr.insert_audio_chunk(np.ones(16000), 1)
     asr.start_silence()
-    asr.end_silence(10, 1)
+    asr.observe_capture_event('silence_started', 1)
+    asr.insert_audio_chunk(np.full(10 * 16000, .01), 11)
+    asr.process_iter()
     tokens, end = asr.finish()
-    assert tokens[-1].end == 1 and end == 11
+    assert tokens[-1].end == end == 11
+    assert max(b for a, b in store.times[0]) == 1  # unchanged words keep their earlier estimates
     assert asr.finish()[0] == []
 
 
@@ -78,19 +85,21 @@ def test_backlog_at_vad_endpoint_keeps_every_sample_and_decode_bounded():
     asr.insert_audio_chunk(audio, 50)
     committed, _ = asr.start_silence()
     assert committed == []
+    backlog_calls = list(calls)
     held = asr.audio_buffer.copy()
     assert len(held) <= 17 * 16000
-    asr.end_silence(5, 50)
+    asr.observe_capture_event('silence_started', 50)
+    asr.observe_capture_event('speech_started', 55)
+    asr.insert_audio_chunk(np.full(5 * 16000, .01), 55)
     asr.insert_audio_chunk(np.ones(16000), 56)
     queued, _ = asr.process_iter()
     final, _ = asr.finish()
-    assert queued and final
+    assert not queued and final
     assert all(len(part) <= 17 * 16000 for part in calls)
-    # The silence decode is retained as the final hypothesis, without
-    # discarding or decoding its PCM again when the long pause is confirmed.
-    # Overlaps are recognized again, but every original sample is covered.
-    np.testing.assert_array_equal(np.unique(np.concatenate(calls[:-1])), audio)
-    assert final[0].start == 55 and final[-1].end == 56
+    # Natural silence does not commit. Overlaps may be recognized again,
+    # but all original backlog samples reached bounded model inputs.
+    np.testing.assert_array_equal(np.unique(np.concatenate(backlog_calls)), audio)
+    assert final[0].start == 0 and final[-1].end == 56
 
 
 @pytest.mark.p1
@@ -102,15 +111,14 @@ def test_mlx_uses_requested_window_and_retains_short_pauses(monkeypatch):
         QwenAccurateOnline(*args, **kwargs, token_type=SimpleNamespace,
                           transcript_type=SimpleNamespace))
     asr = module.build_mlx_online('model', 'en', .5, lambda text: None, window_seconds=30)
-    assert asr.window_seconds == 30 and asr.pause_context_seconds == 3
-    assert asr.update_seconds == .5
+    assert asr.window_seconds == 30
+    assert asr.update_seconds == 1.
 
 
 @pytest.mark.p1
 def test_capacity_rollover_does_not_close_or_shrink_the_asr_interval():
     asr = online(lambda audio: 'First sentence. Extra.' if len(audio) > 8 * 16000
                  else 'First sentence.', window=8)
-    asr.choose_cut = lambda audio, seconds: 8 * 16000
     store = install_revision_bridge(asr)
     asr.insert_audio_chunk(np.ones(12 * 16000), 12)
     asr.process_iter()
@@ -145,7 +153,9 @@ def test_short_vad_pause_uses_existing_store_without_publishing_closed_source():
     assert snapshot['closed_ends'] == []
     first = captions.update(snapshot)[0]
     assert not first.final and not store.rows[0]['closed']
-    asr.end_silence(.75, 1)
+    asr.observe_capture_event('silence_started', 1)
+    asr.observe_capture_event('speech_started', 1.75)
+    asr.insert_audio_chunk(np.full(12000, .01), 1.75)
     asr.insert_audio_chunk(np.ones(16000), 2.75)
     asr.process_iter()
     store.augment_snapshot(snapshot)
@@ -159,7 +169,7 @@ def test_short_vad_pause_uses_existing_store_without_publishing_closed_source():
 
 
 @pytest.mark.p1
-def test_silent_pcm_closes_utterance_through_shared_strategy_without_caption_timer():
+def test_silent_pcm_does_not_close_source_or_sat_until_explicit_finish():
     asr = online(lambda audio: 'Last sentence.')
     store = install_revision_bridge(asr)
     captions = CaptionMapper('en', predictor=lambda text: [], clock=lambda: 0)
@@ -174,12 +184,14 @@ def test_silent_pcm_closes_utterance_through_shared_strategy_without_caption_tim
     snapshot = {}
     store.augment_snapshot(snapshot)
     tail = captions.update(snapshot)[0]
-    assert tail.asr_final and not tail.boundary_final and not tail.final
-    assert captions.update(snapshot, done=True)[0].final
+    assert not tail.asr_final and not tail.boundary_final and not tail.final
+    assert not store.rows[0]['closed']
     # WLK still receives its scheduling tokens once; caption data already came
     # from the full-hypothesis store, which never waits for append-only tokens.
     tokens, _ = asr.finish()
     assert ''.join(t.text for t in tokens) == 'Last sentence.'
+    store.augment_snapshot(snapshot)
+    assert captions.update(snapshot, done=True)[0].final
     assert asr.finish()[0] == []
 
 
@@ -226,7 +238,9 @@ def test_explicit_pause_waits_for_already_accepted_pcm_in_queue():
     # A queued natural VAD endpoint preceding the explicit pause must not
     # consume the force marker before the rest of accepted PCM is decoded.
     assert asr.start_silence()[0] == [] and not store.rows[0]['closed']
-    asr.end_silence(.5, 1)
+    asr.observe_capture_event('silence_started', 1)
+    asr.observe_capture_event('speech_started', 1.5)
+    asr.insert_audio_chunk(np.full(8000, .01), 1.5)
     asr.insert_audio_chunk(np.ones(56000), 5)
     asr.process_iter()
     assert asr.start_silence()[0] and store.rows[0]['closed']
@@ -271,11 +285,15 @@ def test_shared_submission_retranslates_corrected_source_then_finalizes():
     assert publish() == []
     clock[0] = 2
     # A single recognition plus wall time is not ASR agreement. Actual silent
-    # PCM may close ASR, after which the independent SaT submission delay runs.
+    # PCM cannot close ASR, after which the independent SaT submission delay runs.
     assert publish() == []
     asr.observe_capture_event('silence_started', 1)
     asr.observe_capture_event('audio_advanced', 4)
     asr.get_buffer()
+    assert publish() == []
+    assert not store.rows[0]['closed']
+    asr.force_next_endpoint(1)
+    asr.start_silence()
     assert publish() == []
     clock[0] = 4
     first = publish()

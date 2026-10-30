@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from linguaflow.mlx_asr import MLXClient, choose_cut
+from linguaflow.mlx_asr import MLXClient
 from linguaflow.qwen_accurate import QwenAccurateOnline
 
 
@@ -63,7 +63,7 @@ def test_bounded_windows_preserve_every_sample_and_flush_once():
     def decode(audio):
         decoded.append(audio.copy())
         return str(len(audio))
-    online = QwenAccurateOnline(decode, choose_cut, 'en', window_seconds=12,
+    online = QwenAccurateOnline(decode, 'en', window_seconds=12,
                                token_type=SimpleNamespace, transcript_type=SimpleNamespace)
     audio = np.arange(40 * 16000, dtype=np.float32)
     online.insert_audio_chunk(audio, 40.)
@@ -73,13 +73,6 @@ def test_bounded_windows_preserve_every_sample_and_flush_once():
     assert all(0 < len(part) <= 17 * 16000 for part in decoded)
     assert tokens[0].start == 0 and tokens[-1].end == 40
     assert online.finish()[0] == []
-
-
-@pytest.mark.p1
-def test_cut_uses_quiet_region_near_boundary():
-    audio = np.ones(17 * 16000, np.float32)
-    audio[12*16000:12*16000+1600] = 0
-    assert choose_cut(audio, 12) == 12*16000
 
 
 @pytest.mark.p1

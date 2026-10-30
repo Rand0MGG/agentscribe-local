@@ -2,7 +2,7 @@
 
 本地语音识别与双语字幕桌面应用，面向外语课堂、讲座和讨论。边听边读，课后回听原声、查找字幕、导出复习。
 
-**[Mac 下载](https://github.com/Rand0MGG/agentscribe-local/releases/tag/v0.9.2)** · **[Windows 预览版](https://github.com/Rand0MGG/agentscribe-local/releases/tag/v0.9.0)** · [源码与使用指南](docs/WORKSPACE.md)
+**[Mac 下载](https://github.com/Rand0MGG/agentscribe-local/releases/tag/v0.11.0)** · **[Windows 预览版](https://github.com/Rand0MGG/agentscribe-local/releases/tag/v0.11.0)** · [源码与使用指南](docs/WORKSPACE.md)
 
 ![双语字幕与录音工作区](docs/preview.png)
 
@@ -21,12 +21,12 @@
 
 | 平台 | 获取方式与范围 |
 | --- | --- |
-| Apple Silicon Mac | `v0.9.2` DMG，最低 macOS 15；未完成 Developer ID/公证，不支持 Intel/Rosetta。按发行说明安装。 |
-| Windows x64 | `v0.9.0` 预览安装器，未做 Authenticode 签名，真实录音及旧版升级待验收；也可 [源码安装](docs/WORKSPACE.md#windows-源码安装)。整套推理环境要求兼容 NVIDIA GPU/驱动。 |
+| Apple Silicon Mac | `v0.11.0` DMG，最低 macOS 15；未完成 Developer ID/公证，不支持 Intel/Rosetta。按发行说明安装。 |
+| Windows x64 | `v0.11.0` 预览安装器，未做 Authenticode 签名，真实录音及旧版升级待验收；也可 [源码安装](docs/WORKSPACE.md#windows-源码安装)。整套推理环境要求兼容 NVIDIA GPU/驱动。 |
 
 准备模型 → 新录音 → 开始聆听；来源、语言、文件夹和名称按需修改。停止保存后可回听或导出。源码中的新功能不自动出现在旧安装包中；已知实现缺口见 [计划](docs/ROADMAP.md#实现缺口)，真实设备、长会话及各平台证据见 [验证索引](docs/VALIDATION.md)。现有短样本不构成全面准确率或同类产品比较。
 
-当前源码已采用 Electron 正式入口；Python 后台及正式安装依赖已移除 Qt，现有录音采集方式保留。此源码变更不代表上述旧安装包已更新。
+当前源码版本为 **0.12.0**，采用 Electron 正式入口；Python 后台及正式安装依赖已移除 Qt，现有录音采集方式保留。此源码变更不代表上述旧安装包已更新。
 
 ## UI Demo 与开发基准
 

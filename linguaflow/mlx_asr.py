@@ -8,7 +8,6 @@ from threading import Lock, Thread
 
 import numpy as np
 
-from .asr_stability import choose_cut
 from .model_options import MLX_MODEL as MLX_MODEL
 from .process_platform import close_process_pipes
 from .qwen_accurate import LANGUAGE_NAMES, QwenAccurateOnline
@@ -133,9 +132,8 @@ def build_mlx_online(model, language, update_seconds, report, window_seconds=30.
     client = MLXClient(model, canonical, report, own=own, **({'context': context} if context else {}))
     # Honor the session's bounded window instead of silently forcing 12 s.
     try:
-        online = QwenAccurateOnline(client.decode, choose_cut, language,
-                                   update_seconds, window_seconds=window_seconds,
-                                   pause_context_seconds=3.)
+        online = QwenAccurateOnline(client.decode, language,
+                                   update_seconds, window_seconds=window_seconds)
     except BaseException:
         client.close()
         raise

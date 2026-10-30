@@ -109,23 +109,25 @@ def test_decode_trace_retains_real_progress_across_overlap(logs):
     def decode(audio):
         calls.append(len(audio))
         return 'private recognized text'
-    asr = QwenAccurateOnline(decode, lambda audio, seconds: 8 * 16000, 'en',
+    asr = QwenAccurateOnline(decode, 'en',
                             window_seconds=8, token_type=SimpleNamespace, transcript_type=SimpleNamespace)
     asr.insert_audio_chunk(np.ones(13 * 16000), 13.)
-    asr.process_iter()  # rolls at 8+5 seconds; retains 10 seconds
+    asr.process_iter()  # 13 s is allowed; >13 s without references falls back to 7 s
     asr.insert_audio_chunk(np.ones(8000), 13.5)
     asr.process_iter()
     asr.finish()
     rows = read_rows(path)
     decodes = [r for r in rows if r['event'] == 'asr_decode_end']
-    assert calls == [208000, 168000]
-    assert [r['new_audio_seconds'] for r in decodes] == [13., .5]
-    assert [(r['window_start'], r['window_end']) for r in decodes] == [(0., 13.), (3., 13.5)]
-    assert decodes[0]['reason'] == 'capacity'
+    assert calls == [160000, 208000, 112000]
+    assert [r['new_audio_seconds'] for r in decodes] == [10., 3., .5]
+    assert [r['admitted_audio_seconds'] for r in decodes] == [10., 3., .5]
+    assert [(r['window_start'], r['window_end']) for r in decodes] == [(0., 10.), (0., 13.), (6.5, 13.5)]
+    assert decodes[0]['reason'] == 'update'
     roll = next(r for r in rows if r['event'] == 'asr_window_roll')
-    assert roll['cut_seconds'] == 8 and roll['retained_seconds'] == 10
+    assert roll['new_start'] == 6.5 and roll['retained_seconds'] == 7
+    assert roll['reason'] == 'no_reference_low_energy'
     assert all(r['compute_seconds'] >= 0 for r in decodes)
-    assert len(sent) == 2 and sent[1]['decode_id'] == 2
+    assert len(sent) == 3 and sent[-1]['decode_id'] == 3
     assert 'private recognized text' not in path.read_text(encoding='utf-8')
 
 
@@ -134,9 +136,9 @@ def test_failed_decode_has_start_and_failure_without_text(logs):
     path = diag.start_logging('test')
     def decode(audio):
         raise RuntimeError('private audio-derived text')
-    asr = QwenAccurateOnline(decode, lambda a, s: len(a), 'en',
+    asr = QwenAccurateOnline(decode, 'en',
                             token_type=SimpleNamespace, transcript_type=SimpleNamespace)
-    asr.insert_audio_chunk(np.ones(8000), .5)
+    asr.insert_audio_chunk(np.ones(16000), 1.)
     with pytest.raises(RuntimeError):
         asr.process_iter()
     rows = read_rows(path)
@@ -305,7 +307,7 @@ def test_pipeline_trace_links_audio_source_sat_and_translation_without_content(l
 
     path = diag.start_logging('test')
     source = 'PRIVATE_SOURCE_MARKER alpha beta. PRIVATE_SECOND_MARKER gamma delta.'
-    asr = QwenAccurateOnline(lambda _: source, lambda audio, _: len(audio), 'en',
+    asr = QwenAccurateOnline(lambda _: source, 'en',
                             token_type=SimpleNamespace, transcript_type=SimpleNamespace)
     store = install_revision_bridge(asr)
     asr.insert_audio_chunk(np.zeros(32000), 2.)
@@ -370,9 +372,9 @@ def test_pipeline_trace_links_audio_source_sat_and_translation_without_content(l
 @pytest.mark.p1
 def test_trace_explains_frozen_prefix_without_changing_confirmation(logs):
     path = diag.start_logging('test')
-    values = iter(['one two three four five six seven eight nine ten eleven twelve'] +
+    values = iter(['', 'one two three four five six seven eight nine ten eleven twelve'] +
                   ['three four five six seven eight nine ten eleven twelve thirteen'] * 3)
-    asr = QwenAccurateOnline(lambda _: next(values), lambda audio, _: 8 * 16000, 'en',
+    asr = QwenAccurateOnline(lambda _: next(values), 'en',
                             window_seconds=8, token_type=SimpleNamespace, transcript_type=SimpleNamespace)
     for duration, end in [(13, 13), (2, 15), (2, 17), (2, 19)]:
         asr.insert_audio_chunk(np.ones(duration * 16000), end)
@@ -720,3 +722,30 @@ def test_compression_stays_on_writer_and_producer_can_continue(logs, monkeypatch
     rows = [row for path in logs.glob('*.gz') for row in read_rows(path)]
     assert sorted(r['index'] for r in rows if r['event'] == 'linked') == list(range(4))
     assert any(r.get('translation_task_id') == 'task-after-rotation' for r in rows)
+
+
+@pytest.mark.p0
+def test_long_idle_commit_keeps_original_decode_link_and_never_logs_text(logs):
+    path = diag.start_logging('test')
+    asr = QwenAccurateOnline(lambda _: 'PRIVATE_IDLE_WORDS', 'en',
+                            token_type=SimpleNamespace, transcript_type=SimpleNamespace)
+    from linguaflow.qwen_revisions import install_revision_bridge
+    install_revision_bridge(asr)
+    asr.observe_capture_event('silence_started', 1, observed_at=1.55)
+    asr.observe_capture_event('speech_started', 50, observed_at=50.1)
+    asr.insert_audio_chunk(np.ones(16000), 1)
+    asr.process_iter()
+    asr.insert_audio_chunk(np.ones(50 * 16000), 51)
+    asr.process_iter()
+    asr.finish()
+    rows = read_rows(path)
+    commits = [r for r in rows if r['event'] == 'asr_commit']
+    decodes = [r for r in rows if r['event'] == 'asr_decode_end']
+    assert [r['interval'] for r in commits] == [0, 1]
+    for commit in commits:
+        last = [r for r in decodes if r['interval'] == commit['interval']][-1]
+        assert commit['decode_id'] == last['decode_id']
+        assert commit['audio_end'] == last['window_end']
+    resumed = next(r for r in rows if r['event'] == 'asr_idle_end')
+    assert resumed['skipped_start'] == 31 and resumed['retained_seconds'] == 1
+    assert 'PRIVATE_IDLE_WORDS' not in path.read_text(encoding='utf-8')

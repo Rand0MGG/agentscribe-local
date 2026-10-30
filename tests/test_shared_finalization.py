@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from linguaflow.asr_stability import StablePrefix, choose_cut, stitch_window
+from linguaflow.asr_stability import StablePrefix, stitch_window
 from linguaflow.core import Caption, source_is_final
 from linguaflow.qwen_accurate import QwenAccurateOnline
 from linguaflow.qwen_revisions import install_revision_bridge
@@ -50,9 +50,8 @@ def test_overlap_revises_tail_without_repeating_matching_words(previous, current
 
 @pytest.mark.p1
 def test_capacity_one_decode_never_confirms_punctuated_fragment():
-    asr = QwenAccurateOnline(lambda audio: 'So we want to.', choose_cut, 'en', window_seconds=8,
-                            pause_context_seconds=3, token_type=SimpleNamespace,
-                            transcript_type=SimpleNamespace)
+    asr = QwenAccurateOnline(lambda audio: 'So we want to.', 'en', window_seconds=8,
+                            token_type=SimpleNamespace, transcript_type=SimpleNamespace)
     store = install_revision_bridge(asr)
     asr.insert_audio_chunk(np.ones(13 * 16000), 13)
     assert asr.process_iter()[0] == []
@@ -66,10 +65,9 @@ def test_capacity_one_decode_never_confirms_punctuated_fragment():
 
 @pytest.mark.p1
 def test_overlapping_windows_correct_old_words_and_keep_one_revision_interval():
-    phrases = iter(['We use soft mass for this vector',
+    phrases = iter(['', 'We use soft mass for this vector',
                     'softmax for this vector and then normalize'])
-    asr = QwenAccurateOnline(lambda audio: next(phrases), lambda audio, sec: 8 * 16000,
-                            'en', window_seconds=8, token_type=SimpleNamespace,
+    asr = QwenAccurateOnline(lambda audio: next(phrases), 'en', window_seconds=8, token_type=SimpleNamespace,
                             transcript_type=SimpleNamespace)
     store = install_revision_bridge(asr)
     asr.insert_audio_chunk(np.ones(13 * 16000), 13)
@@ -210,7 +208,7 @@ def test_both_model_adapters_use_identical_online_policy(monkeypatch, backend):
                             from_pretrained=lambda *a, **kw: model)))
         asr = official.build_official_online('local', 'cpu', 'en', .5, 8)
     assert isinstance(asr, QwenAccurateOnline)
-    assert asr.pause_context_seconds == 3 and asr.window_seconds == 8
+    assert asr.window_seconds == 8
     store = install_revision_bridge(asr)
     asr.insert_audio_chunk(np.ones(13 * 16000), 13)
     asr.process_iter()
@@ -228,12 +226,11 @@ def test_stop_cannot_claim_sat_closure_when_asr_did_not_confirm_text():
 
 @pytest.mark.p1
 def test_copied_prefix_after_one_backlog_decode_is_not_new_asr_agreement():
-    phrases = iter(['zero one two three four five six seven eight nine ten eleven',
+    phrases = iter(['', '', 'zero one two three four five six seven eight nine ten eleven',
                     'three four five six seven eight nine ten eleven twelve',
                     'three four five six seven eight nine ten eleven twelve thirteen',
                     'three four five six seven eight nine ten eleven twelve thirteen fourteen'])
-    asr = QwenAccurateOnline(lambda audio: next(phrases), lambda audio, seconds: 16 * 16000,
-                            'en', window_seconds=16, token_type=SimpleNamespace,
+    asr = QwenAccurateOnline(lambda audio: next(phrases), 'en', window_seconds=16, token_type=SimpleNamespace,
                             transcript_type=SimpleNamespace)
     store = install_revision_bridge(asr)
     asr.insert_audio_chunk(np.ones(21 * 16000), 21)

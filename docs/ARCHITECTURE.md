@@ -85,7 +85,7 @@ Qt 线程负责装配、呈现和发起操作，只有它更新 UI。耗时任�
 | 录音与传输 | `recording_state.py`、`wlk_session.py`、`capture_control.py`、`journal.py`；会话、采集代次、PCM 次序、停止边界 |
 | 回放增益 | `playback_stream.py` 将原始 WAV 作为可随机定位的只读流提供给媒体播放器，按读取块处理 PCM 增益并限制峰值，不生成文件副本；未完成录音经锁检查后仅在读取视图修复固定 PCM WAV 的长度，原件不变；`playback_controller.py` 拥有输入流并在切换/关闭时释放 |
 | 系统音频 | `audio.py`、按需 `audio_macos.py`；Windows WASAPI，Mac CoreAudio 输入 / ScreenCaptureKit 电脑声音，只回传 PCM，复用公共保存/字幕流程 |
-| 推理启动与识别 | `wlk_worker.py`、`inference_startup.py`、`backends.py`；统一装配/资源登记。`qwen_accurate.py`、`asr_stability.py`、`qwen_revisions.py` 负责共享原文确认与修订；`mlx_asr.py` / worker 仅负责独立模型协议 |
+| 推理启动与识别 | `wlk_worker.py`、`inference_startup.py`、`backends.py`；统一装配/资源登记。`qwen_audio.py` 保留原声队列及 VAD 标签；`qwen_accurate.py`、`asr_stability.py`、`qwen_revisions.py` 负责共享窗口、原文确认与修订；`mlx_asr.py` / worker 仅负责独立模型协议 |
 | 分句与翻译 | `semantic_model.py`、`semantic_cache.py`、`wlk_captions.py`；`translation_context.py` 规划，`translation_queue.py` 排队，`translation_service.py` 消费/发布，`translation_models.py` / `llama_translation.py` 适配模型 |
 | 保存与文件库 | `recording_save.py`、`recording_document.py`、`recording_export.py`、`library.py`；锁适配在 `library_access.py`，启动/复制迁移在 `library_startup.py` / `library_migration.py` |
 | 准备与运行环境 | `runtime_paths.py` 路径权威；`runtime_install.py` / `runtime_base.py` / `runtime_cleanup.py` 管事务与归属；`runtime_preparation.py` 管预热租用；`preparation_task.py` 管监督进程，模型管理/准备复用它 |
@@ -99,7 +99,7 @@ Qt 线程负责装配、呈现和发起操作，只有它更新 UI。耗时任�
 
 `diagnostic_log.py` 提供进程独立 JSONL 轮转日志与无用户正文的异常堆栈；`diagnostic_archive.py` 管封存块压缩、完整性校验、跨进程历史预算和崩溃遗留恢复。桌面/worker 入口初始化；Session 生成会话 ID 并传给 worker。Qwen 记录解码序号、窗口及推进原因，通过已有协议回传耗时元数据，由桌面补采集侧积压估计。保存与翻译捕获异常分别在所属线程记录，日志不接管第三方原始 stdout/stderr，也不改变解码调度。
 
-Qwen 的 `asr_decode_start/end` 可按 `session + decode_id` 关联：窗口范围、输入长度、新增音频、耗时和触发原因；`asr_window_roll` 记录切点、移走/保留长度；`asr_commit` 记录收尾原因；`asr_revision` / `caption_revision` 记录字符数、稳定长度及定稿条件，不含正文。`asr_capture_lag` 是收到结果时采集进度减解码覆盖末端的估计，不是词级延迟；`pipeline_progress` 另记流水线积压和磁盘待送量。窗口重叠不算新增音频，空文本也保留本次解码耗时。Whisper 有公共会话/积压/字幕日志，但没有套用 Qwen 的内部窗口事件。
+Qwen 的 `asr_decode_start/end` 可按 `session + decode_id` 关联：窗口范围、输入长度、新增音频、耗时和触发原因；`admitted_audio_seconds` 单列不含恢复保护音的新增预算，`asr_audio_policy` 记录有效上下限；`asr_window_roll` 记录参考点/低能量/积压保护原因、切点及移走/保留长度；`asr_idle_start/end` 记录长静音等待和携带的原声长度；`asr_commit` 记录收尾原因；`asr_revision` / `caption_revision` 记录字符数、稳定长度及定稿条件，不含正文。`asr_capture_lag` 是收到结果时采集进度减解码覆盖末端的估计，不是词级延迟；`pipeline_progress` 另记流水线积压和磁盘待送量。窗口重叠不算新增音频，空文本也保留本次解码耗时。Whisper 有公共会话/积压/字幕日志，但没有套用 Qwen 的内部窗口事件。
 
 处理链的关联与决策日志：
 
@@ -143,6 +143,7 @@ Window 的薄转发入口和控件引用用于现有调用方组合；旧录音�
 
 - 预览原文直接显示，不先筛选完整字幕；确需筛选保留 ID 时使用集合，避免列表嵌套查找。已有字幕内容修订不重建分页，分页查询复用 Transcript 的 ID 顺序。
 - 分句的时间和语言定位在有序字符片段上二分查找，保留时间定位的左边界与语言选择的右边界语义；分句、ID 修订及确认规则不变。
+- Qwen 通过 `ContinuousQwenPCM` 复用 WLK 串行队列和积压合并，替换其丢弃自然静音的入口；VAD 标签保留检测时刻及原始采样时间，不能借用尚未到达的检测结果。原声窗口规则见 [字幕 spec](specs/captions-translation.md)。长静音只暂停模型输入；被挂起的旧假设不伪装为已确认，新段使用原录音时间，SaT 与翻译策略不变。
 - Qwen PCM 使用 `audio_processing.buffer.PCMBuffer` 的连续存储，追加只写新采样，容量不足时增长或压紧，消费窗口只移动起点。临时积压结束后缩回合理容量；推理输入仍单独复制，避免共享可变缓冲。预留容量减少复制，但不承诺空闲时比零长度数组占用更少内存。
 - 保存仍完整写入 JSON，复杂度不变成常数；过期排队请求在冻结字幕前拒绝，导出直接复用排序后的 Caption，按文件逐个生成，并核对实际字节后跳过相同文件的替换。失败或外部修改后的导出仍需恢复，不用成功缓存掩盖旧错误。
 

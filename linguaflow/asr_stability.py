@@ -2,17 +2,6 @@
 import re
 from difflib import SequenceMatcher
 
-import numpy as np
-
-
-def choose_cut(audio, seconds):
-    """Choose quiet PCM near capacity; this never signals text completion."""
-    target = round(seconds * 16000)
-    lo, hi = max(16000, target - 16000), min(len(audio), target + 16000)
-    frame = 1600
-    candidates = range(lo, max(lo + 1, hi - frame + 1), frame)
-    return min(candidates, key=lambda i: float(np.mean(audio[i:i+frame] ** 2)))
-
 
 def units(text):
     return list(re.finditer(r'[\u3400-\u9fff]|[^\s\u3400-\u9fff]+', text))

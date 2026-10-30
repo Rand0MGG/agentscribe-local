@@ -62,9 +62,8 @@ def stub_worker(monkeypatch, platform='win32'):
         WhisperLiveKitConfig=lambda **kwargs: SimpleNamespace(**kwargs)))
 
     def build(model_path, device, language, update_seconds, window_seconds):
-        value = QwenAccurateOnline(lambda audio: 'words', lambda audio, seconds: len(audio), language,
-            update_seconds, window_seconds, pause_context_seconds=3,
-            token_type=SimpleNamespace, transcript_type=SimpleNamespace)
+        value = QwenAccurateOnline(lambda audio: 'words', language,
+            update_seconds, window_seconds, token_type=SimpleNamespace, transcript_type=SimpleNamespace)
         online.append(value)
         return value
     monkeypatch.setattr(qwen_accurate, 'build_official_online', build)
@@ -144,7 +143,7 @@ def test_windows_worker_installs_the_same_qwen_revision_pipeline(monkeypatch, ol
     assert len(configured) == len(online) == len(stores) == 1
     assert configured == [False]  # No second/native ASR load even with legacy fast settings.
     assert online[0].revisions is stores[0]
-    assert online[0].pause_context_seconds == 3
+    assert online[0].vad.snapshot(0, 1) == [(0, 1)]
     assert any(event['type'] == 'ready' for event in events)
     assert events[-1]['type'] == 'done'
 
