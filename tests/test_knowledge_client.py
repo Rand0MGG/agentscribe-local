@@ -14,7 +14,16 @@ def test_close_reaps_descendant_holding_transport(tmp_path, launcher_exits, oper
     child.write_text('''import subprocess, sys, time, json, os
 from pathlib import Path
 p = subprocess.Popen([sys._base_executable, '-c', 'import time; time.sleep(60)'])
-Path(__file__).with_suffix('.pid').write_text(str(p.pid))
+pid_file = Path(__file__).with_suffix('.pid')
+pending = pid_file.with_suffix('.pid.pending')
+with pending.open('w', encoding='ascii') as output:
+    Path(__file__).with_suffix('.publishing').touch()
+    deadline = time.monotonic() + 8
+    while not Path(__file__).with_suffix('.publish').exists():
+        assert time.monotonic() < deadline
+        time.sleep(.01)
+    output.write(str(p.pid))
+pending.replace(pid_file)
 print(json.dumps({'type': 'view'}), flush=True)
 ''' + ("while not Path(__file__).with_suffix('.exit').exists(): time.sleep(.01)\nos._exit(0)"
        if launcher_exits else 'time.sleep(60)'), encoding='utf-8')
@@ -36,16 +45,27 @@ def spawn(command, **options):
     return original(command, **options)
 module.subprocess.Popen = spawn
 module.knowledge_python = lambda: Path(sys.executable)
-client.open(SimpleNamespace(root=Path(sys.argv[1]).parent), {'id':'test', 'folder':'inbox'})
-process = client.process
+process = descendant = None
 pid_file = Path(sys.argv[1]).with_suffix('.pid')
-deadline = time.monotonic() + 8
-while not pid_file.exists():
-    app.process()
-    assert time.monotonic() < deadline
-    time.sleep(.01)
-descendant = psutil.Process(int(pid_file.read_text()))
+def wait_for(path):
+    deadline = time.monotonic() + 8
+    while not path.exists():
+        app.process()
+        assert process.poll() is None, 'helper exited before publishing ' + path.name
+        assert time.monotonic() < deadline, 'helper did not publish ' + path.name
+        time.sleep(.01)
+
 try:
+    client.open(SimpleNamespace(root=Path(sys.argv[1]).parent), {'id':'test', 'folder':'inbox'})
+    process = client.process
+    # Hold publication while the output is empty: existence must mean ready.
+    wait_for(pid_file.with_suffix('.publishing'))
+    assert not pid_file.exists(), 'unfinished PID became visible to the reader'
+    pid_file.with_suffix('.publish').touch()
+    wait_for(pid_file)
+    pid = int(pid_file.read_text(encoding='ascii'))
+    assert pid > 0
+    descendant = psutil.Process(pid)
     if sys.argv[2] == 'True':
         Path(sys.argv[1]).with_suffix('.exit').touch()
         process.wait(timeout=8)
@@ -59,10 +79,12 @@ try:
     assert process.stdin.closed and process.stdout.closed
     assert client.close()
 finally:
-    if descendant.is_running():
+    # Includes failures before the PID is available; the client owns the tree.
+    client.close()
+    if descendant is not None and descendant.is_running():
         descendant.kill()
         descendant.wait(timeout=5)
-    if process.poll() is None:
+    if process is not None and process.poll() is None:
         process.kill()
         process.wait(timeout=5)
     deadline = time.monotonic() + 5
