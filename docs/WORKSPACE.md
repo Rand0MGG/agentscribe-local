@@ -24,7 +24,7 @@
 
 从 [v0.11.0 发行页](https://github.com/Rand0MGG/agentscribe-local/releases/tag/v0.11.0) 下载 DMG，拖入 Applications。支持原生 Apple Silicon/macOS 15+，不支持 Intel/Rosetta；包内有桌面依赖，无需自行安装桌面 Python。当前包未 Developer ID 签名/公证，系统拦截时按发行说明操作，不全局关闭安全保护。
 
-打开后在设置准备运行组件与模型，首次需要网络和磁盘空间。`0.12.0` 源码尚未发行安装包，新增交互以对应包的发行说明为准。
+打开后在设置准备运行组件与模型，首次需要网络和磁盘空间。`0.12.1` 正在准备 Mac 安装包，新增交互以对应包的发行说明为准。
 
 ### Windows 安装包
 

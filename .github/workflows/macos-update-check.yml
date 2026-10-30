@@ -73,7 +73,7 @@ jobs:
           for selected in (os.environ['OLD_TAG'],tag):
               stem='AgentScribe-'+selected[1:]+'-macos-arm64'
               release,=[r for r in releases if r['tag_name']==selected]
-              assert not release['draft']
+              assert not release['draft'] or selected == tag and os.environ['UPDATE_LIVE'] != 'true'
               for suffix in ('.dmg','.build.json','.dmg.ed25519'):
                   name=stem+suffix
                   asset,=[a for a in release['assets'] if a['name']==name and a['state']=='uploaded']

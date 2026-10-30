@@ -6,7 +6,7 @@
 
 - 远程诊断确认点击命中且 `playback.seek` 已发出，但初始化未返回、媒体未加载。[Mac 调用栈](https://github.com/Rand0MGG/agentscribe-local/actions/runs/41080209950/job/124149709266) 明确停在 `PlaybackController.load → HTTPServer.server_bind → socket.getfqdn`；这是产品后台线程被反向主机名查询阻塞，与此前修复的点击计时问题独立。
 - 本地回环媒体服务改为直接绑定数字地址，取消不必要的反向查询。新增 P2 回归在解析器不可用时验证实际 HTTP 文件读取、定位与释放；修复前失败，修复后通过，原随机令牌、范围读取和旧回执拒绝保持不变。没有延长交互测试的 10 秒等待或绕过播放流程。
-- macOS 回听控制器、媒体流、桌面服务与 Qt-free 后台回归 **59 passed**，完整 Electron `test:interaction`、`test:audio-adapter`、Ruff 和差异格式检查通过。隔离合成录音与设备替身，无原生音频导入；证据位于 `.work/reports/ci-analysis-20261030/`。修复后的远程 CI 需独立核对。
+- macOS 回听控制器、媒体流、桌面服务与 Qt-free 后台回归 **59 passed**，完整 Electron `test:interaction`、`test:audio-adapter`、Ruff 和差异格式检查通过。`f4787a2` 的 [13 项远程 CI](https://github.com/Rand0MGG/agentscribe-local/actions/runs/41081727663) 全部通过；Mac 后台播放请求 24ms 返回，随后收到模拟媒体播放回执。隔离合成录音与设备替身，无原生音频导入；证据位于 `.work/reports/ci-analysis-20261030/`，不替代真实音频设备验收。
 
 ## 2026-10-30 回听点击计时与侧栏动画测试
 
