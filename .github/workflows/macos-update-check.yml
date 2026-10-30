@@ -33,6 +33,11 @@ concurrency:
 jobs:
   acceptance:
     if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[verify mac update]') || contains(github.event.head_commit.message, '[verify live mac update]')
+    # GitHub exposes draft releases only to identities with push access.
+    # Checkout does not persist credentials; the token is used only to download.
+    permissions:
+      contents: write
+      actions: read
     runs-on: macos-15
     timeout-minutes: 40
     env:
@@ -72,7 +77,9 @@ jobs:
           work=Path('.work/update-downloads');work.mkdir(parents=True)
           for selected in (os.environ['OLD_TAG'],tag):
               stem='AgentScribe-'+selected[1:]+'-macos-arm64'
-              release,=[r for r in releases if r['tag_name']==selected]
+              matches=[r for r in releases if r['tag_name']==selected]
+              assert len(matches)==1, f'Release {selected} missing or inaccessible; draft access requires contents: write'
+              release,=matches
               assert not release['draft'] or selected == tag and os.environ['UPDATE_LIVE'] != 'true'
               for suffix in ('.dmg','.build.json','.dmg.ed25519'):
                   name=stem+suffix
