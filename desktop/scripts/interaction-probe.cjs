@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const closeWorkspace = require('./close-workspace.cjs');
+const clickWhileBusy = require('./caption-click-checks.cjs');
 const root = path.resolve(__dirname, '../..');
 const output = path.join(root, 'output/playwright/interaction-fixes');
 fs.mkdirSync(output, { recursive: true });
@@ -80,12 +81,22 @@ async function main() {
  await page.screenshot({path:path.join(output,'complete-transcript-start.png')});
  passed.push('650 saved captions load together in forward order at the beginning; Home/End never page or discard text');
  const target=page.locator('[data-caption="3"] .source');
- await target.click({position:{x:15,y:10}});
+ await clickWhileBusy(target);
  await page.getByRole('button',{name:'暂停回听',exact:true}).waitFor();
  const media=()=>fs.readFileSync(path.join(fixture,'media.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
  assert.deepEqual(media().map(row=>[row.action,row.position]),[['seek',6000],['play',6000]]);
  await page.locator('[data-caption="3"].playing').waitFor();
- passed.push('First caption click waits for delayed WAV readiness, seeks to 6 s, then plays exactly once');
+ passed.push('Short source click survives a 500 ms renderer stall, waits for WAV readiness, seeks to 6 s and plays once');
+ for(const selector of ['.source','.translation']) {
+  await page.locator(`[data-caption="3"] ${selector}`).click({position:{x:15,y:10},delay:450});
+  await pause(650);assert.equal(media().length,2);
+ }
+ const textBox=await target.boundingBox();
+ await page.mouse.move(textBox.x+15,textBox.y+10);await page.mouse.down();
+ try {await page.mouse.move(textBox.x+120,textBox.y+10,{steps:5});} finally {await page.mouse.up();}
+ await pause(650);assert.equal(media().length,2);
+ assert(await page.evaluate(()=>!!getSelection().toString()));
+ await page.evaluate(()=>getSelection().removeAllRanges());
  await page.locator('[data-caption="5"] .source').dblclick({position:{x:15,y:10}});await pause(650);
  assert.equal(media().length,2);await page.evaluate(()=>getSelection().removeAllRanges());
  // Wheel away from the current caption; return restores reading without a seek.
@@ -100,9 +111,9 @@ async function main() {
   const area=document.querySelector('.caption-scroll').getBoundingClientRect();
   return nodes.find(node=>{const r=node.getBoundingClientRect();return r.top>area.top+50&&r.bottom<area.top+250;})?.closest('[data-caption]').dataset.caption;
  });
- assert(visibleTarget);await page.locator(`[data-caption="${visibleTarget}"] .source`).click({position:{x:15,y:10}});
+ assert(visibleTarget);await clickWhileBusy(page.locator(`[data-caption="${visibleTarget}"] .translation`));
  await pause(900);assert.equal(await back.count(),0);assert.equal(media().at(-1).position,Number(visibleTarget)*2000);
- passed.push('Double-click selects without playback; circular return follows without seeking; new click resumes follow');
+ passed.push('Long press, drag selection and double-click do not seek; return follows without seeking; short translation click survives a busy renderer and resumes follow');
  await page.evaluate(()=>window.agentScribe.request('playback.seek',{milliseconds:1250000,play:false}));
  await page.locator('[data-caption="625"].playing').waitFor();
  assert.equal(await transcript.locator('[data-caption]').count(),650);

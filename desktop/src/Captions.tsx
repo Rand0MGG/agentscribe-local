@@ -146,7 +146,8 @@ export function Captions({ seekRevision = 0, visible = true, page, state, positi
   function activate(event: React.MouseEvent, row: Caption) {
     const down = pointer.current;
     pointer.current = null;
-    if (!down || down.button !== 0 || active || performance.now() - down.at > 400 ||
+    // Input timestamps exclude renderer stalls between event handlers.
+    if (!down || down.button !== 0 || active || event.timeStamp - down.at > 400 ||
         Math.abs(event.clientX - down.x) + Math.abs(event.clientY - down.y) >= interaction.dragDistance || window.getSelection()?.toString() || event.detail > 1 || !state.has_audio) return;
     // Only actual text hitboxes initiate seeking. Whitespace and selection remain inert.
     const range = document.createRange(); range.selectNodeContents(event.currentTarget);
@@ -176,9 +177,9 @@ export function Captions({ seekRevision = 0, visible = true, page, state, positi
       {!rows.length && !state.preview && (summary || <div className="empty"><div>{active ? state.failure || state.capture?.waiting || (state.state === 'PAUSED' ? '已暂停聆听' : state.status) : '无内容'}</div></div>)}
       {rows.map(row => <article key={row.id} data-caption={row.id} hidden={!!state.preview && !state.preview.keep_ids.includes(row.id)} className={`caption ${playing === row.id && !active ? 'playing' : ''} ${locate === row.id ? 'located' : ''}`}>
         <div className="timestamp">{clock(row.start).slice(row.start >= 3600 ? 0 : 3)}{row.final ? ' · 已定稿' : ' · 优化中'}</div>
-        <p className={`source ${!row.final ? 'draft' : ''}`} onMouseDown={event => { pointer.current = { x: event.clientX, y: event.clientY, at: performance.now(), button: event.button }; }}
+        <p className={`source ${!row.final ? 'draft' : ''}`} onMouseDown={event => { pointer.current = { x: event.clientX, y: event.clientY, at: event.timeStamp, button: event.button }; }}
           onClick={event => activate(event, row)} onDoubleClick={() => clearTimeout(clickTimer.current)}><CaptionText text={row.source} animate={animate} /></p>
-        {row.translation && <p className="translation" onMouseDown={event => { pointer.current = { x: event.clientX, y: event.clientY, at: performance.now(), button: event.button }; }} onClick={event => activate(event, row)} onDoubleClick={() => clearTimeout(clickTimer.current)}><CaptionText text={row.translation} animate={animate} /></p>}
+        {row.translation && <p className="translation" onMouseDown={event => { pointer.current = { x: event.clientX, y: event.clientY, at: event.timeStamp, button: event.button }; }} onClick={event => activate(event, row)} onDoubleClick={() => clearTimeout(clickTimer.current)}><CaptionText text={row.translation} animate={animate} /></p>}
         {(row.error || row.translation && !['译文已定稿', '已保存译文'].includes(row.translation_status)) && <p className={`caption-status ${row.error ? 'error' : ''}`}>{row.error || row.translation_status}</p>}
       </article>)}
       {state.preview && <article className="caption preview"><div className="timestamp">{clock(state.preview.start).slice(state.preview.start >= 3600 ? 0 : 3)} · 实时原文</div><p className="source draft"><CaptionText text={state.preview.source} animate={false} /></p></article>}

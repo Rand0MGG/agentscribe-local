@@ -218,19 +218,33 @@ def test_split_layout_requires_full_height_edge_tile(bounds, expected):
     assert is_split_layout(QRect(*bounds),area) is expected
 
 
-@pytest.mark.p2
+@pytest.mark.p3
 def test_sidebar_animation_reverses_and_respects_reduced_motion(tmp_path):
     run_ui('''
 w.resize(1100,700);w.show();wait(lambda:w.recording_sidebar.width()>=180)
 w.reduce_motion.setChecked(False)
-wide=w.recording_sidebar.width();samples=[]
-w.sidebar_motion.valueChanged.connect(lambda value:samples.append(round(value)))
+wide=w.recording_sidebar.width();motion=w.sidebar_motion
 w.sidebar_toggle.click()
-wait(lambda:len(set(samples))>=3)
+# Drive intermediate frames synchronously: a busy event loop may legitimately
+# deliver the final frame before a polling wait observes an intermediate width.
+assert motion.state()==motion.State.Running
+motion.setCurrentTime(motion.duration()//3)
+first=w.recording_sidebar.width()
+motion.setCurrentTime(2*motion.duration()//3)
+middle=w.recording_sidebar.width()
+assert w.title_bar.height()<middle<first<wide
+w.sidebar_toggle.click()
+assert motion.state()==motion.State.Running
+assert w.recording_sidebar.width()==middle
+motion.setCurrentTime(motion.duration()//3)
+assert middle<w.recording_sidebar.width()<wide
+wait(lambda:not w.sidebar_compact and w.recording_sidebar.width()==wide and motion.state()==motion.State.Stopped)
+w.sidebar_toggle.click()
+wait(lambda:w.recording_sidebar.width()==w.title_bar.height() and motion.state()==motion.State.Stopped)
+w.sidebar_toggle.click()
+wait(lambda:w.recording_sidebar.width()==wide and motion.state()==motion.State.Stopped)
+w.sidebar_toggle.click();motion.setCurrentTime(motion.duration()//3)
 assert w.title_bar.height()<w.recording_sidebar.width()<wide
-w.sidebar_toggle.click()
-wait(lambda:not w.sidebar_compact and w.recording_sidebar.width()==wide)
-w.sidebar_toggle.click();wait(lambda:w.recording_sidebar.width()<wide)
 w.reduce_motion.setChecked(True)
 assert w.recording_sidebar.width()==w.title_bar.height()
 assert w.sidebar_motion.state()==w.sidebar_motion.State.Stopped
