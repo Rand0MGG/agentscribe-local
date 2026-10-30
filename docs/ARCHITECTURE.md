@@ -10,6 +10,8 @@
 
 `linguaflow/desktop_service.py` 使用标准库 `events.Dispatcher`，复用 Session、RecordingSaver、LibraryReader、Preparation、BackgroundCheck、KnowledgeClient 和 PlaybackController；正式后台及课件子进程不导入 Qt。后台线程结果按顺序回到 owner 线程，计时器取消与对象释放使旧回调失效，退出等待真实线程/进程结束。UTF-8 JSONL v1 使用请求编号与有界消息；超时只报告等待失败，不假定后台操作已取消。stdout 专用于协议，诊断日志保持原隐私边界。
 
+后台入口在启动 stdin 协议读线程之前完成 NumPy 初始化，两端共用此顺序。Windows 的管道读取与首次 NumPy 原生模块加载可能互相阻塞，因此不能推迟到首次打开录音读取 WAV 时长时才初始化；初始化失败通过启动进程的 stderr 报告，不发送就绪回执。
+
 Qt `Window` 和 Electron `DesktopService` 组合相同的后台流程；后者另负责 JSONL 请求和事件适配。共享模块不导入 QWidget、Qt 控件或 React：
 
 - `recording_workflow.RecordingWorkflow` 持有唯一的录音领域状态、Session、保存器和自动保存计时器，负责启动事务、启动失败持久化、暂停/继续、字幕修订、预览、结束分类、保存回执和锁释放。保存失败保留终态、脏数据和锁；旧 Session 的迟到信号不能写入新录音。Qt 的旧属性名只转发到此状态，字幕卡片保留独立显示副本。

@@ -76,6 +76,8 @@ git diff --check
 
 在 `desktop/` 执行；探针使用隔离库、偏好、profile 和音频保护，不访问用户现有录音或设备。
 
+首次打开录音的 IPC 回归必须使用全新后台子进程，在 stdin 保持打开且无后续输入时等待合成 WAV 的时长回执，再验证关闭和原件不变。提前在测试进程导入 NumPy、一次性发送全部请求或立即关闭 stdin，不能覆盖 Windows 首次原生模块加载与协议读线程的阻塞冲突。对应 `test_qt_free_backend.py::test_first_wav_open_with_idle_stdin_and_clean_shutdown`。
+
 | 命令 | 证据范围 |
 | --- | --- |
 | `npm ci`、`npx install-electron --no`、`npm run build` | 锁定依赖与 Electron、TypeScript/Vite 构建；Python 路径见上文 |

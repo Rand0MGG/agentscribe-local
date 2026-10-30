@@ -1540,6 +1540,11 @@ def main():
     transport = sys.stdout
     # Third-party logging must not corrupt the reserved protocol channel.
     sys.stdout = sys.stderr
+    # Windows native NumPy initialization can block while another thread reads
+    # piped stdin (numpy/numpy#24290). Initialize before starting IPC on both
+    # platforms, rather than first importing it when a recording is opened.
+    import numpy  # noqa: F401
+
     diag.start_logging('desktop-electron')
     diag.install_exception_hooks()
     from .process_platform import hold_installation_mutex

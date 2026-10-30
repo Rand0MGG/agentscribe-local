@@ -4,13 +4,86 @@ import os
 import subprocess
 import sys
 import threading
+from dataclasses import asdict
 from pathlib import Path
+from queue import Queue
 
 import pytest
 
 from linguaflow.events import Dispatcher, Owner, Signal, Timer, Worker
 from linguaflow.file_lock import FileLock
 from linguaflow.settings_store import SettingsStore
+
+
+@pytest.mark.p1
+def test_first_wav_open_with_idle_stdin_and_clean_shutdown(tmp_path):
+    """Keep IPC input open and idle: communicate(input=...) hides import hangs."""
+    import wave
+
+    from linguaflow.core import Settings
+    from linguaflow.library import Library
+
+    library = Library(tmp_path / '录音')
+    item = library.create(library.ensure_default_folder()['id'], asdict(Settings('preview')), '首次打开')
+    library.save(item, [], 'complete')
+    audio = library.directory(item['id']) / '录音.wav'
+    with wave.open(str(audio), 'wb') as stream:
+        stream.setparams((1, 2, 16000, 0, 'NONE', 'not compressed'))
+        stream.writeframes(bytes(64000))
+    original = audio.read_bytes()
+    frames = Queue()
+    with (tmp_path / 'stderr.txt').open('w+', encoding='utf-8') as errors:
+        process = subprocess.Popen(
+            [sys.executable, '-u', '-m', 'linguaflow.desktop_service', '--no-audio',
+             '--library', str(library.root), '--preferences', str(tmp_path / 'prefs.json')],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errors,
+            text=True, encoding='utf-8', env={**os.environ, 'PYTHONUTF8': '1',
+                'AGENTSCRIBE_LOG_DIR': str(tmp_path / 'logs')})
+        def read_frames():
+            for line in process.stdout:
+                frames.put(line)
+        reader = threading.Thread(target=read_frames, daemon=True)
+        reader.start()
+
+        def receive(predicate):
+            import time
+            from queue import Empty
+            deadline = time.monotonic() + 15
+            while True:
+                try:
+                    row = json.loads(frames.get(timeout=max(.001, deadline - time.monotonic())))
+                except Empty:
+                    errors.flush()
+                    errors.seek(0)
+                    pytest.fail('Backend response timed out with stdin open: ' + errors.read())
+                if predicate(row):
+                    return row
+
+        def send(request_id, method, **params):
+            process.stdin.write(json.dumps(dict(version=1, id=request_id, method=method, params=params)) + '\n')
+            process.stdin.flush()
+
+        try:
+            receive(lambda row: row.get('event') == 'ready')
+            send(1, 'recording.open', identifier=item['id'])
+            opened = receive(lambda row: row.get('id') == 1)
+            assert 'error' not in opened, opened
+            assert opened['result']['playback']['duration'] == 2000
+            assert opened['result']['playback']['supports_gain']
+            send(2, 'app.close')
+            receive(lambda row: row.get('event') == 'closed')
+            process.stdin.close()
+            assert process.wait(timeout=10) == 0
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=10)
+            if not process.stdin.closed:
+                process.stdin.close()
+            reader.join(timeout=5)
+            process.stdout.close()
+        assert not reader.is_alive()
+        assert audio.read_bytes() == original
 
 
 @pytest.mark.p1

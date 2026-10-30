@@ -2,6 +2,13 @@
 
 仅记录当前可核对的证据与限制；测试规则见 [TESTING](TESTING.md)，功能缺口见 [ROADMAP](ROADMAP.md)。历史逐轮记录已移至 [验证归档](archive/testing/VALIDATION_THROUGH_20261030.md)，不把旧通过数或“本地未提交”当作当前状态。
 
+## 2026-10-30 Windows 首次打开录音的 IPC 阻塞修复
+
+- 基于 `43cdf1f`：共享后台在 stdin 协议读线程启动前初始化 NumPy。新增真实管道子进程回归保持输入打开且空闲，验证首次打开合成 WAV 的时长、正常关闭和原件不变；修复前在打开回执处 15 秒超时，修复后通过。
+- Windows 11 / Python 3.12.8：后台、Qt-free、回听控制器与启动相关回归 **51 passed、1 skipped**，跳过项为 macOS Cocoa 事件循环；无原生音频导入尝试。Ruff 与差异格式检查通过。
+- 现有 `npm test`、`test:chain`、`test:interaction`、`test:audio-adapter` 均通过，包括首次 WAV 时长、650 条字幕定位与模拟播放状态。使用隔离库及设备替身，未访问用户录音或真实音频设备。
+- 证据由探针保存在 `output/playwright/`；此前最小诊断脚本在 `.work/reports/ci-timeout/`。本记录仅证明本地 Windows 修复验证，macOS、远程 CI 和安装包未由本轮验证，不能据此宣布 Mac 交互超时已修复。
+
 ## 2026-10-30 Qwen 原声窗口与分批输入
 
 - 连续原声、参考点释放、窗口缓冲带、每轮新增 1～10 秒及长静音等待规则见 [字幕 spec](specs/captions-translation.md)。多轮文字确认、SaT 和翻译策略不变。
