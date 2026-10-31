@@ -107,6 +107,8 @@ Qwen 确认按当前窗口直接输出累计，可靠换窗裁剪并继承已有
 
 `diagnostic_log.py` 提供进程独立 JSONL 轮转日志与无用户正文的异常堆栈；`diagnostic_archive.py` 管封存块压缩、完整性校验、跨进程历史预算和崩溃遗留恢复。桌面/worker 入口初始化；Session 生成会话 ID 并传给 worker。Qwen 记录解码序号、窗口及推进原因，通过已有协议回传耗时元数据，由桌面补采集侧积压估计。保存与翻译捕获异常分别在所属线程记录，日志不接管第三方原始 stdout/stderr，也不改变解码调度。
 
+`capture_diagnostics.CaptureTrace` 对照 Mac 原生回调与录音写入前的 PCM，以 `session + capture_id + source_revision` 关联，`recording_start_seconds` 标明本段在录音中的起点。仅记录首包、连续全零达到 3 秒及恢复、原生有效音频包中断达到 3 秒及恢复、首个超过 1 ms 的时间戳跳变和关闭汇总；持续静音/中断不重复刷日志，剩余跳变只累计。保留样本数、峰值、原生首尾时间戳、缺包间隔及流开关/错误码，不保存波形或正文，不替换音频、改变定稿或自动重连；诊断时间戳读取失败单独记录并继续原有 PCM 流。
+
 Qwen 的 `asr_decode_start/end` 可按 `session + decode_id` 关联：窗口范围、输入长度、新增音频、耗时和触发原因；`admitted_audio_seconds` 单列不含恢复保护音的新增预算，`asr_audio_policy` 记录有效上下限；`asr_window_roll` 记录参考点/低能量/积压保护原因、切点及移走/保留长度；`asr_idle_start/end` 记录长静音等待和携带的原声长度；`asr_commit` 记录收尾原因；`asr_revision` / `caption_revision` 记录字符数、稳定长度及定稿条件，不含正文。`asr_capture_lag` 是收到结果时采集进度减解码覆盖末端的估计，不是词级延迟；`pipeline_progress` 另记流水线积压和磁盘待送量。窗口重叠不算新增音频，空文本也保留本次解码耗时。Whisper 有公共会话/积压/字幕日志，但没有套用 Qwen 的内部窗口事件。
 
 处理链的关联与决策日志：

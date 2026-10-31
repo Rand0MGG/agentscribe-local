@@ -13,6 +13,9 @@ from types import SimpleNamespace
 import numpy as np
 from scipy.signal import resample_poly
 
+from . import diagnostic_log as diag
+from .capture_diagnostics import CaptureTrace
+
 logger = logging.getLogger(__name__)
 PERMISSION_HINT = ('请在“系统设置 → 隐私与安全性 → 屏幕与系统音频录制”中允许 AgentScribe '
                    '录制电脑声音，然后重新打开应用。源码运行时请允许当前 Python 应用。')
@@ -42,6 +45,8 @@ def _native():
                 self.receive(sample)
 
         def stream_didStopWithError_(self, stream, error):
+            diag.event('capture_native_stopped', **self.capture_fields,
+                       error_code=int(error.code()), error_domain=str(error.domain()))
             self.failed(RuntimeError('电脑音频捕获中断。' + PERMISSION_HINT))
             logger.error('ScreenCaptureKit stopped: %s', error)
 
@@ -181,6 +186,8 @@ def capture_system_audio(settings, stop, on_block):
 
 def _capture(native, settings, stop, on_block):
     cm, sc = native.CM, native.SC
+    diag.event('capture_backend_open', backend='screencapturekit', output_rate=settings.input_sample_rate,
+               native_rate=48000, channels=1, excludes_current_process=True)
     done, result = Event(), []
 
     def shared_content(content, error):
@@ -210,18 +217,36 @@ def _capture(native, settings, stop, on_block):
     config.setMinimumFrameInterval_(cm.CMTimeMake(1, 1))
     config.setQueueDepth_(3)
     samples_queue, failed, closed = Queue(maxsize=100), [], Event()
+    trace = CaptureTrace('macos_callback', 48000)
+    skipped_packets = 0
+    metadata_errors = 0
 
     def fail(error):
         if not closed.is_set() and not stop.is_set() and not failed:
             failed.append(error)
+            diag.exception('capture_native_exception', error, **trace.fields)
 
     def receive(sample):
+        nonlocal skipped_packets, metadata_errors
         if closed.is_set() or stop.is_set():
             return
         try:
             samples = _audio_samples(cm, sample)
             if samples is not None:
+                # Timing is diagnostic only: the original PCM and admission
+                # rules are unchanged, including when metadata is unavailable.
+                pts = None
+                if hasattr(cm, 'CMSampleBufferGetPresentationTimeStamp'):
+                    try:
+                        pts = float(cm.CMTimeGetSeconds(cm.CMSampleBufferGetPresentationTimeStamp(sample)))
+                    except Exception as exc:
+                        metadata_errors += 1
+                        if metadata_errors == 1:
+                            diag.exception('capture_timestamp_unavailable', exc, **trace.fields)
+                trace.observe(samples, pts=pts)
                 samples_queue.put_nowait(samples)
+            else:
+                skipped_packets += 1
         except Full:
             fail(RuntimeError('电脑音频处理跟不上采集速度，已停止录音以避免丢失内容。'))
         except Exception as exc:
@@ -229,6 +254,7 @@ def _capture(native, settings, stop, on_block):
 
     output = native.Output.alloc().init()
     output.receive, output.failed = receive, fail
+    output.capture_fields = trace.fields
     stream = sc.SCStream.alloc().initWithFilter_configuration_delegate_(content_filter, config, output)
     owner = _Stream(stream, output)
     queue = native.dispatch.dispatch_queue_create(b'AgentScribe.system-audio', None)
@@ -246,6 +272,7 @@ def _capture(native, settings, stop, on_block):
         if owner.error:
             logger.error('ScreenCaptureKit start failed: %s', owner.error)
             raise RuntimeError('无法开始电脑音频录制。' + PERMISSION_HINT)
+        diag.event('capture_backend_started', backend='screencapturekit')
         pending = np.empty(0, dtype=np.float32)
         while not stop.is_set():
             if failed:
@@ -253,6 +280,7 @@ def _capture(native, settings, stop, on_block):
             try:
                 samples = samples_queue.get(timeout=.05)
             except Empty:
+                trace.poll()
                 continue
             pending = np.concatenate((pending, samples))
             while len(pending) >= 4800 and not stop.is_set():
@@ -261,4 +289,11 @@ def _capture(native, settings, stop, on_block):
                          else resample_poly(block, 1, 3).astype(np.float32))
     finally:
         closed.set()
-        owner.close()
+        try:
+            owner.close()
+        finally:
+            trace.finish()
+            diag.event('capture_backend_closed', backend='screencapturekit',
+                       stop_requested=stop.is_set(), skipped_packets=skipped_packets,
+                       metadata_errors=metadata_errors,
+                       queued_blocks=samples_queue.qsize(), failed=bool(failed or owner.error or owner.stop_error))

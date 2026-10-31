@@ -13,6 +13,7 @@ import numpy as np
 from . import diagnostic_log as diag
 from .audio import capture
 from .capture_control import CaptureControl
+from .capture_diagnostics import CaptureTrace
 from .core import Caption
 from .events import Signal, Worker
 from .journal import AudioJournal
@@ -118,8 +119,10 @@ class Session(Worker):
                 warned = False
                 recording = None
                 recording_file = None
+                signal_trace = None
                 def write_block(samples):
                     nonlocal silent_samples, warned
+                    signal_trace.observe(samples)
                     if recording is not None:
                         recording.writeframes((np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes())
                         recording_file.flush()
@@ -183,7 +186,13 @@ class Session(Worker):
                                     self.source_changed.emit(revision)
                             return self.capture_control.accept(write, segment)
 
-                        self.capture_fn(source_settings, segment, block)
+                        with diag.trace_scope(capture_id=uuid4().hex[:16], source_revision=revision,
+                                              recording_start_seconds=self.recorded_seconds):
+                            signal_trace = CaptureTrace('recording_input', self.settings.input_sample_rate)
+                            try:
+                                self.capture_fn(source_settings, segment, block)
+                            finally:
+                                signal_trace.finish()
                         if not segment.is_set():
                             break
                 except Exception as exc:
