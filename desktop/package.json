@@ -1,6 +1,6 @@
 {
   "name": "agentscribe-desktop",
-  "version": "0.12.1",
+  "version": "0.12.3",
   "private": true,
   "type": "module",
   "main": "electron/main.cjs",

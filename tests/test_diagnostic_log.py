@@ -380,12 +380,13 @@ def test_trace_distinguishes_unconfirmed_history_from_current_confirmation(logs)
         asr.insert_audio_chunk(np.ones(duration * 16000), end)
         asr.process_iter()
     row = [r for r in read_rows(path) if r['event'] == 'asr_revision'][-1]
-    assert row['candidate_stable_chars'] > 0 and row['stable_chars'] == asr.confirmed_end == 0
-    assert row['confirmation_limited'] and row['confirmation_limits'] == ['unconfirmed_history']
+    assert row['stable_chars'] == asr.confirmed_end == 0
     assert row['window_text_start'] > 0
-    assert row['confirmed_chars'] == row['current_stable_chars'] > 0
-    assert row['confirmed_range_count'] == 1
-    assert row['agreement']['reason'] == 'agreement_prefix'
+    assert row['confirmed_chars'] > 0 and row['confirmed_range_count'] == 1
+    assert row['submission_votes'] == 3
+    assert row['submission']['reason'] == 'cumulative_votes'
+    assert row['submission']['fresh_observation']
+
 
 
 @pytest.mark.p2

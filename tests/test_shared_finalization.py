@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from linguaflow.asr_stability import StablePrefix, stitch_window
+from linguaflow.asr_stability import stitch_window
 from linguaflow.core import Caption, source_is_final
 from linguaflow.qwen_accurate import QwenAccurateOnline
 from linguaflow.qwen_revisions import install_revision_bridge
@@ -19,19 +19,6 @@ from linguaflow.wlk_captions import CaptionMapper
 def snapshot(text, stable=None):
     return {'revision_text': text, 'stable_end': len(text) if stable is None else stable,
             'revision_spans': [], 'closed_ends': []}
-
-
-@pytest.mark.p1
-def test_agreement_requires_distinct_audio_and_each_new_word_ages_independently():
-    agreement = StablePrefix(holdback=0)
-    assert agreement.observe('old words', 1) == 0
-    for _ in range(20):
-        assert agreement.observe('old words', 1) == 0
-    assert agreement.observe('old words', 3) == 0
-    assert agreement.observe('old words newly spoken', 5) == len('old words')
-    assert agreement.observe('old words newly spoken', 7) == len('old words')
-    assert agreement.observe('old words newly spoken', 9) == len('old words newly spoken')
-    assert agreement.observe('corrected words newly spoken', 10) == 0
 
 
 @pytest.mark.p1

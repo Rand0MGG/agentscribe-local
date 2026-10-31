@@ -89,7 +89,7 @@ Qt 线程负责装配、呈现和发起操作，只有它更新 UI。耗时任�
 | 录音与传输 | `recording_state.py`、`wlk_session.py`、`capture_control.py`、`journal.py`；会话、采集代次、PCM 次序、停止边界 |
 | 回放增益 | `playback_stream.py` 将原始 WAV 作为可随机定位的只读流提供给媒体播放器，按读取块处理 PCM 增益并限制峰值，不生成文件副本；未完成录音经锁检查后仅在读取视图修复固定 PCM WAV 的长度，原件不变；`playback_controller.py` 拥有输入流并在切换/关闭时释放 |
 | 系统音频 | `audio.py`、按需 `audio_macos.py`；Windows WASAPI，Mac CoreAudio 输入 / ScreenCaptureKit 电脑声音，只回传 PCM，复用公共保存/字幕流程 |
-| 推理启动与识别 | `wlk_worker.py`、`inference_startup.py`、`backends.py`；统一装配/资源登记。`qwen_audio.py` 保留原声队列及 VAD 标签；`qwen_accurate.py`、`asr_stability.py`、`qwen_revisions.py` 负责共享窗口、原文确认与修订；`mlx_asr.py` / worker 仅负责独立模型协议 |
+| 推理启动与识别 | `wlk_worker.py`、`inference_startup.py`、`backends.py`；统一装配/资源登记。`qwen_audio.py` 保留原声队列及 VAD 标签；`qwen_accurate.py`、`asr_submission.py`、`asr_stability.py`、`qwen_revisions.py` 负责共享窗口、原文确认与修订；`mlx_asr.py` / worker 仅负责独立模型协议 |
 | 分句与翻译 | `semantic_model.py`、`semantic_cache.py`、`wlk_captions.py`；`translation_context.py` 规划，`translation_queue.py` 排队，`translation_service.py` 消费/发布，`translation_models.py` / `llama_translation.py` 适配模型 |
 | 保存与文件库 | `recording_save.py`、`recording_document.py`、`recording_export.py`、`library.py`；锁适配在 `library_access.py`，启动/复制迁移在 `library_startup.py` / `library_migration.py` |
 | 准备与运行环境 | `runtime_paths.py` 路径权威；`runtime_install.py` / `runtime_base.py` / `runtime_cleanup.py` 管事务与归属；`runtime_preparation.py` 管预热租用；`preparation_task.py` 管监督进程，模型管理/准备复用它 |
@@ -101,7 +101,7 @@ Qt 线程负责装配、呈现和发起操作，只有它更新 UI。耗时任�
 
 ## 诊断日志
 
-Qwen 确认按当前窗口直接输出累计，可靠换窗裁剪并继承已有观察，失配重建基准；`RevisionStore` 传递可不连续的 `stable_ranges`，兼容字段 `stable_end` 仍只代表连续前缀。字幕逐段检查覆盖范围与相邻已确认后文，前方存疑不会屏蔽后方字幕。显式收尾只关闭当前直接假设，挂起/复制的存疑历史不补成已确认；音频释放与 SaT 候选规则不由此改变。
+`asr_submission.CumulativeSubmission` 按对齐后的文字位置累计三轮直接识别，相同候选可不连续；锁定结果独立保存，后续 ASR 只更新未锁定部分。可靠换窗继承票数，无法对齐时不挪用票数或覆盖锁定内容。`RevisionStore` 传递不连续 `stable_ranges`，`stable_end` 是连续锁定前缀；SaT 仍独立判断句界。显式暂停/EOF 锁定全部剩余文字，包括已移出窗口和挂起历史。`asr_revision` 内嵌本轮是否计票、保护/歧义次数与锁定字符数，无正文、不增加逐词日志。音频释放与 VAD 规则不变。
 
 `qwen_audio.NonzeroPCM` 在窗口前逐 10 ms 帧拦截全零输入；零段标记让解码队列先处理短尾音，失败保留标记以便重试。`KeptAudioClock` 映射保留采样与原录音时间：容量、新增量和确认推进不计零段，修订、字幕、调度 token 与日志仍用原时间；VAD 释放参考仍按原录音标签选择。原始 WAV 和采集/VAD 流不经此过滤，零段不清窗或强制定稿。
 

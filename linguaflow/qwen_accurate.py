@@ -10,7 +10,8 @@ from collections import OrderedDict, deque
 from types import SimpleNamespace
 
 from . import diagnostic_log as diag
-from .asr_stability import StablePrefix, confirmation_ranges, confirmed_until, stitch_window
+from .asr_stability import confirmed_until, stitch_window
+from .asr_submission import CumulativeSubmission
 from .audio_processing.buffer import PCMBuffer
 from .qwen_audio import KeptAudioClock, NonzeroPCM, VADTimeline, ZeroAudioGap, fallback_cut, reference_cut
 
@@ -57,9 +58,8 @@ class QwenAccurateOnline:
         self.capture_time = 0.
         self.force_endpoint = False
         self.force_endpoint_time = None
-        self.agreement = StablePrefix()
-        self._agreement_prefix = ''
-        self._agreement_window_start = 0.
+        self.submission = CumulativeSubmission()
+        self._submission_window_start = None
         self.confirmed_ranges = []
         self.utterance_start = None
         self.window_text = ''
@@ -154,9 +154,8 @@ class QwenAccurateOnline:
         self._audio.discard(len(self.audio_buffer))
         self.text = self.window_text = ''
         self.decoded_samples = self.window_text_start = self.confirmed_end = 0
-        self.agreement = StablePrefix()
-        self._agreement_prefix = ''
-        self._agreement_window_start = 0.
+        self.submission = CumulativeSubmission()
+        self._submission_window_start = None
         self.confirmed_ranges = []
         self.overlap = self.utterance_start = None
 
@@ -295,77 +294,42 @@ class QwenAccurateOnline:
                     count / self.SAMPLING_RATE, compute_seconds, len(text))
         return text
 
-    def _current_agreement(self, local, text, anchored):
-        """Only direct model output votes; copied history is never observed."""
-        prefix = text[:self.window_text_start]
-        reset = None
-        if not anchored and self.start != self._agreement_window_start:
-            reset = 'overlap_unmatched'
-        elif prefix != self._agreement_prefix:
-            removed = prefix[len(self._agreement_prefix):]
-            if (anchored and prefix.startswith(self._agreement_prefix)
-                    and all(value.startswith(removed) for _, value in self.agreement.history)):
-                # Matching overlap keeps genuine observations, in current local
-                # coordinates. No duration-to-word estimate grants evidence.
-                self.agreement.history = [(end, value[len(removed):])
-                                          for end, value in self.agreement.history]
-            else:
-                reset = 'prefix_changed'
-        if reset:
-            self.agreement.history.clear()
-            diag.event('asr_confirmation_reset', interval=self.interval,
-                       decode_id=self.decode_sequence, reason=reset,
-                       window_start=self._clock.source_time(self.start), window_text_start=self.window_text_start,
-                       previous_confirmed_chars=sum(b-a for a, b in self.confirmed_ranges))
-        self._agreement_prefix = prefix
-        self._agreement_window_start = self.start
-        return self.agreement.observe(local, self.decoded_end)
-
     def _recognize(self, count, reason='update'):
         local = self._decode(count, reason)
         self.window_text = local
         self.window_decoded_start = self.start
         anchored = True
+        previous_window_text_start = self.window_text_start
         if self.overlap:
             prior, expected, floor = self.overlap
             text, self.window_text_start, anchored = stitch_window(prior, local, expected, floor)
         else:
             text, self.window_text_start = local, 0
-        previous_text = self.text
-        self.text = text
+        if not anchored:
+            # An estimated acoustic cut is not permission to overwrite submitted
+            # words. Start a new provisional text tail when overlap is unknown;
+            # subsequent decodes of this same window keep that textual origin.
+            self.window_text_start = (previous_window_text_start
+                                      if self.start == self._submission_window_start else len(self.text))
         self.decoded_samples = count
         self.decoded_end = self.start + count / self.SAMPLING_RATE
-        local_stable = self._current_agreement(local, text, anchored)
-        # Preserve only unchanged evidence outside the directly decoded tail.
-        common = 0
-        for old, new in zip(previous_text, text):
-            if old != new:
-                break
-            common += 1
-        copied_end = min(common, self.window_text_start if local else len(text))
-        ranges = [(a, min(b, copied_end)) for a, b in self.confirmed_ranges if a < copied_end]
-        if local_stable:
-            ranges.append((self.window_text_start, self.window_text_start + local_stable))
-        self.confirmed_ranges = confirmation_ranges(text, ranges)
-        stable = confirmed_until(text, self.confirmed_ranges)
-        candidate_stable = self.window_text_start + local_stable if local_stable else 0
-        limits = ['unconfirmed_history'] if stable < candidate_stable else []
         previous_stable = self.confirmed_end
+        text, self.confirmed_ranges, self.window_text_start = self.submission.update(
+            local, start=self.window_text_start, audio_end=self.decoded_end,
+            aligned=anchored or self.start == self._submission_window_start)
+        self._submission_window_start = self.start
+        self.text = text
+        # Rollover matching must use the text we actually kept, including locks;
+        # raw conflicting model output cannot re-enter through the overlap path.
+        self.window_text = text[self.window_text_start:]
+        stable = confirmed_until(text, self.confirmed_ranges)
         self.confirmed_end = stable
         diag.event('asr_revision', decode_id=self.decode_sequence, interval=self.interval,
                    chars=len(text), stable_chars=stable, overlap_matched=anchored,
-                   candidate_stable_chars=candidate_stable, previous_stable_chars=previous_stable,
-                   window_text_start=self.window_text_start,
-                   current_stable_chars=local_stable,
+                   previous_stable_chars=previous_stable, window_text_start=self.window_text_start,
                    confirmed_chars=sum(b-a for a, b in self.confirmed_ranges),
                    confirmed_range_count=len(self.confirmed_ranges),
-                   confirmation_limits=limits, confirmation_limited=stable < candidate_stable,
-                   agreement=self.agreement.diagnostic,
-                   agreement_observations=len(self.agreement.history),
-                   agreement_audio_span=(self.agreement.history[-1][0] - self.agreement.history[0][0]
-                                         if self.agreement.history else 0.),
-                   agreement_rounds=self.agreement.rounds, agreement_horizon=self.agreement.horizon,
-                   agreement_holdback=self.agreement.holdback,
+                   submission=self.submission.diagnostic, submission_votes=3,
                    audio_start=self._clock.source_time(self.utterance_start),
                    audio_end=self._clock.source_time(self.decoded_end, end=True))
         self.drafts[text] = (self.utterance_start, self.decoded_end, stable)
@@ -471,12 +435,10 @@ class QwenAccurateOnline:
         text = self.text
         end = self.decoded_end
         tokens = self._tokens(text, self.utterance_start, end)
-        # Retain the explicit pause/EOF contract for the last direct hypothesis.
-        # Closure cannot confirm copied history that the model no longer heard.
-        if self.window_text:
-            self.confirmed_ranges = confirmation_ranges(text, [*self.confirmed_ranges,
-                (self.window_text_start, len(text))])
-            self.confirmed_end = confirmed_until(text, self.confirmed_ranges)
+        # Explicit pause/EOF accepts the remaining latest draft, including
+        # history whose PCM has left the window. Existing locks remain intact.
+        self.confirmed_ranges = [(0, len(text))] if text else []
+        self.confirmed_end = len(text)
         self._observe(text, self.confirmed_end, end, closed=True)
         diag.event('asr_commit', interval=self.interval, reason=reason,
                    audio_start=self._clock.source_time(self.utterance_start),
@@ -487,9 +449,8 @@ class QwenAccurateOnline:
         self.start = end
         self.text = ''
         self.decoded_samples = 0
-        self.agreement = StablePrefix()
-        self._agreement_prefix = ''
-        self._agreement_window_start = 0.
+        self.submission = CumulativeSubmission()
+        self._submission_window_start = None
         self.confirmed_ranges = []
         self.overlap = None
         self.window_text = ''
@@ -527,8 +488,8 @@ class QwenAccurateOnline:
         for interval, start, end, text, decode_id, ranges in self._suspended:
             if self.revisions is not None:
                 with diag.trace_scope(decode_id=decode_id):
-                    self.revisions.update(interval, start, end, text, confirmed_until(text, ranges),
-                                          closed=True, stable_ranges=ranges)
+                    self.revisions.update(interval, start, end, text, len(text),
+                                          closed=True, stable_ranges=[(0, len(text))])
             tokens.extend(self._tokens(text, start, end))
             self.finalized_until = max(self.finalized_until, self._clock.source_time(end, end=True))
             diag.event('asr_commit', interval=interval, reason=reason, decode_id=decode_id,
@@ -536,7 +497,7 @@ class QwenAccurateOnline:
                        audio_end=self._clock.source_time(end, end=True), chars=len(text))
         self._suspended.clear()
         # Close the last direct hypothesis without replaying unchanged PCM.
-        # Suspended/copied uncertain history stays uncertain at EOF as well.
+        # All suspended and copied drafts are finalized at explicit EOF as well.
         if self.utterance_start is not None and self.text:
             count = max(0, round((self.decoded_end - self.start) * self.SAMPLING_RATE))
             tokens.extend(self._commit(count, reason))
@@ -561,7 +522,7 @@ class QwenAccurateOnline:
         return self.finish()
 
     def augment_snapshot(self, snapshot):
-        """Soft agreement is revisable; do not insert it into WLK's token log."""
+        """The revision bridge owns text locks; WLK tokens still track acoustic closure."""
         snapshot['closed_audio_time'] = self.finalized_until
         text = snapshot.get('buffer_transcription', '')
         draft = self.drafts.get(text)

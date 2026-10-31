@@ -53,7 +53,8 @@ def test_zero_transition_flushes_short_tail_once_and_keeps_context_and_recording
     assert len(calls) == 1
     feed(asr, np.full(RATE, 2, np.float32))
     np.testing.assert_array_equal(calls[1], np.r_[np.ones(RATE // 4), np.full(RATE, 2)])
-    assert asr.agreement.history[-1][0] - asr.agreement.history[0][0] == 1
+    assert asr.submission.last_audio_end == 1.25  # Zero samples do not advance voting time.
+    assert store.rows[0]['stable_ranges'] == []  # Only two direct observations, despite 100 s of zero input.
     view = {}
     store.augment_snapshot(view)
     assert view['revision_spans'][0][2] == 2

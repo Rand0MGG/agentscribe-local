@@ -126,7 +126,7 @@ def test_capacity_rollover_does_not_close_or_shrink_the_asr_interval():
     asr.insert_audio_chunk(np.ones(16000), 13)
     asr.process_iter()
     assert not store.rows[0]['closed'] and store.rows[0]['end'] == 13
-    assert store.rows[0]['stable_end'] == 0
+    assert store.rows[0]['stable_end'] == len(store.rows[0]['text'])  # Three fresh decodes locked the text.
     assert all(0 <= a <= b <= 13 for a, b in store.times[0])
     snapshot = {}
     store.augment_snapshot(snapshot)

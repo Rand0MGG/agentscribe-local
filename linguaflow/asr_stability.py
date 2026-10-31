@@ -35,50 +35,6 @@ def confirmed_until(text, ranges, start=0):
     return end
 
 
-class StablePrefix:
-    """Confirm a prefix across fresh decodes and actual audio progress.
-
-    Repeated polling/decoding of the same PCM cannot age newly added words.
-    Confirmation is revisable: a later changed prefix withdraws the evidence.
-    """
-    def __init__(self, rounds=3, horizon=4., holdback=4):
-        self.rounds, self.horizon, self.holdback = rounds, horizon, holdback
-        self.history = []
-        self.diagnostic = {}
-
-    def observe(self, text, audio_end):
-        value = (audio_end, text)
-        if self.history and audio_end < self.history[-1][0]:
-            self.history = [value]
-        elif self.history and audio_end == self.history[-1][0]:
-            # A correction at the same audio position replaces its observation.
-            self.history[-1] = value
-        else:
-            self.history.append(value)
-        while (len(self.history) > self.rounds
-               and self.history[1][0] <= audio_end - self.horizon):
-            self.history.pop(0)
-        self.history = self.history[-64:]
-        if (len(self.history) < self.rounds
-                or audio_end - self.history[0][0] < self.horizon):
-            self.diagnostic = dict(reason='insufficient_observations' if len(self.history) < self.rounds
-                                   else 'insufficient_audio_progress')
-            return 0
-        current = units(text)
-        count = len(current)
-        for _, previous in self.history[:-1]:
-            prior = units(previous)
-            count = min(count, len(prior))
-            for index in range(count):
-                if current[index].group() != prior[index].group():
-                    count = index
-                    break
-        self.diagnostic = dict(reason='agreement_prefix' if count > self.holdback else
-                               'tail_holdback' if count else 'prefix_disagreement', common_units=count)
-        count = max(0, count - self.holdback)
-        return current[count - 1].end() if count else 0
-
-
 def stitch_window(previous, current, expected_start, search_start=0):
     """Replace the overlapping tail using matching words near its audio range.
 
