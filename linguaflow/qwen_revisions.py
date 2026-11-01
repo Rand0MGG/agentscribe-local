@@ -19,6 +19,7 @@ class RevisionStore:
         self.lock = RLock()
         self.source_version = 0
         self.audio_clock = None
+        self.refresh = None
 
     def _time(self, value, *, end=False):
         return self.audio_clock.source_time(value, end=end) if self.audio_clock else value
@@ -79,6 +80,10 @@ class RevisionStore:
             self.accept(row)
 
     def augment_snapshot(self, snapshot, language='en'):
+        # Deadline-driven text submission can advance without another decode.
+        # Refresh before taking the store lock to preserve lock ordering.
+        if self.refresh:
+            self.refresh()
         with self.lock:
             text, spans, ranges = '', [], []
             closed_ends = []

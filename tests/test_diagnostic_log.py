@@ -383,8 +383,8 @@ def test_trace_distinguishes_unconfirmed_history_from_current_confirmation(logs)
     assert row['stable_chars'] == asr.confirmed_end == 0
     assert row['window_text_start'] > 0
     assert row['confirmed_chars'] > 0 and row['confirmed_range_count'] == 1
-    assert row['submission_votes'] == 3
-    assert row['submission']['reason'] == 'cumulative_votes'
+    assert row['submission_rounds'] == 2
+    assert row['submission']['reason'] == 'local_agreement_2'
     assert row['submission']['fresh_observation']
 
 

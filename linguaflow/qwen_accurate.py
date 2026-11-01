@@ -7,15 +7,25 @@ import logging
 import re
 import time
 from collections import OrderedDict, deque
+from functools import wraps
+from threading import RLock
 from types import SimpleNamespace
 
 from . import diagnostic_log as diag
 from .asr_stability import confirmed_until, stitch_window
-from .asr_submission import CumulativeSubmission
+from .asr_submission import LocalAgreementSubmission
 from .audio_processing.buffer import PCMBuffer
 from .qwen_audio import KeptAudioClock, NonzeroPCM, VADTimeline, ZeroAudioGap, fallback_cut, reference_cut
 
 logger = logging.getLogger(__name__)
+
+
+def _text_transaction(method):
+    @wraps(method)
+    def serialized(self, *args, **kwargs):
+        with self._submission_lock:
+            return method(self, *args, **kwargs)
+    return serialized
 
 LANGUAGE_NAMES = dict(en='English', zh='Chinese', ja='Japanese', ko='Korean',
                       fr='French', de='German', es='Spanish', ru='Russian',
@@ -58,7 +68,8 @@ class QwenAccurateOnline:
         self.capture_time = 0.
         self.force_endpoint = False
         self.force_endpoint_time = None
-        self.submission = CumulativeSubmission()
+        self._submission_lock = RLock()
+        self.submission = LocalAgreementSubmission()
         self._submission_window_start = None
         self.confirmed_ranges = []
         self.utterance_start = None
@@ -68,6 +79,7 @@ class QwenAccurateOnline:
         self.decoded_end = 0.
         self.confirmed_end = 0
         self.decode_sequence = 0
+        self._submission_decode_id = 0
         self.progress_end = 0.
         self._input_floor = 0.
         self.window_decoded_start = 0.
@@ -76,14 +88,15 @@ class QwenAccurateOnline:
         """Use the same full-hypothesis store as the streaming Qwen backend."""
         self.revisions = store
         store.audio_clock = self._clock
+        store.refresh = self.expire_history
 
     @property
     def audio_buffer(self):
         return self._audio.samples
 
-    def _observe(self, text, stable, end, closed=False):
+    def _observe(self, text, stable, end, closed=False, decode_id=None):
         if self.revisions is not None:
-            with diag.trace_scope(decode_id=self.decode_sequence):
+            with diag.trace_scope(decode_id=self.decode_sequence if decode_id is None else decode_id):
                 self.revisions.update(self.interval, self.utterance_start, end, text, stable, closed,
                                       stable_ranges=self.confirmed_ranges)
 
@@ -150,21 +163,24 @@ class QwenAccurateOnline:
             raise ValueError('Qwen 原声音频时间不连续，已停止而不是补零或跳过音频')
         self._audio.append(audio)
 
+    @_text_transaction
     def _reset_acoustics(self):
         self._audio.discard(len(self.audio_buffer))
         self.text = self.window_text = ''
         self.decoded_samples = self.window_text_start = self.confirmed_end = 0
-        self.submission = CumulativeSubmission()
+        self.submission = LocalAgreementSubmission()
         self._submission_window_start = None
         self.confirmed_ranges = []
         self.overlap = self.utterance_start = None
 
+    @_text_transaction
     def _resume(self, at):
         # Preserve the old draft as an OPEN source row; SaT still owns sentence
         # boundaries. New word times start at real resumed audio, never the gap.
         if self.utterance_start is not None and self.text:
+            self.submission.mark_history(len(self.submission.words))
             self._suspended.append((self.interval, self.utterance_start, self.decoded_end,
-                                    self.text, self.decode_sequence, list(self.confirmed_ranges)))
+                                    self.text, self.decode_sequence, self.submission))
             self.interval += 1
         self._reset_acoustics()
         # The original pre-speech protection is context, not newly admitted speech.
@@ -296,6 +312,11 @@ class QwenAccurateOnline:
 
     def _recognize(self, count, reason='update'):
         local = self._decode(count, reason)
+        self._accept_hypothesis(local, count)
+
+    @_text_transaction
+    def _accept_hypothesis(self, local, count):
+        self._submission_decode_id = self.decode_sequence
         self.window_text = local
         self.window_decoded_start = self.start
         anchored = True
@@ -324,12 +345,13 @@ class QwenAccurateOnline:
         self.window_text = text[self.window_text_start:]
         stable = confirmed_until(text, self.confirmed_ranges)
         self.confirmed_end = stable
+        self._history_event(self.interval, self.decode_sequence, self.submission.diagnostic['history_timeout_units'])
         diag.event('asr_revision', decode_id=self.decode_sequence, interval=self.interval,
                    chars=len(text), stable_chars=stable, overlap_matched=anchored,
                    previous_stable_chars=previous_stable, window_text_start=self.window_text_start,
                    confirmed_chars=sum(b-a for a, b in self.confirmed_ranges),
                    confirmed_range_count=len(self.confirmed_ranges),
-                   submission=self.submission.diagnostic, submission_votes=3,
+                   submission=self.submission.diagnostic, submission_rounds=2,
                    audio_start=self._clock.source_time(self.utterance_start),
                    audio_end=self._clock.source_time(self.decoded_end, end=True))
         self.drafts[text] = (self.utterance_start, self.decoded_end, stable)
@@ -337,6 +359,37 @@ class QwenAccurateOnline:
         self.drafts.move_to_end(text)
         while len(self.drafts) > 8:
             self.drafts.popitem(last=False)
+
+    def _history_event(self, interval, decode_id, count):
+        if count:
+            diag.event('asr_history_finalized', interval=interval, decode_id=decode_id,
+                       reason='history_unchanged_timeout', unchanged_seconds=LocalAgreementSubmission.HISTORY_SECONDS,
+                       finalized_units=count)
+
+    def expire_history(self):
+        """Refresh text deadlines without decoding, touching PCM or blocking UI."""
+        if not self._submission_lock.acquire(blocking=False):
+            return
+        try:
+            for interval, start, end, text, decode_id, submission in self._suspended:
+                count = submission.expire_history()
+                if count:
+                    _, ranges = submission.snapshot()
+                    if self.revisions is not None:
+                        with diag.trace_scope(decode_id=decode_id):
+                            self.revisions.update(interval, start, end, text, confirmed_until(text, ranges),
+                                                  stable_ranges=ranges)
+                    self._history_event(interval, decode_id, count)
+            count = self.submission.expire_history()
+            if count and self.utterance_start is not None:
+                _, self.confirmed_ranges = self.submission.snapshot()
+                self.confirmed_end = confirmed_until(self.text, self.confirmed_ranges)
+                self.drafts[self.text] = (self.utterance_start, self.decoded_end, self.confirmed_end)
+                self._observe(self.text, self.confirmed_end, self.decoded_end,
+                              decode_id=self._submission_decode_id)
+                self._history_event(self.interval, self._submission_decode_id, count)
+        finally:
+            self._submission_lock.release()
 
     def _release(self, drop, reason):
         """Release only previously decoded PCM; preserve the revision overlap."""
@@ -431,6 +484,7 @@ class QwenAccurateOnline:
             self.any_emitted = True
         return output
 
+    @_text_transaction
     def _commit(self, count, reason='finish'):
         text = self.text
         end = self.decoded_end
@@ -449,7 +503,7 @@ class QwenAccurateOnline:
         self.start = end
         self.text = ''
         self.decoded_samples = 0
-        self.submission = CumulativeSubmission()
+        self.submission = LocalAgreementSubmission()
         self._submission_window_start = None
         self.confirmed_ranges = []
         self.overlap = None
@@ -480,12 +534,13 @@ class QwenAccurateOnline:
         # Kept for WLK's online contract. Natural VAD labels never call this.
         return self.process_iter()
 
+    @_text_transaction
     def _drain(self, reason='finish'):
         self._queue_nonzero(self._nonzero.flush())
         self._consume_audio(final=True)
         self._update_window(final=True)
         tokens = []
-        for interval, start, end, text, decode_id, ranges in self._suspended:
+        for interval, start, end, text, decode_id, submission in self._suspended:
             if self.revisions is not None:
                 with diag.trace_scope(decode_id=decode_id):
                     self.revisions.update(interval, start, end, text, len(text),

@@ -101,7 +101,7 @@ Qt 线程负责装配、呈现和发起操作，只有它更新 UI。耗时任�
 
 ## 诊断日志
 
-`asr_submission.CumulativeSubmission` 按对齐后的文字位置累计三轮直接识别，相同候选可不连续；锁定结果独立保存，后续 ASR 只更新未锁定部分。可靠换窗继承票数，无法对齐时不挪用票数或覆盖锁定内容。`RevisionStore` 传递不连续 `stable_ranges`，`stable_end` 是连续锁定前缀；SaT 仍独立判断句界。显式暂停/EOF 锁定全部剩余文字，包括已移出窗口和挂起历史。`asr_revision` 内嵌本轮是否计票、保护/歧义次数与锁定字符数，无正文、不增加逐词日志。音频释放与 VAD 规则不变。
+`asr_submission.LocalAgreementSubmission` 分离锁定文字与最新模型假设，对连续两轮待定结果取共同前缀后不可撤销提交。同音频不计次，失配换窗重建比较基准；Qwen 缺少逐词时间戳，使用原始措辞对齐排除锁定上下文，新后文不能被锁定保护吞掉。`RevisionStore` 传递可不连续的 `stable_ranges`，`stable_end` 是连续锁定前缀；SaT 独立判断句界。当前文字窗口之前及挂起区间的未锁定词，距最后实际改字满 10 秒后定稿；当前窗口不超时锁定。既有快照刷新触发到期检查，单调时钟计时、逐词保留修改时间，新增后文不重置旧词；刷新不等待推理锁。显式暂停/EOF 锁定全部剩余文字，包括已移出窗口和挂起历史。`asr_revision` 内嵌是否为独立观察、本轮提交词数、锁定保护次数和总锁定字符数，`asr_history_finalized` 只在超时锁定发生时记录原因、词数及所属 interval/decode；无正文、不增加轮询日志。音频释放与 VAD 规则不变。
 
 `qwen_audio.NonzeroPCM` 在窗口前逐 10 ms 帧拦截全零输入；零段标记让解码队列先处理短尾音，失败保留标记以便重试。`KeptAudioClock` 映射保留采样与原录音时间：容量、新增量和确认推进不计零段，修订、字幕、调度 token 与日志仍用原时间；VAD 释放参考仍按原录音标签选择。原始 WAV 和采集/VAD 流不经此过滤，零段不清窗或强制定稿。
 
@@ -113,7 +113,7 @@ Qwen 的 `asr_decode_start/end` 可按 `session + decode_id` 关联：窗口范�
 
 处理链的关联与决策日志：
 
-- Qwen `asr_revision` 区分连续前缀、当前直接输出及全部区段的确认字符数、范围数量与窗口文字起点；`unconfirmed_history` 仅表示前缀存在缺口，不限制后方区段。`asr_confirmation_reset` 只在对应失效时记录原因并关联 `decode_id`；多轮一致性不足、推进不足及尾部保留仍留证据。`asr_commit` 关联最后一次解码，收尾不一定产生新解码，也不代表所有历史文字已确认。
+- Qwen `asr_revision` 区分连续前缀、当前直接输出及全部区段的确认字符数、范围数量与窗口文字起点；`unconfirmed_history` 仅表示前缀存在缺口，不限制后方区段。`asr_revision.submission` 记录两轮共同前缀及历史超时提交数。`asr_commit` 关联最后一次解码；显式收尾锁定全部剩余文字，不一定产生新解码。
 - `asr_zero_start/end` 仅记录进入/恢复及跳过的原时间范围；`zero_input` 标明短尾音解码原因，`skipped_zero_seconds` 区分窗口原时间跨度与实际送入模型的长度。持续零输入不逐包落盘。
 - `source_revision` 将 `decode_id` 连接到 `source_stream + source_version`；版本只在修订存储接受变化时增加，记录区间与区间版本。`_diagnostic_source` 随同一锁内生成的内部快照传递，不进入 Caption 或录音文件格式。处理快照可能跳过中间版本；需按 `source_revision` 顺序还原各区间元数据，不能假定一次识别恰好对应一次分句。
 - 每次字幕映射分配 `mapping_id`，但只在实际调用预测器、字幕发生变化、显式收尾或失败时写 `caption_mapping_end`；无变化的纯缓存轮询不写开始/结束或缓存命中事件。关键结果的 `splits` 附带本次最多两个分割用途、原 `split_id`、缓存状态和源文偏移，保留缓存来源关联。计时从本次映射开始计算，不需要每次入口另写一条记录。`sat_call_start/end` 记录每个真正执行的重叠文本窗口预测器调用；结束记录的 `model` 内嵌实际推理起点、耗时、阈值及成功/失败信息，嵌套调用不再单独写模型开始/结束。独立模型调用仍保留模型事件。即使结果没改变字幕，真实调用和失败也保留。每个候选位置仅记录一次：结束记录的 `boundaries` 包含首批最多 32 个源文字符偏移，其余以同一 call ID 的 `sat_boundaries` 接续；`offset/total` 标明完整性，候选顺序和重复值保留。`outside_core/separator` 是各块 `positions` 中被过滤项的局部索引，其余即采用项；空原因数组省略。不记录正文或概率数组。缓存重用时边界相对原分割的偏移按本次 `source_offset` 换算。

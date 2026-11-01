@@ -46,7 +46,7 @@ def test_current_window_recovers_after_uncertain_prefix_roll_and_reaches_transla
         asr.process_iter()
         mapper.update(snapshot(store))
         current = next(c for c in mapper.previous.values() if c.source == 'Current lesson is reliable.')
-        assert current.asr_final == (end == 12)
+        assert current.asr_final == (end >= 10)
     assert current.final
     assert any(not c.asr_final for c in mapper.previous.values() if 'old' in c.source)
     plans = ContextPlanner().update(mapper.previous.values())
@@ -136,7 +136,7 @@ def test_submitted_text_survives_later_model_rewrite_and_polling_does_not_vote()
         for _ in range(5):
             asr.process_iter()
         row = next(c for c in mapper.previous.values() if c.source == 'Current lesson is reliable.')
-        assert row.asr_final == (end == 8)
+        assert row.asr_final == (end >= 6)
     asr.insert_audio_chunk(np.ones(2 * 16000), 10)
     asr.process_iter()
     mapper.update(snapshot(store))
@@ -165,9 +165,9 @@ def test_chinese_ranges_shift_with_old_correction_and_reject_stale_translation()
 
 
 @pytest.mark.p1
-def test_cumulative_submission_reaches_preview_mapping_final_translation_and_export():
+def test_local_agreement_reaches_preview_mapping_final_translation_and_export():
     from linguaflow.core import export_txt, source_is_final
-    values = iter(['Apple stays here.', 'Apple stays here.', 'Orange stays here.',
+    values = iter(['Apple stays here.', 'Orange stays here.', 'Apple stays here.',
                    'Apple stays here.', 'Orange stays here. New ending.'])
     events = []
     asr = QwenAccurateOnline(lambda _: next(values), 'en', token_type=SimpleNamespace,
@@ -181,7 +181,7 @@ def test_cumulative_submission_reaches_preview_mapping_final_translation_and_exp
         mapper.update(snapshot(store))
         planner.update(mapper.previous.values())
         if end == 3:
-            assert asr.text == 'Orange stays here.'
+            assert asr.text == 'Apple stays here.'
             assert asr.confirmed_end == 0
         if end == 4:
             assert asr.text == 'Apple stays here.' and asr.confirmed_end == len(asr.text)
@@ -200,10 +200,10 @@ def test_cumulative_submission_reaches_preview_mapping_final_translation_and_exp
 
 
 @pytest.mark.p1
-def test_ten_minute_rollovers_keep_votes_locks_and_all_words_at_eof():
+def test_ten_minute_rollovers_keep_locks_and_all_words_at_eof():
     def decode(audio):
         words = [f'w{int(i)-1}' for i in np.unique(audio)]
-        # A late model correction must not overwrite earlier three-vote words.
+        # A late model correction must not overwrite earlier submitted words.
         if len(words) > 6:
             words[2] = 'wrong'
         return ' '.join(words)

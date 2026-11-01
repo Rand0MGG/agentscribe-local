@@ -51,10 +51,11 @@ def test_zero_transition_flushes_short_tail_once_and_keeps_context_and_recording
     for _ in range(99):
         feed(asr, np.zeros(RATE, np.float32))
     assert len(calls) == 1
+    assert store.rows[0]['stable_ranges'] == []  # 100 seconds of zero input supplied no second observation.
     feed(asr, np.full(RATE, 2, np.float32))
     np.testing.assert_array_equal(calls[1], np.r_[np.ones(RATE // 4), np.full(RATE, 2)])
     assert asr.submission.last_audio_end == 1.25  # Zero samples do not advance voting time.
-    assert store.rows[0]['stable_ranges'] == []  # Only two direct observations, despite 100 s of zero input.
+    assert store.rows[0]['stable_ranges'] == [(0, len('First words.'))]  # Only the common prefix locks.
     view = {}
     store.augment_snapshot(view)
     assert view['revision_spans'][0][2] == 2

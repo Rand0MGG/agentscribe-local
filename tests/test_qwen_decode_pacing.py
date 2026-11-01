@@ -29,7 +29,10 @@ def test_slow_decode_does_not_hold_following_speech_until_stop(monkeypatch, firs
     snapshot = {}
     store.augment_snapshot(snapshot)
     assert snapshot['revision_text'] == '先说中文 Then English.'
-    assert not tokens and snapshot['stable_end'] == 0  # visible before commit/EOF
+    # The backlog produces two fresh, matching decodes: lock their text without
+    # closing the acoustic interval or waiting until stop.
+    assert not tokens and snapshot['stable_end'] == len(snapshot['revision_text'])
+    assert not store.rows[0]['closed']
     assert calls == [16000, 176000, 208000]
     asr.finish()
     assert calls == [16000, 176000, 208000]  # stopping must not trigger the missing decode

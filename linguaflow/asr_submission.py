@@ -1,10 +1,12 @@
-"""Position-scoped cumulative votes; submitted text is never rewritten by ASR.
+"""LocalAgreement-2 submission with immutable output and a Qwen text adapter.
 
-Like WhisperStreaming's hypothesis buffer, keep submitted output separate from
-new hypotheses. Unlike LocalAgreement-2, three nonconsecutive observations vote
-for a candidate. Only directly decoded text with fresh audio supplies a vote.
+The pending hypotheses follow Whisper-Streaming's HypothesisBuffer.flush:
+https://github.com/ufal/whisper_streaming/blob/main/whisper_online.py
+Qwen has no word timestamps here. Raw word alignment removes already submitted
+context instead; it must remain separate from the immutable displayed spelling.
 """
-from dataclasses import dataclass, field
+import time
+from dataclasses import dataclass
 from difflib import SequenceMatcher
 
 from .asr_stability import confirmation_ranges, units
@@ -19,161 +21,172 @@ def _key(parts):
     return tuple(p.lstrip() for p in parts)
 
 
-@dataclass
-class _Span:
-    parts: tuple
-    observations: dict = field(default_factory=dict)
+@dataclass(eq=False)
+class _Word:
+    text: str
+    raw: tuple
     locked: bool = False
-
-    @property
-    def alignment_parts(self):
-        # Keep the position of a temporarily omitted, unlocked word. Otherwise
-        # A,A,omitted,A loses its votes and may be mistaken for a new insertion.
-        return self.parts or next((p for p in reversed(self.observations.values()) if p), ())
-
-    def observe(self, parts, end):
-        if self.locked:
-            return
-        self.parts = parts
-        if end is not None:
-            self.observations[end] = parts
-            if parts and sum(_key(p) == _key(parts) for p in self.observations.values()) >= 3:
-                self.locked = True
-                self.observations.clear()
+    changed_at: float = 0.
 
 
-class CumulativeSubmission:
-    def __init__(self):
-        self.spans = []
+class LocalAgreementSubmission:
+    HISTORY_SECONDS = 10.
+
+    def __init__(self, clock=None):
+        self.clock = clock or time.monotonic
+        self.words = []
+        self.previous = []
         self.last_audio_end = float('-inf')
         self.diagnostic = {}
+        self.history_count = 0
+        self.history_due = float('inf')
 
-    def _split_at(self, start):
-        """Locate a textual window boundary, never estimate votes from time."""
-        offset = 0
-        for i, span in enumerate(self.spans):
-            size = sum(map(len, span.parts))
-            if not size and offset == start:
-                return i
-            if offset + size > start:
-                count, cursor = 0, offset
-                for part in span.parts:
-                    if cursor + len(part) > start:
-                        break
-                    cursor += len(part)
-                    count += 1
-                if count:
-                    # A multiword alternative can straddle the next text window.
-                    # Preserve only observations with this exact word structure.
-                    pieces = []
-                    for lo, hi in ((0, count), (count, len(span.parts))):
-                        observations = {end: value[lo:hi] for end, value in span.observations.items()
-                                        if len(value) == len(span.parts)}
-                        pieces.append(_Span(span.parts[lo:hi], observations, span.locked))
-                    self.spans[i:i+1] = pieces
-                    return i + 1
-                return i
-            offset += size
-        return len(self.spans)
+    def _replace(self, old, parts, now, internal=False):
+        """Project raw corrections without changing submitted spellings.
 
-    def _replace(self, old, parts, end):
-        if not old:
-            result = [_Span((p,)) for p in parts]
-            for span in result:
-                span.observe(span.parts, end)
-            return result
-        if len(old) > 1 and sum(len(span.alignment_parts) for span in old) == len(parts):
-            # A length-preserving substitution keeps distinct word positions;
-            # disagreement at one word must not reset its unchanged neighbor.
-            result, cursor = [], 0
-            for span in old:
-                stop = cursor + len(span.alignment_parts)
-                result.extend(self._replace([span], parts[cursor:stop], end))
-                cursor = stop
-            return result
-        if any(span.locked for span in old):
-            self.diagnostic['protected_changes'] += 1
-            if not parts:
-                return [item for span in old for item in
-                        ([span] if span.locked else self._replace([span], (), end))]
-            if all(span.locked for span in old):
-                return old
-            # No trustworthy split around immutable words: do not guess which
-            # new words replace a lock. Await a hypothesis with usable anchors.
-            self.diagnostic['ambiguous_changes'] += 1
-            return old
-        # Keep previous variants of the same aligned range, including alternate
-        # tokenizations such as "soft mass" / "softmax". A combined range only
-        # inherits observations in which every constituent was really decoded.
-        rounds = set(old[0].observations)
-        for span in old[1:]:
-            rounds.intersection_update(span.observations)
-        observations = {r: tuple(p for span in old for p in span.observations[r]) for r in sorted(rounds)}
-        span = _Span(parts, observations)
-        span.observe(parts, end)
-        return [span]
+        An internal rewrite wholly inside submitted text is absorbed there.
+        At the open right edge, additional words are new pending output; a
+        disagreeing submitted word must never swallow the entire new suffix.
+        """
+        result, cursor = [], 0
+        absorb = internal and old and all(w.locked for w in old)
+        for i, word in enumerate(old):
+            stop = len(parts) if absorb and i == len(old)-1 else min(len(parts), cursor+len(word.raw))
+            value = parts[cursor:stop]
+            if word.locked:
+                if value != word.raw:
+                    self.diagnostic['protected_changes'] += 1
+                if value:
+                    word.raw = value
+                result.append(word)
+            else:
+                if value == (word.text,):
+                    result.append(word)
+                else:
+                    result.extend(_Word(p, (p,), changed_at=now) for p in value)
+            cursor = stop
+        result.extend(_Word(p, (p,), changed_at=now) for p in parts[cursor:])
+        return result
 
     def update(self, local, *, start, audio_end, aligned=True):
+        now = self.clock()
         fresh = audio_end > self.last_audio_end
-        end = audio_end if fresh else None
         self.last_audio_end = max(self.last_audio_end, audio_end)
-        self.diagnostic = dict(reason='cumulative_votes', fresh_observation=fresh,
-                               protected_changes=0, ambiguous_changes=0)
-        index = self._split_at(start)
-        prefix, old = self.spans[:index], self.spans[index:]
-        if not aligned:
-            for span in old:
-                if not span.locked:
-                    span.observations.clear()
-            old = [span for span in old if span.parts]
+        self.diagnostic = dict(reason='local_agreement_2', fresh_observation=fresh,
+                               protected_changes=0, committed_units=0)
+        offset, index = 0, len(self.words)
+        for i, word in enumerate(self.words):
+            if offset + len(word.text) > start:
+                index = i
+                break
+            offset += len(word.text)
+        prefix, old = self.words[:index], self.words[index:]
+        active = set(old)
+        previous = [key for word, key in self.previous if word in active and not word.locked] if aligned else []
         incoming = list(_parts(local))
         if incoming and prefix:
-            # Window decodes omit the preceding separator; it is not a new word.
-            previous = ''.join(p for span in prefix for p in span.parts)
+            before = ''.join(w.text for w in prefix)
             first = incoming[0].lstrip()
-            gap = ' ' if previous and first else ''
-            if previous and first and '\u3400' <= previous[-1] <= '\u9fff' and '\u3400' <= first[0] <= '\u9fff':
+            gap = ' ' if before and first else ''
+            if before and first and '\u3400' <= before[-1] <= '\u9fff' and '\u3400' <= first[0] <= '\u9fff':
                 gap = ''
             incoming[0] = gap + first
-        flat = [p for span in old for p in span.alignment_parts]
+        flat = [p for word in old for p in word.raw]
         edges, pos = {0: 0}, 0
-        for i, span in enumerate(old):
-            pos += len(span.alignment_parts)
-            edges[pos] = i + 1
-        opcodes = SequenceMatcher(None, _key(flat), _key(incoming), autojunk=False).get_opcodes()
+        for i, word in enumerate(old):
+            pos += len(word.raw)
+            edges[pos] = i+1
         result, pending = [], None
-        for tag, a, b, c, d in opcodes:
+
+        def apply(kind, lo, hi, begin, stop):
+            group = old[edges[lo]:edges[hi]]
+            parts = tuple(incoming[begin:stop])
+            if kind == 'equal':
+                cursor = 0
+                for word in group:
+                    count = len(word.raw)
+                    word.raw = parts[cursor:cursor+count]
+                    if not word.locked:
+                        value = ''.join(word.raw)
+                        if value != word.text:
+                            word.changed_at = now
+                            word.text = value
+                    result.append(word)
+                    cursor += count
+            elif kind == 'insert' and edges[lo] < len(old) and old[edges[lo]].locked:
+                # Inserting before submitted words would rewrite that prefix.
+                self.diagnostic['protected_changes'] += 1
+            else:
+                result.extend(self._replace(group, parts, now, internal=hi < len(flat)))
+
+        for tag, a, b, c, d in SequenceMatcher(None, _key(flat), _key(incoming), autojunk=False).get_opcodes():
             if pending is None:
                 pending = [tag, a, b, c, d]
             else:
                 pending[0] = 'replace'
                 pending[2], pending[4] = b, d
-            if b not in edges:
-                continue
             kind, lo, hi, begin, stop = pending
-            group = old[edges[lo]:edges[hi]]
-            parts = tuple(incoming[begin:stop])
-            if kind == 'equal':
-                cursor = 0
-                for span in group:
-                    count = len(span.alignment_parts)
-                    span.observe(parts[cursor:cursor+count], end)
-                    result.append(span)
-                    cursor += count
-            elif kind == 'insert' and result and edges[lo] < len(old) and result[-1].locked and old[edges[lo]].locked:
-                # An insertion inside an already submitted run is a rewrite too.
-                self.diagnostic['protected_changes'] += 1
-            else:
-                result.extend(self._replace(group, parts, end))
+            if hi not in edges:
+                # A partial match in a submitted multiword correction must not
+                # absorb the complete, unchanged words before it.
+                if kind == 'equal':
+                    cut = max(edge for edge in edges if edge <= hi)
+                    if cut > lo:
+                        apply(kind, lo, cut, begin, begin+cut-lo)
+                        pending = [kind, cut, hi, begin+cut-lo, stop]
+                continue
+            apply(*pending)
             pending = None
-        self.spans = prefix + result
-        text, ranges, cursor = '', [], 0
-        for span in self.spans:
-            value = ''.join(span.parts)
-            if span.locked:
-                ranges.append((cursor + len(value)-len(value.lstrip()), cursor + len(value)))
-            text += value
-            cursor += len(value)
-        prefix_size = sum(len(p) for span in prefix for p in span.parts)
+
+        draft = [word for word in result if not word.locked]
+        keys = [word.text.lstrip() for word in draft]
+        if fresh:
+            count = 0
+            for before, current in zip(previous, keys):
+                if before != current:
+                    break
+                count += 1
+            for word in draft[:count]:
+                word.locked = True
+            self.diagnostic['committed_units'] = count
+            self.previous = list(zip(draft[count:], keys[count:]))
+        elif keys != previous:
+            # A repeated-PCM correction is displayable, but is not a new
+            # independent hypothesis that can supply an agreement observation.
+            self.previous = []
+        else:
+            self.previous = list(zip(draft, keys))
+        self.words = prefix + result
+        self.mark_history(len(prefix))
+        self.diagnostic['history_timeout_units'] = self.expire_history(now)
+        text, ranges = self.snapshot()
+        prefix_size = sum(len(w.text) for w in prefix)
         window_start = prefix_size + len(text[prefix_size:])-len(text[prefix_size:].lstrip())
-        return text, confirmation_ranges(text, ranges), window_start
+        return text, ranges, window_start
+
+    def mark_history(self, count):
+        """Only text before the aligned current window (or a suspended row)."""
+        self.history_count = count
+        self.history_due = min((w.changed_at + self.HISTORY_SECONDS
+                                for w in self.words[:count] if not w.locked), default=float('inf'))
+
+    def expire_history(self, now=None):
+        now = self.clock() if now is None else now
+        if now < self.history_due:
+            return 0
+        count = 0
+        for word in self.words[:self.history_count]:
+            if not word.locked and now - word.changed_at >= self.HISTORY_SECONDS:
+                word.locked = True
+                count += 1
+        self.mark_history(self.history_count)
+        return count
+
+    def snapshot(self):
+        text, ranges, cursor = '', [], 0
+        for word in self.words:
+            if word.locked:
+                ranges.append((cursor+len(word.text)-len(word.text.lstrip()), cursor+len(word.text)))
+            text += word.text
+            cursor += len(word.text)
+        return text, confirmation_ranges(text, ranges)

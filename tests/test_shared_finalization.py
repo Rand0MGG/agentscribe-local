@@ -40,7 +40,7 @@ def test_capacity_one_decode_never_confirms_punctuated_fragment():
     asr = QwenAccurateOnline(lambda audio: 'So we want to.', 'en', window_seconds=8,
                             token_type=SimpleNamespace, transcript_type=SimpleNamespace)
     store = install_revision_bridge(asr)
-    asr.insert_audio_chunk(np.ones(13 * 16000), 13)
+    asr.insert_audio_chunk(np.ones(10 * 16000), 10)
     assert asr.process_iter()[0] == []
     assert store.rows[0]['stable_end'] == 0 and not store.rows[0]['closed']
     data = {}
@@ -48,6 +48,10 @@ def test_capacity_one_decode_never_confirms_punctuated_fragment():
     mapper = CaptionMapper('en', predictor=lambda text: [])
     row = mapper.update(data)[0]
     assert not row.asr_final and not row.boundary_final and not row.final
+    asr.insert_audio_chunk(np.ones(3 * 16000), 13)
+    asr.process_iter()
+    assert store.rows[0]['stable_end'] == len('So we want to.')
+    assert not store.rows[0]['closed']  # Two decodes lock text; capacity does not close the interval.
 
 
 @pytest.mark.p1
@@ -199,7 +203,7 @@ def test_both_model_adapters_use_identical_online_policy(monkeypatch, backend):
     store = install_revision_bridge(asr)
     asr.insert_audio_chunk(np.ones(13 * 16000), 13)
     asr.process_iter()
-    assert not store.rows[0]['closed'] and store.rows[0]['stable_end'] == 0
+    assert not store.rows[0]['closed'] and store.rows[0]['stable_end'] == len('shared words')
     asr.finish()
     assert store.rows[0]['closed']
 
