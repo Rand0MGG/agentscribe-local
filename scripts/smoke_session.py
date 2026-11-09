@@ -7,8 +7,10 @@ import wave
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QCoreApplication, QTimer
 from scipy.signal import resample_poly
+
+from linguaflow.events import Dispatcher as QCoreApplication
+from linguaflow.events import Timer as QTimer
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from linguaflow.core import Settings, export_srt

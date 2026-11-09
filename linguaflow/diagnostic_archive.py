@@ -7,6 +7,8 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+from .os_lock import exclusive_lock
+
 HISTORY_BYTES = 128 * 1024 * 1024
 _BASE = r'support-[a-z-]+-\d{8}T\d{6}-(\d+)-[a-f0-9]{8}\.jsonl'
 _RAW = re.compile(_BASE + r'(?:\.\d+)?$')
@@ -23,21 +25,11 @@ def _history_lock(root, wait_seconds):
     if lock.is_symlink():
         raise OSError('history lock is a symbolic link')
     with lock.open('a+b') as stream:
-        if os.name == 'nt':
-            import msvcrt
-            if stream.tell() == 0:
-                stream.write(b'0')
-                stream.flush()
-        else:
-            import fcntl
         deadline = time.monotonic() + wait_seconds
         while True:
+            held = exclusive_lock(stream)
             try:
-                if os.name == 'nt':
-                    stream.seek(0)
-                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
-                else:
-                    fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                held.__enter__()
                 break
             except OSError:
                 if time.monotonic() >= deadline:
@@ -47,11 +39,7 @@ def _history_lock(root, wait_seconds):
         try:
             yield True
         finally:
-            if os.name == 'nt':
-                stream.seek(0)
-                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                fcntl.flock(stream, fcntl.LOCK_UN)
+            held.__exit__(None, None, None)
 
 
 def _compress(source):

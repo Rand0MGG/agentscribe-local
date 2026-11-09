@@ -7,6 +7,8 @@ import threading
 import time
 from pathlib import Path
 
+from .asr_review import MAX_TOKENS, RepetitionReviewError, checked_generate
+
 
 def watch_parent(parent):
     # Also release Metal memory when WLK is cancelled during model generation.
@@ -46,11 +48,12 @@ def serve(read, emit):
         if not 0 < len(pcm) <= 45 * 16000 or not np.isfinite(pcm).all():
             raise ValueError('MLX 识别音频必须是 0–45 秒的有限值 16 kHz 单声道 PCM。')
         started = time.perf_counter()
-        result = model.generate(pcm, language=settings['language'], temperature=0.,
-                                max_tokens=512, prefill_step_size=256, verbose=False,
-                                **({'system_prompt': context} if context else {}))
+        result, review = checked_generate(model, pcm, language=settings['language'], temperature=0.,
+                                          max_tokens=MAX_TOKENS, prefill_step_size=256, verbose=False,
+                                          **({'system_prompt': context} if context else {}))
         mx.synchronize()
         emit({'type': 'result', 'text': result.text.strip(),
+              'generation_tokens': result.generation_tokens, 'repetition_review': review,
               'compute_seconds': time.perf_counter() - started,
               'peak_bytes': mx.get_peak_memory(), 'active_bytes': mx.get_active_memory(),
               'device': str(mx.default_device())})
@@ -74,7 +77,8 @@ def main():
     try:
         serve(read, emit)
     except Exception as exc:
-        emit({'type': 'error', 'text': str(exc)})
+        emit({'type': 'error', 'text': str(exc),
+              **({'repetition_review': exc.review} if isinstance(exc, RepetitionReviewError) else {})})
         raise
 
 

@@ -10,7 +10,7 @@ import { Playback } from './Playback';
 import { LevelMeter, RecordingIsland } from './RecordingIsland';
 import { useMaterial, usePageTransition } from './motion';
 import { useNotifications } from './notifications';
-import { bridge, clock, request, type Bootstrap, type Caption, type Item, type Page, type Settings, type State } from './types';
+import { bridge, clock, request, type Bootstrap, type Caption, type Item, type Page, type Settings, type State, type Method, type RequestArgs, type DeletedItem } from './types';
 
 const blockingCommands = new Set(['recording.new', 'recording.open', 'recording.start', 'recording.stop', 'recording.pause', 'recording.save', 'recording.close_recovered', 'library.refresh', 'library.migrate']);
 
@@ -28,7 +28,7 @@ export function App() {
   const [busy, setBusy] = useState(false), [seconds, setSeconds] = useState(0), [level, setLevel] = useState(0);
   const [playback, setPlayback] = useState<{ position: number; duration: number; state: string; caption_id: number | null }>({ position: 0, duration: 0, state: 'StoppedState', caption_id: null }), [volume, setVolume] = useState(100);
   const scrubbing = useRef(false);
-  const [deleted, setDeleted] = useState<any[] | null>(null), [moving, setMoving] = useState<Item | null>(null), [moveTo, setMoveTo] = useState('');
+  const [deleted, setDeleted] = useState<DeletedItem[] | null>(null), [moving, setMoving] = useState<Item | null>(null), [moveTo, setMoveTo] = useState('');
   const [search, setSearch] = useState<string | null>(null), [searchMatches, setSearchMatches] = useState<{ rows: Caption[]; identifier: string | null; generation: number }>({ rows: [], identifier: null, generation: -1 }), [locate, setLocate] = useState<number | null>(null);
   const [searchPage, setSearchPage] = useState(0), [searchTotal, setSearchTotal] = useState(0);
   const [diagnostics, setDiagnostics] = useState<string[]>([]), [showDiagnostics, setShowDiagnostics] = useState(false);
@@ -46,13 +46,17 @@ export function App() {
   const [updateEvent, setUpdateEvent] = useState<any>(null), [updateNotes, setUpdateNotes] = useState(false);
   dataRef.current = data;
 
-  async function perform(method: string, params: Record<string, unknown> = {}) {
+  async function perform<M extends Method>(method: M, ...args: RequestArgs<M>) {
     if (commands.current.has(method)) return;
     commands.current.add(method); setBusy([...commands.current].some(command => blockingCommands.has(command)));
     try {
-      const result = await request(method, params);
+      const result = await request(method, ...args);
       if (method === 'audio.select') {
-        setData(old => old ? { ...old, device: result } : old);
+        // Narrow the generic command result before storing the device tuple.
+        if (Array.isArray(result) && typeof result[0] === 'string' && typeof result[1] === 'boolean') {
+          const device: [string, boolean] = [result[0], result[1]];
+          setData(old => old ? { ...old, device } : old);
+        }
         setAudioMessage('已选择音频来源。'); setNotice(null, 'audio-discovery');
       }
       return result;
@@ -69,7 +73,7 @@ export function App() {
     }
     try {
       const playbackTarget = start === undefined && target === undefined ? playback.caption_id : null;
-      const result = await request<Page>('captions.page', { ...(start !== undefined ? { start } : {}), ...(target !== undefined || playbackTarget !== null ? { locate: target ?? playbackTarget } : {}) });
+      const result = await request('captions.page', { ...(start !== undefined ? { start } : {}), ...(target !== undefined || playbackTarget !== null ? { locate: target ?? playbackTarget } : {}) });
       if (result.generation === dataRef.current?.state.generation && generation === result.generation) {
         setPage(result); if (target !== undefined) setLocate(target);
       }
@@ -85,7 +89,7 @@ export function App() {
           tail.current = true; setLocate(null); setPage({ ...emptyPage, generation: value.generation });
           setPlayback({ position: 0, duration: value.playback?.duration || 0, state: 'StoppedState', caption_id: null }); setVolume(value.playback?.volume ?? 100); setSeconds(0);
         }
-        if (value.state === 'IDLE' && value.has_audio && value.playback) setPlayback(old => ({ ...old, duration: value.playback.duration }));
+        if (value.state === 'IDLE' && value.has_audio && value.playback) { const duration = value.playback.duration; setPlayback(old => ({ ...old, duration })); }
         setData(old => old ? { ...old, state: value } : old);
       }
       if (event === 'library') setData(old => old ? { ...old, library: value } : old);
@@ -138,7 +142,7 @@ export function App() {
         setPlayback(old => ({ ...old, ...value, ...(scrubbing.current ? { position: old.position, caption_id: old.caption_id } : {}) }));
       }
     });
-    request<Bootstrap>('bootstrap').then(result => {
+    request('bootstrap').then(result => {
       if (!live) return;
       stateGeneration.current = result.state.generation;
       setPlayback({ position: 0, duration: result.state.playback?.duration || 0, state: 'StoppedState', caption_id: null }); setVolume(result.state.playback?.volume ?? 100);
@@ -167,7 +171,7 @@ export function App() {
     const ticket = ++searchGeneration.current;
     const timer = setTimeout(() => {
       const owner = dataRef.current?.state;
-      request<{ rows: Caption[]; generation: number; total: number }>('captions.search', { query: search, start: searchPage * 100 }).then(result => {
+      request('captions.search', { query: search, start: searchPage * 100 }).then(result => {
         if (owner && ticket === searchGeneration.current && result.generation === owner.generation && result.generation === dataRef.current?.state.generation) { setSearchMatches({ rows: result.rows, identifier: owner.item?.id ?? null, generation: result.generation }); setSearchTotal(result.total); }
       }).catch(e => setNotice({ text: e.message, error: true }));
     }, 150);
@@ -216,7 +220,7 @@ export function App() {
     <header className="titlebar" aria-label="窗口拖动区域" />
     <div className="page-stack" ref={pageTransition}>{section === 'settings' && <SettingsPage audioBusy={audioBusy} audioMessage={audioMessage} updatesBusy={updatesBusy} update={updateEvent} initialCategory={settingsCategory} data={data} values={data.settings} state={state} onClose={() => setSection('recording')} onDeleted={async () => { const result = await perform('trash.list'); if (result) setDeleted(result); }} perform={perform} onPatch={setSettings} onCategory={setSettingsCategory} />}<div className="workspace-layout" hidden={section !== 'recording'}>
       <ResizableSidebar preferred={data.layout?.sidebar_width} onCommit={async width => {
-        try { const saved = await request<number>('layout.sidebar', { width }); setData(old => old ? { ...old, layout: { sidebar_width: saved } } : old); }
+        try { const saved = await request('layout.sidebar', { width }); setData(old => old ? { ...old, layout: { sidebar_width: saved } } : old); }
         catch (error) { setNotice({ text: (error as Error).message, error: true }); throw error; }
       }}><div className="brand">AgentScribe</div><Button className="navigation sidebar-action" variant="quiet" aria-label="新录音" title="新录音" disabled={blocked} onClick={() => newRecording()}><Icon name="new" /><span className="sidebar-label">新录音</span></Button>
         <SidebarToggle /><div className="folder-heading"><span className="sidebar-label">文件夹</span><Tip label="新建文件夹" side="right"><Button className="sidebar-action sidebar-icon-action" variant="quiet" aria-label="新建文件夹" disabled={blocked} onClick={() => setEditor({ title: '新建文件夹', save: name => request('folder.create', { name }) })}><Icon name="folder-add" /></Button></Tip></div>
@@ -260,6 +264,7 @@ export function App() {
               {active ? <><Tip label={state.state === 'PAUSED' ? '继续录音' : '暂停'}><Button className="icon-button" aria-label={state.state === 'PAUSED' ? '继续录音' : '暂停'} disabled={!['LISTENING', 'PAUSED'].includes(state.state) || !!state.failure} onClick={() => perform('recording.pause')}><Icon name={state.state === 'PAUSED' ? 'play' : 'pause'} /></Button></Tip><Tip label="停止"><Button variant="primary" className="transport-button" aria-label="停止" disabled={state.state === 'STOPPING'} onClick={() => perform('recording.stop')}><Icon name="stop" /></Button></Tip></> :
                 <Tip label="开始聆听"><Button variant="primary" className="transport-button" aria-label="开始聆听" disabled={busy || (state.preparation_blocks_recording ?? state.preparing) || state.saving || state.closing || state.update_fenced || data.no_audio || !sourceAvailable} onClick={() => perform('recording.start')}><Icon name="play" /></Button></Tip>}
           </RecordingIsland>}
+          {!active && state.saving && !state.closing && <p className="status" role="status">正在保存…</p>}
           {(state.failure || state.save_error || state.closing) && <p className="status error" role="alert">{state.save_error || state.failure || '正在保存并退出…'}</p>}
         </>}</Transport>
       </main></div></div>
@@ -279,7 +284,7 @@ export function App() {
     }}>移动</Button></>}><Choice label="目标文件夹" value={moveTo} options={data.library.folders.filter(row => row.id !== moving.id).map(row => ({ value: row.id, label: row.name }))} onChange={setMoveTo} /></Modal>}
     {deleted && <Deleted rows={deleted} disabled={blocked} onChange={setDeleted} onClose={() => setDeleted(null)} />}
     {updateNotes && <Modal title={'更新到 ' + (updateEvent?.version || '')} description="更新保留录音、模型与设置。录音中可以下载，结束并保存后才能安装。" open onClose={() => { setUpdateNotes(false); perform('updates.action', { action: 'cancel' }); }} actions={<><Button onClick={() => { setUpdateNotes(false); perform('updates.action', { action: 'cancel' }); }}>稍后</Button><Button variant="primary" onClick={() => { setUpdateNotes(false); perform('updates.action', { action: 'download' }); }}>下载更新</Button></>}><p>{String(updateEvent?.notes || '此版本未提供更新说明。').replace(/<[^>]+>/g, '')}</p></Modal>}
-    {search !== null && <Modal title="查找字幕" description="搜索原文或译文，选择结果定位，不会自动播放。" open onClose={() => { setSearch(null); searchGeneration.current++; }}><input aria-label="搜索当前录音字幕" placeholder="搜索原文或译文…" value={search} onChange={event => { setSearchPage(0); setSearch(event.target.value); }} autoFocus /><div className="search-results">{matches.map(row => <button key={row.id} onClick={async () => { const result = await perform('captions.locate', { identifier: searchMatches.identifier, generation: searchMatches.generation, caption_id: row.id }); if (result && result.page.generation === dataRef.current?.state.generation) { setPage(result.page); setLocate(row.id); setSearch(null); } }}>{clock(row.start).slice(row.start >= 3600 ? 0 : 3)}　{row.source}<span>{row.translation}</span></button>)}{!matches.length && <p>没有匹配内容。</p>}</div><div className="settings-actions"><span>共 {searchTotal} 条，显示 {matches.length ? searchPage * 100 + 1 : 0}–{searchPage * 100 + matches.length}</span><Button disabled={searchPage === 0} onClick={() => setSearchPage(searchPage - 1)}>上一页</Button><Button disabled={(searchPage + 1) * 100 >= searchTotal} onClick={() => setSearchPage(searchPage + 1)}>下一页</Button></div></Modal>}
+    {search !== null && <Modal title="查找字幕" description="搜索原文或译文，选择结果定位，不会自动播放。" open onClose={() => { setSearch(null); searchGeneration.current++; }}><input aria-label="搜索当前录音字幕" placeholder="搜索原文或译文…" value={search} onChange={event => { setSearchPage(0); setSearch(event.target.value); }} autoFocus /><div className="search-results">{matches.map(row => <button key={row.id} onClick={async () => { if (!searchMatches.identifier) return; const result = await perform('captions.locate', { identifier: searchMatches.identifier, generation: searchMatches.generation, caption_id: row.id }); if (result && result.page.generation === dataRef.current?.state.generation) { setPage(result.page); setLocate(row.id); setSearch(null); } }}>{clock(row.start).slice(row.start >= 3600 ? 0 : 3)}　{row.source}<span>{row.translation}</span></button>)}{!matches.length && <p>没有匹配内容。</p>}</div><div className="settings-actions"><span>共 {searchTotal} 条，显示 {matches.length ? searchPage * 100 + 1 : 0}–{searchPage * 100 + matches.length}</span><Button disabled={searchPage === 0} onClick={() => setSearchPage(searchPage - 1)}>上一页</Button><Button disabled={(searchPage + 1) * 100 >= searchTotal} onClick={() => setSearchPage(searchPage + 1)}>下一页</Button></div></Modal>}
 
   </div></Tooltip.Provider>;
 }

@@ -2,10 +2,10 @@
 import json
 import os
 import subprocess
-import sys
 from contextlib import contextmanager
 from uuid import uuid4
 
+from .os_lock import exclusive_lock
 from .process_platform import spawn_options, stop_tree
 from .runtime_paths import installation_command, python_environment, resource_root
 
@@ -34,28 +34,15 @@ def preparation_lock(directory):
     """OS releases the lock even if a cancelled preparation is forcibly killed."""
     directory.mkdir(parents=True, exist_ok=True)
     with (directory / 'prepare.lock').open('a+b') as handle:
-        handle.seek(0)
-        if not handle.read(1):
-            handle.write(b'0')
-            handle.flush()
-        handle.seek(0)
+        lock = exclusive_lock(handle)
         try:
-            if sys.platform == 'win32':
-                import msvcrt
-                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock.__enter__()
         except OSError as exc:
             raise RuntimeError('已有准备任务正在运行，请等待完成或取消后重试。') from exc
         try:
             yield
         finally:
-            handle.seek(0)
-            if sys.platform == 'win32':
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            lock.__exit__(None, None, None)
 
 
 def publish(pointer, value):

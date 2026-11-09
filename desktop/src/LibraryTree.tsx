@@ -107,7 +107,7 @@ export function ResizableSidebar({ preferred, onCommit, children }: { preferred?
     const unsubscribe = bridge?.subscribe(({ event, data }) => {
       if (event === 'window-layout') { received = true; update(data.split); }
     });
-    request<{ split: boolean }>('window.layout').then(value => { if (!received) update(value.split); }).catch(() => {});
+    request('window.layout').then(value => { if (!received) update(value.split); }).catch(() => {});
     return () => { live = false; unsubscribe?.(); };
   }, []);
   useEffect(() => { setDraft(null); }, [preferred]);

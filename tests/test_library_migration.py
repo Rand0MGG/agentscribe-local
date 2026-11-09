@@ -192,7 +192,7 @@ def test_volume_without_hardlinks_uses_exclusive_verified_copy(tmp_path, monkeyp
     import errno
     import os
     source, item, _ = populated(tmp_path/'old')
-    def unsupported(*args):
+    def unsupported(*args, **kwargs):
         raise OSError(errno.ENOTSUP, 'fixture exFAT volume')
     monkeypatch.setattr(os, 'link', unsupported)
     copied, verified = migrate_library(source, tmp_path/'external')

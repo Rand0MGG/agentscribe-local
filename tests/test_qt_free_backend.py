@@ -169,7 +169,7 @@ def test_failed_preference_commit_retains_original_and_pending_changes(tmp_path,
     settings.setValue('saved', 1)
     before = settings.path.read_bytes()
     replace = os.replace
-    monkeypatch.setattr(os, 'replace', lambda *_: (_ for _ in ()).throw(OSError('full disk')))
+    monkeypatch.setattr(os, 'replace', lambda *_, **kwargs: (_ for _ in ()).throw(OSError('full disk')))
     settings.setValue('saved', 2)
     assert settings.status() == SettingsStore.Status.AccessError
     assert settings.path.read_bytes() == before

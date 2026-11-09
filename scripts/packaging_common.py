@@ -6,7 +6,7 @@ import tarfile
 import urllib.request
 from pathlib import Path
 
-LEGACY_QT_FILES = {'linguaflow/notifications.py', 'linguaflow/window_platform.py', 'linguaflow/library_browser.py', 'linguaflow/ui_tooltips.py', 'linguaflow/recording_search.py', 'linguaflow/deleted_dialog.py', 'linguaflow/workspace_widgets.py', 'linguaflow/ui_backdrop.py', 'linguaflow/model_dialog.py', 'linguaflow/model_browser.py', 'linguaflow/caption_feed.py', 'linguaflow/ui_components.py', 'linguaflow/management.py', 'linguaflow/onboarding.py', 'linguaflow/playback_controls.py', 'linguaflow/recording_controls.py', 'linguaflow/legacy_playback.py', 'linguaflow/qt_controls.py', 'linguaflow/window_chrome.py', 'linguaflow/subtitles_overlay.py', 'linguaflow/app.py', 'linguaflow/caption_view.py', 'linguaflow/knowledge/panel.py'}
+LEGACY_QT_FILES = {'linguaflow/settings_binding.py', 'linguaflow/ui_macos.py', 'linguaflow/notifications.py', 'linguaflow/window_platform.py', 'linguaflow/library_browser.py', 'linguaflow/ui_tooltips.py', 'linguaflow/recording_search.py', 'linguaflow/deleted_dialog.py', 'linguaflow/workspace_widgets.py', 'linguaflow/ui_backdrop.py', 'linguaflow/model_dialog.py', 'linguaflow/model_browser.py', 'linguaflow/caption_feed.py', 'linguaflow/ui_components.py', 'linguaflow/management.py', 'linguaflow/onboarding.py', 'linguaflow/playback_controls.py', 'linguaflow/recording_controls.py', 'linguaflow/legacy_playback.py', 'linguaflow/qt_controls.py', 'linguaflow/window_chrome.py', 'linguaflow/subtitles_overlay.py', 'linguaflow/app.py', 'linguaflow/caption_view.py', 'linguaflow/knowledge/panel.py'}
 
 
 def copy_notices(items, source, destination):
@@ -64,7 +64,7 @@ def copy_application(root, destination):
         if name in LEGACY_QT_FILES:
             continue
         relative = Path(name)
-        if relative.suffix not in {'.py', '.mjs'}:
+        if relative.suffix not in {'.py', '.mjs'} and name != 'linguaflow/desktop_contract.json':
             raise ValueError('未声明的应用资源格式：' + name)
         source = root / relative
         if (not source.is_file() or any(path.is_symlink() or (

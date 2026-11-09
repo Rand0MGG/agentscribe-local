@@ -15,9 +15,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import winsound
 
 import soundcard as sc
-from PySide6.QtCore import QCoreApplication, QTimer
 
 from linguaflow.core import Settings, export_srt
+from linguaflow.events import Dispatcher as QCoreApplication
+from linguaflow.events import Timer as QTimer
 from linguaflow.wlk_session import Session
 
 

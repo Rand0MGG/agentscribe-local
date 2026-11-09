@@ -490,6 +490,7 @@ def test_capture_feedback_distinguishes_audio_and_model_lifecycle(desktop):
     from types import SimpleNamespace
 
     from linguaflow.recording_state import RecordingState
+    desktop._create_recording(name='capture feedback')
     ready = Event()
     desktop.session = SimpleNamespace(model_ready=ready)
     try:
@@ -512,6 +513,12 @@ def test_capture_feedback_distinguishes_audio_and_model_lifecycle(desktop):
         assert desktop.snapshot()['capture']['waiting'] == '正在聆听…'
         desktop._stage('音频', '输入持续为零，请检查来源 / 静音')
         assert desktop.snapshot()['capture']['waiting'].startswith('没有收到声音。')
+        desktop._caption(Caption(1, 0, 1, 'Already transcribed', 'en'))
+        assert desktop.snapshot()['count'] == 1
+        assert desktop.snapshot()['capture']['volume_label'] == '未收到声音'
+        desktop._stage('音频', '已收到声音 · 连续采集')
+        assert desktop.snapshot()['capture']['volume_label'] == '输入音量'
+        desktop._stage('音频', '输入持续为零，请检查来源 / 静音')
         desktop.state = RecordingState.PAUSED
         assert desktop.snapshot()['capture']['volume_label'] == '已暂停'
         desktop.pending_source_revision = 2
@@ -648,24 +655,48 @@ def test_recording_audio_metadata_is_ready_without_player(desktop):
 
 
 @pytest.mark.p1
-def test_finished_session_populates_playback_after_saving_and_unlocking(desktop):
+@pytest.mark.parametrize('save_fails', [False, True])
+def test_finished_session_populates_playback_after_saving_and_unlocking(desktop, monkeypatch, save_fails):
     import wave
     from types import SimpleNamespace
     desktop._create_recording(name='completed audio')
+    desktop.library.begin(desktop.item, {})
     directory = desktop.library.directory(desktop.item['id'])
     with wave.open(str(directory / '录音.wav'), 'wb') as audio:
         audio.setnchannels(1)
         audio.setsampwidth(2)
         audio.setframerate(16000)
         audio.writeframes(bytes(64000))
+    original = (directory / '录音.wav').read_bytes()
+    save = desktop.library.save
+    if save_fails:
+        def fail_save(*args):
+            raise OSError('Disk unavailable')
+        monkeypatch.setattr(desktop.library, 'save', fail_save)
+    events = []
+    desktop.output.connect(events.append)
     desktop.recording_lock = acquire_recording_lock(directory)
     desktop.translating = False
     desktop.session = SimpleNamespace(isRunning=lambda: False, deleteLater=lambda: None)
     desktop._finished(desktop.session)
+    assert desktop.recording_lock is not None
+    assert desktop.snapshot()['saving']
+    assert desktop.snapshot()['playback']['duration'] == 0
+    assert not any(event.get('event') == 'notice' for event in events)
     drain(desktop)
+    if save_fails:
+        assert desktop.recording_lock is not None
+        assert desktop.dirty and 'Disk unavailable' in desktop.save_error
+        assert desktop.snapshot()['playback']['duration'] == 0
+        monkeypatch.setattr(desktop.library, 'save', save)
+        desktop.retry_save()
+        drain(desktop)
     assert desktop.recording_lock is None
+    assert desktop.item['state'] == 'complete'
     assert desktop.snapshot()['playback']['duration'] == 2000
     assert desktop.player is None
+    assert (directory / '录音.wav').read_bytes() == original
+    assert not any(event.get('event') == 'notice' for event in events)
 
 
 @pytest.mark.p0
@@ -749,3 +780,96 @@ def test_failed_runtime_release_cannot_start_a_new_recording(desktop):
     finally:
         desktop.no_audio = True
         desktop.runtime = None
+
+
+@pytest.mark.p1
+def test_preview_autosave_and_unfinished_recovery_keep_latest_words_and_translation(desktop):
+    from linguaflow.recording_state import RecordingState
+    desktop._create_recording(name='最新草稿')
+    desktop.session = QObject(desktop)
+    desktop.state = RecordingState.LISTENING
+    desktop._caption(Caption(1, 0, 1, 'Saved prefix', 'en'))
+    desktop._caption(Caption(2, 1, 2, 'Old tail', 'en', '旧译文', final=False))
+    event = dict(sequence=1, keep_ids=[1], source='Latest words', start=1., end=3., language='en')
+    desktop._preview(event)
+    drain(desktop)
+    saved = desktop.library.load(desktop.item)[1]
+    assert [row.source for row in saved] == ['Saved prefix', 'Latest words']
+    assert saved[-1].translation == '旧译文' and saved[-1].translation_source == 'Old tail'
+    assert not saved[-1].final and desktop.captions[2].source == 'Old tail'
+    desktop._preview(dict(event, sequence=2, source='Corrected words'))
+    desktop._preview(dict(sequence=1, done=True))
+    drain(desktop)
+    assert desktop.preview['sequence'] == 2
+    assert desktop.library.load(desktop.item)[1][-1].source == 'Corrected words'
+    desktop._retain_preview()
+    assert desktop.preview is None and desktop.captions[2].source == 'Corrected words'
+    assert desktop.captions[2].translation_source == 'Old tail'
+    desktop.session = None
+    desktop.state = RecordingState.IDLE
+    desktop._save('incomplete')
+    drain(desktop)
+    saved = desktop.library.load(desktop.item)[1]
+    assert saved[-1].source == 'Corrected words' and not saved[-1].final
+    assert saved[-1].translation == '旧译文'
+
+
+@pytest.mark.p0
+def test_abrupt_desktop_exit_recovers_preview_and_partial_audio_without_touching_original(tmp_path):
+    import io
+    import wave
+
+    from linguaflow.library import Library
+    from linguaflow.playback_stream import PlaybackStream
+    program = r'''
+import os, sys, time, wave
+from pathlib import Path
+from linguaflow.desktop_service import DesktopService
+from linguaflow.events import Dispatcher, Owner
+from linguaflow.settings_store import SettingsStore
+from linguaflow.library_access import acquire_recording_lock
+from linguaflow.recording_state import RecordingState
+root = Path(sys.argv[1])
+app = Dispatcher([])
+service = DesktopService(library_root=root/'library', prefs=SettingsStore(root/'prefs.json', 1), no_audio=True)
+service._create_recording(name='异常退出 原件保留')
+directory = service.library.directory(service.item['id'])
+service.recording_lock = acquire_recording_lock(directory)
+service.library.begin(service.item, {})
+service.session = Owner(service)
+service.state = RecordingState.LISTENING
+raw = (directory/'录音.wav').open('wb')
+writer = wave.open(raw, 'wb')
+writer.setparams((1,2,48000,0,'NONE','not compressed'))
+writer.writeframes(b'\x01\x00'*40)
+raw.flush()
+raw.write(b'\x02\x00'*5+b'\x03')
+raw.flush()
+service._preview(dict(sequence=1,keep_ids=[],source='Latest before crash',start=0.,end=1.,language='en'))
+deadline = time.monotonic()+5
+while service.dirty or service.saver.busy:
+    app.process()
+    assert time.monotonic() < deadline
+    time.sleep(.005)
+# Deliberately omit stop, writer.close, flush, service.close and lock release.
+os._exit(0)
+'''
+    result = subprocess.run([sys.executable, '-c', program, str(tmp_path)], capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    library = Library(tmp_path / 'library')
+    item = library.index['sessions'][0]
+    data, captions = library.load(item)
+    assert data['session']['state'] == 'recording'
+    assert len(captions) == 1 and captions[0].source == 'Latest before crash' and not captions[0].final
+    path = library.directory(item['id']) / '录音.wav'
+    original = path.read_bytes()
+    stream = PlaybackStream(path, recover_recording=True)
+    try:
+        with wave.open(io.BytesIO(bytes(stream.read(stream.size())))) as reader:
+            assert reader.getnframes() == 45
+            assert reader.readframes(100) == b'\x01\x00'*40+b'\x02\x00'*5
+    finally:
+        stream.close()
+    assert path.read_bytes() == original
+    lock = acquire_recording_lock(path.parent)
+    lock.unlock()

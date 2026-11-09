@@ -1,5 +1,6 @@
 # 界面规范
 
+当前维护入口为 Electron。本文 Qt 组件、Demo、配对图和参数来源属于历史设计基线，源码归档于 `archive/qt/`，不再运行或维护 Qt；当前功能契约仍由正式 Electron 组件与探针验证。
 正文易读、常用操作直达，Windows/macOS 共用交互。业务约定见 [spec](specs/README.md)，操作见 [指南](WORKSPACE.md)，实现见 [架构](ARCHITECTURE.md)；实现与验收缺口见 [计划](ROADMAP.md)。
 
 ## 使用与约束等级
@@ -28,8 +29,8 @@
 
 | 基准 | 负责的契约 | 入口 |
 | --- | --- | --- |
-| 组件 Demo | 控件外观、输入响应、状态、主题与动效 | [独立 Qt 展示窗口](#独立-qt-展示窗口) · [preview_components.py](../scripts/preview_components.py) |
-| 正式流程 Demo | 页面组合、任务入口、选择保持、进度、失败恢复与流程衔接 | [正式流程展示](#正式流程展示) · [preview_workflows.py](../scripts/preview_workflows.py) |
+| 组件 Demo | 控件外观、输入响应、状态、主题与动效 | [独立 Qt 展示窗口](#独立-qt-展示窗口) · [preview_components.py](../archive/qt/scripts/preview_components.py) |
+| 正式流程 Demo | 页面组合、任务入口、选择保持、进度、失败恢复与流程衔接 | [正式流程展示](#正式流程展示) · [preview_workflows.py](../archive/qt/scripts/preview_workflows.py) |
 
 - **外观一致**：同角色使用同一主题、字号层级、颜色、尺寸、间距、圆角、阴影、图标与对齐；明暗主题、宽窄布局及所有适用状态都保持一致，页面不得用局部样式另造同类外观。
 - **交互一致**：点击、悬停、按压、选中、禁用、键盘焦点、展开/关闭、滚动、输入校验、动效与减少动态效果遵循同一组件契约。加载、成功、失败、取消、重试和退出的可见状态与操作逻辑也须一致，不能只对齐正常状态。
@@ -220,7 +221,7 @@ Qt Demo 保持参考可运行；Electron 的组件展示必须直接导入正式
 
 ### 正式流程展示
 
-入口：[scripts/preview_workflows.py](../scripts/preview_workflows.py)，运行 `.venv\Scripts\python.exe scripts/preview_workflows.py`。复用正式 Window、录音库选择、设置、菜单、模型弹窗、准备线程与信号；仅录音/下载任务由隔离夹具替换，示例目录位于 `.work/workspace-preview/workflows/`。覆盖文件夹切到录音、55% 失败后原任务重试、环境阶段进度、取消继续、窄窗口长菜单及小岛到回放轨道双向过渡。场景面板可切换主题和窗口尺寸。取消准备使用正式组件：立即反馈正在取消、禁用重复点击，迟到进度不得覆盖该状态；后台结束后才提供继续准备。此演示不证明真实下载服务器续传或音频可用。
+入口：[scripts/preview_workflows.py](../archive/qt/scripts/preview_workflows.py)，运行 `.venv\Scripts\python.exe scripts/preview_workflows.py`。复用正式 Window、录音库选择、设置、菜单、模型弹窗、准备线程与信号；仅录音/下载任务由隔离夹具替换，示例目录位于 `.work/workspace-preview/workflows/`。覆盖文件夹切到录音、55% 失败后原任务重试、环境阶段进度、取消继续、窄窗口长菜单及小岛到回放轨道双向过渡。场景面板可切换主题和窗口尺寸。取消准备使用正式组件：立即反馈正在取消、禁用重复点击，迟到进度不得覆盖该状态；后台结束后才提供继续准备。此演示不证明真实下载服务器续传或音频可用。
 
 原组件展示只覆盖单组件和内存任务，不能替代正式页面的异步状态、任务入口和数据选择验收。操作菜单超出窗口可用高度时使用可滚动视口；键盘末项、禁用项浏览、子菜单和反复开关都需验证，不能仅裁掉超出部分。
 
@@ -228,7 +229,7 @@ Qt Demo 保持参考可运行；Electron 的组件展示必须直接导入正式
 
 Windows 正式窗口与展示外壳采用 8 px 圆角和同一软阴影绘制函数：扩散 12 px、下移 4 px、逐层 alpha 按高斯曲线从 6 衰减，透明边距 16 px；比早期展示略重；最大化去掉边距、圆角与阴影，还原后恢复。不使用旧式系统标题栏。
 
-入口：[scripts/preview_components.py](../scripts/preview_components.py)。它不创建主应用 Window、不读取用户录音/设置、不准备模型；音频后端导入由无音频 guard 阻止。正式组件直接复用，已确认的候选逻辑归入共享实现，展示不维护第二套控件。控件变更只存在内存；截图和 guard 日志写 `.work/browser/component-lab/`。
+入口：[scripts/preview_components.py](../archive/qt/scripts/preview_components.py)。它不创建主应用 Window、不读取用户录音/设置、不准备模型；音频后端导入由无音频 guard 阻止。正式组件直接复用，已确认的候选逻辑归入共享实现，展示不维护第二套控件。控件变更只存在内存；截图和 guard 日志写 `.work/browser/component-lab/`。
 
 Windows：`.venv\Scripts\python.exe scripts/preview_components.py`。Mac：`.venv/bin/python scripts/preview_components.py`。加 `--capture` 保存明暗与宽窄布局后关闭；该选项不构成交互验收。
 
@@ -369,7 +370,7 @@ Windows：`.venv\Scripts\python.exe scripts/preview_components.py`。Mac：`.ven
 
 ### 双前端切换契约
 
-双向切换按钮统一收纳到“设置 → 运行环境”，主侧栏不显示切换入口；其余继续对照 v0.10.2。只有保存、编辑与后台任务门禁通过后才交接；保留当前录音/草稿、偏好和可见屏幕内的窗口几何，下一界面不能抢在原资源退出前启动。缺组件时原窗保留，目标启动失败显示原因并回退。首次默认 Qt，成功切换后记住选择。安装版更新使用明确标注的 Qt 更新入口，升级恢复首次启动由 Qt 确认；不把此差异隐藏为完全等价。
+正式入口固定为 Electron，Qt 切换已移除。窗口关闭与更新仍须通过保存、编辑和后台任务门禁；保留旧录音、偏好和几何读取兼容。安装版通过原生启动器确认真实 Electron 界面就绪，不再经 Qt 更新入口。
 
 
 ### Electron 的材质与动态参数

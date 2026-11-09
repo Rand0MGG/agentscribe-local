@@ -3,7 +3,6 @@ import base64
 import errno
 import io
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -181,7 +180,7 @@ def test_close_interrupts_pending_response_without_waiting_for_request_deadline(
         worker.join(timeout=3)
 
 
-def fake_runtime(monkeypatch, available=True):
+def fake_runtime(monkeypatch, available=True, outputs=None):
     state = {'device': 'cpu', 'calls': []}
     mx = SimpleNamespace(metal=SimpleNamespace(is_available=lambda: available), gpu='gpu',
         set_default_device=lambda device: state.update(device=device),
@@ -190,7 +189,7 @@ def fake_runtime(monkeypatch, available=True):
         get_peak_memory=lambda: 456, synchronize=lambda: None, clear_cache=lambda: None)
     def generate(audio, **kwargs):
         state['calls'].append((audio, kwargs))
-        return SimpleNamespace(text=' hello ')
+        return next(outputs) if outputs is not None else SimpleNamespace(text=' hello ', generation_tokens=1)
     monkeypatch.setitem(sys.modules, 'mlx', SimpleNamespace(core=mx))
     monkeypatch.setitem(sys.modules, 'mlx.core', mx)
     monkeypatch.setitem(sys.modules, 'mlx_audio.stt.utils', SimpleNamespace(
@@ -225,38 +224,29 @@ def test_worker_pcm_contract_and_quantization_validation(monkeypatch, tmp_path, 
     assert state['calls'][0][1]['language'] == 'English'
 
 
-@pytest.mark.p0
-def test_mac_profile_roundtrip_and_backend_switch_do_not_open_audio(tmp_path):
-    code = '''
-import os,sys
-from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QApplication
-from linguaflow.app import Window
-app = QApplication([])
-prefs = QSettings(os.environ['AGENTSCRIBE_LIBRARY'] + '/prefs.ini', QSettings.Format.IniFormat)
-w = Window(discover=False, prefs=prefs)
-w.use_mac_profile()
-settings = w.settings_binding.session_settings(('file', False))
-assert settings.backend == 'qwen3-mlx' and settings.asr_device == 'mlx'
-assert settings.qwen_model.endswith('1.7B-4bit')
-assert settings.translate
-assert settings.translation_engine == 'llama' and settings.translation_device == 'metal'
-assert settings.translation_before == 5 and settings.translation_after == 1
-w.save()
-w.model_manager.backend.setCurrentIndex(0)
-assert w.compute.currentData() == 'cpu' and w.compute.isEnabled()
-w.restore()
-assert w.compute.currentData() == 'mlx' and not w.compute.isEnabled()
-assert w.model_manager.qwen_model.currentText().endswith('1.7B-4bit')
-assert 'soundcard' not in sys.modules and 'PySide6.QtMultimedia' not in sys.modules
-w.close()
-'''
-    if sys.platform != 'darwin':
-        pytest.skip('Mac UI profile')
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True,
-        timeout=20, env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen',
-                        'AGENTSCRIBE_LIBRARY': str(tmp_path)})
-    assert result.returncode == 0, result.stdout + result.stderr
+@pytest.mark.p1
+def test_worker_protocol_never_publishes_the_rejected_hypothesis(monkeypatch, tmp_path):
+    from linguaflow.mlx_asr_worker import serve
+    state = fake_runtime(monkeypatch, outputs=iter([
+        SimpleNamespace(text='yeah, ' * 255, generation_tokens=512),
+        SimpleNamespace(text='Oh, yeah.', generation_tokens=4),
+    ]))
+    (tmp_path/'config.json').write_text(json.dumps(
+        {'model_type': 'qwen3_asr', 'quantization': {'bits': 4}}))
+    pcm = np.linspace(-.1, .1, 16000, dtype='<f4')
+    inputs = iter([{'model': str(tmp_path), 'language': 'English', 'context': 'terms'},
+                   {'pcm': base64.b64encode(pcm.tobytes()).decode()}, {'type': 'stop'}])
+    events = []
+    serve(lambda: next(inputs), events.append)
+    assert [event['type'] for event in events] == ['ready', 'result']
+    assert events[-1]['text'] == 'Oh, yeah.' and events[-1]['generation_tokens'] == 4
+    assert events[-1]['repetition_review']['outcome'] == 'recovered'
+    assert len(state['calls']) == 2
+    for audio, params in state['calls']:
+        np.testing.assert_array_equal(audio, pcm)
+        assert params['system_prompt'] == 'terms' and params['language'] == 'English'
+
+
 
 
 @pytest.mark.p1

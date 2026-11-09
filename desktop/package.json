@@ -5,7 +5,7 @@
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
-    "build": "tsc --noEmit && vite build",
+    "build": "node scripts/protocol-types.cjs --check && tsc --noEmit && vite build",
     "start": "npm run build && electron .",
     "test": "node scripts/platform-helper-checks.cjs && node scripts/helper-lifetime-checks.cjs && node scripts/probe.cjs",
     "components": "npm run build && electron . --components --no-audio",

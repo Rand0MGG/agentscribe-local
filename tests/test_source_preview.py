@@ -5,7 +5,6 @@ from threading import Event
 
 import pytest
 from test_shared_qwen_worker import stub_worker
-from ui_support import run_ui
 
 from linguaflow.core import Settings
 from linguaflow.source_preview import SourcePreview, preview_captions
@@ -230,105 +229,10 @@ def test_pending_preview_rebases_when_older_segmentation_changes_the_prefix():
     assert rebased['keep_ids'] == [] and rebased['source'] == 'First. Second continues.'
 
 
-@pytest.mark.p1
-def test_ui_newer_preview_survives_old_semantics_and_reconciles_without_duplicates(tmp_path):
-    run_ui(r'''
-from PySide6.QtCore import QObject, Signal
-from linguaflow.core import Caption
-class Session(QObject):
-    source_preview = Signal(object)
-session = Session(w)
-w.session = session
-session.source_preview.connect(w.on_source_preview)
-w.show();w.reduce_motion.setChecked(False)
-w.set_recording_state(module.RecordingState.LISTENING)
-w.on_caption(Caption(1,0,1,'First.','en','第一句。'))
-w.on_caption(Caption(2,1,2,'Wrong.','en','原译文', final=False))
-event = dict(sequence=1, keep_ids=[1], source='Corrected continuing sentence',start=1.,end=3.,language='en')
-session.source_preview.emit(event)
-assert w.source_preview_card.source.text() == event['source']
-assert not w.source_preview_card.source.reveal.isActive()
-assert w.cards[1].isVisible() and w.cards[2].isHidden()
-assert w.overlay.source.text() == event['source'] and w.overlay.target.isHidden()
-assert w.captions[2].source == 'Wrong.'  # Preview is display-only.
-event = dict(event, sequence=2, source='Corrected complete sentence. A following sentence.')
-session.source_preview.emit(event)
-session.source_preview.emit(dict(sequence=1,done=True))
-assert w.source_preview['sequence'] == 2
-w.on_caption(Caption(2,1,3,'Corrected complete sentence.','en',revision=2))
-w.on_caption(Caption(3,3,4,'A following sentence.','en'))
-assert w.cards[2].isHidden() and w.source_preview_card.isVisible()
-session.source_preview.emit(dict(sequence=2,done=True))
-assert w.source_preview is None and w.source_preview_card.isHidden()
-assert all(card.isVisible() for card in w.cards.values())
-assert all(not card.source.reveal.isActive() for card in w.cards.values())
-assert [c.source for c in w.captions.values()] == ['First.', 'Corrected complete sentence.', 'A following sentence.']
-session.source_preview.emit(dict(event, sequence=1, source='Late obsolete'))
-assert w.source_preview is None
-w.session=None
-w.set_recording_state(module.RecordingState.IDLE)
-w.session_dirty=False
-w.close()
-''', tmp_path)
 
 
-@pytest.mark.p1
-def test_unfinished_preview_is_saved_as_draft_with_existing_translations(tmp_path):
-    run_ui(r'''
-from PySide6.QtCore import QObject
-from linguaflow.core import Caption
-assert w.new_recording(name='保留最新草稿',check_models=False)
-w.session=QObject(w)
-w.set_recording_state(module.RecordingState.LISTENING)
-w.on_caption(Caption(1,0,1,'Earlier words','en','已有译文',final=False))
-w.on_source_preview(dict(sequence=1,keep_ids=[],source='Latest corrected words',start=0.,end=2.,language='en'))
-w.retain_source_preview()
-assert w.source_preview is None and len(w.captions)==1
-caption=next(iter(w.captions.values()))
-assert caption.source=='Latest corrected words' and not caption.final
-assert caption.translation=='已有译文' and caption.translation_source=='Earlier words'
-assert caption.error and w.last_error
-w.session=None
-assert w.persist_session('incomplete')
-_,saved=w.library.load(w.current_item)
-assert saved[0].source=='Latest corrected words' and saved[0].translation=='已有译文' and not saved[0].final
-w.set_recording_state(module.RecordingState.IDLE)
-w.close()
-''', tmp_path)
 
 
-@pytest.mark.p1
-def test_preview_autosaves_before_semantics_and_completed_rows_replace_draft(tmp_path):
-    run_ui(r'''
-from PySide6.QtCore import QObject
-from linguaflow.core import Caption
-assert w.new_recording(name='崩溃恢复',check_models=False)
-w.session=QObject(w)
-w.set_recording_state(module.RecordingState.LISTENING)
-w.on_caption(Caption(1,0,1,'Saved prefix','en'))
-w.on_caption(Caption(2,1,2,'Old tail','en','旧译文',final=False))
-w.on_source_preview(dict(sequence=1,keep_ids=[1],source='Latest words',start=1.,end=3.,language='en'))
-assert w.recording_saver.flush()
-_,saved=w.library.load(w.current_item)
-assert [c.source for c in saved]==['Saved prefix','Latest words']
-assert not saved[-1].final and saved[-1].translation=='旧译文'
-assert saved[-1].translation_source=='Old tail'
-assert w.captions[2].source=='Old tail' and w.source_preview is not None
-assert not w.session_dirty
-w.on_source_preview(dict(sequence=2,keep_ids=[1],source='Corrected words',start=1.,end=3.,language='en'))
-w.on_source_preview(dict(sequence=1,done=True))
-assert w.recording_saver.flush()
-assert w.library.load(w.current_item)[1][-1].source=='Corrected words'
-w.on_caption(Caption(2,1,3,'Corrected words','en',revision=2))
-w.on_source_preview(dict(sequence=2,done=True))
-assert w.recording_saver.flush()
-_,saved=w.library.load(w.current_item)
-assert len(saved)==2 and saved[-1].final and not saved[-1].error
-w.session=None
-w.set_recording_state(module.RecordingState.IDLE)
-assert w.persist_session('complete')
-w.close()
-''', tmp_path)
 
 
 @pytest.mark.p1
@@ -395,56 +299,3 @@ def test_stop_or_cancel_joins_inflight_semantics_before_finalization(monkeypatch
             task.cancel()
             await asyncio.gather(task,return_exceptions=True)
     asyncio.run(exercise())
-
-
-@pytest.mark.p1
-def test_abrupt_process_exit_recovers_preview_and_partial_audio_without_cleanup(tmp_path):
-    run_ui(r'''
-import wave
-from linguaflow.library_access import acquire_recording_lock
-assert w.new_recording(name='异常退出 原件保留',check_models=False)
-directory=w.library.directory(w.current_item['id'])
-w.recording_lock=acquire_recording_lock(directory)
-w.library.begin(w.current_item,{})
-w.session=QObject(w)
-w.set_recording_state(module.RecordingState.LISTENING)
-raw=(directory/'录音.wav').open('wb')
-writer=wave.open(raw,'wb')
-writer.setparams((1,2,48000,0,'NONE','not compressed'))
-writer.writeframes(b'\x01\x00'*40)
-raw.flush()
-# Terminate after physical PCM reaches disk but before the data header update.
-raw.write(b'\x02\x00'*5+b'\x03')
-raw.flush()
-w.on_source_preview(dict(sequence=1,keep_ids=[],source='Latest before crash',start=0.,end=1.,language='en'))
-wait(lambda: not w.session_dirty)
-# No Session.stop, wave.close, window.close, saver.flush or lock release.
-if os.name=='nt':
-    # os._exit on Windows runs DLL detach, which can crash Qt TLS teardown.
-    # Terminate only this test child, as an external hard kill would.
-    import ctypes
-    terminate=ctypes.WinDLL('kernel32',use_last_error=True).TerminateProcess
-    terminate.argtypes=[ctypes.c_void_p,ctypes.c_uint]
-    assert terminate(ctypes.c_void_p(-1),0)
-os._exit(0)
-''', tmp_path)
-    import io
-    import wave
-
-    from linguaflow.library import Library
-    from linguaflow.playback_stream import PlaybackStream
-    library=Library(tmp_path)
-    item=library.index['sessions'][0]
-    data,captions=library.load(item)
-    assert data['session']['state']=='recording'
-    assert len(captions)==1 and captions[0].source=='Latest before crash' and not captions[0].final
-    path=library.directory(item['id'])/'录音.wav'
-    original=path.read_bytes()
-    stream=PlaybackStream(path,recover_recording=True)
-    try:
-        with wave.open(io.BytesIO(bytes(stream.read(stream.size())))) as reader:
-            assert reader.getnframes()==45
-            assert reader.readframes(100)==b'\x01\x00'*40+b'\x02\x00'*5
-    finally:
-        stream.close()
-    assert path.read_bytes()==original

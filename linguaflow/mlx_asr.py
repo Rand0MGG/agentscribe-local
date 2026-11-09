@@ -78,6 +78,9 @@ class MLXClient:
             if not line:
                 raise RuntimeError('MLX 识别进程已退出；请查看诊断日志和可用内存。')
             result = json.loads(line)
+            if result.get('repetition_review'):
+                from . import diagnostic_log as diag
+                diag.event('asr_repetition_review', **result['repetition_review'])
             if result.get('type') == 'error':
                 raise RuntimeError(result['text'])
             return result

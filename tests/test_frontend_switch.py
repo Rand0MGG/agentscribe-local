@@ -68,44 +68,6 @@ Path(os.environ['AGENTSCRIBE_FRONTEND_CONTEXT']).with_name('ready-qt').write_tex
         owner.wait(timeout=3)
 
 
-@pytest.mark.p1
-def test_qt_frontend_button_guards_and_accepted_close(tmp_path):
-    from ui_support import run_ui_process
-    run_ui_process('''
-import json, os
-from pathlib import Path
-from unittest.mock import patch
-from linguaflow.settings_store import SettingsStore as QSettings
-from PySide6.QtWidgets import QApplication
-from linguaflow.app import Window
-from linguaflow.recording_state import RecordingState
-from scripts.probe_package import close_window
-app = QApplication([])
-root = Path(os.environ['AGENTSCRIBE_LIBRARY'])
-w = Window(discover=False, no_audio=True, library_root=root/'library',
-           prefs=QSettings(str(root/'prefs.ini'), QSettings.Format.IniFormat))
-w.show(); app.processEvents()
-assert w.new_recording(check_models=False)
-w.pending_recording_name = '切换草稿 · 中文'
-w.workspace_title.setText(w.pending_recording_name)
-launched = []
-with patch('linguaflow.frontend_switch.command_for', return_value=[__import__('sys').executable]), patch('linguaflow.frontend_switch.launch', side_effect=launched.append):
-    w.recording_state = RecordingState.LISTENING
-    w.frontend_button.click()
-    assert w.isVisible() and not launched and not w.frontend_handoff
-    w.recording_state = RecordingState.IDLE
-    w.session_dirty = True
-    w.frontend_button.click()
-    assert w.isVisible() and not launched
-    w.session_dirty = False
-    w.frontend_button.click()
-    close_window(w, app)
-assert len(launched) == 1
-saved = json.loads(launched[0].read_text(encoding='utf-8'))
-assert saved['draft']['name'] == '切换草稿 · 中文'
-assert saved['recording'] is None and saved['no_audio']
-assert not list((root/'library').rglob('session.json'))
-''', tmp_path)
 
 
 @pytest.mark.p1

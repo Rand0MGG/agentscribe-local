@@ -16,11 +16,12 @@ def test_unchanged_exports_are_not_replaced_and_partial_exports_are_repaired(tmp
     directory = library.directory(item['id'])
     expected = {name: (directory / name).read_bytes() for name in ('定稿.srt', '定稿.txt')}
     replaced = []
-    original = Path.replace
-    def track(path, target):
+    from linguaflow.storage_io import Directory
+    original = Directory.rename
+    def track(directory, path, target, **kwargs):
         replaced.append(Path(target).name)
-        return original(path, target)
-    monkeypatch.setattr(Path, 'replace', track)
+        return original(directory, path, target, **kwargs)
+    monkeypatch.setattr(Directory, 'rename', track)
     library.save(item, [caption, Caption(2, 1, 2, 'draft', 'en', final=False)])
     assert replaced == ['session.json']
     (directory / '定稿.srt').unlink()
@@ -151,14 +152,15 @@ def test_failed_atomic_save_keeps_original(tmp_path, monkeypatch):
     item = library.create("inbox", {})
     caption = Caption(1, 0, 1, "saved", "en")
     library.save(item, [caption])
-    original = type(tmp_path).replace
+    from linguaflow.storage_io import Directory
+    original = Directory.rename
 
-    def fail(path, target):
-        if path.name == "session.json.tmp":
+    def fail(directory, path, target, **kwargs):
+        if target == "session.json":
             raise OSError("disk unavailable")
-        return original(path, target)
+        return original(directory, path, target, **kwargs)
 
-    monkeypatch.setattr(type(tmp_path), "replace", fail)
+    monkeypatch.setattr(Directory, "rename", fail)
     with pytest.raises(OSError):
         library.save(item, [replace(caption, source="new")])
     assert library.load(item)[1][0].source == "saved"

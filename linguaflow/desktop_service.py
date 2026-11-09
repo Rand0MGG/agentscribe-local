@@ -5,8 +5,6 @@ Python owns recording, persistence and process lifecycle independently of the UI
 stdin EOF requests the same orderly shutdown as the desktop close action.
 """
 import argparse
-import base64
-import hashlib
 import json
 import math
 import os
@@ -20,6 +18,10 @@ from uuid import uuid4
 from . import diagnostic_log as diag
 from .application_lifecycle import Activity, ShutdownWorkflow
 from .core import LANGUAGES, Settings, translation_status
+from .desktop_knowledge import DesktopKnowledge
+from .desktop_library import DesktopLibrary
+from .desktop_models import DesktopModels
+from .desktop_protocol import CONTRACT, validate_params
 from .events import Connection, Dispatcher, Owner, Signal, Timer, Worker
 from .library import default_recording_name
 from .library_access import (
@@ -37,7 +39,7 @@ from .model_options import (
     translation_devices,
 )
 from .preferences import PREFERENCES, read_audio_device, read_preferences, write_preferences
-from .preparation_workflow import PreparationWorkflow, preparation_command
+from .preparation_workflow import PreparationWorkflow
 from .recording_save import RecordingSaver
 from .recording_state import RecordingState
 from .recording_workflow import (
@@ -74,7 +76,7 @@ def caption_value(caption):
     return {**asdict(caption), 'translation_status': translation_status(caption)}
 
 
-class DesktopService(Owner):
+class DesktopService(DesktopModels, DesktopLibrary, DesktopKnowledge, Owner):
     """IPC adapter for shared backend workflows; no widget or browser dependency."""
 
     preparation = property(lambda self: self.preparation_workflow.worker,
@@ -237,33 +239,12 @@ class DesktopService(Owner):
         self.clock.timeout.connect(self._clock)
         self.clock.start()
         Timer.singleShot(0, self._warm_runtime)
-        self.routes = {name: method for name, method in (
-            ('bootstrap', self.bootstrap), ('settings.set', self.set_settings),
-            ('library.refresh', self.refresh), ('recording.open', self.open_recording),
-            ('recording.new', self.new_recording), ('folder.create', self.create_folder),
-            ('item.rename', self.rename), ('item.move', self.move), ('item.trash', self.trash),
-            ('trash.list', self.deleted), ('trash.restore', self.restore), ('trash.purge', self.purge),
-            ('captions.locate', self.locate), ('captions.page', self.page), ('captions.search', self.search),
-            ('recording.save', self.retry_save), ('recording.export', self.export),
-            ('recording.close_recovered', self.close_recovered),
-            ('audio.refresh', self.refresh_devices), ('audio.select', self.select_device),
-            ('recording.start', self.start), ('recording.stop', self.stop), ('recording.pause', self.pause),
-            ('playback.event', self.playback_event), ('playback.toggle', self.play), ('playback.seek', self.seek), ('playback.volume', self.volume),
-            ('models.prepare', self.prepare), ('models.cancel', self.cancel_preparation),
-            ('models.retry', self.retry_preparation),
-            ('models.check', self.check_models), ('models.cancel_check', self.cancel_model_check),
-            ('models.inventory', self.model_inventory), ('models.delete', self.delete_model),
-            ('updates.check', self.check_updates), ('updates.action', self.update_action), ('app.edited', self.set_edited), ('library.migrate', self.migrate_library),
-            ('library.cancel_migration', self.cancel_migration),
-            ('knowledge.open', self.open_knowledge), ('knowledge.command', self.knowledge_command),
-            ('knowledge.image', self.knowledge_image),
-            ('app.close', self.close), ('path.recording', self.recording_path),
-            ('frontend.prepare', self.prepare_frontend), ('frontend.ready', self.mark_frontend_ready),
-            ('frontend.cancel', self.cancel_frontend),
-            ('layout.sidebar', self.set_sidebar_width),
-            ('overlay.get', self.overlay_preferences), ('overlay.set', self.set_overlay_preferences),
-            ('path.diagnostics', lambda: str(diag.log_directory())),
-        )}
+        self.routes = {name: getattr(self, spec["handler"])
+                       for name, spec in CONTRACT.items() if "handler" in spec}
+
+    @staticmethod
+    def diagnostics_path():
+        return str(diag.log_directory())
 
     @staticmethod
     def _directory_failed(_root, error):
@@ -287,8 +268,7 @@ class DesktopService(Owner):
             if self.update_fenced and operation not in ('bootstrap', 'app.close', 'updates.action', 'app.edited', 'updates.check'):
                 raise ValueError('正在准备重启更新，请等待完成或取消更新。')
             params = request.get('params', {})
-            if not isinstance(params, dict):
-                raise ValueError('操作参数必须是对象。')
+            validate_params(operation, params)
             if operation not in ('bootstrap', 'captions.page', 'captions.search', 'overlay.get', 'overlay.set'):
                 diag.event('desktop_request', operation=operation, request_id=identifier)
             if operation in ('library.refresh', 'recording.open'):
@@ -369,17 +349,6 @@ class DesktopService(Owner):
             update_pending=self.update_fenced or self.native_updater.pending,
             knowledge=self.knowledge_state.busy, edits=self.unsaved_edits)
 
-    def prepare_frontend(self, owner_pid, geometry, updates=False):
-        reason = self.activity_snapshot().switch_reason()
-        if reason or self.closing:
-            raise ValueError(reason or '正在退出，请稍候。')
-        self._idle()
-        from .frontend_switch import prepare
-        self.frontend_handoff = prepare('qt', library=self.library, prefs=self.prefs,
-            recording=self.item['id'] if self.item else None, draft=self.draft,
-            no_audio=self.no_audio, owner_pid=owner_pid, geometry=geometry, purpose='updates' if updates else None)
-        return {'ready': True}
-
     def _idle(self):
         if self.update_fenced:
             raise ValueError('正在准备重启更新，请等待完成或取消更新。')
@@ -396,56 +365,6 @@ class DesktopService(Owner):
         if self.dirty or self.save_error:
             raise ValueError('字幕尚未保存，请先重试保存或备份全部文字。')
         check_library_migration(self.library.root)
-
-    def _find(self, identifier, *, folders=True):
-        rows = self.library.index['sessions'] + (self.library.index['folders'] if folders else [])
-        item = next((row for row in rows if row['id'] == identifier), None)
-        if item is None:
-            raise ValueError('文件已变化，请刷新列表后重试。')
-        return item
-
-    def _close_resources(self):
-        if self.knowledge is not None and not self.knowledge.close():
-            raise ValueError('课程后台仍在退出，请稍后重试。')
-        if self.player is not None:
-            self.player.release()
-
-    def refresh(self):
-        # Library mutations refresh their own index. Do not scan it twice.
-        self.emit('library', self.library.index)
-        return {'index': self.library.index, 'warnings': self.library.warnings}
-
-    def _read_library(self, request_id, *, refresh=False, identifier=None):
-        self._idle()
-        if not refresh:
-            if not isinstance(identifier, str):
-                raise ValueError('请选择录音。')
-            check_library_access(self.library, self._find(identifier, folders=False))
-        self.read_request = request_id, refresh
-        self.reader.start(self.library, refresh=refresh, identifier=identifier)
-
-    def _read_completed(self, result, error):
-        request_id, refresh = self.read_request
-        self.read_request = None
-        try:
-            if error or result is None or self.closing:
-                raise ValueError(error or '读取已取消，原视图保留。')
-            library, item, loaded = result
-            if not refresh:
-                check_library_access(library, item)
-                self._close_resources()
-            self.library = library
-            if refresh:
-                value = self.refresh()
-            else:
-                data, captions = loaded
-                self.status = '已打开录音'
-                self._select(item, captions, data.get('settings', {}).get('translate', True))
-                value = self.snapshot()
-            self.output.emit({'id': request_id, 'result': value})
-        except Exception as exc:
-            self.output.emit({'id': request_id, 'error': {'message': str(exc), 'kind': type(exc).__name__}})
-        self._continue_close()
 
     def _audio_metadata(self):
         item = self.item
@@ -464,135 +383,6 @@ class DesktopService(Owner):
                 self.emit('notice', {'text': '音频暂不可读取：' + str(exc), 'error': True})
         if self.has_audio:
             self.playback_volume = min(self.playback_volume, 300 if self.playback_metadata['supports_gain'] else 100)
-
-    def _select(self, item, captions=(), translating=None):
-        self.located_position = None
-        self.audio_stage = ''
-        self.generation += 1
-        self.revision = 0
-        self.item = item
-        self.draft = None if item else {'name': default_recording_name(), 'folder': self.library.ensure_default_folder()['id']}
-        self._audio_metadata()
-        self.captions = Transcript((row.id, row) for row in captions)
-        self.preview = None
-        self.preview_sequence = 0
-        self.failure = self.save_error = ''
-        self.save_target = None
-        self.recovery_receipt = None
-        self.translating = self.values['translate'] if translating is None else translating
-        self.changed()
-        self.emit('captions', self.page())
-        self.attach_knowledge()
-
-    def open_recording(self, identifier):
-        self._idle()
-        item = self._find(identifier, folders=False)
-        check_library_access(self.library, item)
-        # Read and validate before releasing the currently visible recording.
-        data, captions = self.library.load(item)
-        self._close_resources()
-        self.status = '已打开录音'
-        self._select(item, captions, data.get('settings', {}).get('translate', True))
-        return self.snapshot()
-
-    def new_recording(self, folder_id=None, name=None):
-        self._idle()
-        folder_id = folder_id or (self.draft or self.item or {}).get('folder')
-        if not any(row['id'] == folder_id for row in self.library.index['folders']):
-            folder_id = self.library.ensure_default_folder()['id']
-        name = name or default_recording_name()
-        self.library.validate_name(name)
-        self._close_resources()
-        self._select(None)
-        self.draft = {'name': name, 'folder': folder_id}
-        self.status = '准备开始录音'
-        self.changed()
-        return self.snapshot()
-
-    def _create_recording(self, folder_id=None, name=None):
-        """Commit a pending workspace only when capture is explicitly started."""
-        self._idle()
-        if folder_id is None:
-            folder_id = self.library.ensure_default_folder()['id']
-        folder = self._find(folder_id)
-        if 'parent' not in folder:
-            raise ValueError('请选择保存文件夹。')
-        check_library_access(self.library, folder)
-        self._close_resources()
-        item = self.library.create(folder_id, asdict(self.settings()), name)
-        self.status = '准备开始录音'
-        self._select(item)
-        self.refresh()
-        return self.snapshot()
-
-    def create_folder(self, name, parent=None):
-        self._idle()
-        if parent:
-            item = self._find(parent)
-            if 'parent' not in item:
-                raise ValueError('请选择父文件夹。')
-            check_library_access(self.library, item)
-        item = self.library.folder(name, parent)
-        self.refresh()
-        return item
-
-    def rename(self, identifier, name):
-        if identifier is None and self.draft:
-            self.library.validate_name(name)
-            self.draft['name'] = name.strip()
-            self.changed()
-            return
-        item = self._find(identifier)
-        active_current = bool(self.session and self.item and identifier == self.item['id'])
-        self.library_workflow.ensure_edit(item, activity=self.activity_snapshot(),
-            close_resources=self._close_resources, rename_current=True)
-        self.library.rename(item, name, defer_directory=active_current)
-        if self.item and self.item['id'] == identifier:
-            self.item = item
-        self.refresh()
-        self.changed()
-
-    def move(self, identifier, folder_id):
-        item, folder = self._find(identifier), self._find(folder_id)
-        if 'parent' not in folder:
-            raise ValueError('请选择目标文件夹。')
-        self._edit_item(item)
-        check_library_access(self.library, folder)
-        self.library.move(item, folder_id)
-        self.refresh()
-        if self.item:
-            self.item = self._find(self.item['id'], folders=False)
-        self.changed()
-
-    def trash(self, identifier):
-        item = self._find(identifier)
-        self._edit_item(item)
-        token = self.library.trash(item)
-        if self.item and not any(row['id'] == self.item['id'] for row in self.library.index['sessions']):
-            self._select(None)
-        self.library.ensure_default_folder()
-        self.refresh()
-        return token
-
-    def _edit_item(self, item):
-        if self.closing:
-            raise ValueError('正在退出，请稍后重试。')
-        self.library_workflow.ensure_edit(item, activity=self.activity_snapshot(), close_resources=self._close_resources)
-
-    def deleted(self):
-        return self.library.deleted()
-
-    def restore(self, token):
-        self._idle()
-        self.library.restore_deleted(token)
-        self.refresh()
-        return self.deleted()
-
-    def purge(self, token):
-        self._idle()
-        self._close_resources()
-        self.library.purge_deleted(token)
-        return self.deleted()
 
     def page(self, start=None, locate=None, seconds=None):
         if start is not None and (type(start) is not int or start < 0):
@@ -872,7 +662,8 @@ class DesktopService(Owner):
             Timer.singleShot(20, lambda: self._finished(session))
             return
         self.status = '正在保存录音与字幕…'
-        self._audio_metadata()
+        # Final saving still owns the recording lock. Playback metadata is
+        # refreshed by _after_lock_released, including after a failed-save retry.
         self.emit('captions', self.page())
         self.changed()
 
@@ -913,67 +704,6 @@ class DesktopService(Owner):
         self._audio_metadata()
         self.changed()
 
-    def export(self, path, format='srt', recovery=False):
-        from .recording_export import FORMATS, write_export, write_recovery
-        if not self.item or not isinstance(path, str) or not Path(path).is_absolute() or format not in FORMATS:
-            raise ValueError('请选择有效的导出位置和格式。')
-        if self.session and not recovery:
-            raise ValueError('请先停止录音再导出定稿。')
-        target = Path(path).resolve()
-        # A native save dialog is required by the Electron main process. Still
-        # reject overwriting source/session data inside any recording directory.
-        if target == self.library.root or self.library.root in target.parents:
-            raise ValueError('请导出到录音库之外，避免覆盖录音或课程原件。')
-        if not self.exporter.busy:
-            self.export_errors = []
-        self.export_sequence += 1
-        item = {'recording_token': (self.generation, self.item['id']), 'path': str(target), 'format': format, 'name': self.item['name'], 'recovery': recovery,
-                'state': 'recovery' if recovery else 'export'}
-        self.exporter.submit(write_recovery if recovery else write_export,
-                             (-self.export_sequence, str(target)), self.revision, item,
-                             preview_captions(self.captions, self.preview))
-        self.emit('notice', {'key': 'export', 'text': '正在导出…', 'busy': True})
-
-    def _exported(self, snapshot, _state, error):
-        if not error and snapshot.item.get('recovery'):
-            try:
-                digest = hashlib.sha256(Path(snapshot.item['path']).read_bytes()).hexdigest()
-                self.recovery_receipt = (snapshot, digest)
-            except OSError as exc:
-                error = str(exc)
-        self.changed()
-        if error:
-            self.export_errors.append(f"{Path(snapshot.item['path']).name}：{error}")
-
-    def _exports_finished(self):
-        self.emit('notice', {'key': 'export', 'text': '导出失败：' + '；'.join(self.export_errors)
-                            if self.export_errors else '导出完成', 'error': bool(self.export_errors)})
-
-    def _recovery_ready(self):
-        receipt = self.recovery_receipt
-        return bool(receipt and self.item and not self.session and not self.saver.busy and self.dirty
-                    and self.save_error and receipt[0].item.get('recording_token') == (self.generation, self.item['id'])
-                    and receipt[0].revision == self.revision)
-
-    def close_recovered(self):
-        if not self._recovery_ready():
-            raise ValueError('录音内容已变化，请先停止并重新备份全部文字。')
-        snapshot, digest = self.recovery_receipt
-        if hashlib.sha256(Path(snapshot.item['path']).read_bytes()).hexdigest() != digest:
-            raise ValueError('备份已被修改，请重新备份再关闭。')
-        self.autosave.stop()
-        self.dirty = False
-        self.save_error = ''
-        self._release_lock()
-        self._select(None)
-        self.refresh()
-
-    def recording_path(self, identifier=None):
-        if identifier is not None:
-            item = self._find(identifier)
-            return str(self.library.directory(item['id']))
-        return str(self.library.directory(self.item['id']) if self.item else self.library.root)
-
     def set_sidebar_width(self, width):
         if type(width) is not int or not 180 <= width <= 420:
             raise ValueError('录音库宽度必须在 180–420 之间。')
@@ -987,48 +717,6 @@ class DesktopService(Owner):
                 self.prefs.setValue('electron_sidebar_width', previous)
             raise OSError('录音库宽度未能保存，请检查设置目录权限。')
         return width
-
-    def migrate_library(self, path):
-        if not isinstance(path, str) or not Path(path).is_absolute():
-            raise ValueError('请选择有效的保存目录。')
-        if Path(path).resolve() == self.library.root:
-            return
-        if self.session:
-            self.pending_library = path
-            self.emit('notice', {'text': '录音结束并保存后，自动迁移到新位置。'})
-            self.changed()
-            return
-        self._idle()
-        self._close_resources()
-        self.library_workflow.start(path)
-        self.changed()
-
-    def cancel_migration(self):
-        self.pending_library = None
-        if self.migration.busy:
-            self.migration.cancel()
-        self.changed()
-
-    def _begin_pending_migration(self):
-        if not self.pending_library or self.session or self.saver.busy or self.dirty or self.closing:
-            return
-        path, self.pending_library = self.pending_library, None
-        try:
-            self.migrate_library(path)
-        except (OSError, ValueError) as exc:
-            self.emit('notice', {'text': str(exc), 'error': True})
-
-
-
-    def _library_adopted(self, library):
-        self.emit('library-root', str(library.root))
-        self.refresh()
-
-    def _library_migrated(self, retained, error=''):
-        self.emit('notice', {'key': 'migration', 'text': error or (
-            '录音已迁移；部分发生变化的旧文件仍保留。' if retained else '录音已迁移到新位置。'), 'error': bool(error)})
-        self.changed()
-        self._continue_close()
 
     def _start_task(self, name, action, completed=None):
         if name in self.tasks:
@@ -1060,90 +748,6 @@ class DesktopService(Owner):
             callback(task.error)
         task.deleteLater()
         self._continue_close()
-
-    def _selected_models(self):
-        values = self.values
-        return [{'path': values['asr'] if values['backend'] == 'wlk-whisper' else values['qwen_model'],
-                 'kind': 'asr', 'engine': values['backend']},
-                {'path': values['llama_model'] if values['translation_engine'] == 'llama' else values['translation'],
-                 'kind': 'translation', 'engine': values['translation_engine']}]
-
-    def _selection(self):
-        values = self.values
-        return dict(backend=values['backend'],
-                    asr_model=values['asr'] if values['backend'] == 'wlk-whisper' else values['qwen_model'],
-                    translation_engine=values['translation_engine'],
-                    translation_model=values['llama_model'] if values['translation_engine'] == 'llama' else values['translation'],
-                    translation_device=values['translation_device'])
-
-    def _refresh_models(self):
-        if self.closing or self.update_fenced:
-            return
-        if self.preparation or self.asset_check:
-            self.model_refresh.start(100)
-            return
-        self.check_models()
-
-    def check_models(self):
-        if self.asset_check:
-            raise ValueError('模型检查正在进行，可取消后重试。')
-        from .ui_checks import BackgroundCheck
-        selection = self._selection()
-        translating = self.values['translate']
-        arguments = ['--check', '--selection', json.dumps(selection)]
-        if not translating:
-            arguments += ['--only', 'asr']
-        check = BackgroundCheck('linguaflow.recommended_prepare', arguments, self)
-        self.asset_check = check
-        self.asset_check_cancelled = False
-        def result(value):
-            if self.closing or self.asset_check_cancelled:
-                return
-            if selection != self._selection() or translating != self.values['translate']:
-                self.model_refresh.start(100)
-            elif isinstance(value, list) and all(isinstance(row, str) for row in value):
-                self.asset_selection, self.missing_assets = selection, value
-                self.emit('model-check', {'busy': False, 'missing': value,
-                                         'message': '所选模型已就绪。' if not value else '所选模型与组件尚需准备。'})
-            else:
-                message = '模型检查未完成：' + (check.failure_reason or '返回内容不符合预期，请重新检查。')
-                self.emit('model-check', {'busy': False, 'error': message})
-                self.emit('notice', {'text': message, 'error': True})
-        def finished():
-            if self.asset_check_cancelled and not self.closing:
-                self.emit('model-check', {'busy': False, 'message': '模型检查已取消，已有结果保留。'})
-            if self.asset_check is check:
-                self.asset_check = None
-            check.deleteLater()
-            self.changed()
-            self._continue_close()
-        check.result.connect(result)
-        check.completed.connect(finished)
-        check.begin()
-        self.emit('model-check', {'busy': True, 'message': '正在检查所选模型…'})
-        self.changed()
-
-    def cancel_model_check(self):
-        if self.asset_check:
-            self.asset_check_cancelled = True
-            self.asset_check.kill()
-            self.emit('model-check', {'busy': True, 'message': '正在取消模型检查…'})
-
-    def model_inventory(self):
-        from .model_inventory import inventory
-        selected = self._selected_models()
-        self._start_task('inventory', lambda: inventory(selected))
-
-    def delete_model(self, identifier):
-        self._idle()
-        if self.preparation:
-            raise ValueError('请先完成或取消模型准备。')
-        from .model_inventory import delete_model, inventory
-        selected = self._selected_models()
-        def remove():
-            delete_model(identifier, selected)
-            return inventory(selected)
-        self._start_task('inventory', remove)
 
     def update_activity_snapshot(self):
         from .update_workflow import UpdateActivity
@@ -1272,176 +876,6 @@ class DesktopService(Owner):
             raise ValueError('音量必须在 0–300% 之间。')
         self._player().set_volume(value)
         self.playback_volume = value
-
-    def prepare(self, only=None, kind='models', selection=None):
-        if kind != 'documents':
-            self._idle()
-        elif self.update_fenced or self.migration.busy or self.pending_library or self.closing:
-            raise ValueError('请等待当前文件操作完成。')
-        if self.preparation or self.runtime_action or 'inventory' in self.tasks:
-            raise ValueError('已有准备任务正在运行。')
-        if only not in (None, 'all', 'asr', 'translation'):
-            raise ValueError('无效的准备范围。')
-        if kind not in ('models', 'runtime', 'documents') or (kind == 'documents' and not self.values['beta_features']):
-            raise ValueError('无效的准备任务，请先启用对应功能。')
-        settings = self.settings()
-        current = dict(backend=settings.backend,
-                         asr_model=settings.asr_model if settings.backend == 'wlk-whisper' else settings.qwen_model,
-                         translation_engine=settings.translation_engine,
-                         translation_model=settings.llama_model if settings.translation_engine == 'llama' else settings.translation_model,
-                         translation_device=settings.translation_device)
-        if selection is None:
-            selection = current
-        elif kind != 'models':
-            raise ValueError('无效的模型下载快照。')
-        if kind == 'models' and only is None and not settings.translate:
-            only = 'asr'
-        command = preparation_command(selection, kind=kind, only=only)
-        self.cancel_model_check()
-        self.preparation_command = command, kind
-        self._start_preparation(command, kind)
-
-    def retry_preparation(self):
-        if not self.preparation_command or self.preparation_command[1] != 'documents':
-            self._idle()
-        elif self.update_fenced or self.migration.busy or self.pending_library or self.closing:
-            raise ValueError('请等待当前文件操作完成。')
-        if self.preparation or not self.preparation_command or not self.preparation_recovery:
-            raise ValueError('没有可恢复的准备任务。')
-        command, kind = self.preparation_command
-        if kind == 'documents' and not self.values['beta_features']:
-            raise ValueError('请先启用课程助手 Beta。')
-        self._start_preparation(command, kind)
-
-    def _warm_runtime(self):
-        if self.no_audio or self.closing or self.update_fenced or self.preparation or self.runtime_action:
-            return
-        if self.runtime is None:
-            from .runtime_preparation import RuntimePreparation
-            self.runtime = RuntimePreparation()
-        self.runtime.prepare()
-
-    def _retire_runtime(self, completed):
-        runtime = self.runtime
-        def finished(error):
-            if not error and self.runtime is runtime:
-                self.runtime = None
-            completed(error)
-        self._start_task('runtime-release', runtime.close, finished)
-
-    def _start_preparation(self, command, kind):
-        if self.runtime is not None and kind != 'documents':
-            self.runtime_action = (command, kind)
-            self.preparation_status = '正在释放推理环境…'
-            def released(error):
-                action, self.runtime_action = self.runtime_action, None
-                if error:
-                    self.preparation_status = '准备未完成：' + error
-                    self.preparation_recovery = '重试'
-                elif action and not self.closing:
-                    self._start_preparation(*action)
-                self.changed()
-            self._retire_runtime(released)
-            self.changed()
-            return
-        self.preparation_recovery = ''
-        self.preparation_status = '正在准备所选模型与组件…'
-        self.preparation_workflow.start(lambda: self.preparation.run_command(command),
-                                        affects_runtime=kind != 'documents', beta_only=kind == 'documents')
-        self.changed()
-
-    def _progress(self, value):
-        if not self.preparation or self.preparation.cancelled:
-            return
-        self.progress = value
-        self.changed()
-
-    def _preparation_result(self, value):
-        self.emit('diagnostic', value)
-        from .preparation_task import preparation_error_message
-        self.preparation_status = preparation_error_message(value) if value.startswith('未完成：') else value
-        self.changed()
-
-    def _preparation_finished(self, task):
-        self.preparation_recovery = '继续准备' if task.cancelled else ('重试' if self.preparation_status.startswith('准备未完成：') else '')
-        self.progress = None
-        if not self.closing:
-            self._warm_runtime()
-            self.model_refresh.start(100)
-            if 'inventory' not in self.tasks:
-                self.model_inventory()
-        self.changed()
-        self._continue_close()
-
-    def cancel_preparation(self):
-        if self.runtime_action:
-            self.runtime_action = None
-            self.preparation_status = '准备已取消，已完成文件保留。'
-            self.preparation_recovery = '继续准备'
-            self.changed()
-        if self.preparation:
-            self.preparation_workflow.cancel()
-            self.preparation_status = '正在取消，已完成文件保留…'
-            self.changed()
-
-    def attach_knowledge(self):
-        from .knowledge.lifecycle import should_attach
-        try:
-            if should_attach(self.library, self.item, enabled=self.values['beta_features']):
-                self.open_knowledge()
-        except (OSError, ValueError, RuntimeError) as exc:
-            self.emit('notice', {'text': f'课程资料未就绪：{exc}', 'error': True})
-
-    def open_knowledge(self):
-        if not self.values['beta_features']:
-            raise ValueError('请先在设置中启用课程助手 Beta。')
-        if not self.item:
-            raise ValueError('请先新建或打开录音。')
-        if self.knowledge is None:
-            from .knowledge.client import KnowledgeClient
-            self.knowledge = KnowledgeClient(self, state=self.knowledge_state)
-            self.knowledge.changed.connect(self._knowledge_event)
-        if self.knowledge.identifier != self.item['id']:
-            self.knowledge_state.reset()
-        self.knowledge.open(self.library, self.item, self.captions.values())
-
-    def _knowledge_event(self, value):
-        self.emit('knowledge', self.knowledge_state.receive(value))
-
-    def knowledge_image(self, identifier):
-        if not self.values['beta_features'] or not self.knowledge or not self.knowledge.connected:
-            raise ValueError('课程后台未连接。')
-        from .knowledge.files import checked_path
-        row = next((row for row in self.knowledge_view.get('blocks', []) if row['id'] == identifier), None)
-        filename = (row or {}).get('image_path') or (row or {}).get('preview_image_path')
-        if not filename:
-            return None
-        path = checked_path(self.library.root, Path(filename))
-        with path.open('rb') as stream:
-            image = stream.read(8 * 1024 * 1024 + 1)
-        if len(image) > 8 * 1024 * 1024 or not image.startswith(b'\x89PNG\r\n\x1a\n'):
-            raise ValueError('课件预览图片无效或超过显示大小限制，请重新准备原页。')
-        return 'data:image/png;base64,' + base64.b64encode(image).decode('ascii')
-
-    def knowledge_command(self, operation, values=None):
-        allowed = {'view', 'permission', 'import', 'associate', 'credential', 'terms', 'preview', 'extract',
-                   'notes', 'organize', 'question', 'edit', 'export', 'cancel'}
-        if operation not in allowed or not isinstance(values or {}, dict):
-            raise ValueError('不支持的课程操作。')
-        if not self.values['beta_features'] or not self.knowledge or not self.knowledge.connected:
-            raise ValueError('课程后台未连接，请重新打开课程资料。')
-        if not self.item or self.knowledge.identifier != self.item['id']:
-            raise ValueError('当前录音已变化，请重新打开课程资料。')
-        if self.session and operation in ('import', 'associate', 'terms', 'preview', 'extract', 'organize', 'question'):
-            raise ValueError('请先停止录音再修改课程资料。')
-        if operation in ('notes', 'organize', 'question') and (self.dirty or self.saver.busy or self.save_error):
-            raise ValueError('请等待字幕保存完成，再处理笔记。')
-        if (values or {}).keys() & {'operation', 'root', 'identifier', 'epoch'}:
-            raise ValueError('课程操作不能更改后台归属。')
-        if operation == 'cancel':
-            from .knowledge.lifecycle import cancel_task
-            return cancel_task(self.knowledge, self.knowledge.operation)
-        return self.knowledge.send(operation, **(values or {}))
 
     def _clock(self):
         if self.native_updater.pending and not self.closing:

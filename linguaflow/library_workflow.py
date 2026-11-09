@@ -89,11 +89,13 @@ class LibraryWorkflow(Owner):
             return
         data = self.recording.data
         old_root = data.library.root
-        self.prefs.setValue('library_directory', str(library.root))
-        self.prefs.sync()
-        if self.prefs.status().value != 0:
-            self.prefs.setValue('library_directory', str(old_root))
-            self.completed([], '无法保存新位置，原录音保留；新位置有已校验副本。')
+        try:
+            committed = self.prefs.commit_value('library_directory', str(library.root))
+            if not committed:
+                self.completed([], '无法保存新位置，原录音保留；新位置有已校验副本。')
+                return
+        except Exception as exc:
+            self.completed([], '迁移偏好提交失败，原件及副本保留：' + str(exc))
             return
         data.library = library
         if data.item:

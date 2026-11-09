@@ -64,7 +64,7 @@ jobs:
           print('Candidate only: no Release, update-feed publication or production signing.')
           PY
       - name: Install build and test tools
-        run: python -m pip install -e ".[dev,legacy-qt]" 'zstandard==0.25.0'
+        run: python -m pip install -e ".[dev]" 'zstandard==0.25.0'
       - name: No-audio regression
         run: python scripts/test_no_audio.py -q -rs --tb=short --junitxml=.work/reports/candidate-tests.xml
       - name: Static checks

@@ -19,6 +19,7 @@ def tracked_source(root):
     (root / 'linguaflow/knowledge').mkdir(parents=True)
     (root / 'linguaflow/__init__.py').write_text('__version__ = "0.8.0"')
     (root / 'linguaflow/knowledge/render.mjs').write_text('export {};')
+    (root / 'linguaflow/desktop_contract.json').write_text('{}')
     (root / '.gitignore').write_text('.env\n')
     subprocess.run(['git', 'init', '-q', str(root)], check=True)
     subprocess.run(['git', '-C', str(root), 'add', '.'], check=True)
@@ -33,7 +34,7 @@ def test_both_builds_copy_only_tracked_declared_application_inputs(tmp_path, des
     (root / 'linguaflow/untracked.py').write_text('raise RuntimeError("local experiment")')
     target = tmp_path / destination
     inventory = packaging_common.copy_application(root, target)
-    assert set(inventory) == {'linguaflow/__init__.py', 'linguaflow/knowledge/render.mjs'}
+    assert set(inventory) == {'linguaflow/__init__.py', 'linguaflow/knowledge/render.mjs', 'linguaflow/desktop_contract.json'}
     assert not (target / '.env').exists() and not (target / 'untracked.py').exists()
     assert all(packaging_common.digest(tmp_path / destination / Path(name).relative_to('linguaflow')) == sha
                for name, sha in inventory.items())
@@ -396,25 +397,8 @@ def test_package_probe_rejects_success_exit_with_lifecycle_warning(tmp_path, mon
         probe_package.run_probe(tmp_path / 'AgentScribe.app')
 
 
-@pytest.mark.p1
-def test_package_window_waits_for_accepted_close_and_owned_processes():
-    from PySide6.QtCore import QProcess
-    state = {'steps': 0}
-    job = SimpleNamespace(state=lambda: QProcess.ProcessState.NotRunning if state['steps'] >= 3
-                          else QProcess.ProcessState.Running)
-    window = SimpleNamespace(close=lambda: True, isVisible=lambda: state['steps'] < 2,
-                             background_checks=set(), findChildren=lambda _: [job])
-    application = SimpleNamespace(processEvents=lambda: state.update(steps=state['steps'] + 1))
-    probe_package.close_window(window, application)
-    assert state['steps'] == 3
 
 
-@pytest.mark.p1
-def test_package_window_timeout_is_failure():
-    window = SimpleNamespace(close=lambda: None, isVisible=lambda: True,
-                             background_checks=set(), findChildren=lambda _: [])
-    with pytest.raises(RuntimeError, match='未完成退出'):
-        probe_package.close_window(window, SimpleNamespace(processEvents=lambda: None), timeout=0)
 
 
 @pytest.mark.p1

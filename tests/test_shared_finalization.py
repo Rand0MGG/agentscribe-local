@@ -191,7 +191,7 @@ def test_both_model_adapters_use_identical_online_policy(monkeypatch, backend):
         asr = mlx.build_mlx_online('local', 'en', .5, lambda text: None,
                                   window_seconds=8)
     else:
-        model = SimpleNamespace(model=SimpleNamespace(generation_config=SimpleNamespace()),
+        model = SimpleNamespace(model=SimpleNamespace(generation_config=SimpleNamespace(), generate=lambda **kwargs: None),
                                 transcribe=lambda *a, **kw: [SimpleNamespace(text='shared words')])
         monkeypatch.setitem(sys.modules, 'torch', SimpleNamespace(float32='float32',
                             float16='float16', bfloat16='bfloat16'))

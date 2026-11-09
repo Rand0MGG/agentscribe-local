@@ -13,11 +13,11 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from PySide6.QtCore import QCoreApplication
 
 import linguaflow.runtime_preparation as preparation
 import linguaflow.wlk_session as session_module
 from linguaflow.core import Settings
+from linguaflow.events import Dispatcher as QCoreApplication
 from linguaflow.wlk_session import Session
 
 
@@ -217,7 +217,7 @@ def execute(runtime, source, count):
         session.stop(discard=True)
         session.wait(5000)
         pytest.fail('reused session hung')
-    app.processEvents()
+    app.process()
     return session, captions, failures
 
 

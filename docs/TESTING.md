@@ -35,7 +35,7 @@ git diff --check
 
 可追加测试路径缩小范围。入口对当前及继承环境的 Python 后代阻断原生音频导入，使用合成 PCM/设备替身；不枚举设备、采集、播放、改变音频设置或中断用户进程。原生 GUI、进程列表和本地回环服务可能需要相应系统权限，受阻应说明，不能改成假流程或跳过换绿。真实设备、文件模型推理、联网与云端调用另按用户授权执行。
 
-开发默认 Python 3.12，兼容版本以 `pyproject.toml` 为准。正式运行/Qt-free 检查安装 `.[dev]`；完整旧界面对照还需 `.[dev,legacy-qt]`。保留 pytest 正常临时路径、中文/空格/深目录边界；不得通过全局缩短路径掩盖问题。优先复用现有依赖，不因文档审查安装模型或改变机器设置。
+开发默认 Python 3.12，兼容版本以 `pyproject.toml` 为准。正式运行与完整回归安装 `.[dev]`，不再安装 Qt 依赖。保留 pytest 正常临时路径、中文/空格/深目录边界；不得通过全局缩短路径掩盖问题。优先复用现有依赖，不因文档审查安装模型或改变机器设置。
 
 ## 按改动选择验证
 
@@ -55,7 +55,7 @@ git diff --check
 
 - 断言结果和安全边界，不镜像实现。不能靠生产测试专用分支、吞异常、放宽断言或删除失败测试换绿；替身留在测试侧。
 - 完成/取消需要实际终态和有期限的等待；`close()` 被调用不等于退出，目录存在不等于原件未损坏。失败后回收本次自有资源，不处理其他应用。
-- 旧 Qt 用例使用 `tests/ui_support.py` 隔离进程及统一退出/日志检查，拒绝绘制回调和 QPainter/QThread/QProcess 销毁错误。布局稳定与业务完成分开判断；固定短等待不能代替状态条件。跨进程中文使用明确 UTF-8。
+- Qt 专属界面用例已退役并归档于 `archive/qt/`，不纳入 CI；混合文件中的后台检查保留。录音最新草稿、异常退出与未收尾 WAV 恢复检查迁至 `test_desktop_service.py`。Electron 探针覆盖正式入口、交互和退出；跨进程中文使用明确 UTF-8。
 - 动画中间帧与反向接续用受控动画时间检查，终态用有期限的条件等待；采样次数不能证明动画仍在途中。回听交互覆盖原文/译文短单击遇到界面阻塞，以及长按、拖选、双击不定位。
 - 图片检查真实解码与资源尺寸，页面检查实际内容；截图文件存在不是视觉验收。自动回归保留流程与必要布局边界，纯外观细节按 [UI_DESIGN](UI_DESIGN.md#demo-一致性与优先复用) 人工核对，不恢复已退役的像素/文案枚举。
 - `.github/workflows/checks.yml` 是执行矩阵权威：Windows/Mac、Python 3.11–3.13 完整无音频回归；课程 SDK、原生文档渲染与 Electron 分别验证。P0–P3 均运行；专用集成设置 `AGENTSCRIBE_REQUIRE_INTEGRATIONS=1`，选中用例有跳过即失败。
@@ -89,7 +89,7 @@ git diff --check
 | `npm run test:migration` | 历史迁移交互对照；正式入口始终是 Electron |
 | `npm run components` | 按需组件演示，不能替代正式流程验收 |
 
-Python 的 `test_qt_free_backend.py` 在拒绝 Qt 导入的条件下验证后台、设置迁移、竞争锁与退出；`test_playback_controller.py` 验证合成 WAV 的 HTTP 范围读取、旧代次拒绝及原件保护。Node 音频适配器由独立入口验证，不再通过 Python 包装重复运行。Qt 仅作为保留行为的对照及部分图像夹具，不进入正式依赖或安装载荷；不能仅因测试使用 Qt 就删除其独有保护。
+Python 的 `test_qt_free_backend.py` 在拒绝 Qt 导入的条件下验证后台、设置迁移、竞争锁与退出；`test_playback_controller.py` 验证合成 WAV 的 HTTP 范围读取、旧代次拒绝及原件保护。Node 音频适配器由独立入口验证，不再通过 Python 包装重复运行。图像夹具是仓库内的合成图片；像素断言使用标准库 PNG 解码，不再运行 Qt。历史升级探针仅为旧已发行包保留兼容分支。
 
 回听回归还验证主机名解析不可用时，真实本地 HTTP 加载、文件读取及定位仍完成。Electron 交互探针记录点击命中、播放请求/回执和媒体动作；初始化超过 5 秒仅输出 Python 调用栈，不改变原超时或断言。诊断仅用于隔离测试库，不进入正式用户日志。
 
@@ -102,3 +102,9 @@ Python 的 `test_qt_free_backend.py` 在拒绝 Qt 导入的条件下验证后台
 ## 证据与维护
 
 临时证据放 `.work/` 或 `output/playwright/`，私人全文、音频、模型与密钥不进 Git。当前规则留在本文，精确运行结果留在 [VALIDATION](VALIDATION.md)，历史审查见 [2026-10-23 报告](testing/TEST_CODE_REVIEW_20261023.md)。历史报告的待办按当前源码复核，不直接当作仍存在的问题。
+
+## 接口与跨平台共用规则
+
+`test_desktop_protocol.py` 核对后端签名与共同接口定义、拒绝越权命令/多余路径/错误参数；前端编译检查必填参数、返回类型及不可访问的内部方法。修改 `linguaflow/desktop_contract.json` 后运行 `node desktop/scripts/protocol-types.cjs` 更新类型，`npm run build` 会拒绝过期产物。
+
+`test_platform_consolidation.py` 覆盖三平台目录规则、旧默认设置保留、公共文件锁，以及官方 Qwen 原始生成结果的审查/同输入恢复/失败路径；`test_mlx_repetition.py` 继续覆盖 MLX 适配。替身生成只证明控制逻辑，Windows 实际 GPU 推理质量、速度与安装升级仍需目标系统实测。

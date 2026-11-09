@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { usePageTransition } from './motion';
 import { Button, Choice, ConfirmDialog, Modal, NumberField, SettingsRow, Toggle } from './components';
-import { bridge, request, type Bootstrap, type Settings, type State } from './types';
+import { bridge, request, type Bootstrap, type Settings, type State, type Method, type RequestArgs, type RequestResults } from './types';
 
 const categories = ['常规', '聆听', '模型管理', '字幕与延迟', '运行环境', '使用指南'];
 const backendNames: Record<string, string> = { 'wlk-whisper': 'WhisperLiveKit · Whisper / AlignAtt', 'qwen3-streaming': 'WhisperLiveKit · Qwen3-ASR 流式', 'qwen3-mlx': 'Qwen3-ASR · MLX（试验）' };
@@ -9,7 +9,7 @@ const deviceNames: Record<string, string> = { cpu: 'CPU（通用）', cuda: 'NVI
 
 export function SettingsPage({ data, values, state, updatesBusy, update, audioBusy, audioMessage, onClose, onDeleted, perform, onPatch, onCategory, initialCategory = '常规' }: {
   audioBusy: boolean; audioMessage: string; data: Bootstrap; values: Settings; state: State; updatesBusy: boolean; update?: { text?: string }; onClose: () => void; onDeleted: () => void;
-  perform: (method: string, params?: Record<string, unknown>) => Promise<any>;
+  perform: <M extends Method>(method: M, ...args: RequestArgs<M>) => Promise<RequestResults[M] | undefined>;
   onPatch: (values: Settings) => void; onCategory?: (category: string) => void; initialCategory?: string;
 }) {
   const [category, setCategory] = useState(initialCategory), [query, setQuery] = useState('');
@@ -31,7 +31,7 @@ export function SettingsPage({ data, values, state, updatesBusy, update, audioBu
     return <Choice label={label} value={String(values[key])} options={options} onChange={value => onPatch({ [key]: value })} />;
   }
   const languages = data.options.languages.map(row => ({ value: row[0], label: row[0] }));
-  const aliases: Record<string, string> = { '模型管理': '下载 缓存 删除 ASR 翻译 Qwen HY-MT2 Whisper 本地 参数 前文 后文 GPU CPU MLX NLLB', '常规': '文件 存储 目录 路径 删除 恢复 跟随 动画 减少动态效果 外观 保存位置 Beta', '聆听': '设备 输入 语言 翻译', '字幕与延迟': '字幕 草稿 刷新 停顿', '运行环境': '安装 修复 更新 版本 GitHub 准备 取消 重试 界面 前端 切换 Qt Electron', '使用指南': '首次 使用 帮助 入门 导出 SRT 开始 说明' };
+  const aliases: Record<string, string> = { '模型管理': '下载 缓存 删除 ASR 翻译 Qwen HY-MT2 Whisper 本地 参数 前文 后文 GPU CPU MLX NLLB', '常规': '文件 存储 目录 路径 删除 恢复 跟随 动画 减少动态效果 外观 保存位置 Beta', '聆听': '设备 输入 语言 翻译', '字幕与延迟': '字幕 草稿 刷新 停顿', '运行环境': '安装 修复 更新 版本 GitHub 准备 取消 重试 界面 前端 ', '使用指南': '首次 使用 帮助 入门 导出 SRT 开始 说明' };
   const descriptions: Record<string, string> = { '常规': '管理本地录音、保存位置和使用习惯。', '聆听': '从哪里听、听什么语言，以及你想看到的译文。', '模型管理': '查看、设置或删除已下载的识别与翻译模型。', '字幕与延迟': '调整识别请求频率与计算量；实际草稿速度取决于模型，不直接控制字幕定稿。', '运行环境': '准备本地组件、修复运行环境和检查软件更新。', '使用指南': '从第一次聆听，到整理和分享你的录音。' };
   const visibleCategories = categories.filter(value => query.trim().toLowerCase().split(/\s+/).every(term => (value + ' ' + aliases[value]).toLowerCase().includes(term)));
   const firstMatch = visibleCategories[0], categoryVisible = visibleCategories.includes(category);

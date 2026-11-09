@@ -58,4 +58,4 @@ docs/                 当前指南、规范、计划与证据入口
 
 正式入口：`linguaflow/desktop_launcher.py`；安全交接：`frontend_switch.py`；系统交互参数、旧几何与同源壁纸材质：`desktop_platform.py`；Electron 业务边界：`desktop_service.py`。必需的 Electron 打包输入与许可归 `packaging/electron/`，装配归 `scripts/package_electron.py`；安装包方法归 RELEASING，不在 UI 文档重复维护。
 
-新旧 UI 对照工具：`scripts/preview_parity.py`（受保护的原生 Qt 夹具）、`desktop/scripts/parity.cjs`（原生 Electron 页面/动画）、`scripts/compare_desktop_ui.py`（离线逐页对照）；执行与证据边界归 TESTING / VALIDATION。
+历史 Qt 代码、专属测试和预览脚本归档于 `archive/qt/`，不运行或打包。正式界面与动画检查使用 `desktop/scripts/`；后台数据保护测试继续在 `tests/`，对应关系见归档 README。

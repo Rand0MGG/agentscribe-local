@@ -11,6 +11,7 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from .core import export_srt, export_txt
 from .recording_document import read_recording_document
+from .storage_io import atomic_write
 
 
 def default_recording_name(now: datetime | None = None) -> str:
@@ -64,12 +65,7 @@ class Library:
 
     @staticmethod
     def _write(path, value):
-        temporary = path.with_suffix(path.suffix + ".tmp")
-        with temporary.open('w', encoding='utf-8') as output:
-            json.dump(value, output, ensure_ascii=False, indent=2)
-            output.flush()
-            os.fsync(output.fileno())
-        temporary.replace(path)
+        atomic_write(path, json.dumps(value, ensure_ascii=False, indent=2).encode('utf-8'))
 
     @staticmethod
     def validate_name(name):
@@ -83,6 +79,16 @@ class Library:
         if re.fullmatch(r"CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9]", name.split(".")[0], re.I):
             raise ValueError("这个名称被系统保留，请换一个名称。")
         return name
+
+    @classmethod
+    def validate_stored_name(cls, name):
+        # Older versions appended a collision suffix after checking the limit.
+        if isinstance(name, str) and len(name) > 64:
+            match = re.fullmatch(r"(.{1,64}) \(([0-9]+)\)", name)
+            if match and int(match[2]) >= 2:
+                cls.validate_name(name.rsplit(' (', 1)[0])
+                return name
+        return cls.validate_name(name)
 
     def _safe(self, path):
         path = Path(path)
@@ -179,7 +185,8 @@ class Library:
         while candidate.name.casefold() in entries and entries[candidate.name.casefold()] != source:
             if not unique:
                 raise FileExistsError("此处已有同名文件或文件夹，请使用其他名称。")
-            candidate = parent / f"{name} ({number})"
+            suffix = f" ({number})"
+            candidate = parent / (name[:64-len(suffix)].rstrip() + suffix)
             number += 1
         self._safe(candidate)
         return candidate
@@ -231,9 +238,7 @@ class Library:
             encoded = text.replace('\n', os.linesep).encode('utf-8-sig')
             if _export_matches(path, encoded):
                 continue
-            temporary = path.with_suffix(path.suffix + ".tmp")
-            temporary.write_bytes(encoded)
-            temporary.replace(path)
+            atomic_write(path, encoded)
         item["state"] = data["session"]["state"]
 
     def load(self, item):
@@ -303,7 +308,7 @@ class Library:
                         continue
                     self._safe(box)
                     data = self._read(box / "restore.json")
-                    self.validate_name(data['name'])
+                    self.validate_stored_name(data['name'])
                     if not isinstance(data['deleted'], str):
                         continue
                     data["token"] = box.name
@@ -334,14 +339,14 @@ class Library:
             raise ValueError("无效的恢复标识")
         box = self._deleted_box(token)
         data = self._read(box / "restore.json")
-        self.validate_name(data["name"])
+        self.validate_stored_name(data["name"])
         source = self._safe(box / data["name"])
         original = self._safe(self.root / data["original"])
         if any(root == original or root in original.parents for root in
                (self.root / self.trash_name, self.root / self.legacy_trash_name)):
             raise ValueError("无效的恢复位置")
         original.parent.mkdir(parents=True, exist_ok=True)
-        destination = self._destination(original.parent, original.name, unique=True)
+        destination = self._destination(original.parent, original.name[:64].rstrip(" ."), unique=True)
         source.rename(destination)
         self.refresh()
         return destination

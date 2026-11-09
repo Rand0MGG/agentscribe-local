@@ -1,0 +1,655 @@
+{
+  "bootstrap": {
+    "handler": "bootstrap",
+    "forward": true,
+    "params": {},
+    "result": "Bootstrap"
+  },
+  "settings.set": {
+    "handler": "set_settings",
+    "forward": true,
+    "params": {
+      "values": {
+        "type": "object",
+        "ts": "Settings"
+      }
+    },
+    "result": "Settings"
+  },
+  "library.refresh": {
+    "handler": "refresh",
+    "forward": true,
+    "params": {},
+    "result": "{ index: Library; warnings: string[] }"
+  },
+  "recording.open": {
+    "handler": "open_recording",
+    "forward": true,
+    "params": {
+      "identifier": {
+        "type": "string"
+      }
+    },
+    "result": "State"
+  },
+  "recording.new": {
+    "handler": "new_recording",
+    "forward": true,
+    "params": {
+      "folder_id": {
+        "type": "string",
+        "optional": true,
+        "nullable": true
+      },
+      "name": {
+        "type": "string",
+        "optional": true,
+        "nullable": true
+      }
+    },
+    "result": "State"
+  },
+  "folder.create": {
+    "handler": "create_folder",
+    "forward": true,
+    "params": {
+      "name": {
+        "type": "string"
+      },
+      "parent": {
+        "type": "string",
+        "optional": true,
+        "nullable": true
+      }
+    },
+    "result": "Item"
+  },
+  "item.rename": {
+    "handler": "rename",
+    "forward": true,
+    "params": {
+      "identifier": {
+        "type": "string",
+        "nullable": true
+      },
+      "name": {
+        "type": "string"
+      }
+    },
+    "result": "unknown"
+  },
+  "item.move": {
+    "handler": "move",
+    "forward": true,
+    "params": {
+      "identifier": {
+        "type": "string"
+      },
+      "folder_id": {
+        "type": "string"
+      }
+    },
+    "result": "unknown"
+  },
+  "item.trash": {
+    "handler": "trash",
+    "forward": true,
+    "params": {
+      "identifier": {
+        "type": "string"
+      }
+    },
+    "result": "unknown"
+  },
+  "trash.list": {
+    "handler": "deleted",
+    "forward": true,
+    "params": {},
+    "result": "DeletedItem[]"
+  },
+  "trash.restore": {
+    "handler": "restore",
+    "forward": true,
+    "params": {
+      "token": {
+        "type": "string"
+      }
+    },
+    "result": "DeletedItem[]"
+  },
+  "trash.purge": {
+    "handler": "purge",
+    "forward": true,
+    "params": {
+      "token": {
+        "type": "string"
+      }
+    },
+    "result": "DeletedItem[]"
+  },
+  "captions.locate": {
+    "handler": "locate",
+    "forward": true,
+    "params": {
+      "identifier": {
+        "type": "string"
+      },
+      "generation": {
+        "type": "number"
+      },
+      "caption_id": {
+        "type": "number",
+        "optional": true,
+        "nullable": true
+      },
+      "seconds": {
+        "type": "number",
+        "optional": true,
+        "nullable": true
+      }
+    },
+    "result": "CaptionLocation"
+  },
+  "captions.page": {
+    "handler": "page",
+    "forward": true,
+    "params": {
+      "start": {
+        "type": "number",
+        "optional": true,
+        "nullable": true
+      },
+      "locate": {
+        "type": "number",
+        "optional": true,
+        "nullable": true
+      },
+      "seconds": {
+        "type": "number",
+        "optional": true,
+        "nullable": true
+      }
+    },
+    "result": "Page"
+  },
+  "captions.search": {
+    "handler": "search",
+    "forward": true,
+    "params": {
+      "query": {
+        "type": "string"
+      },
+      "start": {
+        "type": "number",
+        "optional": true
+      }
+    },
+    "result": "{ generation: number; total: number; rows: Caption[] }"
+  },
+  "recording.save": {
+    "handler": "retry_save",
+    "forward": true,
+    "params": {},
+    "result": "unknown"
+  },
+  "recording.export": {
+    "handler": "export",
+    "forward": false,
+    "params": {
+      "format": {
+        "type": "string",
+        "optional": true
+      },
+      "recovery": {
+        "type": "boolean",
+        "optional": true
+      }
+    },
+    "result": "unknown",
+    "backendParams": {
+      "path": {
+        "type": "string"
+      },
+      "format": {
+        "type": "string",
+        "optional": true
+      },
+      "recovery": {
+        "type": "boolean",
+        "optional": true
+      }
+    },
+    "renderer": true
+  },
+  "recording.close_recovered": {
+    "handler": "close_recovered",
+    "forward": true,
+    "params": {},
+    "result": "unknown"
+  },
+  "audio.refresh": {
+    "handler": "refresh_devices",
+    "forward": true,
+    "params": {},
+    "result": "unknown"
+  },
+  "audio.select": {
+    "handler": "select_device",
+    "forward": true,
+    "params": {
+      "identifier": {
+        "type": "string"
+      },
+      "loopback": {
+        "type": "boolean"
+      }
+    },
+    "result": "[string, boolean]"
+  },
+  "recording.start": {
+    "handler": "start",
+    "forward": true,
+    "params": {},
+    "result": "unknown"
+  },
+  "recording.stop": {
+    "handler": "stop",
+    "forward": true,
+    "params": {},
+    "result": "unknown"
+  },
+  "recording.pause": {
+    "handler": "pause",
+    "forward": true,
+    "params": {},
+    "result": "unknown"
+  },
+  "playback.event": {
+    "handler": "playback_event",
+    "forward": false,
+    "params": {
+      "epoch": {
+        "type": "number"
+      },
+      "state": {
+        "type": "string"
+      },
+      "position": {
+        "type": "number",
+        "optional": true
+      },
+      "error": {
+        "type": "string",
+        "optional": true
+      }
+    },
+    "result": "unknown"
+  },
+  "playback.toggle": {
+    "handler": "play",
+    "forward": true,
+    "params": {},
+    "result": "unknown"
+  },
+  "playback.seek": {
+    "handler": "seek",
+    "forward": true,
+    "params": {
+      "milliseconds": {
+        "type": "number"
+      },
+      "play": {
+        "type": "boolean",
+        "optional": true
+      }
+    },
+    "result": "unknown"
+  },
+  "playback.volume": {
+    "handler": "volume",
+    "forward": true,
+    "params": {
+      "value": {
+        "type": "number"
+      }
+    },
+    "result": "unknown"
+  },
+  "models.prepare": {
+    "handler": "prepare",
+    "forward": true,
+    "params": {
+      "only": {
+        "type": "string",
+        "optional": true,
+        "nullable": true
+      },
+      "kind": {
+        "type": "string",
+        "optional": true
+      },
+      "selection": {
+        "type": "object",
+        "optional": true,
+        "nullable": true,
+        "ts": "Record<string, string>"
+      }
+    },
+    "result": "unknown"
+  },
+  "models.cancel": {
+    "handler": "cancel_preparation",
+    "forward": true,
+    "params": {},
+    "result": "unknown"
+  },
+  "models.retry": {
+    "handler": "retry_preparation",
+    "forward": true,
+    "params": {},
+    "result": "unknown"
+  },
+  "models.check": {
+    "handler": "check_models",
+    "forward": true,
+    "params": {},
+    "result": "unknown"
+  },
+  "models.cancel_check": {
+    "handler": "cancel_model_check",
+    "forward": true,
+    "params": {},
+    "result": "unknown"
+  },
+  "models.inventory": {
+    "handler": "model_inventory",
+    "forward": true,
+    "params": {},
+    "result": "unknown"
+  },
+  "models.delete": {
+    "handler": "delete_model",
+    "forward": true,
+    "params": {
+      "identifier": {
+        "type": "string"
+      }
+    },
+    "result": "unknown"
+  },
+  "updates.check": {
+    "handler": "check_updates",
+    "forward": true,
+    "params": {
+      "manual": {
+        "type": "boolean",
+        "optional": true
+      }
+    },
+    "result": "unknown"
+  },
+  "updates.action": {
+    "handler": "update_action",
+    "forward": true,
+    "params": {
+      "action": {
+        "type": "string"
+      }
+    },
+    "result": "unknown"
+  },
+  "app.edited": {
+    "handler": "set_edited",
+    "forward": false,
+    "params": {
+      "dirty": {
+        "type": "boolean"
+      }
+    },
+    "result": "unknown"
+  },
+  "library.migrate": {
+    "handler": "migrate_library",
+    "forward": false,
+    "params": {},
+    "result": "unknown",
+    "backendParams": {
+      "path": {
+        "type": "string"
+      }
+    },
+    "renderer": true
+  },
+  "library.cancel_migration": {
+    "handler": "cancel_migration",
+    "forward": true,
+    "params": {},
+    "result": "unknown"
+  },
+  "knowledge.open": {
+    "handler": "open_knowledge",
+    "forward": true,
+    "params": {},
+    "result": "unknown"
+  },
+  "knowledge.command": {
+    "handler": "knowledge_command",
+    "forward": true,
+    "params": {
+      "operation": {
+        "type": "string"
+      },
+      "values": {
+        "type": "object",
+        "optional": true,
+        "nullable": true
+      }
+    },
+    "result": "unknown"
+  },
+  "knowledge.image": {
+    "handler": "knowledge_image",
+    "forward": true,
+    "params": {
+      "identifier": {
+        "type": "string"
+      }
+    },
+    "result": "string | null"
+  },
+  "app.close": {
+    "handler": "close",
+    "forward": false,
+    "params": {},
+    "result": "unknown"
+  },
+  "path.recording": {
+    "handler": "recording_path",
+    "forward": false,
+    "params": {
+      "identifier": {
+        "type": "string",
+        "optional": true,
+        "nullable": true
+      }
+    },
+    "result": "unknown"
+  },
+  "frontend.ready": {
+    "handler": "mark_frontend_ready",
+    "forward": true,
+    "params": {},
+    "result": "unknown",
+    "backendParams": {
+      "owner_pid": {
+        "type": "number",
+        "optional": true,
+        "nullable": true
+      }
+    },
+    "renderer": true
+  },
+  "frontend.cancel": {
+    "handler": "cancel_frontend",
+    "forward": false,
+    "params": {},
+    "result": "unknown"
+  },
+  "layout.sidebar": {
+    "handler": "set_sidebar_width",
+    "forward": true,
+    "params": {
+      "width": {
+        "type": "number"
+      }
+    },
+    "result": "number"
+  },
+  "overlay.get": {
+    "handler": "overlay_preferences",
+    "forward": false,
+    "params": {},
+    "result": "unknown"
+  },
+  "overlay.set": {
+    "handler": "set_overlay_preferences",
+    "forward": false,
+    "params": {
+      "font": {
+        "type": "number",
+        "optional": true,
+        "nullable": true
+      },
+      "opacity": {
+        "type": "number",
+        "optional": true,
+        "nullable": true
+      },
+      "bounds": {
+        "type": "object",
+        "optional": true,
+        "nullable": true
+      }
+    },
+    "result": "OverlayOptions",
+    "renderer": true
+  },
+  "path.diagnostics": {
+    "handler": "diagnostics_path",
+    "forward": false,
+    "params": {},
+    "result": "unknown",
+    "renderer": true
+  },
+  "overlay.snapshot": {
+    "params": {},
+    "result": "{ state: State | null; settings: Settings | null; rows: Caption[]; options: OverlayOptions }"
+  },
+  "overlay.resize": {
+    "params": {
+      "width": {
+        "type": "number"
+      },
+      "height": {
+        "type": "number"
+      }
+    },
+    "result": "unknown"
+  },
+  "overlay.close": {
+    "params": {},
+    "result": "unknown"
+  },
+  "knowledge.dismiss": {
+    "params": {},
+    "result": "unknown"
+  },
+  "knowledge.locate": {
+    "params": {
+      "seconds": {
+        "type": "number"
+      },
+      "identifier": {
+        "type": "string"
+      },
+      "generation": {
+        "type": "number"
+      }
+    },
+    "result": "unknown"
+  },
+  "material.get": {
+    "params": {},
+    "result": "Material | null"
+  },
+  "window.layout": {
+    "params": {},
+    "result": "{ split: boolean }"
+  },
+  "window.minimize": {
+    "params": {},
+    "result": "unknown"
+  },
+  "window.edited": {
+    "params": {
+      "owner": {
+        "type": "string",
+        "ts": "'name' | 'knowledge'"
+      },
+      "dirty": {
+        "type": "boolean"
+      }
+    },
+    "result": "unknown"
+  },
+  "window.close": {
+    "params": {},
+    "result": "unknown"
+  },
+  "overlay.toggle": {
+    "params": {},
+    "result": "unknown"
+  },
+  "knowledge.window": {
+    "params": {},
+    "result": "unknown"
+  },
+  "captions.copy": {
+    "params": {},
+    "result": "unknown"
+  },
+  "app.help": {
+    "params": {},
+    "result": "unknown"
+  },
+  "app.releases": {
+    "params": {},
+    "result": "unknown"
+  },
+  "library.recover": {
+    "params": {},
+    "result": "unknown"
+  },
+  "path.reveal": {
+    "params": {
+      "identifier": {
+        "type": "string",
+        "optional": true,
+        "nullable": true
+      }
+    },
+    "result": "unknown"
+  },
+  "models.choose": {
+    "params": {
+      "key": {
+        "type": "string"
+      },
+      "apply": {
+        "type": "boolean",
+        "optional": true
+      }
+    },
+    "result": "{ path?: string; cancelled?: boolean }"
+  }
+}

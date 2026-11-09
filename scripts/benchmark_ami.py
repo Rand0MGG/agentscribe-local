@@ -55,7 +55,7 @@ def command(argv, log):
 
 def runtime_versions(python):
     code = """import importlib.metadata as m,json,sys
-names=['numpy','av','PySide6','torch','qwen-asr','whisperlivekit','wtpsplit']
+names=['numpy','av','torch','qwen-asr','whisperlivekit','wtpsplit']
 versions={}
 for name in names:
  try: versions[name]=m.version(name)

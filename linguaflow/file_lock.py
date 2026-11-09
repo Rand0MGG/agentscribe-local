@@ -7,6 +7,8 @@ from pathlib import Path
 
 import psutil
 
+from .os_lock import exclusive_lock
+
 
 class FileLock:
     def __init__(self, path):
@@ -21,25 +23,8 @@ class FileLock:
     def _guard(self):
         # A persistent OS-locked sidecar serializes reclaim/create/unlink. Never
         # unlink this inode: waiters must continue to share the same lock.
-        with self.path.with_name(self.path.name + ".guard").open("a+b") as stream:
-            if os.name == "nt":
-                import msvcrt
-                if stream.tell() == 0:
-                    stream.write(b"0")
-                    stream.flush()
-                stream.seek(0)
-                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            try:
-                yield
-            finally:
-                if os.name == "nt":
-                    stream.seek(0)
-                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
-                else:
-                    fcntl.flock(stream, fcntl.LOCK_UN)
+        with self.path.with_name(self.path.name + ".guard").open("a+b") as stream, exclusive_lock(stream):
+            yield
 
     def _acquire(self):
         try:

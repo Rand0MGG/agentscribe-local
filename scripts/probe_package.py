@@ -17,23 +17,6 @@ ROOT = Path(__file__).resolve().parents[1]
 FLAGS = '--disable-gpu --disable-audio-input --disable-audio-output --use-fake-device-for-media-stream'
 
 
-def close_window(window, application, *, timeout=15):
-    """Wait for accepted close and owned Qt checks, not just the close request."""
-    from PySide6.QtCore import QProcess
-    accepted = window.close()
-    deadline = time.monotonic() + timeout
-    while True:
-        application.processEvents()
-        running = any(job.state() != QProcess.ProcessState.NotRunning
-                      for job in window.findChildren(QProcess))
-        if not window.isVisible() and not window.background_checks and not running:
-            if accepted or window.close():
-                return
-        if time.monotonic() >= deadline:
-            raise RuntimeError('安装包窗口或自有子进程未完成退出。')
-        time.sleep(.01)
-
-
 def probe(app_path, work, *, install_documents=False):
     import ssl
 

@@ -5,7 +5,6 @@ import json
 import os
 import plistlib
 import sys
-import tempfile
 from contextlib import contextmanager
 from enum import IntEnum
 from pathlib import Path
@@ -28,12 +27,17 @@ class SettingsStore:
         self.batching = 0
         registry = str(path).strip('\\').casefold() == r'HKEY_CURRENT_USER\Software\LinguaFlow\LocalCaptions'.casefold()
         if isinstance(format, str) or (sys.platform == 'win32' and format == 0 and registry):
+            from .runtime_paths import user_data_root
             home = Path.home()
-            directory = (home / 'Library/Application Support/AgentScribe' if sys.platform == 'darwin' else
-                         Path(os.environ.get('LOCALAPPDATA', home / '.local/share')) / 'AgentScribe')
-            self.path = directory / 'preferences.json'
+            self.path = user_data_root() / 'preferences.json'
             legacy = home / 'Library/Preferences/com.LinguaFlow.LocalCaptions.plist'
-            self.values = self._read_json() if self.path.exists() else self._native_legacy(legacy)
+            # Read the former default once when the unified root differs (e.g.
+            # Windows without LOCALAPPDATA, or Linux with XDG_DATA_HOME). Never
+            # alter that source; subsequent writes go to the canonical path.
+            previous = (home / 'Library/Application Support/AgentScribe' if sys.platform == 'darwin' else
+                        Path(os.environ.get('LOCALAPPDATA', home / '.local/share')) / 'AgentScribe') / 'preferences.json'
+            self.values = (self._read_json() if self.path.exists() else self._read_json(previous)
+                           if previous != self.path and previous.is_file() else self._native_legacy(legacy))
         else:
             original = Path(path).expanduser()
             self.path = original if original.suffix == '.json' else original.with_name(original.name + '.backend.json')
@@ -44,8 +48,8 @@ class SettingsStore:
             else:
                 self.values = {}
 
-    def _read_json(self):
-        value = json.loads(self.path.read_text(encoding='utf-8'), object_hook=self._decode)
+    def _read_json(self, path=None):
+        value = json.loads((path or self.path).read_text(encoding='utf-8'), object_hook=self._decode)
         if not isinstance(value, dict):
             raise ValueError('设置文件格式无效；原文件已保留。')
         return value
@@ -141,6 +145,22 @@ class SettingsStore:
         if not self.batching:
             self.sync()
 
+    def commit_value(self, key, value):
+        """One durable write; a failed replace leaves the old disk and memory value."""
+        previous = dict(self.values), dict(self.dirty), set(self.removed)
+        self.values[key] = value
+        self.dirty[key] = value
+        self.removed.discard(key)
+        try:
+            self.sync()
+        except Exception:
+            self.values, self.dirty, self.removed = previous
+            raise
+        if self.status() != self.Status.NoError:
+            self.values, self.dirty, self.removed = previous
+            return False
+        return True
+
     def remove(self, key):
         self.values.pop(key, None)
         self.dirty.pop(key, None)
@@ -160,7 +180,7 @@ class SettingsStore:
 
     def sync(self):
         from .file_lock import FileLock
-        temporary = None
+        from .storage_io import atomic_write
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             lock = FileLock(str(self.path) + '.lock')
@@ -171,22 +191,17 @@ class SettingsStore:
                 merged.update(self.dirty)
                 for key in self.removed:
                     merged.pop(key, None)
-                with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=self.path.parent,
-                                                 prefix='.preferences-', delete=False) as stream:
-                    temporary = Path(stream.name)
-                    json.dump(merged, stream, ensure_ascii=False, default=self._encode)
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                os.replace(temporary, self.path)
+                atomic_write(self.path, json.dumps(merged, ensure_ascii=False, default=self._encode).encode('utf-8'))
                 self.values, self.dirty, self.removed = merged, {}, set()
                 self._status = self.Status.NoError
             finally:
-                lock.unlock()
+                try:
+                    lock.unlock()
+                except OSError as exc:
+                    from . import diagnostic_log as diag
+                    diag.exception('preferences_lock_cleanup_failed', exc)
         except (OSError, ValueError, TypeError):
             self._status = self.Status.AccessError
-        finally:
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
 
     def status(self):
         return self._status

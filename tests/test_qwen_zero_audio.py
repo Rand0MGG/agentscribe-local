@@ -1,4 +1,4 @@
-"""Zero frames never enter Qwen; real recording time and old PCM survive gaps."""
+"""Only entirely zero inference windows are rejected; mixed PCM stays intact."""
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from threading import Event
 from types import SimpleNamespace
@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from linguaflow.qwen_accurate import QwenAccurateOnline
-from linguaflow.qwen_audio import KeptAudioClock, NonzeroPCM, ZeroAudioGap
+from linguaflow.qwen_audio import KeptAudioClock
 from linguaflow.qwen_revisions import install_revision_bridge
 
 RATE = 16000
@@ -28,81 +28,142 @@ def feed(asr, audio):
 
 
 @pytest.mark.p1
-def test_zero_input_never_decodes_even_when_vad_says_speech():
+@pytest.mark.parametrize('packet', [160, 1760, 35200])
+def test_short_zero_gaps_stay_in_pcm_without_extra_decodes(packet):
+    asr, calls, _ = online()
+    audio = np.tile(np.r_[np.full(1600, .125, np.float32), np.zeros(160, np.float32)], 20)
+    for start in range(0, len(audio), packet):
+        feed(asr, audio[start:start+packet])
+    assert 1 <= len(calls) <= 2
+    for part in calls:
+        np.testing.assert_array_equal(part, audio[:len(part)])
+    asr.finish()
+    np.testing.assert_array_equal(calls[-1], audio)
+    assert len(calls) <= 3  # EOF alone may flush the sub-second remainder.
+
+
+@pytest.mark.p1
+@pytest.mark.parametrize('vad_quiet', [False, True])
+@pytest.mark.parametrize('packet', [RATE, 100 * RATE])
+def test_zero_window_skips_model_and_advances_bounded_queue(vad_quiet, packet):
     asr, calls, store = online()
-    asr.observe_capture_event('speech_started', 0)
-    for _ in range(100):
-        feed(asr, np.zeros(RATE, np.float32))
-    assert asr.end == 100 and not len(asr.audio_buffer)
-    assert not calls and not store.rows
+    asr.observe_capture_event('silence_started' if vad_quiet else 'speech_started', 0)
+    audio = np.zeros(100 * RATE, np.float32)
+    for start in range(0, len(audio), packet):
+        feed(asr, audio[start:start+packet])
+    assert asr.end == 100 and len(asr.audio_buffer) <= 35 * RATE
+    assert not asr._queued_audio and not calls and not store.rows
+    assert asr.decode_sequence == 0
     assert asr.finish() == ([], 100)
     assert not calls
 
 
 @pytest.mark.p1
-def test_zero_transition_flushes_short_tail_once_and_keeps_context_and_recording_time():
-    asr, calls, store = online()
-    feed(asr, np.zeros(2 * RATE, np.float32))
-    feed(asr, np.ones(RATE // 4, np.float32))
-    assert not calls
-    feed(asr, np.zeros(RATE, np.float32))
-    np.testing.assert_array_equal(calls[0], np.ones(RATE // 4, np.float32))
-    assert not store.rows[0]['closed']  # Zero is not a forced endpoint.
-    for _ in range(99):
-        feed(asr, np.zeros(RATE, np.float32))
+@pytest.mark.parametrize('reverse', [False, True])
+def test_half_zero_window_passes_unchanged(reverse):
+    asr, calls, _ = online()
+    audio = np.r_[np.zeros(5 * RATE, np.float32), np.full(5 * RATE, .125, np.float32)]
+    if reverse:
+        audio = audio[::-1].copy()
+    original = audio.copy()
+    feed(asr, audio)
     assert len(calls) == 1
-    assert store.rows[0]['stable_ranges'] == []  # 100 seconds of zero input supplied no second observation.
-    feed(asr, np.full(RATE, 2, np.float32))
-    np.testing.assert_array_equal(calls[1], np.r_[np.ones(RATE // 4), np.full(RATE, 2)])
-    assert asr.submission.last_audio_end == 1.25  # Zero samples do not advance voting time.
-    assert store.rows[0]['stable_ranges'] == [(0, len('First words.'))]  # Only the common prefix locks.
+    np.testing.assert_array_equal(calls[0], original)
+    np.testing.assert_array_equal(audio, original)
+    assert asr._clock.source_time(5) == 5
+    asr.finish()
+    assert len(calls) == 1
+
+
+@pytest.mark.p1
+@pytest.mark.parametrize('position', [0, RATE // 2, RATE - 1])
+def test_one_nonzero_sample_passes_even_if_very_weak_and_vad_says_quiet(position):
+    asr, calls, _ = online()
+    asr.observe_capture_event('silence_started', 0)
+    audio = np.zeros(RATE, np.float32)
+    audio[position] = 1e-12
+    feed(asr, audio)
+    np.testing.assert_array_equal(calls[0], audio)
+
+
+@pytest.mark.p1
+def test_zero_tail_uses_normal_minimum_and_keeps_earlier_sound_in_window():
+    asr, calls, store = online()
+    speech = np.full(RATE // 4, .125, np.float32)
+    feed(asr, speech)
+    feed(asr, np.zeros(RATE // 2, np.float32))
+    assert not calls
+    feed(asr, np.zeros(RATE // 4, np.float32))
+    np.testing.assert_array_equal(calls[0], np.r_[speech, np.zeros(3 * RATE // 4)])
+    feed(asr, np.zeros(RATE, np.float32))
+    assert len(calls) == 2  # The full window still contains original nonzero PCM.
+    assert not store.rows[0]['closed']
+    asr.finish()
+    assert len(calls) == 2 and store.rows[0]['closed']
+
+
+@pytest.mark.p1
+@pytest.mark.parametrize('vad_quiet', [False, True])
+def test_sound_resumes_after_long_zero_without_reconnect(vad_quiet):
+    asr, calls, store = online()
+    asr.observe_capture_event('silence_started' if vad_quiet else 'speech_started', 0)
+    feed(asr, np.zeros(100 * RATE, np.float32))
+    assert not calls
+    asr.observe_capture_event('speech_started', 100)
+    speech = np.full(RATE, .25, np.float32)
+    feed(asr, speech)
+    assert len(calls) == 1
+    np.testing.assert_array_equal(calls[0][-RATE:], speech)
+    assert np.count_nonzero(calls[0][:-RATE]) == 0
+    assert asr.end == 101 and len(calls[0]) <= 35 * RATE
     view = {}
     store.augment_snapshot(view)
-    assert view['revision_spans'][0][2] == 2
-    assert view['revision_spans'][-1][3] == 103.25
-    resumed = view['revision_spans'][len('First words.'):]
-    assert all(a >= 102.25 for _, _, a, _, _ in resumed)
-    before = len(calls)
+    assert view['revision_spans'][-1][3] == 101
     asr.finish()
-    assert len(calls) == before
+    assert len(calls) == 1 and all(r['closed'] for r in store.rows.values())
 
 
 @pytest.mark.p1
-@pytest.mark.parametrize('packet', [1, 73, 160, 801])
-def test_filter_is_packet_independent_and_retains_zero_crossings_and_weak_audio(packet):
-    waveform = np.ones(160, np.float32)
-    waveform[[0, 50, 159]] = 0  # Individual zero samples belong to real sound.
-    weak = np.full(160, 1e-12, np.float32)
-    audio = np.r_[np.zeros(320, np.float32), waveform, np.zeros(480, np.float32), weak, np.zeros(80, np.float32)]
-    gate, parts = NonzeroPCM(RATE), []
-    for start in range(0, len(audio), packet):
-        parts.extend(gate.feed(audio[start:start+packet], start / RATE))
-    parts.extend(gate.flush())
-    kept = np.concatenate([part for _, part in parts if not isinstance(part, ZeroAudioGap)])
-    np.testing.assert_array_equal(kept, np.r_[waveform, weak])
-    assert sum(round((part.end - part.start) * RATE) for _, part in parts
-               if isinstance(part, ZeroAudioGap)) == 880
+def test_skipped_zero_window_does_not_erase_text_vote_or_extend_text_times():
+    asr, calls, store = online()
+    asr.decode = lambda audio: calls.append(audio.copy()) or 'Keep these words.'
+    feed(asr, np.ones(RATE, np.float32))
+    # No VAD labels: normal rolling eventually releases all original sound.
+    for _ in range(50):
+        feed(asr, np.zeros(RATE, np.float32))
+    assert not np.any(asr.audio_buffer)
+    text = asr.text
+    rows = repr(store.rows)
+    last_observation = asr.submission.last_audio_end
+    count, decode_id = len(calls), asr.decode_sequence
+    for _ in range(50):
+        feed(asr, np.zeros(RATE, np.float32))
+    assert len(calls) == count and asr.decode_sequence == decode_id
+    assert asr.text == text == 'Keep these words.' and repr(store.rows) == rows
+    assert asr.submission.last_audio_end == last_observation
+    asr.finish()
+    assert all(r['closed'] for r in store.rows.values())
+    assert asr.finish()[0] == []
 
 
 @pytest.mark.p1
-def test_failed_zero_tail_flush_preserves_tail_for_retry():
+def test_failed_mixed_decode_keeps_samples_for_retry():
     asr, calls, _ = online()
     decode = asr.decode
     asr.decode = lambda _: (_ for _ in ()).throw(RuntimeError('decode failed'))
-    feed(asr, np.ones(RATE // 4, np.float32))
+    audio = np.r_[np.ones(RATE // 4, np.float32), np.zeros(RATE, np.float32)]
     with pytest.raises(RuntimeError, match='decode failed'):
-        feed(asr, np.zeros(RATE, np.float32))
-    assert len(asr.audio_buffer) == RATE // 4
+        feed(asr, audio)
+    np.testing.assert_array_equal(asr.audio_buffer, audio)
     asr.decode = decode
     asr.process_iter()
-    assert len(calls) == 1
-    np.testing.assert_array_equal(calls[0], np.ones(RATE // 4, np.float32))
+    np.testing.assert_array_equal(calls[0], audio)
     asr.finish()
     assert len(calls) == 1
 
 
 @pytest.mark.p1
-def test_mixed_backlog_keeps_all_nonzero_audio_bounded_and_clock_gaps():
+def test_mixed_backlog_does_not_drop_nonzero_samples_and_keeps_original_time():
     calls = []
     def decode(audio):
         calls.append((round(asr.start * RATE), audio.copy()))
@@ -110,37 +171,21 @@ def test_mixed_backlog_keeps_all_nonzero_audio_bounded_and_clock_gaps():
     asr = QwenAccurateOnline(decode, 'en', token_type=SimpleNamespace, transcript_type=SimpleNamespace)
     first = np.arange(1, 40 * RATE + 1, dtype=np.float32)
     second = np.arange(len(first) + 1, 80 * RATE + 1, dtype=np.float32)
-    feed(asr, np.r_[np.zeros(2 * RATE, np.float32), first, np.zeros(100 * RATE, np.float32), second])
+    original = np.r_[np.zeros(2 * RATE, np.float32), first, np.zeros(100 * RATE, np.float32), second]
+    feed(asr, original)
     asr.finish()
-    reached, parts = 0, []
+    covered = np.zeros(len(original), dtype=bool)
     for start, part in calls:
-        end = start + len(part)
-        assert 0 < end - reached <= 10 * RATE
-        assert len(part) <= 35 * RATE
-        parts.append(part[reached-start:])
-        reached = end
-    np.testing.assert_array_equal(np.concatenate(parts), np.r_[first, second])
+        assert len(part) <= 35 * RATE and np.any(part)
+        np.testing.assert_array_equal(part, original[start:start+len(part)])
+        covered[start:start+len(part)] = True
+    assert np.all(covered[original != 0])
     assert asr.end == 182
 
 
 @pytest.mark.p1
-def test_removed_zero_gap_still_supplies_original_vad_release_reference():
-    asr, calls, _ = online()
-    for kind, at in [('silence_started', 0), ('speech_started', .5),
-                     ('silence_started', 10), ('speech_started', 110)]:
-        asr.observe_capture_event(kind, at)
-    feed(asr, np.r_[np.ones(10 * RATE, np.float32), np.zeros(100 * RATE, np.float32),
-                   np.full(25 * RATE, 2, np.float32)])
-    # At 30 s of retained PCM, the original 100 s quiet gap remains the
-    # release reference. Its source duration is not confused with zero PCM.
-    np.testing.assert_array_equal(asr.audio_buffer, np.full(25 * RATE, 2, np.float32))
-    assert asr.get_buffer().start == 110
-    assert all(len(part) <= 35 * RATE for part in calls)
-
-
-@pytest.mark.p1
 @pytest.mark.parametrize('value,expected_calls', [(0., 0), (.002, 1)])
-def test_explicit_pause_flushes_partial_frame_without_manufacturing_zero_input(value, expected_calls):
+def test_explicit_pause_checks_even_sub_frame_tail(value, expected_calls):
     asr, calls, _ = online()
     feed(asr, np.full(80, value, np.float32))
     assert not calls

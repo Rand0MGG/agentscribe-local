@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Button, ConfirmDialog, Modal } from './components';
-import { request } from './types';
+import { request, type DeletedItem } from './types';
 
-export function Deleted({ rows, disabled, onChange, onClose }: { rows: any[]; disabled: boolean; onChange: (rows: any[]) => void; onClose: () => void }) {
-  const [selected, setSelected] = useState<string[]>([]), [purging, setPurging] = useState<any[] | null>(null);
+export function Deleted({ rows, disabled, onChange, onClose }: { rows: DeletedItem[]; disabled: boolean; onChange: (rows: DeletedItem[]) => void; onClose: () => void }) {
+  const [selected, setSelected] = useState<string[]>([]), [purging, setPurging] = useState<DeletedItem[] | null>(null);
   useEffect(() => { setSelected(old => { const kept = old.filter(token => rows.some(row => row.token === token)); return kept.length ? kept : rows.length ? [rows[0].token] : []; }); }, [rows]);
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
-  async function apply(method: string, targets: any[]) {
+  async function apply(method: 'trash.restore' | 'trash.purge', targets: DeletedItem[]) {
     setBusy(true); setError('');
     const failures: string[] = [];
     try {

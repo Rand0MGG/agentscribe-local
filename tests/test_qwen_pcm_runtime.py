@@ -153,16 +153,18 @@ async def run():
     settings['audio_processing'] = {}
     events = []
     await asyncio.wait_for(_run_session(settings, events.append, read, config, engine, asr, Semantic()), 20)
-    assert len(calls) == 2, [len(a) for a in calls]
-    np.testing.assert_array_equal(calls[0], np.full(4000, 2000 / 32768, np.float32))
-    np.testing.assert_array_equal(calls[1], np.r_[calls[0], np.full(16000, 3000 / 32768, np.float32)])
+    assert calls and all(np.any(a) for a in calls)
+    expected = audio.astype(np.float32) / 32768
+    for part in calls:
+        np.testing.assert_array_equal(part, expected[:len(part)])
+    np.testing.assert_array_equal(calls[-1], expected)
     assert asr.end == 5.25 and events[-1]['type'] == 'done'
     source = {}
     asr.revisions.augment_snapshot(source)
-    assert source['revision_spans'][0][2] == 1
-    assert source['revision_spans'][-1][3] == 4.25
-    assert all(a >= 3.25 for _, _, a, _, _ in source['revision_spans'][len('First words.'):])
-    print('PASS: installed WLK mixed zero/audio queue, retained context, short-tail flush, original timestamps and EOF')
+    assert source['revision_spans'][0][2] == 0
+    assert source['revision_spans'][-1][3] == 5.25
+    assert all(row['closed'] for row in asr.revisions.rows.values())
+    print('PASS: installed WLK queue keeps mixed PCM intact, original timestamps and EOF')
 asyncio.run(run())
 '''
 

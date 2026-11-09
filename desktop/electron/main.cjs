@@ -13,16 +13,7 @@ let restartService, audioHost;
 const root = path.resolve(__dirname, '../..');
 const page = path.resolve(__dirname, '../dist/index.html');
 const pageURL = pathToFileURL(page).href;
-const methods = new Set([
-  'bootstrap', 'frontend.ready', 'settings.set', 'library.refresh', 'recording.open', 'recording.new', 'folder.create',
-  'item.rename', 'item.move', 'item.trash', 'trash.list', 'trash.restore', 'trash.purge',
-  'captions.locate', 'captions.page', 'captions.search', 'recording.save', 'audio.refresh', 'audio.select',
-  'recording.start', 'recording.stop', 'recording.pause', 'playback.toggle', 'playback.seek',
-  'playback.volume', 'models.prepare', 'models.cancel', 'models.retry', 'knowledge.open', 'knowledge.command',
-  'models.inventory', 'models.delete', 'updates.check', 'updates.action', 'library.cancel_migration',
-  'models.check', 'models.cancel_check', 'layout.sidebar',
-  'recording.close_recovered', 'knowledge.image',
-]);
+const { forwardedMethods: methods, validateRequest } = require('./protocol.cjs');
 let window, overlay, knowledge, service, quitting = false, state, preferences, overlayRows = [];
 let fault = process.env.AGENTSCRIBE_FRONTEND_RECOVERY || '';
 app.setName('AgentScribe');
@@ -226,6 +217,7 @@ ipcMain.handle('desktop:request', async (event, request) => {
     throw new Error('无效的桌面请求。');
   }
   const { method, params } = request;
+  validateRequest(method, params);
   if (target === overlay) {
     if (method === 'overlay.snapshot') return { state, settings: preferences, rows: overlayRows, options: await service.request('overlay.get') };
     if (method === 'overlay.resize') {

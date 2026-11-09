@@ -20,6 +20,20 @@ module.exports = async function(app, page, passed) {
     await page.waitForFunction(()=>document.documentElement.dataset.reducedMotion==='false');
     await send([{event:'state',data:state},{event:'captions',data:captions}]);
     await page.waitForFunction(()=>document.querySelectorAll('.caption-body [data-caption]').length===3);
+    // Input feedback must remain visible after captions replace the empty view.
+    const capture = {...original.state.capture, label:'录音中', volume_label:'未收到声音',
+      waiting:'没有收到声音。', model_loading:false};
+    await send([{event:'state',data:{...state,capture}}]);
+    await page.getByText('未收到声音',{exact:true}).waitFor();
+    assert.equal(await page.locator('.caption-body [data-caption]:visible').count(),3);
+    await send([{event:'state',data:{...state,capture:{...capture,volume_label:'输入音量'}}}]);
+    await page.getByText('输入音量',{exact:true}).waitFor();
+    assert.equal(await page.getByText('未收到声音',{exact:true}).count(),0);
+    await send([{event:'state',data:{...state,state:'IDLE',saving:true,has_audio:false}}]);
+    await page.getByText('正在保存…',{exact:true}).waitFor();
+    assert(await page.getByRole('button',{name:'开始聆听',exact:true}).isDisabled());
+    await send([{event:'state',data:state}]);
+    passed.push('Zero-input feedback stays visible with existing captions, clears on recovery, and final saving is shown before playback');
     await page.evaluate(() => {
       window.originalCaptionNodes = [...document.querySelectorAll('.caption-body [data-caption]')];
     });

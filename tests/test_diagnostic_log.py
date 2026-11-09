@@ -399,23 +399,23 @@ def test_zero_audio_trace_records_transitions_and_original_clock_not_every_packe
     def feed(audio):
         asr.insert_audio_chunk(audio, asr.end + len(audio) / 16000)
         asr.process_iter()
-    feed(np.zeros(16000))
-    feed(np.ones(4000))
     for _ in range(20):
         feed(np.zeros(4000))
-    feed(np.ones(16000))
+    feed(np.ones(4000))
+    feed(np.zeros(12000))
+    feed(np.zeros(16000))
     asr.finish()
     rows = read_rows(path)
-    transitions = [r for r in rows if r['event'] in ('asr_zero_start', 'asr_zero_end')]
-    assert [r['event'] for r in transitions] == ['asr_zero_start', 'asr_zero_end'] * 2
-    assert transitions[-1]['skipped_seconds'] == 5
+    transitions = [r for r in rows if r['event'] in ('asr_zero_window_start', 'asr_zero_window_end')]
+    assert [r['event'] for r in transitions] == ['asr_zero_window_start', 'asr_zero_window_end']
+    assert transitions[0]['window_start'] == 0 and transitions[0]['window_end'] == 1
+    assert transitions[-1]['window_end'] == 6
     decodes = [r for r in rows if r['event'] == 'asr_decode_end']
-    assert len(decodes) == 2 and decodes[0]['reason'] == 'zero_input'
-    assert decodes[-1]['window_start'] == 1 and decodes[-1]['window_end'] == 7.25
-    assert decodes[-1]['audio_seconds'] == 1.25 and decodes[-1]['skipped_zero_seconds'] == 5
-    assert decodes[-1]['admitted_audio_seconds'] == 1
+    assert len(decodes) == 2 and [r['decode_id'] for r in decodes] == [1, 2]
+    assert decodes[-1]['window_start'] == 0 and decodes[-1]['window_end'] == 7
+    assert decodes[-1]['audio_seconds'] == 7 and decodes[-1]['admitted_audio_seconds'] == 1
     source = [r for r in rows if r['event'] == 'source_revision'][-1]
-    assert source['audio_start'] == 1 and source['audio_end'] == 7.25
+    assert source['audio_start'] == 0 and source['audio_end'] == 7
     assert 'PRIVATE_ZERO_TEST' not in path.read_text(encoding='utf-8')
 
 

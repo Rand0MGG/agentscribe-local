@@ -98,7 +98,7 @@ export function Knowledge({ onClose, active, onSeek }: { onClose: () => void; ac
   useEffect(() => {
     let current = true;
     setImage(null);
-    if (block?.preview_image_path || visual?.image_path) request<string>('knowledge.image', { identifier: visual?.image_path ? visual.id : block.id }).then(value => {
+    if (block?.preview_image_path || visual?.image_path) request('knowledge.image', { identifier: visual?.image_path ? visual.id : block.id }).then(value => {
       if (current) setImage(value);
     }).catch(error => { if (current) setMessage(error.message); });
     return () => { current = false; };
@@ -187,7 +187,7 @@ export function KnowledgeWindow() {
       document.documentElement.dataset.theme = String(value.appearance);
       document.documentElement.dataset.reducedMotion = String(!!value.reduce_motion);
     }
-    request<Bootstrap>('bootstrap').then(value => { settings(value.settings); state(value.state, false); }).catch(error => setError(error.message));
+    request('bootstrap').then(value => { settings(value.settings); state(value.state, false); }).catch(error => setError(error.message));
     return bridge?.subscribe(({ event, data }) => {
       if (event === 'settings') settings(data);
       if (event === 'state') state(data, true);
@@ -195,5 +195,5 @@ export function KnowledgeWindow() {
     });
   }, []);
   return <>{error && <p className="error" role="alert">{error}</p>}<Knowledge active={active} onClose={() => request('knowledge.dismiss').catch(error => setError(error.message))}
-    onSeek={(seconds, identifier) => request('knowledge.locate', { seconds, identifier, generation: generation.current }).catch(error => setError(error.message))} /></>;
+    onSeek={(seconds, identifier) => { if (generation.current !== null) request('knowledge.locate', { seconds, identifier, generation: generation.current }).catch(error => setError(error.message)); }} /></>;
 }

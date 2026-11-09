@@ -1,0 +1,218 @@
+{
+  "tests/test_beta_features.py": [
+    "test_beta_off_hides_entries_and_ignores_old_cloud_consent_and_qwen_context",
+    "test_beta_toggle_persists_and_closes_owned_worker_without_deleting_course_data",
+    "test_disabling_beta_cancels_only_course_component_preparation",
+    "test_knowledge_close_reaps_exited_child_with_buffered_input"
+  ],
+  "tests/test_caption_feedback.py": [
+    "test_tooltip_destroyed_before_application_stops_receiving_events"
+  ],
+  "tests/test_caption_view.py": [
+    "test_saved_transcript_is_complete_in_forward_order_without_page_controls",
+    "test_caption_anchor_audio_selection_sync_and_recording_lock"
+  ],
+  "tests/test_deleted_dialog.py": [
+    "test_delete_all_cancel_then_confirm_preserves_live_and_unknown_files",
+    "test_delete_all_retains_shared_course_and_reports_partial_failure"
+  ],
+  "tests/test_export_search_feedback.py": [
+    "test_export_and_backup_feedback_tracks_queue_failure_and_cancel"
+  ],
+  "tests/test_first_run_asr_only.py": [
+    "test_translation_recovery_preserves_intent_for_next_recording"
+  ],
+  "tests/test_installation_ui.py": [
+    "test_update_settings_and_inline_storage_path",
+    "test_slow_update_check_does_not_block_local_recording_and_save"
+  ],
+  "tests/test_interaction_fixes.py": [
+    "test_live_overlay_catches_up_with_current_and_hidden_revisions",
+    "test_overlay_hidden_controls_release_reading_space_without_resizing",
+    "test_click_only_on_caption_text_plays_but_selection_and_live_recording_do_not",
+    "test_player_reads_real_gain_stream_and_closes_it_without_changing_original",
+    "test_overlay_geometry_round_trips_shared_electron_coordinates"
+  ],
+  "tests/test_knowledge_ui.py": [
+    "test_missing_agent_sdk_corrupt_course_and_worker_exit_leave_local_recording_usable",
+    "test_course_panel_context_save_source_sync_and_owned_process_cleanup",
+    "test_visual_page_panel_coverage_provenance_and_window_sizes",
+    "test_new_format_import_filter_and_local_preview_without_cloud"
+  ],
+  "tests/test_language_selection.py": [
+    "test_matching_languages_disable_translation_in_both_views"
+  ],
+  "tests/test_library_defaults.py": [
+    "test_new_workspace_recreates_default_folder_after_last_folder_is_deleted",
+    "test_default_folder_write_failure_reports_error_without_resetting_view"
+  ],
+  "tests/test_live_library.py": [
+    "test_library_thread_start_failure_reports_and_allows_retry_and_close",
+    "test_live_title_and_unrelated_operations_preserve_capture_path",
+    "test_saved_empty_recording_is_distinct_from_live_listening_and_pause"
+  ],
+  "tests/test_llama_ui.py": [
+    "test_engine_model_selection_roundtrip_and_platform_guard",
+    "test_background_validation_uses_only_active_translation_model"
+  ],
+  "tests/test_model_guidance_ui.py": [
+    "test_knowledge_cleanup_dispatches_ui_events_and_guards_file_changes"
+  ],
+  "tests/test_model_options.py": [
+    "test_desktop_backend_device_and_model_choices_roundtrip"
+  ],
+  "tests/test_model_preparation.py": [
+    "test_recognition_delegates_selection_and_propagates_command_failure"
+  ],
+  "tests/test_model_ui_boundaries.py": [
+    "test_inventory_provider_selection_and_busy_controls",
+    "test_model_changes_schedule_one_check_for_final_selection",
+    "test_background_export_freezes_caption_snapshot",
+    "test_added_export_suffix_cannot_overwrite_existing_document_without_consent"
+  ],
+  "tests/test_preparation_feedback.py": [
+    "test_failed_preparation_shows_stage_and_reason_and_success_clears_error",
+    "test_cancelled_preparation_is_not_reported_as_failure",
+    "test_failed_model_check_does_not_claim_missing_models_or_start_recording",
+    "test_failed_recheck_revalidates_old_missing_result_before_download_guidance",
+    "test_model_check_failure_reason_and_retry_preserve_existing_assets"
+  ],
+  "tests/test_recording_page.py": [
+    "test_export_requires_confirmed_nonempty_source",
+    "test_live_final_captions_do_not_reenable_export_until_idle",
+    "test_new_workspace_uses_defaults_without_creating_empty_recordings"
+  ],
+  "tests/test_responsive_transport.py": [
+    "test_device_refresh_is_atomic_and_start_uses_visible_source",
+    "test_recording_starts_without_asset_scan_and_loading_is_distinct_from_capture"
+  ],
+  "tests/test_shared_model_preparation_ui.py": [
+    "test_mac_catalog_preserves_gpu_selection",
+    "test_empty_inventory_prepares_selected_models_and_shared_progress",
+    "test_prepare_preserves_partial_legacy_model_preferences"
+  ],
+  "tests/test_sidebar_responsive.py": [
+    "test_expanding_sidebar_restores_current_recording_selection",
+    "test_compact_sidebar_keeps_full_icon_width_with_many_folders",
+    "test_sidebar_compacts_and_restores_without_losing_navigation",
+    "test_recording_states_do_not_override_manual_sidebar",
+    "test_compact_folder_tooltip_and_settings_navigation_motion",
+    "test_split_layout_requires_full_height_edge_tile",
+    "test_sidebar_animation_reverses_and_respects_reduced_motion",
+    "test_cross_folder_recording_row_hit_areas_load_matching_content"
+  ],
+  "tests/test_startup_workspace_polish.py": [
+    "test_model_download_card_is_local_and_dismissal_does_not_cancel_or_reopen"
+  ],
+  "tests/test_ui.py": [
+    "test_main_prepares_runtime_after_show_and_closes_on_quit",
+    "test_background_autosave_keeps_new_revisions_dirty_and_rejects_other_recording_results",
+    "test_finish_does_not_dispose_signal_sender_while_background_save_is_pending",
+    "test_failed_retranslation_preserves_text_and_retry_completes_recording",
+    "test_corrupt_recording_open_preserves_file_and_current_view",
+    "test_preferences_roundtrip_and_recording_guards",
+    "test_start_validation_and_new_workspace_do_not_launch",
+    "test_fatal_error_survives_late_status_and_finish",
+    "test_library_navigation_preserves_session_and_draft",
+    "test_named_recording_start_finish_and_settings_routes"
+  ],
+  "tests/test_ui_backdrop.py": [
+    "test_close_during_wallpaper_render_waits_without_blocking_qt"
+  ],
+  "tests/test_ui_feedback.py": [
+    "test_migration_progress_and_cancel_remain_reachable_after_wait_and_dismissal",
+    "test_model_check_is_busy_cancellable_and_rejects_late_result",
+    "test_course_disconnect_disables_actions_and_keeps_unsaved_terms_for_reconnect",
+    "test_real_course_worker_exit_and_reconnect_preserve_draft"
+  ],
+  "tests/test_ui_model_overlay.py": [
+    "test_model_editor_keeps_inspection_readonly_and_download_selection_explicit",
+    "test_catalog_downloads_models_readonly_and_bundle_selects_only_explicitly"
+  ],
+  "tests/test_ui_presentation.py": [
+    "test_recording_actions_prompt_for_models_without_automatic_downloads"
+  ],
+  "tests/test_ui_support.py": [
+    "test_qt_warnings_reject_drawing_errors_but_allow_platform_hints",
+    "test_failed_ui_process_remains_a_failure"
+  ],
+  "tests/test_update_feedback.py": [
+    "test_background_failure_finishes_and_manual_retry_ignores_old_callbacks",
+    "test_manual_click_promotes_active_background_check_without_duplicate_request",
+    "test_cancelled_update_cannot_reappear_or_install_and_new_check_has_feedback",
+    "test_native_busy_rejection_is_visible_and_does_not_latch_check"
+  ],
+  "tests/test_ux_journeys.py": [
+    "test_library_click_keeps_event_loop_responsive_and_failed_load_keeps_view",
+    "test_close_during_library_read_waits_without_applying_late_result"
+  ],
+  "tests/test_ux_recovery.py": [
+    "test_long_recording_search_and_playback_keep_complete_saved_transcript",
+    "test_failed_save_keeps_real_lock_and_releases_only_after_retry",
+    "test_save_error_does_not_expire_and_dismissal_keeps_recovery_actions",
+    "test_draft_backup_preserves_text_without_claiming_main_save_success",
+    "test_actionable_warning_shows_reason_without_opening_diagnostics",
+    "test_course_drafts_remain_bound_to_their_course_with_real_worker",
+    "test_course_draft_survives_navigation_failure_and_exit_cancel",
+    "test_active_term_editor_commits_before_recording_navigation",
+    "test_history_stays_readable_during_live_updates_and_deleted_rows_refill",
+    "test_backup_cancel_failure_and_explicit_close_preserve_original",
+    "test_old_terms_acknowledgement_does_not_clear_new_edits",
+    "test_queued_backups_to_different_files_are_all_written",
+    "test_cross_page_variable_heights"
+  ],
+  "tests/test_window_platform.py": [
+    "test_system_resize_is_only_requested_for_windows",
+    "test_overlay_behavior_preserves_flags_without_conflicting_space_policies",
+    "test_restored_overlay_is_reachable_after_display_removal"
+  ],
+  "tests/test_workflow_preview.py": [
+    "test_real_preview_navigation_and_task_recovery",
+    "test_preparation_cancel_feedback_survives_late_progress"
+  ],
+  "tests/test_workspace_appearance.py": [
+    "test_streamed_http_download_progress_stays_live_across_settings"
+  ],
+  "tests/test_workspace_modules.py": [
+    "test_workspace_components_own_state_without_importing_main_window"
+  ],
+  "tests/test_user_workflows.py": [
+    "test_exports_to_same_path_survive_recording_revision_reset",
+    "test_repeated_update_checks_do_not_interrupt_download_or_clear_install_gate",
+    "test_save_error_recovery_survives_success_and_navigation",
+    "test_notification_progress_and_priority",
+    "test_notifications_do_not_move_workspace",
+    "test_download_cancel_remains_available_after_popup_expires",
+    "test_guidance_requires_only_enabled_models_and_preserves_translation_choice",
+    "test_playback_highlight_manual_interrupt_return_and_seek",
+    "test_close_waits_for_active_session_and_failed_save_retains_recording",
+    "test_update_never_stops_recording_and_release_is_background_and_fenced",
+    "test_library_operation_retries_failed_final_state",
+    "test_update_abandonment_waits_for_runtime_shutdown_and_recovers",
+    "test_older_auto_save_cannot_clear_pending_final_state",
+    "test_search_locates_saved_source_and_translation_without_starting_playback",
+    "test_library_migration_waits_for_session_and_commits_verified_recordings"
+  ],
+  "tests/test_frontend_switch.py": [
+    "test_qt_frontend_button_guards_and_accepted_close"
+  ],
+  "tests/test_audio_source_switch.py": [
+    "test_source_category_feedback_meter_and_live_selector"
+  ],
+  "tests/test_source_preview.py": [
+    "test_ui_newer_preview_survives_old_semantics_and_reconciles_without_duplicates",
+    "test_unfinished_preview_is_saved_as_draft_with_existing_translations",
+    "test_preview_autosaves_before_semantics_and_completed_rows_replace_draft",
+    "test_abrupt_process_exit_recovers_preview_and_partial_audio_without_cleanup"
+  ],
+  "tests/test_macos_support.py": [
+    "test_mac_settings_restore_without_audio_initialization"
+  ],
+  "tests/test_packaging.py": [
+    "test_package_window_waits_for_accepted_close_and_owned_processes",
+    "test_package_window_timeout_is_failure"
+  ],
+  "tests/test_mlx_asr.py": [
+    "test_mac_profile_roundtrip_and_backend_switch_do_not_open_audio"
+  ]
+}

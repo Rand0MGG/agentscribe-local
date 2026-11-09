@@ -4,7 +4,6 @@ import subprocess
 import sys
 
 import pytest
-from ui_support import assert_ui_process
 
 
 @pytest.mark.p1
@@ -49,4 +48,4 @@ assert len(ticks)>3
 '''
     result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, errors='backslashreplace', timeout=15,
                             env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen'})
-    assert_ui_process(result)
+    assert result.returncode == 0, result.stdout + result.stderr

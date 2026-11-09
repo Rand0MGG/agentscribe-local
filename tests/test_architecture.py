@@ -56,8 +56,8 @@ def test_domain_and_storage_have_no_transitive_qt_or_model_dependency():
 @pytest.mark.p2
 def test_runtime_does_not_depend_on_desktop_and_package_has_no_import_cycles():
     graph, _ = dependencies()
-    desktop = {'linguaflow.' + name for name in ('app', 'management', 'workspace_widgets',
-               'settings_binding', 'deleted_dialog', 'wlk_session', 'recording_save')}
+    desktop = {'linguaflow.' + name for name in ('desktop_service', 'desktop_library', 'desktop_models', 'desktop_knowledge',
+               'wlk_session', 'recording_save')}
     for module in ('wlk_worker', 'backends', 'semantic_model', 'audio_processing.pipeline'):
         assert not reachable(graph, 'linguaflow.' + module) & desktop
     for module, imports in graph.items():
@@ -70,7 +70,7 @@ def test_knowledge_sdk_and_worker_cannot_enter_realtime_or_desktop_transport():
     graph, external = dependencies()
     cloud = {'linguaflow.knowledge.' + name for name in ('api', 'harness', 'worker', 'storage')}
     sdk = {'deepagents', 'langchain', 'langchain_core', 'langchain_deepseek', 'langgraph', 'openai', 'httpx', 'keyring'}
-    for module in ('app', 'knowledge.client', 'knowledge.panel', 'knowledge.session'):
+    for module in ('desktop_service', 'knowledge.client', 'knowledge.session'):
         dependencies_ = reachable(graph, 'linguaflow.' + module)
         assert not dependencies_ & cloud, (module, dependencies_ & cloud)
         assert not set().union(*(external[row] for row in dependencies_)) & sdk
@@ -83,3 +83,9 @@ def test_knowledge_sdk_and_worker_cannot_enter_realtime_or_desktop_transport():
         forbidden = {'linguaflow.' + name for name in ('app', 'wlk_worker', 'wlk_session', 'backends',
                      'audio_processing.pipeline', 'recording_save')}
         assert not dependencies_ & forbidden, (module, dependencies_ & forbidden)
+
+
+@pytest.mark.p1
+def test_maintained_application_has_no_qt_imports():
+    _, external = dependencies()
+    assert not {module for module, names in external.items() if 'PySide6' in names or 'PyQt6' in names}

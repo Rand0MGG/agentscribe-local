@@ -17,7 +17,7 @@ from linguaflow.qwen_accurate import build_official_online
 def test_same_context_reaches_pytorch_transcribe_and_mlx_generate(monkeypatch, tmp_path):
     context = context_text(compile_context([Term('gradient descent', approved=True)]).to_dict())
     calls = []
-    model = SimpleNamespace(model=SimpleNamespace(generation_config=SimpleNamespace()),
+    model = SimpleNamespace(model=SimpleNamespace(generation_config=SimpleNamespace(), generate=lambda **kwargs: None),
                             transcribe=lambda *args, **kwargs: calls.append(kwargs) or [SimpleNamespace(text='gradient descent')])
     monkeypatch.setitem(sys.modules, 'torch', SimpleNamespace(float32='float32'))
     monkeypatch.setitem(sys.modules, 'qwen_asr', SimpleNamespace(Qwen3ASRModel=SimpleNamespace(from_pretrained=lambda *args, **kwargs: model)))
@@ -34,7 +34,7 @@ def test_same_context_reaches_pytorch_transcribe_and_mlx_generate(monkeypatch, t
     monkeypatch.setitem(sys.modules, 'mlx', SimpleNamespace(core=mx))
     monkeypatch.setitem(sys.modules, 'mlx.core', mx)
     monkeypatch.setitem(sys.modules, 'mlx_audio.stt.utils', SimpleNamespace(load_model=lambda _: SimpleNamespace(
-        generate=lambda *args, **kwargs: calls.append(kwargs) or SimpleNamespace(text='gradient descent'))))
+        generate=lambda *args, **kwargs: calls.append(kwargs) or SimpleNamespace(text='gradient descent', generation_tokens=2))))
     (tmp_path / 'config.json').write_text(json.dumps({'model_type': 'qwen3_asr', 'quantization': {'bits': 4}}))
     pcm = np.ones(16000, dtype='<f4')
     messages = iter([{'model': str(tmp_path), 'language': 'English', 'context': context},
@@ -59,7 +59,7 @@ def test_pytorch_and_mlx_adapters_share_revision_finalization_and_translation_po
     from linguaflow.translation_service import publish_translation_result
     from linguaflow.wlk_captions import CaptionMapper
     closed, outcomes = [], []
-    model = SimpleNamespace(model=SimpleNamespace(generation_config=SimpleNamespace()),
+    model = SimpleNamespace(model=SimpleNamespace(generation_config=SimpleNamespace(), generate=lambda **kwargs: None),
         transcribe=lambda *args, **kwargs: [SimpleNamespace(text='The value is five.')])
     monkeypatch.setitem(sys.modules, 'torch', SimpleNamespace(float32='float32'))
     monkeypatch.setitem(sys.modules, 'qwen_asr', SimpleNamespace(Qwen3ASRModel=SimpleNamespace(

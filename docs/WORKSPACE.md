@@ -123,6 +123,6 @@ PDF/PPTX 导入先提取可用文字，点击“准备本地原页”可离线�
 
 正式入口为 Electron，Python 后台不再依赖 Qt。安装桌面 Python 依赖后，在 `desktop/` 执行 `npm ci` 和 `npm run build`，再使用原来的 `python -m linguaflow` 入口。旧录音格式不变，旧偏好首次读取后转存原子 JSON，原文件保留。
 
-Qt 界面不再进入安装包，`--frontend qt` 会提示退役。只有执行旧界面开发对照时才安装 `.[dev,legacy-qt]`，正式依赖不需要它。采集继续使用 SoundCard / ScreenCaptureKit；回听、课件图片与网页渲染复用 Electron。
+Qt 界面不再进入安装包，`--frontend qt` 会提示退役。旧界面与专属测试归档于 `archive/qt/`，停止维护，不再提供 `legacy-qt` 依赖组。采集继续使用 SoundCard / ScreenCaptureKit；回听、课件图片与网页渲染复用 Electron。
 
 录音保护期间只能运行隔离无音频验证，不能直接启动普通工作区或发现设备。测试入口见 [TESTING](TESTING.md#electron-正式入口)：`npm test`、`npm run test:chain`、`npm run test:interaction` 和 `npm run test:audio-adapter`。原生更新仍由 Python 后台及 Sparkle/WinSparkle 负责。

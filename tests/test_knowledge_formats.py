@@ -168,11 +168,8 @@ def samples(tmp_path_factory):
     for source in (Path(__file__).parent / 'fixtures/course_formats').glob('*'):
         if source.suffix.lower() in ('.doc', '.xls', '.ppt'):
             shutil.copyfile(source, directory / source.name)
-    from PySide6.QtGui import QImage
-    image = QImage(300, 160, QImage.Format.Format_RGB32)
-    image.fill(0xff27ae60)
-    for suffix, encoding in [('.png', 'PNG'), ('.jpg', 'JPEG'), ('.jpeg', 'JPEG'), ('.webp', 'WEBP'), ('.bmp', 'BMP'), ('.ico', 'ICO')]:
-        assert image.save(str(directory / ('figure'+suffix)), encoding)
+    for image in (Path(__file__).parent / 'fixtures/course_images').iterdir():
+        shutil.copyfile(image, directory / image.name)
     (directory / 'figure.svg').write_text('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="160"><rect width="300" height="160" fill="#2244cc"/></svg>', encoding='utf-8')
     # A genuine GIF, not a renamed PNG (single static frame).
     (directory / 'figure.gif').write_bytes(bytes.fromhex('47494638396101000100800000000000ffffff21f90401000000002c00000000010001000002024401003b'))
@@ -237,11 +234,11 @@ def test_real_offline_import_preserves_whole_pages_and_sources(samples, tmp_path
     if suffix in ('.html', '.htm'):
         assert len(blocks) == 4  # Includes both vertical and horizontal overflow, using screen CSS.
         assert {row['path'] for row in document['resources']} == {'theme.css', 'draw.js', 'figure.png'}
-        from PySide6.QtGui import QImage
-        first = QImage(str(base / 'pages' / manifest['images'][0]['path']))
-        assert first.pixelColor(50, 280).blue() == 204  # Local script's Canvas actually rendered.
-        last = QImage(str(base / 'pages' / manifest['images'][-1]['path']))
-        assert last.pixelColor(180, 550).red() == 204  # Last corner is visible, including @media-print-hidden content.
+        from tests.image_support import png_pixels
+        first = png_pixels(base / 'pages' / manifest['images'][0]['path'])
+        assert first[280, 50, 2] == 204  # Local script's Canvas actually rendered.
+        last = png_pixels(base / 'pages' / manifest['images'][-1]['path'])
+        assert last[550, 180, 0] == 204  # Last corner is visible, including @media-print-hidden content.
     if document['resources']:
         (base / 'resources' / document['resources'][0]['path']).write_bytes(b'changed')
         with pytest.raises(ValueError, match='资源快照'):
@@ -331,10 +328,11 @@ def test_reimport_versions_resources_and_rolls_back_failed_publication(monkeypat
     old_blocks = read_blocks(library, path, course)
     base = material_cache(library, path, old)
     old_manifest = read_json(base / 'pages/manifest.json')
-    from PySide6.QtGui import QImage
-    image = QImage(str(tmp_path / 'figure.png'))
-    image.fill(0xffcc2244)
-    assert image.save(str(tmp_path / 'figure.png'))
+    import numpy as np
+
+    from linguaflow.desktop_platform import png_rgba
+    pixels = np.full((160, 300, 4), (204, 34, 68, 255), dtype=np.uint8)
+    (tmp_path / 'figure.png').write_bytes(png_rgba(pixels))
     original = module.write_json
     def fail_course(root, target, value):
         if target == path:
@@ -410,7 +408,7 @@ asyncio.run(m.import_document(library, folder, Path(sys.argv[4])))
 @pytest.mark.p2
 @pytest.mark.parametrize('position', ['fixed', 'sticky'])
 def test_scrolling_headers_preserve_middle_and_last_corner_evidence(tmp_path, position):
-    from PySide6.QtGui import QImage
+    from tests.image_support import png_pixels
     source = tmp_path / 'course.html'
     source.write_text('<style>body{margin:0;background:white;width:1400px;height:3100px}'
         f'#head{{position:{position};top:0;left:0;width:100%;height:100px;background:#228844;z-index:100}}'
@@ -426,8 +424,7 @@ def test_scrolling_headers_preserve_middle_and_last_corner_evidence(tmp_path, po
     manifest = read_json(base / 'pages/manifest.json')
     counts = dict.fromkeys(('228844', 'cc2244', '2233cc'), 0)
     for row in manifest['images']:
-        image = QImage(str(base / 'pages' / row['path'])).convertToFormat(QImage.Format.Format_RGB888)
-        pixels = bytes(image.constBits())
+        pixels = png_pixels(base / 'pages' / row['path'])[:, :, :3].tobytes()
         for color in counts:
             counts[color] += pixels.count(bytes.fromhex(color))
     assert counts['cc2244'] > 7000 and counts['2233cc'] == 1600 and counts['228844'] > 100000

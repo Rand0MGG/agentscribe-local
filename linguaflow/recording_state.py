@@ -9,6 +9,7 @@ def capture_feedback(state, *, model_ready=None, failed=False, source_pending=Fa
               '继续后切换' if source_pending and state is RecordingState.PAUSED else
               '正在切换…' if source_pending else
               '已暂停' if state is RecordingState.PAUSED else
+              '未收到声音' if state is RecordingState.LISTENING and audio_stage.startswith('输入持续为零') else
               '输入音量' if state is RecordingState.LISTENING else '准备收音' if state.active else '')
     if state is RecordingState.IDLE:
         waiting = '等待语音…'
