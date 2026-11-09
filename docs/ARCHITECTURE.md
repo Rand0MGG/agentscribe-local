@@ -63,7 +63,7 @@ Electron 的 `audio.refresh` 立即返回已有来源列表，并用现有 `_Tas
 
 来源控件消费 `audio-discovery` 的忙碌与失败状态，以及 `devices/device` 的列表和选择；bootstrap 补充在途状态供重载恢复。首次尚无选择且未建立会话时选首个来源；保存的来源消失时保留原选择并提示重选，不自动换设备。
 
-`desktop_platform.py` 是短时、无网络/音频/录音资源的系统显示查询：读取系统双击/拖动阈值，并直接解析旧悬浮窗二进制几何；它不运行业务窗口。Electron 服务的资源采样包含宿主及其子进程。通知按任务独立存储、优先级选择和收起，课程笔记编辑收到持久化回执才关闭。
+`desktop_platform.py` 是短时、无网络/音频/录音资源的系统显示查询：读取系统交互参数，直接解析并校验旧 Qt `saveGeometry` 二进制几何，不实例化 Qt 控件或业务窗口。Electron 服务的资源采样包含宿主及其子进程。通知按任务独立存储、优先级选择和收起，课程笔记编辑收到持久化回执才关闭。
 
 ## 数据与执行流
 
@@ -194,7 +194,7 @@ Window 的薄转发入口和控件引用用于现有调用方组合；旧录音�
 - 当前 ASR 与 SaT 共用并行加载和取消管理，SaT 在 CPU 运行，ORT 优化缓存按运行库、架构和权重隔离。模型准备与开录只读缓存的具体路径见 `inference_startup.py`、`semantic_model.py`、`semantic_cache.py`；这些是当前方案，调整需比较真实链路质量、延迟和资源。
 - 当前 llama.cpp 适配对 GPU 选择校验全部层已卸载到所选设备，CPU 选择显式关闭 GPU 层，并关闭历史请求主机缓存以控制保留量。具体实现见 `llama_translation.py`；不把这些设置本身当作性能改善证据。
 - 原文确认及初译阈值由 `asr_stability.py` / `wlk_captions.py` 维护，上下文默认值与预算由 `translation_config.py` / 模型适配维护，合并批量上限由 `translation_queue.py` 维护。规范要求有效、完整和可追溯，不把当前数值或实现方案当作永久产品约束。
-- 课程原页渲染当前使用独立 LibreOffice Kit 和本地 Electron/Chromium 渲染器，受限工具循环使用 Deep Agents；它们是现行依赖方案，许可、静态覆盖和来源约束仍由课程 spec 定义。代码包继续使用 `linguaflow` 内部名，并保留旧启动入口、偏好和录音兼容。
+- 课程原页渲染由独立 LibreOffice Kit 处理 Office/PDF，隔离的本地 Electron 辅助进程处理网页、文本和图片；受限工具循环使用 Deep Agents。它们是现行依赖方案，许可、静态覆盖和来源约束仍由课程 spec 定义。代码包继续使用 `linguaflow` 内部名，并保留旧启动入口、偏好和录音兼容。
 
 ## 数据与适配边界
 
@@ -209,6 +209,6 @@ Window 的薄转发入口和控件引用用于现有调用方组合；旧录音�
 
 `session.json` 与衍生字幕文件分别原子替换，不是整个录音目录的一次事务；WAV 在采集中流式写入。写入线程结束不等于全部所需文件保存成功，保存资格仍以带错误与版本信息的回执判断。
 
-Windows 课件 IO 以扩展长度路径访问，普通路径用于身份比较；Chromium/Office 使用临时副本渲染，临时目录先展开系统可能返回的 8.3 短名称，再按原有归属校验发布，Mac 沿用原渲染路径。VAD Float32 与 Windows nagisa/DyNet 中文路径兼容集中在 `runtime_compat.py`，保留真实算法；不以假分词或异常吞没绕过。
+Windows 课件 IO 以扩展长度路径访问，普通路径用于身份比较；Electron/Office 使用临时副本渲染，临时目录先展开系统可能返回的 8.3 短名称，再按原有归属校验发布，Mac 沿用原渲染路径。VAD Float32 与 Windows nagisa/DyNet 中文路径兼容集中在 `runtime_compat.py`，保留真实算法；不以假分词或异常吞没绕过。
 
 固定依赖/组件版本由 `pyproject.toml`、`requirements-*.txt`、平台锁与 `packaging/updates.json` 维护。`tests/test_architecture.py` 检查显式导入循环、核心隔离和依赖方向，不能覆盖所有动态导入或真实模型行为。

@@ -8,7 +8,7 @@
 - 设置默认目录统一调用 `runtime_paths.user_data_root`，旧默认 JSON 只读兼容；公共 OS 文件锁供录音、安装和诊断复用。官方 Qwen 和 MLX 使用同一极端重复审查，正常结果不增加模型调用；官方适配保留原预处理、文本解析及在线提交链。官方新增保护以生成结果替身验证，未在本轮运行 Windows GPU 模型。
 - 桌面命令拆分为库、模型、课程三个模块，复用单个 owner 与原领域状态。共同 JSON 接口定义生成 TypeScript 方法/参数/返回值，Python 与 Electron 同源校验；保留每个窗口的权限白名单和原领域检查。回归涵盖参数错误、内部命令不可达、renderer 无权指定导出/迁移路径、后端签名漂移及类型产物过期。构建载荷显式允许该接口资源，仍拒绝其他未知 JSON。
 - macOS 最终完整无音频回归 **1307 passed、4 skipped，121.64 秒**；跳过为 Windows venv redirector、Job Object、原生安装编译器和 8.3 路径测试。无原生音频导入尝试。此前一轮 **1304 passed、1 failed、4 skipped** 的失败是旧 Qwen 模型替身缺少 `generate` 方法，已补齐后完成整套重跑；较早受限进程列表检查不能计为通过。
-- Electron 构建、**11 项** `test:chain`、**28 项** `test:interaction`、`test:audio-adapter` 均通过；Ruff 与 `git diff --check` 通过。证据目录 `.work/reports/architecture-20261110/`。桌面探针只用隔离库、合成数据和自有窗口；未动用户录音设备。Windows 原生运行、两端实际安装升级、真实音频和长期识别质量不在本轮验证内；代码仍为本地未提交、未推送、未发布状态。
+- Electron 构建、**11 项** `test:chain`、**28 项** `test:interaction`、`test:audio-adapter` 均通过；Ruff 与 `git diff --check` 通过。证据目录 `.work/reports/architecture-20261110/`。桌面探针只用隔离库、合成数据和自有窗口；未动用户录音设备。Windows 原生运行、两端实际安装升级、真实音频和长期识别质量不在本轮验证内；本节记录本地验证，不代表已发行。
 
 ## 2026-11-09 dot R28–R35 保存与迁移修复
 
@@ -25,6 +25,47 @@
 - 完整 macOS 无音频回归 **1396 passed、4 skipped，284.00 秒**；跳过均为 Windows 专属。另补 worker 协议恢复用例后，相关回归 **119 passed**；原异常正文不出 worker、上下文与 PCM 保持一致。无原生音频导入尝试，差异格式检查通过。
 - 随后按原设置、原速完整重放 11月9日的 **548.1 秒**录音，经真实 Session/journal、Qwen MLX、SaT 和 Hy-MT2 Metal：全部 **26,308,800** 采样送入，**254** 轮识别、**70** 次换窗，无错误；再次触发255次重复并成功恢复一次，最终无极端重复段。最终 **40/40** 条原文/句界/译文定稿，音频结束前原文40/40、句界与最终译文39/40，收尾仅1条翻译任务、**3.58秒**；原文→字幕全文一致，锁定文字无改写/删除，独立SRT/TXT导出完成。证据在 `.work/reports/yeah-full-20261109/`；原WAV摘要未变，无设备访问。单次识别中位1.95秒、最高11.07秒（含异常恢复）；系统swap净增约2.80 GiB，不能仅归因于本进程。该次原速文件验收不含设备/UI/Windows、逐词准确率或长期资源压力；运行时序不同，不作严格前后性能对照。
 - 证据在 `.work/reports/yeah-20261109/`。原 WAV 摘要未变、无音频设备访问；真实模型验证限三个短窗口，不是整段实时流程、SaT/翻译、Windows 或长期质量验收。代码尚未提交、推送或发布。
+
+## 2026-11-09 迁移 journal 失败与文件归属
+
+本节及以下 11 月 5–8 日记录是 `dot` 对旧基线的历史发现；R28–R35 的后续修复与验证见[保存与迁移修复](#2026-11-09-dot-r28r35-保存与迁移修复)。历史反例和当时的未修复结论保留，不代表当前源码仍未修复。
+
+- 固定 `main@292bae156ff21142be628f22cae00e801bc5cdef`；Linux / Python 3.12.14。13 个未改动运行源文件核对 Git blob，合成库/偏好运行真实迁移、LibraryWorkflow、FileLock、SettingsStore、线程与 Dispatcher；未运行完整 DesktopService/UI。
+- R35：定点使 journal fsync 或 replace 失败后，副本回滚但 `.agentscribe-migration.json.tmp` 未被清理，下一次同目标迁移因非空拒绝。真实 Linux `RLIMIT_FSIZE` 另使 journal flush 写入 64 字节后报 EFBIG，复现同一缺口；不是实际磁盘满或断电。三组原件摘要均不变，工作流故障案例的偏好保持旧目录、finished 发出且锁释放。定位：[journal 与回滚](../linguaflow/library_migration.py#L174-L191)、[写入](../linguaflow/library.py#L66-L72)、[重试入口](../linguaflow/library_migration.py#L62-L83)。
+- R29 补证，不另计新根因：journal 写入前并发加入临时硬链接，真实 I/O 将其指向的合成源音频截断并改写成 JSON；工作流采用新库，报告保留旧音频路径，但该原件已变，独立目标音频摘要完整。并发普通临时文件及 replace 前出现的最终 journal 文件也被覆盖。均为受控并发时点，不代表发生概率或所有副本丢失。
+- 无故障注入的命名冲突：源库原有 `.agentscribe-migration.json.tmp` 会被列入已校验文件，目标副本随后被当作 journal 临时文件改写并改名；首次返回的副本缺少该文件，重试报缺失，清理保留源文件并报告。不能按“临时后缀”认定残件归本事务。
+- 共 10 个场景完成：7 组反例和 3 组对照。journal 打开前失败可直接重试；正常 copied journal 可恢复并完成清理；故障后同名文件被替换时重试保留新文件的字节和 inode。仅在隔离脚本确认自有残件后移到目标外，fsync/replace 两组重试才成功，此为手工恢复对照，不是产品自动恢复。
+- 未改程序、spec 或新增仓库测试；未使用用户数据/设备、模型或云端 Codex。未跑完整套件、Windows/macOS、真实介质/断电与完整退出流程；R29、R35 均未修复。本节不重复统计先前映射、空目录、偏好分歧或音频部分写入问题。
+
+## 2026-11-08 迁移偏好提交与部分发布恢复
+
+- 固定 `main@292bae156ff21142be628f22cae00e801bc5cdef`，Linux / Python 3.12.14。13 个未改动源文件核对 Git blob，以合成库/偏好执行真实 LibraryWorkflow、SettingsStore、FileLock、迁移线程及 Dispatcher；录音容器只提供空闲状态，不是完整桌面验收。
+- R32：`setValue` 自动提交成功后，调用方重复 sync 失败，恢复旧位置也失败，导致当前库/内存仍为旧位置、磁盘为新副本。旧库后续新增录音保留，但新进程运行真实 `open_library` 看不到它；后续成功 sync 可恢复旧位置。未发生文件删除。定位：[自动提交](../linguaflow/settings_store.py#L137-L142)、[重复提交与恢复](../linguaflow/library_workflow.py#L86-L102)。
+- R33：偏好 replace 和临时文件 unlink 同时注入失败，异常逃出 [sync 清理](../linguaflow/settings_store.py#L185-L189)，实际工作线程结束但没有 finished，2 个迁移锁仍持有，重试与取消不能恢复该工作流。旧偏好、原件与已校验副本不变；未验证完整 UI 退出，不能称无法退出或重启无法恢复。
+- R34：模拟不支持硬链接进入 fallback，部分 write 后报错导致 [部分摘要/回滚](../linguaflow/library_migration.py#L150-L188) 保留本事务残件，无 copied journal，同目标重试被非空检查拒绝。注入 ENOSPC 与真实 Linux `RLIMIT_FSIZE` / EFBIG 两种方法均留下 1,052,672 字节文件；后者使用真实文件 I/O，但不是实际 exFAT/FAT 或物理磁盘满试验。源库摘要不变。
+- 共 9 个场景完成：上述 3 类缺口的 4 组反例及 5 组对照。正常迁移、首次偏好失败后恢复、持续偏好失败/旧目录恢复成功后的重试、fallback 首块后取消均保护原件并进入预期终态；取消对照恢复空目标。
+- 未改程序或新增仓库测试；未访问用户数据/设备、调用模型或云端 Codex。未运行完整仓库套件、Electron UI、Windows/macOS、真实介质/断电验收。偏好故障采用定点注入，不代表发生概率；R32–R34 尚未修复，原有 spec 不变。
+
+## 2026-11-07 迁移失败回滚与空目录保护
+
+- 固定 `main@292bae156ff21142be628f22cae00e801bc5cdef`，Linux / Python 3.12.14；六个执行源文件核对 Git blob，真实迁移函数配合受控异常及合成文件。没有改源码、添加仓库测试或访问用户数据/设备。
+- 新确认两类空目录保护缺口、共 4 组反例：成功清理删除复制后新增的空目录或已无目标副本的原空目录，仍返回 `retained=[]`；发布失败回滚删除后来替换在已发布文件/目录路径上的空目录。均不需要符号链接，限目录结构/名称丢失，未证明音频字节丢失。定位：[成功清理](../linguaflow/library_migration.py#L211-L217)、[失败回滚](../linguaflow/library_migration.py#L179-L188)，列 R31。
+- 既有 R30 的新分支补证，不计为新根因：发布后将目标根替换为指向源或外部同内容合成库的链接，再注入校验失败，回滚分别删除原件或外部文件；尚未进入偏好提交。2 组均有移走保留的副本，不声称全部副本丢失。暂存清理的 `FileNotFoundError` 同时覆盖原异常。
+- 7 组保护/恢复对照通过：正常复制清理、硬链接及模拟不支持硬链接的发布失败回滚、保留已改目标、并发同名冲突、新增非空目录、暂存清理失败后的重试。最后一组保留原件、事务记录且重试成功，但留下暂存目录；暂不据此认定数据损坏。
+- 未运行仓库完整套件、偏好持久化/UI、真实 exFAT/FAT、Windows junction/macOS 或设备验收。异常与不支持硬链接通过进程内注入，不是实际磁盘故障证明。上述问题未修复，spec 的原件/映射保护要求不变。
+
+## 2026-11-06 迁移复制与清理映射保护
+
+- 在固定 `main@292bae156ff21142be628f22cae00e801bc5cdef` 的隔离源码副本，Linux / Python 3.12.14，以合成录音、字幕和资料执行真实 `migrate_library` / `finish_migration`；六个执行源文件均核对 Git blob 摘要，没有访问用户录音、设备或模型。
+- 复制完成后替换源录音父目录为外部目录符号链接，可删除该外部目录中的同内容文件；替换目标录音父目录为指向源目录的符号链接，可删除唯一音频，源与目标均不可读，两者都返回 `retained=[]`。重试已复制事务也接受目标音频文件的符号链接，但叶子链接清理对照会保留原件。定位：[清理检查](../linguaflow/library_migration.py#L194-L217)、[重试验证](../linguaflow/library_migration.py#L63-L81)；已列 R30，尚未修复。
+- 6 组正常复制/清理、源与目标内容变化、取消、源与目标叶子链接保护对照通过；3 组受控反例复现。上述删除反例要求复制后发生外部目录替换，不表示普通迁移必然丢失数据，也无真实用户损失证据。
+- 未安装 pytest，未运行仓库套件；这是有限函数流程检查，不包括完整偏好提交/UI、Windows junction/macOS、实际设备或安装包验收。现有 CI 全绿不能覆盖新反例；源码未修改。
+
+## 2026-11-05 保存临时文件链接保护
+
+- 对 `main@292bae156ff21142be628f22cae00e801bc5cdef` 的独立源码副本，在 Linux / Python 3.12 使用合成文件检查 `RecordingSaver → Library.save`，未访问用户录音、设备或模型。
+- 预先将 `session.json.tmp`、`定稿.srt.tmp`、`定稿.txt.tmp` 分别设为指向其他合成文件的符号链接或硬链接，6 个组合均改写目标内容，保存仍回报 `complete`。定位：[`library.py` 写入临时 JSON](../linguaflow/library.py#L65-L72) 与[定稿导出](../linguaflow/library.py#L216-L237)；已列为 R29，尚未修复。
+- 正常保存、替换失败等 4 组对照通过。结论只覆盖上述预置链接条件；未验证 Mac/Windows、桌面 UI 或安装包。结果来自合成文件，不代表普通保存必然损坏数据。
 
 ## 2026-11-02 Qwen 整窗全零检查
 
