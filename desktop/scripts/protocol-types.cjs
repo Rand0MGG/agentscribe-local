@@ -13,5 +13,6 @@ const source = '// Generated from linguaflow/desktop_contract.json. Run node scr
   'export type Method = keyof RequestParams;\n' +
   'export type RequestArgs<M extends Method> = {} extends RequestParams[M] ? [params?: RequestParams[M]] : [params: RequestParams[M]];\n';
 if (process.argv.includes('--check')) {
-  if (!fs.existsSync(target) || fs.readFileSync(target, 'utf8') !== source) throw new Error('桌面接口类型已过期，请运行 node scripts/protocol-types.cjs。');
+  // Git may check out text as CRLF on Windows; only line endings are equivalent.
+  if (!fs.existsSync(target) || fs.readFileSync(target, 'utf8').replace(/\r\n/g, '\n') !== source) throw new Error('桌面接口类型已过期，请运行 node scripts/protocol-types.cjs。');
 } else fs.writeFileSync(target, source);

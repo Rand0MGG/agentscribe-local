@@ -61,3 +61,32 @@ validateRequest('audio.select', {identifier:'fixture',loopback:false});
     subprocess.run(['node', '-e', program], cwd=root, check=True, capture_output=True)
     subprocess.run(['node', 'desktop/scripts/protocol-types.cjs', '--check'], cwd=root, check=True, capture_output=True)
     assert json.loads((root/'linguaflow/desktop_contract.json').read_text()) == CONTRACT
+
+
+@pytest.mark.p1
+@pytest.mark.parametrize('line_ending', [b'\n', b'\r\n'], ids=['LF', 'CRLF'])
+@pytest.mark.parametrize('change', ['unchanged', 'stale', 'missing'])
+def test_generated_contract_check_handles_checkout_line_endings(tmp_path, line_ending, change):
+    root = Path(__file__).resolve().parents[1]
+    for name in ('desktop/scripts/protocol-types.cjs', 'desktop/electron/protocol.cjs',
+                 'linguaflow/desktop_contract.json', 'desktop/src/protocol.generated.ts'):
+        target = tmp_path / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        content = (root / name).read_bytes().replace(b'\r\n', b'\n')
+        target.write_bytes(content.replace(b'\n', line_ending))
+    generated = tmp_path / 'desktop/src/protocol.generated.ts'
+    if change == 'missing':
+        generated.unlink()
+    elif change == 'stale':
+        content = generated.read_bytes()
+        assert b"'bootstrap': Bootstrap" in content
+        generated.write_bytes(content.replace(b"'bootstrap': Bootstrap", b"'bootstrap': string"))
+    original = generated.read_bytes() if generated.exists() else None
+    result = subprocess.run(['node', 'desktop/scripts/protocol-types.cjs', '--check'],
+                            cwd=tmp_path, capture_output=True, text=True, encoding='utf-8')
+    if change == 'unchanged':
+        assert result.returncode == 0, result.stderr
+    else:
+        assert result.returncode != 0 and '桌面接口类型已过期' in result.stderr
+    # The build gate is read-only, even on CRLF and rejected content.
+    assert (generated.read_bytes() if generated.exists() else None) == original
