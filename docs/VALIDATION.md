@@ -2,6 +2,16 @@
 
 仅记录当前可核对的证据与限制；测试规则见 [TESTING](TESTING.md)，功能缺口见 [ROADMAP](ROADMAP.md)。历史逐轮记录已移至 [验证归档](archive/testing/VALIDATION_THROUGH_20261030.md)，不把旧通过数或“本地未提交”当作当前状态。
 
+## 2026-11-10 独立导出与恢复备份的并发路径审计
+
+- 固定 `409114ce0e7246698cafab30833f2bc03ca01f9a`，核对时 `main` 与 `dot` 一致、PR #1 已合并，无开放 Issue/PR；[该提交 Code checks](https://github.com/Rand0MGG/agentscribe-local/actions/runs/42664027060) 的 13 个任务均成功。R28–R35 按上轮修复记录对待，本轮审查此前未深入的独立导出入口，不把旧反例直接当成当前缺陷。
+- 调用链：Electron 原生保存对话框 → [`DesktopLibrary.export`](../linguaflow/desktop_library.py#L192-L210) 排队前解析并拒绝库内目标 → 真实 `RecordingSaver` 串行线程 → [`recording_export._write_text`](../linguaflow/recording_export.py#L47-L57) 按路径发布/清理。随机临时名已独占创建，但没有新 `storage_io` 的目录绑定、临时对象身份和安全回收；恢复回调只对当时目标文件取摘要。
+- Linux / Python 3.12.14，35 份源码及参考文件在运行前后与固定提交 Git blob 一致。使用真实 `Library`、录音锁、线程队列及文件系统，最小宿主替代界面通知/导航；同步屏障控制排队时序，发布边界注入文件替换。9 组对照通过：SRT/TXT/Markdown 冻结快照、草稿恢复与旧版本拒绝、直接/祖先链接/叶链接指向库内时拒绝、普通导出及恢复备份的发布失败保留旧文件并清理本次临时文件。
+- 2 组排队反例：正常库外目录通过检查后，将该目录移走并用指向合成录音目录的链接替代，再放行队列。普通 TXT 导出与全部文字备份均覆盖库内同名合成 TXT，且回报成功；无关 `session.json` 字节不变。触发需要其他操作在检查后替换目录，不是普通导出必然发生。
+- 2 组发布反例：写入结束后、`os.replace` 前移走真实临时文件，并在原临时路径放入无关文件。两种导出均发布错误内容且回报成功。恢复备份随后对错误内容形成摘要回执，生产 `close_recovered` 方法仍清除未保存状态、关闭当前录音并释放真实录音锁；声明成功的备份中没有合成未保存草稿。正确文字由审计脚本移走保留，不据此宣称实际用户数据已不可恢复。
+- 2 组清理反例：正常发布后或注入发布失败前，在临时路径放入非本次所有的文件，`finally.unlink` 都将其删除；失败组的既有最终文件仍保持原字节。以上 6 组受控反例统一列为 R36；R29 的库内保存修复不因此整体撤销，需明确独立导出尚未接入。
+- 本轮只用临时合成数据，未运行 Electron UI、仓库测试套件、模型或设备，未验证 Windows/macOS、实际介质或断电。没有修改程序/测试文件或 spec；文档差异不能视为修复。后续续接独立导出的部分写入、flush/close 失败及打开目录后的替换，再补真实桌面回执与两端原生验证。
+
 ## 2026-11-10 GitHub Windows 构建校验修复
 
 - 核对提交 `0321125` 的 [Code checks 42661391563](https://github.com/Rand0MGG/agentscribe-local/actions/runs/42661391563)：7 个任务通过；6 个 Windows 任务失败，其中 5 个停在 `protocol-types.cjs --check`，另一个 Python 3.11 任务在 Electron 官方下载 URL 收到 HTTP 500。失败任务尚未进入应用测试，不能据此判定录音/存储代码正确或错误。另一同提交运行已取消，不计成功。
