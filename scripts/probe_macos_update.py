@@ -104,6 +104,29 @@ def stop_owned(executable, native):
             assert native.stop(pid, stamp), 'Could not stop owned isolated app'
 
 
+def restored_desktop_ready(executable):
+    """Observe the restored Electron frontend's own startup acknowledgement."""
+    import psutil
+
+    electron = executable.parent.parent / 'Resources/desktop/runtime/Electron.app/Contents/MacOS/Electron'
+    for pid in owned_processes(executable):
+        try:
+            for child in psutil.Process(pid).children():
+                if child.exe() != str(electron):
+                    continue
+                environment = child.environ()
+                filename = environment.get('AGENTSCRIBE_DESKTOP_READY')
+                token = environment.get('AGENTSCRIBE_DESKTOP_READY_TOKEN')
+                if filename and token:
+                    receipt = json.loads(Path(filename).read_text())
+                    if receipt == {'token': token, 'parent': child.pid}:
+                        return True
+        except (psutil.NoSuchProcess, psutil.AccessDenied, OSError, ValueError):
+            # Startup may still be writing the receipt or replacing a process.
+            continue
+    return False
+
+
 def preserved_files(root):
     return {str(p.relative_to(root)): digest(p) for p in root.rglob('*') if p.is_file()}
 
@@ -241,12 +264,24 @@ def run_case(case, work, old_app, candidate, manifest, signature, live):
                     subprocess.run(['codesign', '--verify', '--deep', '--strict', str(installed)], check=True, capture_output=True)
                 else:
                     deadline = time.monotonic() + 30
+                    electron = resources / 'desktop/runtime/Electron.app/Contents/MacOS/Electron'
+                    notice = data_root / 'updates/notice.json'
                     while time.monotonic() < deadline:
-                        if owned_processes(executable) and not (data_root / 'updates/notice.json').exists():
+                        # Electron 0.12.1 does not consume the legacy Qt notice.
+                        # Require its actual frontend handshake instead of
+                        # mistaking an unconsumed notice for a failed relaunch.
+                        ready = (restored_desktop_ready(executable) if electron.is_file()
+                                 else owned_processes(executable) and not notice.exists())
+                        if ready:
                             break
                         time.sleep(.1)
                     else:
-                        raise TimeoutError('Restored old application did not relaunch and consume recovery notice')
+                        raise TimeoutError('Restored old application did not acknowledge frontend readiness')
+                    recovery_notice = 'retained' if notice.exists() else 'consumed'
+                    if notice.exists():
+                        assert json.loads(notice.read_text()) == {'token': state['token'], 'version': old_version}
+                    (work / 'restored-desktop.json').write_text(json.dumps({
+                        'ready': True, 'version': old_version, 'recovery_notice': recovery_notice}))
             else:
                 assert any(e['stage'] == ('cancelled' if case == 'cancel' else 'error') for e in events), events
                 assert not any(e['stage'] in ('ready', 'installing', 'installed') for e in events), events
