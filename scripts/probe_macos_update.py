@@ -98,10 +98,29 @@ def owned_processes(executable):
 
 
 def stop_owned(executable, native):
-    for pid in owned_processes(executable):
-        stamp = native.stamp(pid)
+    import psutil
+
+    pids = set(owned_processes(executable))
+    roots, descendants = [], {}
+    for pid in pids:
+        try:
+            process = psutil.Process(pid)
+            if any(parent.pid in pids for parent in process.parents()):
+                continue
+            roots.append(process)
+            for child in process.children(recursive=True):
+                descendants[child.pid] = child
+        except psutil.NoSuchProcess:
+            continue
+    # The host's lifetime socket asks Electron to close normally. Killing its
+    # backend at the same time prevents that close handshake and leaves the
+    # single-instance lock held across otherwise independent test cases.
+    for process in roots:
+        stamp = native.stamp(process.pid)
         if stamp:
-            assert native.stop(pid, stamp), 'Could not stop owned isolated app'
+            assert native.stop(process.pid, stamp), 'Could not stop owned isolated app'
+    _, alive = psutil.wait_procs([*roots, *descendants.values()], timeout=30)
+    assert not alive, 'Owned desktop processes did not exit: ' + str([p.pid for p in alive])
 
 
 def restored_desktop_ready(executable):
@@ -139,7 +158,7 @@ def save_recovery_diagnostics(work, data_root):
     destination.mkdir(exist_ok=True)
     rows = []
     for process in psutil.process_iter(['pid', 'ppid', 'exe']):
-        if not (process.info['exe'] or '').startswith(str(work) + '/'):
+        if not (process.info['exe'] or '').startswith(str(work.parent) + '/'):
             continue
         row = dict(process.info)
         try:
