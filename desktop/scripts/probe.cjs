@@ -32,9 +32,32 @@ library.save(item, [
 ], 'complete')
 `, fixture], { cwd: root, encoding: 'utf8' });
   const errors = [];
+  let entry = path.join(appRoot, 'desktop');
+  if (process.env.AGENTSCRIBE_PROBE_RESOURCES) {
+    // Native packaged launchers deliberately discard external PYTHONPATH.
+    // Install the existing offline fixture explicitly through their --python
+    // diagnostic entry; keep the sealed app, Service and validators unchanged.
+    const bootstrap = path.join(fixture, 'native-fixture.py');
+    writeFileSync(bootstrap, `import os, sys, runpy\nfrom pathlib import Path\n` +
+      `fixture = Path(${JSON.stringify(fixture)})\nroot = ${JSON.stringify(root)}\n` +
+      `sys.path.append(root)\n` +
+      `os.environ['PYTHONPATH'] = os.pathsep.join((str(fixture), os.environ['AGENTSCRIBE_RESOURCES'], root))\n` +
+      `runpy.run_path(str(fixture / 'sitecustomize.py'))\n` +
+      `from linguaflow import runtime_paths\nruntime_paths.user_data_root = lambda: fixture / 'application-data'\n` +
+      `(fixture / 'native-fixture-installed').touch()\n` +
+      `runpy.run_module('linguaflow.desktop_service', run_name='__main__')\n`);
+    const native = process.platform === 'darwin' ? path.resolve(appRoot, '../MacOS/AgentScribe') : path.join(appRoot, 'AgentScribe.exe');
+    entry = path.join(fixture, 'native-entry.cjs');
+    writeFileSync(entry, `const cp = require('node:child_process');\nconst spawn = cp.spawn;\n` +
+      `cp.spawn = function(command, args, options) {\n` +
+      `  if (command === ${JSON.stringify(native)} && args.slice(0,4).join(' ') === '--python -u -m linguaflow.desktop_service')\n` +
+      `    args = ['--python', '-u', ${JSON.stringify(bootstrap)}, ...args.slice(4)];\n` +
+      `  return spawn.call(this, command, args, options);\n};\n` +
+      `require(${JSON.stringify(path.join(appRoot, 'desktop/electron/main.cjs'))});\n`);
+  }
   let desktop;
   try {
-    desktop = await electron.launch({ executablePath: process.env.AGENTSCRIBE_PROBE_ELECTRON || require('electron'), args: [path.join(appRoot, 'desktop'), '--no-audio'],
+    desktop = await electron.launch({ executablePath: process.env.AGENTSCRIBE_PROBE_ELECTRON || require('electron'), args: [entry, '--no-audio'],
       env: { ...process.env, AGENTSCRIBE_DESKTOP_PROFILE: path.join(fixture, 'profile'), AGENTSCRIBE_DESKTOP_LIBRARY: path.join(fixture, 'library'),
         AGENTSCRIBE_DESKTOP_PREFERENCES: path.join(fixture, 'prefs.ini'),
         AGENTSCRIBE_LOG_DIR: path.join(fixture, 'logs'), AGENTSCRIBE_CHAIN_FIXTURE: fixture,
@@ -46,6 +69,7 @@ library.save(item, [
     const page = await desktop.firstWindow();
     page.on('pageerror', error => errors.push(error.message));
     await page.getByRole('button', { name: '新录音', exact: false }).first().waitFor();
+    if (process.env.AGENTSCRIBE_PROBE_RESOURCES) assert(existsSync(path.join(fixture, 'native-fixture-installed')));
     await require('./titlebar-checks.cjs')(desktop, page);
     assert.equal(await page.getByRole('button', { name: '悬浮字幕', exact: true }).count(),0);
     assert.equal(await page.getByRole('button', { name: '导出定稿', exact: true }).count(),0);

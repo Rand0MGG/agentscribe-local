@@ -76,6 +76,8 @@ jobs:
           AGENTSCRIBE_REQUIRE_NATIVE_UPDATE_TEST=1 python scripts/test_no_audio.py tests/test_sparkle_cycle.py -q
           python scripts/build_macos.py
       - name: Verify installed Electron desktop without audio
+        env:
+          PROBE_COMMIT: ${{ github.sha }}
         run: |
           python - <<'PY'
           import os, subprocess
@@ -92,7 +94,14 @@ jobs:
                      'AGENTSCRIBE_PROBE_ELECTRON':str(resources/'desktop/runtime/Electron.app/Contents/MacOS/Electron'),
                      'PYTHONDONTWRITEBYTECODE':'1',
                      'AGENTSCRIBE_PROBE_EVIDENCE':str(Path('.work/reports/packaged-electron').resolve())}
-              subprocess.run(['node', 'desktop/scripts/probe.cjs'], env=env, check=True, timeout=180)
+              # Test tooling follows the reviewed workflow; the sealed package
+              # and its source manifest remain pinned to the immutable tag.
+              probe = Path('desktop/scripts/installed-preview-probe.cjs')
+              probe.write_bytes(subprocess.check_output(['git', 'show', os.environ['PROBE_COMMIT']+':desktop/scripts/probe.cjs']))
+              try:
+                  subprocess.run(['node', str(probe)], env=env, check=True, timeout=180)
+              finally:
+                  probe.unlink()
           PY
       - name: Upload verified Mac files to draft only
         env:
@@ -126,4 +135,5 @@ jobs:
           path: |
             .work/packaging/dist/*
             .work/reports/preview-tests.xml
+            .work/reports/packaged-electron/**
           if-no-files-found: ignore
