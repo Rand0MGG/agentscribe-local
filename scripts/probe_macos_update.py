@@ -163,6 +163,30 @@ def save_recovery_diagnostics(work, data_root):
                 shutil.copyfile(file, target)
 
 
+def diagnose_restored_launch(executable, work):
+    """Failure-only comparison, never counted as automatic recovery success."""
+    destination = work / 'diagnostics'
+    destination.mkdir(exist_ok=True)
+    app = executable.parent.parent.parent
+    verified = subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)],
+                              capture_output=True, text=True, timeout=30)
+    with (destination / 'manual-launch.log').open('wb') as output:
+        child = subprocess.Popen([str(executable), '--no-audio'], stdout=output, stderr=output,
+                                 env={**os.environ, 'AGENTSCRIBE_LOG_DIR': str(destination / 'manual-logs')})
+        deadline = time.monotonic() + 15
+        ready = False
+        while child.poll() is None and time.monotonic() < deadline:
+            if restored_desktop_ready(executable):
+                ready = True
+                break
+            time.sleep(.1)
+        (destination / 'manual-launch.json').write_text(json.dumps({
+            'codesign_returncode': verified.returncode, 'codesign_stderr': verified.stderr,
+            'pid': child.pid, 'returncode': child.poll(), 'ready': ready}, indent=2))
+        # run_case's existing owned-process cleanup handles this diagnostic
+        # child too; leave the original automatic-relaunch failure unchanged.
+
+
 def run_case(case, work, old_app, candidate, manifest, signature, live):
     from linguaflow.core import Caption
     from linguaflow.library import Library
@@ -308,6 +332,8 @@ def run_case(case, work, old_app, candidate, manifest, signature, live):
                             break
                         time.sleep(.1)
                     else:
+                        save_recovery_diagnostics(work, data_root)
+                        diagnose_restored_launch(executable, work)
                         raise TimeoutError('Restored old application did not acknowledge frontend readiness')
                     recovery_notice = 'retained' if notice.exists() else 'consumed'
                     if notice.exists():
