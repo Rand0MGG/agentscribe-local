@@ -61,8 +61,10 @@ class QwenAccurateOnline:
         self._input_end = None
         self._clock = KeptAudioClock(self.SAMPLING_RATE)
         self._zero_window = False
-        self._idle_start = None
-        self._idle_tail = PCMBuffer(self.SAMPLING_RATE)
+        self._zero_input = False
+        self._waiting_for_speech = False
+        self._vad_silent_window = False
+        self._skipped_window = False
         self._suspended = []
         self.revisions = None
         self.interval = 0
@@ -82,7 +84,6 @@ class QwenAccurateOnline:
         self.confirmed_end = 0
         self.decode_sequence = 0
         self._submission_decode_id = 0
-        self._input_floor = 0.
         self.window_decoded_start = 0.
 
     def set_revision_store(self, store):
@@ -115,7 +116,7 @@ class QwenAccurateOnline:
         self.force_endpoint_time = at_time
         if at_time is not None:
             # The capture-side pause resets Silero to its initial quiet state.
-            # Mirror that state so resumed pure quiet can still enter idle.
+            # Mirror that state so resumed pure quiet can still skip inference.
             self.vad.event('silence_started', at_time)
             diag.event('vad_reset', audio_seconds=at_time)
 
@@ -136,16 +137,21 @@ class QwenAccurateOnline:
             if self._input_end is not None and source != self._input_end:
                 raise ValueError('Qwen 原声音频时间不连续，已停止而不是补零或跳过音频')
             self._input_end = source + len(audio)
-            start = self._clock.append(source, len(audio))
-            self._queued_audio.append((start, audio.copy()))
+            zero = not np.any(audio)
+            if zero != self._zero_input:
+                diag.event('asr_zero_input_start' if zero else 'asr_zero_input_end',
+                           audio_seconds=source / self.SAMPLING_RATE)
+            if zero:
+                # Keep an ordered boundary, not zero PCM. Advancing the source
+                # clock preserves the gap without joining words across it.
+                start = self._clock.append(source + len(audio), 0)
+                if not self._zero_input:
+                    self._queued_audio.append((start, None))
+            else:
+                start = self._clock.append(source, len(audio))
+                self._queued_audio.append((start, audio.copy()))
+            self._zero_input = zero
         self.end = audio_stream_end_time
-
-    def _silences(self, start, end):
-        source_start = self._clock.source_time(start)
-        source_end = self._clock.source_time(end, end=True)
-        return [(self._clock.model_time(a), self._clock.model_time(b))
-                for a, b in self.vad.snapshot(source_start, source_end)
-                if self._clock.model_time(b) > self._clock.model_time(a)]
 
     def _append(self, audio, start):
         if not len(audio):
@@ -160,6 +166,9 @@ class QwenAccurateOnline:
     @_text_transaction
     def _reset_acoustics(self):
         self._audio.discard(len(self.audio_buffer))
+        self._reset_text()
+
+    def _reset_text(self):
         self.text = self.window_text = ''
         self.decoded_samples = self.window_text_start = self.confirmed_end = 0
         self.submission = LocalAgreementSubmission()
@@ -168,97 +177,89 @@ class QwenAccurateOnline:
         self.overlap = self.utterance_start = None
 
     @_text_transaction
-    def _resume(self, at):
-        # Preserve the old draft as an OPEN source row; SaT still owns sentence
-        # boundaries. New word times start at real resumed audio, never the gap.
-        if self.utterance_start is not None and self.text:
+    def _suspend_text(self):
+        if self.text:
             self.submission.mark_history(len(self.submission.words))
             self._suspended.append((self.interval, self.utterance_start, self.decoded_end,
-                                    self.text, self.decode_sequence, self.submission))
+                                    self.text, self._submission_decode_id, self.submission))
             self.interval += 1
-        self._reset_acoustics()
-        # The original pre-speech protection is context, not newly admitted speech.
-        self._input_floor = at
-        tail = self._idle_tail.samples.copy()
-        self._append(tail, at - len(tail) / self.SAMPLING_RATE)
-        self._idle_tail.discard(len(self._idle_tail.samples))
-        diag.event('asr_idle_end', interval=self.interval, audio_seconds=self._clock.source_time(at),
-                   skipped_start=self._clock.source_time(self._idle_start + self.window_seconds),
-                   retained_seconds=len(tail) / self.SAMPLING_RATE)
-        self._idle_start = None
+        self._reset_text()
+
+    @_text_transaction
+    def _resume_text(self, source_start, source_end):
+        # Keep the previous text/clock while new words start after the gap.
+        self._suspend_text()
+        at = self.vad.speech_after_quiet(source_start, source_end)
+        if at is None:
+            at = max(source_start, self._clock.source_time(self.processed_end, end=True))
+        self.utterance_start = self._clock.model_time(at)
+        diag.event('asr_text_resume', interval=self.interval, audio_seconds=at)
 
     def _fresh_samples(self, end=None):
         end = self.start + len(self.audio_buffer) / self.SAMPLING_RATE if end is None else end
-        return max(0, round((end - max(self.start, self.processed_end, self._input_floor)) * self.SAMPLING_RATE))
+        return max(0, round((end - max(self.start, self.processed_end)) * self.SAMPLING_RATE))
 
     def _consume_audio(self, final=False):
         rate = self.SAMPLING_RATE
         minimum = round(self.update_seconds * rate)
         maximum = round(self.MAX_NEW_SECONDS * rate)
         while self._queued_audio:
-            fresh = self._fresh_samples() if self._idle_start is None else 0
-            # Keep a short tail queued until there is enough useful new audio.
-            # Idle still consumes capture/VAD data, without requiring a decode.
-            if (not final and self._idle_start is None
-                    and fresh + sum(len(a) for _, a in self._queued_audio) < minimum):
+            start, audio = self._queued_audio[0]
+            if audio is None:
+                # Flush only real, previously unprocessed tail audio. A zero
+                # gap is not a hypothesis and does not force text confirmation.
+                self._update_window(final=True, reason='before_zero_gap')
+                self._suspend_text()
+                self._audio.discard(len(self.audio_buffer))
+                self.start = self.processed_end = start
+                self._waiting_for_speech = self._skipped_window = True
+                self._queued_audio.popleft()
+                continue
+            fresh = self._fresh_samples()
+            available, boundary = fresh, False
+            for _, pending in self._queued_audio:
+                if pending is None:
+                    boundary = True
+                    break
+                available += len(pending)
+            if not (final or boundary or self._waiting_for_speech) and available < minimum:
                 break
-            budget = maximum - fresh
+            budget = maximum if self._waiting_for_speech else maximum - fresh
             if budget <= 0:
-                # Also retries buffered input after a surfaced decoder failure;
-                # do not append another batch before it has been recognized.
                 self._update_window()
                 continue
-            start, audio = self._queued_audio.popleft()
+            self._queued_audio.popleft()
             if len(audio) > budget:
                 self._queued_audio.appendleft((start + budget / rate, audio[budget:]))
                 audio = audio[:budget]
-            end = start + len(audio) / self.SAMPLING_RATE
-            # Keep the original silence start for the long-idle threshold.
-            silences = self._silences(0., end)
-            cursor = 0
-            if self._idle_start is not None:
-                if any(a == self._idle_start and b <= start for a, b in silences):
-                    self._resume(start)
-            for quiet_start, quiet_end in silences:
-                stop = quiet_start + self.window_seconds
-                if quiet_end < stop or quiet_end <= start:
+            self._append(audio, start)
+            if self._waiting_for_speech:
+                # Reuse the PCM buffer as a bounded recent-audio cache. VAD
+                # still sees every packet. No periodic window preparation or
+                # model call occurs while its complete contents remain quiet.
+                limit = round((self.window_seconds + 5) * rate)
+                drop = max(0, len(self.audio_buffer) - limit)
+                self._audio.discard(drop)
+                self.start += drop / rate
+                if self._vad_quiet(len(self.audio_buffer)):
+                    self.processed_end = self.start + len(self.audio_buffer) / rate
+                    self.vad.prune(self._clock.source_time(self.start))
                     continue
-                lo = max(cursor, min(len(audio), round((stop - start) * self.SAMPLING_RATE)))
-                hi = max(lo, min(len(audio), round((quiet_end - start) * self.SAMPLING_RATE)))
-                if self._idle_start is None:
-                    self._append(audio[cursor:lo], start + cursor / self.SAMPLING_RATE)
-                    try:
-                        self._update_window()
-                    except Exception:
-                        # The prefix is already buffered. Keep the unconsumed
-                        # tail queued if this bounded decode fails.
-                        self._queued_audio.appendleft((start + lo / self.SAMPLING_RATE, audio[lo:]))
-                        raise
-                    self._idle_start = quiet_start
-                    # Protect the first resumed packet even if it contains less
-                    # than one second of pre-speech silence.
-                    self._idle_tail.append(self.audio_buffer[-self.SAMPLING_RATE:])
-                    diag.event('asr_idle_start', interval=self.interval,
-                               audio_seconds=self._clock.source_time(stop, end=True),
-                               silence_start=self._clock.source_time(quiet_start))
-                self._idle_tail.append(audio[lo:hi])
-                self._idle_tail.discard(max(0, len(self._idle_tail.samples) - self.SAMPLING_RATE))
-                cursor = hi
-                if quiet_end < end:
-                    self._resume(quiet_end)
-                else:
-                    break
-            self._append(audio[cursor:], start + cursor / self.SAMPLING_RATE)
-            self.vad.prune(self._clock.source_time(min(self.start,
-                           self._idle_start if self._idle_start is not None else self.start)))
-            if self._idle_start is None:
-                self._update_window()
+                self._waiting_for_speech = False
+            self.vad.prune(self._clock.source_time(self.start))
+            self._update_window(final=final or boundary)
+
+    def _vad_quiet(self, count):
+        end = self.start + count / self.SAMPLING_RATE
+        return self.vad.is_silent(self._clock.source_time(self.start),
+                                 self._clock.source_time(end, end=True),
+                                 observed_until=self.capture_time)
 
     def _decode(self, count, reason='update'):
         if not 0 < count <= round((self.window_seconds + 5) * self.SAMPLING_RATE):
             raise ValueError('Qwen 推理窗口超出上限')
-        # Inspect exactly the bounded PCM that would enter the model. Mixed
-        # windows (including very weak nonzero samples) pass without filtering.
+        # Inspect exactly the bounded PCM that would enter the model. Never
+        # remove individual quiet samples from a mixed speech/noise window.
         audio = self.audio_buffer[:count].copy()
         zero = not np.any(audio)
         if zero != self._zero_window:
@@ -268,13 +269,28 @@ class QwenAccurateOnline:
                        window_end=self._clock.source_time(self.start + count / self.SAMPLING_RATE, end=True))
             self._zero_window = zero
         if zero:
+            self._skipped_window = True
             return None
-        # A copied, bounded input cannot be changed by the capture thread.
-        self.decode_sequence += 1
         end = self.start + count / self.SAMPLING_RATE
-        fresh = max(0., end - max(self.start, self.processed_end))
         source_start = self._clock.source_time(self.start)
         source_end = self._clock.source_time(end, end=True)
+        quiet = self.vad.is_silent(source_start, source_end, observed_until=self.capture_time)
+        if quiet != self._vad_silent_window:
+            diag.event('asr_vad_window_start' if quiet else 'asr_vad_window_end',
+                       interval=self.interval, decode_id=self.decode_sequence,
+                       window_start=source_start, window_end=source_end,
+                       vad_audio_end=self.capture_time)
+            self._vad_silent_window = quiet
+        if quiet:
+            self._waiting_for_speech = True
+            self._skipped_window = True
+            return None
+        if self._skipped_window:
+            self._resume_text(source_start, source_end)
+            self._skipped_window = False
+        # A copied, bounded input cannot be changed by the capture thread.
+        self.decode_sequence += 1
+        fresh = max(0., end - max(self.start, self.processed_end))
         fields = dict(decode_id=self.decode_sequence, interval=self.interval, reason=reason,
                       window_start=source_start, window_end=source_end, audio_seconds=count / self.SAMPLING_RATE,
                       new_audio_seconds=fresh, admitted_audio_seconds=self._fresh_samples(end) / self.SAMPLING_RATE,
@@ -298,7 +314,7 @@ class QwenAccurateOnline:
         local = self._decode(count, reason)
         if local is not None:
             self._accept_hypothesis(local, count)
-        # A skipped zero window is consumed, but cannot erase/vote on text or
+        # A skipped zero/quiet window is consumed, but cannot erase/vote on text or
         # extend the last real hypothesis's timestamps. It is safe to release.
         self.processed_end = self.start + count / self.SAMPLING_RATE
 
@@ -380,7 +396,7 @@ class QwenAccurateOnline:
             self._submission_lock.release()
 
     def _release(self, drop, reason):
-        """Release recognized PCM or rejected zero windows; preserve the text overlap."""
+        """Release recognized or skipped PCM; preserve the text overlap."""
         count = max(1, round((self.decoded_end - self.window_decoded_start) * self.SAMPLING_RATE))
         offset = round((self.start - self.window_decoded_start) * self.SAMPLING_RATE) + drop
         from .asr_stability import units
@@ -448,6 +464,8 @@ class QwenAccurateOnline:
             # Once forced, stay in this loop until strictly below target.
 
     def _update_window(self, final=False, reason='update'):
+        if self._waiting_for_speech:
+            return
         if self.start + len(self.audio_buffer) / self.SAMPLING_RATE <= self.processed_end + 1e-6:
             return
         if not final and self._fresh_samples() < round(self.update_seconds * self.SAMPLING_RATE):
@@ -502,8 +520,7 @@ class QwenAccurateOnline:
 
     def process_iter(self):
         self._consume_audio()
-        if self._idle_start is None:
-            self._update_window()
+        self._update_window()
         return [], self.end
 
     def get_buffer(self):
@@ -537,13 +554,13 @@ class QwenAccurateOnline:
                        audio_end=self._clock.source_time(end, end=True), chars=len(text))
         self._suspended.clear()
         # Close the last direct hypothesis without replaying unchanged PCM.
-        # All suspended and copied drafts are finalized at explicit EOF as well.
+        # Historical and current drafts are finalized at explicit EOF as well.
         if self.utterance_start is not None and self.text:
             count = max(0, round((self.decoded_end - self.start) * self.SAMPLING_RATE))
             tokens.extend(self._commit(count, reason))
         self._reset_acoustics()
-        self._idle_start = None
-        self._idle_tail.discard(len(self._idle_tail.samples))
+        self._skipped_window = self._waiting_for_speech = False
+        self._zero_input = False
         self.start = self._clock.count / self.SAMPLING_RATE
         return tokens
 

@@ -1,4 +1,4 @@
-"""Only entirely zero inference windows are rejected; mixed PCM stays intact."""
+"""Strict zero guard remains independent of VAD; mixed PCM stays intact."""
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from threading import Event
 from types import SimpleNamespace
@@ -28,7 +28,7 @@ def feed(asr, audio):
 
 
 @pytest.mark.p1
-@pytest.mark.parametrize('packet', [160, 1760, 35200])
+@pytest.mark.parametrize('packet', [1760, 35200])
 def test_short_zero_gaps_stay_in_pcm_without_extra_decodes(packet):
     asr, calls, _ = online()
     audio = np.tile(np.r_[np.full(1600, .125, np.float32), np.zeros(160, np.float32)], 20)
@@ -77,9 +77,10 @@ def test_half_zero_window_passes_unchanged(reverse):
 
 @pytest.mark.p1
 @pytest.mark.parametrize('position', [0, RATE // 2, RATE - 1])
-def test_one_nonzero_sample_passes_even_if_very_weak_and_vad_says_quiet(position):
+def test_one_nonzero_sample_passes_when_vad_coverage_is_unknown(position):
     asr, calls, _ = online()
     asr.observe_capture_event('silence_started', 0)
+    # A label at zero does not prove VAD has inspected the whole window.
     audio = np.zeros(RATE, np.float32)
     audio[position] = 1e-12
     feed(asr, audio)
@@ -87,19 +88,60 @@ def test_one_nonzero_sample_passes_even_if_very_weak_and_vad_says_quiet(position
 
 
 @pytest.mark.p1
-def test_zero_tail_uses_normal_minimum_and_keeps_earlier_sound_in_window():
+def test_zero_gap_drains_real_tail_once_without_zero_pcm_or_early_confirmation():
     asr, calls, store = online()
     speech = np.full(RATE // 4, .125, np.float32)
     feed(asr, speech)
     feed(asr, np.zeros(RATE // 2, np.float32))
-    assert not calls
+    np.testing.assert_array_equal(calls[0], speech)
     feed(asr, np.zeros(RATE // 4, np.float32))
-    np.testing.assert_array_equal(calls[0], np.r_[speech, np.zeros(3 * RATE // 4)])
     feed(asr, np.zeros(RATE, np.float32))
-    assert len(calls) == 2  # The full window still contains original nonzero PCM.
+    assert len(calls) == 1 and not len(asr.audio_buffer)
+    assert store.rows[0]['start'] == 0 and store.rows[0]['end'] == .25
+    assert store.rows[0]['stable_end'] == 0
     assert not store.rows[0]['closed']
     asr.finish()
-    assert len(calls) == 2 and store.rows[0]['closed']
+    assert len(calls) == 1 and store.rows[0]['closed']
+
+
+@pytest.mark.p1
+def test_many_short_zero_gaps_do_not_join_sound_or_compress_subtitle_time():
+    asr, calls, store = online()
+    asr.decode = lambda audio: calls.append(audio.copy()) or 'Words.'
+    speech = np.full(1600, .125, np.float32)
+    for index in range(20):
+        feed(asr, speech)
+        feed(asr, np.zeros(160, np.float32))
+        assert len(calls) == index + 1
+        np.testing.assert_array_equal(calls[-1], speech)
+        view = {}
+        store.augment_snapshot(view)
+        spans = view['revision_spans'][-len('Words.'):]
+        assert spans[0][2] == pytest.approx(index * .11)
+        assert spans[-1][3] == pytest.approx(index * .11 + .1)
+    assert not len(asr.audio_buffer) and not asr._queued_audio
+    asr.finish()
+    assert len(calls) == 20 and all(row['closed'] for row in store.rows.values())
+
+
+@pytest.mark.p1
+def test_failed_tail_before_zero_gap_keeps_audio_and_boundary_for_retry():
+    asr, calls, store = online()
+    speech = np.full(RATE // 4, .125, np.float32)
+    feed(asr, speech)
+    decode = asr.decode
+    asr.decode = lambda _: (_ for _ in ()).throw(RuntimeError('tail failed'))
+    with pytest.raises(RuntimeError, match='tail failed'):
+        feed(asr, np.zeros(RATE, np.float32))
+    np.testing.assert_array_equal(asr.audio_buffer, speech)
+    assert asr._queued_audio[0][1] is None
+    asr.decode = decode
+    asr.process_iter()
+    np.testing.assert_array_equal(calls[0], speech)
+    assert not len(asr.audio_buffer) and not asr._queued_audio
+    assert store.rows[0]['end'] == .25 and not store.rows[0]['closed']
+    asr.finish()
+    assert len(calls) == 1
 
 
 @pytest.mark.p1
@@ -128,19 +170,19 @@ def test_skipped_zero_window_does_not_erase_text_vote_or_extend_text_times():
     asr, calls, store = online()
     asr.decode = lambda audio: calls.append(audio.copy()) or 'Keep these words.'
     feed(asr, np.ones(RATE, np.float32))
-    # No VAD labels: normal rolling eventually releases all original sound.
+    # Zero blocks are discarded without manufacturing text observations.
     for _ in range(50):
         feed(asr, np.zeros(RATE, np.float32))
     assert not np.any(asr.audio_buffer)
-    text = asr.text
     rows = repr(store.rows)
-    last_observation = asr.submission.last_audio_end
+    submission = asr._suspended[0][-1]
+    last_observation = submission.last_audio_end
     count, decode_id = len(calls), asr.decode_sequence
     for _ in range(50):
         feed(asr, np.zeros(RATE, np.float32))
     assert len(calls) == count and asr.decode_sequence == decode_id
-    assert asr.text == text == 'Keep these words.' and repr(store.rows) == rows
-    assert asr.submission.last_audio_end == last_observation
+    assert store.rows[0]['text'] == 'Keep these words.' and repr(store.rows) == rows
+    assert submission.last_audio_end == last_observation == 1
     asr.finish()
     assert all(r['closed'] for r in store.rows.values())
     assert asr.finish()[0] == []

@@ -124,21 +124,24 @@ def test_snapshot_tick_finalizes_history_without_inference_and_logs_only_changes
 
 
 @pytest.mark.p1
-def test_suspended_history_preserves_original_edit_clock_and_stays_acoustically_open(monkeypatch):
+def test_released_history_preserves_original_edit_clock_and_stays_acoustically_open(monkeypatch):
     import linguaflow.asr_submission as submission
     clock = [0.]
     monkeypatch.setattr(submission.time, 'monotonic', lambda: clock[0])
     asr = QwenAccurateOnline(lambda _: 'Old draft.', 'en',
                             token_type=SimpleNamespace, transcript_type=SimpleNamespace)
     store = install_revision_bridge(asr)
-    asr.insert_audio_chunk(np.ones(16000), 1)
+    asr.insert_audio_chunk(np.ones(32000), 2)
     asr.process_iter()
     clock[0] = 5
-    asr._idle_start = 0
-    asr._resume(2)
+    asr._release(16000, 'test_roll')
+    asr.decode = lambda _: 'New words.'
+    asr.insert_audio_chunk(np.ones(16000), 3)
+    asr.process_iter()
     clock[0] = 10
     store.augment_snapshot({})
     assert store.rows[0]['stable_ranges'] == [(0, len('Old draft.'))]
+    assert store.rows[0]['text'] == 'Old draft. New words.'
     assert not store.rows[0]['closed']
     asr.finish()
     assert store.rows[0]['closed']
