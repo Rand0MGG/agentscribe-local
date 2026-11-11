@@ -1,13 +1,32 @@
 """Recording export formats and atomic publication, shared by desktop platforms."""
-import os
-import tempfile
+import hashlib
+from dataclasses import dataclass
 from pathlib import Path
 
 from .core import export_md, export_srt, export_txt, source_is_final, srt_time
+from .storage_io import Directory, atomic_write, file_digest, identity
 
 FORMATS = {'srt': ('SubRip 字幕 (*.srt)', export_srt),
            'txt': ('纯文本 (*.txt)', export_txt),
            'md': ('Markdown 文档 (*.md)', export_md)}
+
+
+@dataclass(frozen=True)
+class ExportReceipt:
+    parent: tuple[int, int]
+    file: tuple[int, int]
+    digest: str
+
+
+def check_export(path, receipt):
+    """Read in bounded chunks, and reject replaced directories/files or mappings."""
+    path = Path(path)
+    with Directory(path.parent) as directory:
+        if tuple(identity(directory.info)) != receipt.parent:
+            raise OSError('备份目录已变化，请重新备份再关闭。')
+        file_id, digest = file_digest(directory, path.name)
+        if tuple(file_id) != receipt.file or digest != receipt.digest:
+            raise ValueError('备份已被修改，请重新备份再关闭。')
 
 
 def export_target(path, selected_filter):
@@ -23,7 +42,7 @@ def export_target(path, selected_filter):
 def write_export(item, captions, state=None):
     """RecordingSaver callback: publish only a complete UTF-8 document; raise on failure."""
     text = FORMATS[item['format']][1](captions)
-    _write_text(Path(item['path']), text)
+    return _write_text(Path(item['path']), text, item.get('parent_identity'))
 
 
 def write_recovery(item, captions, state=None):
@@ -41,17 +60,16 @@ def write_recovery(item, captions, state=None):
         if caption.error:
             rows.append('未完成说明：' + caption.error)
         rows.append('')
-    _write_text(Path(item['path']), '\n'.join(rows))
+    return _write_text(Path(item['path']), '\n'.join(rows), item.get('parent_identity'))
 
 
-def _write_text(path, text):
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile(dir=path.parent, prefix='.' + path.name + '.',
-                                         suffix='.tmp', delete=False) as stream:
-            temporary = Path(stream.name)
-            stream.write(text.encode('utf-8-sig'))
-        os.replace(temporary, path)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+def _write_text(path, text, expected_parent=None):
+    if expected_parent is None:
+        with Directory(path.parent) as directory:
+            expected_parent = identity(directory.info)
+    content = text.encode('utf-8-sig')
+    digest = hashlib.sha256(content).hexdigest()
+    owned = atomic_write(path, content, expected_parent=expected_parent)
+    receipt = ExportReceipt(tuple(expected_parent), tuple(owned), digest)
+    check_export(path, receipt)
+    return receipt

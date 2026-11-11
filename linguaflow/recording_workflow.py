@@ -49,6 +49,7 @@ class RecordingWorkflow(Owner):
         self.data = RecordingData()
         self.saver = RecordingSaver(self)
         self.saver.completed.connect(self._saved)
+        self.saver.completion_failed.connect(self._completion_failed)
         self.saver.idle.connect(self.release_lock)
         self.autosave = Timer(self)
         self.autosave.setSingleShot(True)
@@ -262,13 +263,29 @@ class RecordingWorkflow(Owner):
                 data.save_target = None
         self.saved.emit(snapshot, state, error)
 
-    def release_lock(self):
+    def _completion_failed(self, snapshot, error):
         data = self.data
-        if (data.lock and data.session is None and not data.state.active
-                and not self.saver.busy and not data.dirty and not data.save_error):
+        if data.item and snapshot.token == (data.generation, data.item['id']):
+            data.dirty = True
+            data.save_error = error
+            self.saved.emit(snapshot, '', error)
+
+    def release_lock(self, *, recovered=False):
+        data = self.data
+        if data.session is not None or data.state.active or self.saver.busy:
+            return False
+        if not recovered and (data.dirty or data.save_error):
+            return False
+        had_lock = data.lock is not None
+        if had_lock:
             data.lock.unlock()
             data.lock = None
+        if recovered:
+            data.dirty = False
+            data.save_error = ''
+        if had_lock:
             self.lock_released.emit()
+        return True
 
 
 def unfinished_translations(captions, translating):
