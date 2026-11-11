@@ -406,16 +406,16 @@ def test_zero_audio_trace_records_transitions_and_original_clock_not_every_packe
     feed(np.zeros(16000))
     asr.finish()
     rows = read_rows(path)
-    transitions = [r for r in rows if r['event'] in ('asr_zero_window_start', 'asr_zero_window_end')]
-    assert [r['event'] for r in transitions] == ['asr_zero_window_start', 'asr_zero_window_end']
-    assert transitions[0]['window_start'] == 0 and transitions[0]['window_end'] == 1
-    assert transitions[-1]['window_end'] == 6
+    transitions = [r for r in rows if r['event'].startswith('asr_zero_input_')]
+    assert [r['event'] for r in transitions] == ['asr_zero_input_start', 'asr_zero_input_end', 'asr_zero_input_start']
+    assert [r['audio_seconds'] for r in transitions] == [0, 5, 5.25]
     decodes = [r for r in rows if r['event'] == 'asr_decode_end']
-    assert len(decodes) == 2 and [r['decode_id'] for r in decodes] == [1, 2]
-    assert decodes[-1]['window_start'] == 0 and decodes[-1]['window_end'] == 7
-    assert decodes[-1]['audio_seconds'] == 7 and decodes[-1]['admitted_audio_seconds'] == 1
+    assert len(decodes) == 1 and decodes[0]['decode_id'] == 1
+    assert decodes[0]['window_start'] == 5 and decodes[0]['window_end'] == 5.25
+    assert decodes[0]['audio_seconds'] == .25 and decodes[0]['admitted_audio_seconds'] == .25
     source = [r for r in rows if r['event'] == 'source_revision'][-1]
-    assert source['audio_start'] == 0 and source['audio_end'] == 7
+    # Omitted zero blocks keep their original recording-time gap.
+    assert source['audio_start'] == 5 and source['audio_end'] == 5.25
     assert 'PRIVATE_ZERO_TEST' not in path.read_text(encoding='utf-8')
 
 
@@ -758,7 +758,7 @@ def test_compression_stays_on_writer_and_producer_can_continue(logs, monkeypatch
 
 
 @pytest.mark.p0
-def test_long_idle_commit_keeps_original_decode_link_and_never_logs_text(logs):
+def test_long_quiet_commit_keeps_original_decode_link_and_never_logs_text(logs):
     path = diag.start_logging('test')
     asr = QwenAccurateOnline(lambda _: 'PRIVATE_IDLE_WORDS', 'en',
                             token_type=SimpleNamespace, transcript_type=SimpleNamespace)
@@ -766,8 +766,10 @@ def test_long_idle_commit_keeps_original_decode_link_and_never_logs_text(logs):
     install_revision_bridge(asr)
     asr.observe_capture_event('silence_started', 1, observed_at=1.55)
     asr.observe_capture_event('speech_started', 50, observed_at=50.1)
+    asr.observe_capture_event('audio_advanced', 1)
     asr.insert_audio_chunk(np.ones(16000), 1)
     asr.process_iter()
+    asr.observe_capture_event('audio_advanced', 51)
     asr.insert_audio_chunk(np.ones(50 * 16000), 51)
     asr.process_iter()
     asr.finish()
@@ -779,6 +781,9 @@ def test_long_idle_commit_keeps_original_decode_link_and_never_logs_text(logs):
         last = [r for r in decodes if r['interval'] == commit['interval']][-1]
         assert commit['decode_id'] == last['decode_id']
         assert commit['audio_end'] == last['window_end']
-    resumed = next(r for r in rows if r['event'] == 'asr_idle_end')
-    assert resumed['skipped_start'] == 31 and resumed['retained_seconds'] == 1
+    assert any(r['event'] == 'asr_vad_window_start' for r in rows)
+    assert any(r['event'] == 'asr_vad_window_end' for r in rows)
+    resumed = next(r for r in rows if r['event'] == 'asr_text_resume')
+    assert resumed['audio_seconds'] == 50
+    assert not any(r['event'].startswith('asr_idle_') for r in rows)
     assert 'PRIVATE_IDLE_WORDS' not in path.read_text(encoding='utf-8')

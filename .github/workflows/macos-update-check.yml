@@ -119,4 +119,6 @@ jobs:
             .work/update-acceptance/**/events.jsonl
             .work/update-acceptance/**/*app.log
             .work/update-acceptance/**/recovery-state.json
+            .work/update-acceptance/**/restored-desktop.json
+            .work/update-acceptance/**/diagnostics/**
           if-no-files-found: ignore

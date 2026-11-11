@@ -52,40 +52,53 @@ def test_backlog_admission_is_one_to_ten_seconds_without_losing_pcm(window):
 
 @pytest.mark.p1
 @pytest.mark.parametrize('window', [25, 30])
-def test_idle_threshold_tracks_window_and_protection_does_not_satisfy_minimum(window):
+def test_waiting_keeps_bounded_recent_audio_without_periodic_window_updates(window):
     asr, calls = online(window)
-    quiet(asr, 1, 100)
+    quiet(asr, 0, 100)
+    prepared = []
+    prepare = asr._prepare_window
+    def observe_prepare():
+        prepared.append(asr.end)
+        prepare()
+    asr._prepare_window = observe_prepare
     audio = np.arange(101 * RATE, dtype=np.float32)
-    asr.insert_audio_chunk(audio[:window * RATE], window)
-    asr.process_iter()
-    assert asr._idle_start is None
-    asr.insert_audio_chunk(audio[window * RATE:(window + 1) * RATE], window + 1)
-    asr.process_iter()
-    assert asr._idle_start == 1  # exactly W seconds of continuous quiet
-    count = len(calls)
-    asr.insert_audio_chunk(audio[(window + 1) * RATE:100 * RATE], 100)
-    asr.process_iter()
-    assert len(calls) == count  # no minimum input requirement during long idle
+    for end in range(1, 101):
+        asr.observe_capture_event('audio_advanced', end)
+        asr.insert_audio_chunk(audio[(end - 1) * RATE:end * RATE], end)
+        asr.process_iter()
+        assert not calls
+        assert asr.processed_end == end
+        assert prepared == [1]
+        assert len(asr.audio_buffer) <= (window + 5) * RATE
+    np.testing.assert_array_equal(asr.audio_buffer, audio[(100 - window - 5) * RATE:100 * RATE])
     start = 100 * RATE
     for end in (100.25, 100.99, 101):
+        asr.observe_capture_event('audio_advanced', end)
         asr.insert_audio_chunk(audio[start:round(end * RATE)], end)
         asr.process_iter()
         start = round(end * RATE)
-        assert len(calls) == count + (end == 101)
-    np.testing.assert_array_equal(calls[-1], audio[99 * RATE:])
+        assert len(calls) == (end == 101)
+    np.testing.assert_array_equal(calls[-1], audio[round(asr.start * RATE):])
+    np.testing.assert_array_equal(calls[-1][-RATE:], audio[100 * RATE:])
 
 
 @pytest.mark.p1
-def test_resumed_protection_is_separate_from_ten_second_new_audio_budget():
+def test_speech_after_quiet_backlog_keeps_ten_second_new_audio_budget():
     asr, calls = online(25)
     quiet(asr, 0, 40)
     audio = np.arange(60 * RATE, dtype=np.float32)
+    asr.observe_capture_event('audio_advanced', 60)
     asr.insert_audio_chunk(audio, 60)
     asr.process_iter()
-    resumed = [part for part in calls if part[-1] >= 40 * RATE]
-    assert len(resumed) == 2
-    np.testing.assert_array_equal(resumed[0], audio[39 * RATE:50 * RATE])
-    np.testing.assert_array_equal(resumed[1], audio[39 * RATE:60 * RATE])
+    assert len(calls) == 2
+    previous_end = 40 * RATE
+    for part in calls:
+        start, end = int(part[0]), int(part[-1]) + 1
+        np.testing.assert_array_equal(part, audio[start:end])
+        assert 0 < end - previous_end <= 10 * RATE
+        previous_end = end
+    assert np.isin(audio[40 * RATE:], np.concatenate(calls)).all()
+    assert previous_end == len(audio)
 
 
 def quiet(asr, a, b=None):
@@ -179,45 +192,52 @@ def test_fallback_relative_dip_or_exact_target_without_synthetic_padding():
 
 @pytest.mark.p1
 @pytest.mark.parametrize('packets', [[31, 40, 50, 51], [50, 51], [51]])
-def test_long_idle_resume_retains_real_protection_and_absolute_time(packets):
+def test_long_quiet_keeps_bounded_original_context_and_open_text(packets):
     asr, calls = online()
     store = install_revision_bridge(asr)
     quiet(asr, 1, 50)
     audio = np.arange(51 * RATE, dtype=np.float32)
+    asr.observe_capture_event('audio_advanced', 1)
     asr.insert_audio_chunk(audio[:RATE], 1)
     asr.process_iter()
     for end in packets:
         start = round(asr.end * RATE)
+        asr.observe_capture_event('audio_advanced', end)
         asr.insert_audio_chunk(audio[start:end * RATE], end)
         asr.process_iter()
-        if end <= 50:
-            assert not store.rows[0]['closed']
-            assert len(asr._idle_tail.samples) <= RATE
-    np.testing.assert_array_equal(calls[-1], audio[49 * RATE:])
-    assert asr.start == 49 and store.rows[1]['start'] == 49
-    assert store.rows[0]['end'] == 31 and not store.rows[0]['closed']
+        assert len(asr.audio_buffer) <= 35 * RATE
+        assert not store.rows[0]['closed']
+    np.testing.assert_array_equal(calls[-1], audio[round(asr.start * RATE):])
+    np.testing.assert_array_equal(calls[-1][-RATE:], audio[50 * RATE:])
+    assert list(store.rows) == [0, 1] and store.rows[0]['start'] == 0
+    assert store.rows[0]['end'] < 50
+    assert store.rows[1]['start'] == 50 and store.rows[1]['end'] == 51
+    assert min(a for a, _ in store.times[1]) >= 50
     asr.finish()
     assert all(row['closed'] for row in store.rows.values())
     assert asr.finish()[0] == []
 
 
 @pytest.mark.p1
-def test_only_long_quiet_waits_and_short_pause_keeps_original_samples():
+def test_whole_quiet_skips_while_short_pause_inside_speech_keeps_original_samples():
     asr, calls = online()
     quiet(asr, 0, 40)
     noise = np.full(40 * RATE, .001, dtype=np.float32)
+    asr.observe_capture_event('audio_advanced', 40)
     asr.insert_audio_chunk(noise, 40)
     asr.process_iter()
-    assert calls and all(len(part) <= 35 * RATE for part in calls)
-    count = len(calls)
+    assert not calls
     asr.get_buffer()
-    assert len(calls) == count
+    assert not calls
     voice = np.ones(RATE, dtype=np.float32)
+    asr.observe_capture_event('audio_advanced', 41)
     asr.insert_audio_chunk(voice, 41)
     asr.process_iter()
-    np.testing.assert_array_equal(calls[-1], np.concatenate((noise[-RATE:], voice)))
+    original = np.concatenate((noise, voice))
+    np.testing.assert_array_equal(calls[-1], original[round(asr.start * RATE):])
     quiet(asr, 41, 42)
     pause = np.full(RATE, .002, dtype=np.float32)
+    asr.observe_capture_event('audio_advanced', 43)
     asr.insert_audio_chunk(np.concatenate((pause, voice)), 43)
     asr.process_iter()
     np.testing.assert_array_equal(calls[-1][-2 * RATE:], np.concatenate((pause, voice)))
@@ -241,7 +261,7 @@ def test_natural_pause_never_confirms_but_explicit_pause_closes_once():
 
 
 @pytest.mark.p1
-def test_failure_before_long_idle_preserves_queued_resumed_speech():
+def test_failure_before_long_quiet_preserves_queued_resumed_speech():
     asr, calls = online()
     quiet(asr, 1, 50)
     original = asr.decode
@@ -249,13 +269,15 @@ def test_failure_before_long_idle_preserves_queued_resumed_speech():
         raise RuntimeError('model failure')
     asr.decode = fail
     audio = np.arange(51 * RATE, dtype=np.float32)
+    asr.observe_capture_event('audio_advanced', 51)
     asr.insert_audio_chunk(audio, 51)
     with pytest.raises(RuntimeError, match='model failure'):
         asr.process_iter()
     asr.decode = original
     asr.finish()
     assert np.isin(audio[:RATE], np.concatenate(calls)).all()
-    np.testing.assert_array_equal(calls[-1], audio[49 * RATE:])
+    np.testing.assert_array_equal(calls[-1][-RATE:], audio[50 * RATE:])
+    assert all(len(part) <= 35 * RATE for part in calls)
 
 
 @pytest.mark.p1
@@ -302,21 +324,24 @@ def test_genuine_agreement_keeps_advancing_across_many_context_rollovers():
 
 
 @pytest.mark.p1
-def test_explicit_pause_vad_reset_still_detects_long_quiet_after_resume():
+def test_explicit_pause_vad_reset_skips_quiet_and_resumes_original_speech():
     asr, calls = online()
     asr.insert_audio_chunk(np.ones(RATE), 1)
     asr.process_iter()
     asr.force_next_endpoint(1)
     asr.start_silence()
-    # Silero was reset and emits no boundary while resumed input stays quiet.
-    asr.insert_audio_chunk(np.full(39 * RATE, .01), 40)
-    asr.process_iter()
-    assert asr._idle_start == 1
     count = len(calls)
-    asr.insert_audio_chunk(np.full(5 * RATE, .01), 45)
-    asr.process_iter()
-    assert len(calls) == count
+    # Silero was reset and emits no boundary while resumed input stays quiet.
+    for end in (40, 45):
+        start = asr.end
+        asr.observe_capture_event('audio_advanced', end)
+        asr.insert_audio_chunk(np.full(round((end-start) * RATE), .01), end)
+        asr.process_iter()
+        assert len(calls) == count and len(asr.audio_buffer) <= 35 * RATE
     asr.observe_capture_event('speech_started', 45)
+    asr.observe_capture_event('audio_advanced', 46)
     asr.insert_audio_chunk(np.ones(RATE), 46)
     asr.process_iter()
-    np.testing.assert_array_equal(calls[-1], np.concatenate((np.full(RATE, .01, np.float32), np.ones(RATE))))
+    np.testing.assert_array_equal(calls[-1][-RATE:], np.ones(RATE))
+    assert np.all(calls[-1][:-RATE] == np.float32(.01))
+    assert len(calls) == count + 1

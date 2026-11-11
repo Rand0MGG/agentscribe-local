@@ -98,14 +98,112 @@ def owned_processes(executable):
 
 
 def stop_owned(executable, native):
-    for pid in owned_processes(executable):
-        stamp = native.stamp(pid)
+    import psutil
+
+    pids = set(owned_processes(executable))
+    roots, descendants = [], {}
+    for pid in pids:
+        try:
+            process = psutil.Process(pid)
+            if any(parent.pid in pids for parent in process.parents()):
+                continue
+            roots.append(process)
+            for child in process.children(recursive=True):
+                descendants[child.pid] = child
+        except psutil.NoSuchProcess:
+            continue
+    # The host's lifetime socket asks Electron to close normally. Killing its
+    # backend at the same time prevents that close handshake and leaves the
+    # single-instance lock held across otherwise independent test cases.
+    for process in roots:
+        stamp = native.stamp(process.pid)
         if stamp:
-            assert native.stop(pid, stamp), 'Could not stop owned isolated app'
+            assert native.stop(process.pid, stamp), 'Could not stop owned isolated app'
+    _, alive = psutil.wait_procs([*roots, *descendants.values()], timeout=30)
+    assert not alive, 'Owned desktop processes did not exit: ' + str([p.pid for p in alive])
+
+
+def restored_desktop_ready(executable):
+    """Observe the restored Electron frontend's own startup acknowledgement."""
+    import psutil
+
+    electron = executable.parent.parent / 'Resources/desktop/runtime/Electron.app/Contents/MacOS/Electron'
+    for pid in owned_processes(executable):
+        try:
+            for child in psutil.Process(pid).children():
+                if child.exe() != str(electron):
+                    continue
+                environment = child.environ()
+                filename = environment.get('AGENTSCRIBE_DESKTOP_READY')
+                token = environment.get('AGENTSCRIBE_DESKTOP_READY_TOKEN')
+                if filename and token:
+                    receipt = json.loads(Path(filename).read_text())
+                    if receipt == {'token': token, 'parent': child.pid}:
+                        return True
+        except (psutil.NoSuchProcess, psutil.AccessDenied, OSError, ValueError):
+            # Startup may still be writing the receipt or replacing a process.
+            continue
+    return False
 
 
 def preserved_files(root):
     return {str(p.relative_to(root)): digest(p) for p in root.rglob('*') if p.is_file()}
+
+
+def save_recovery_diagnostics(work, data_root):
+    """Retain only this disposable test's application startup evidence."""
+    import psutil
+
+    destination = work / 'diagnostics'
+    destination.mkdir(exist_ok=True)
+    rows = []
+    for process in psutil.process_iter(['pid', 'ppid', 'exe']):
+        if not (process.info['exe'] or '').startswith(str(work.parent) + '/'):
+            continue
+        row = dict(process.info)
+        try:
+            environment = process.environ()
+            filename = environment.get('AGENTSCRIBE_DESKTOP_READY')
+            row['ready_path'] = filename
+            if filename:
+                receipt = json.loads(Path(filename).read_text())
+                row['ready_parent'] = receipt.get('parent')
+                row['ready_token_matches'] = receipt.get('token') == environment.get('AGENTSCRIBE_DESKTOP_READY_TOKEN')
+        except (psutil.Error, OSError, ValueError) as error:
+            row['observation_error'] = str(error)
+        rows.append(row)
+    (destination / 'processes.json').write_text(json.dumps(rows, indent=2))
+    for directory in ('logs', 'updates'):
+        source = data_root / directory
+        for file in source.rglob('*'):
+            if file.is_file() and file.suffix in ('.log', '.json'):
+                target = destination / directory / file.relative_to(source)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(file, target)
+
+
+def diagnose_restored_launch(executable, work):
+    """Failure-only comparison, never counted as automatic recovery success."""
+    destination = work / 'diagnostics'
+    destination.mkdir(exist_ok=True)
+    app = executable.parent.parent.parent
+    verified = subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)],
+                              capture_output=True, text=True, timeout=30)
+    with (destination / 'manual-launch.log').open('wb') as output:
+        child = subprocess.Popen([str(executable), '--no-audio'], stdout=output, stderr=output,
+                                 env={**os.environ, 'AGENTSCRIBE_LOG_DIR': str(destination / 'manual-logs')})
+        deadline = time.monotonic() + 15
+        ready = False
+        while child.poll() is None and time.monotonic() < deadline:
+            if restored_desktop_ready(executable):
+                ready = True
+                break
+            time.sleep(.1)
+        (destination / 'manual-launch.json').write_text(json.dumps({
+            'codesign_returncode': verified.returncode, 'codesign_stderr': verified.stderr,
+            'pid': child.pid, 'returncode': child.poll(), 'ready': ready}, indent=2))
+        # run_case's existing owned-process cleanup handles this diagnostic
+        # child too; leave the original automatic-relaunch failure unchanged.
 
 
 def run_case(case, work, old_app, candidate, manifest, signature, live):
@@ -241,12 +339,26 @@ def run_case(case, work, old_app, candidate, manifest, signature, live):
                     subprocess.run(['codesign', '--verify', '--deep', '--strict', str(installed)], check=True, capture_output=True)
                 else:
                     deadline = time.monotonic() + 30
+                    electron = resources / 'desktop/runtime/Electron.app/Contents/MacOS/Electron'
+                    notice = data_root / 'updates/notice.json'
                     while time.monotonic() < deadline:
-                        if owned_processes(executable) and not (data_root / 'updates/notice.json').exists():
+                        # Electron 0.12.1 does not consume the legacy Qt notice.
+                        # Require its actual frontend handshake instead of
+                        # mistaking an unconsumed notice for a failed relaunch.
+                        ready = (restored_desktop_ready(executable) if electron.is_file()
+                                 else owned_processes(executable) and not notice.exists())
+                        if ready:
                             break
                         time.sleep(.1)
                     else:
-                        raise TimeoutError('Restored old application did not relaunch and consume recovery notice')
+                        save_recovery_diagnostics(work, data_root)
+                        diagnose_restored_launch(executable, work)
+                        raise TimeoutError('Restored old application did not acknowledge frontend readiness')
+                    recovery_notice = 'retained' if notice.exists() else 'consumed'
+                    if notice.exists():
+                        assert json.loads(notice.read_text()) == {'token': state['token'], 'version': old_version}
+                    (work / 'restored-desktop.json').write_text(json.dumps({
+                        'ready': True, 'version': old_version, 'recovery_notice': recovery_notice}))
             else:
                 assert any(e['stage'] == ('cancelled' if case == 'cancel' else 'error') for e in events), events
                 assert not any(e['stage'] in ('ready', 'installing', 'installed') for e in events), events
@@ -263,6 +375,8 @@ def run_case(case, work, old_app, candidate, manifest, signature, live):
                         status=state['status'] if state else 'retained', preserved=True, live=live,
                         fault_after_startup=killed_startup, events=events)
     finally:
+        if not passed or case == 'rollback':
+            save_recovery_diagnostics(work, data_root)
         stop_owned(executable, native)
         if child:
             child.wait(timeout=15)

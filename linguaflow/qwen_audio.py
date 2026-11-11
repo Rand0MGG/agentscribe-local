@@ -8,7 +8,7 @@ from . import diagnostic_log as diag
 
 
 class KeptAudioClock:
-    """Queued PCM coordinates mapped to the untouched recording, without zero removal."""
+    """Kept PCM coordinates mapped to the untouched recording, including zero gaps."""
     def __init__(self, rate):
         self.rate = rate
         self.starts, self.ends, self.sources = [], [], []
@@ -74,6 +74,29 @@ class VADTimeline:
                        for a, b, known, ended in self.silences if known <= end]
             return [(max(start, a), min(end, b)) for a, b in visible if a < end and b > start + 1e-6]
 
+    def is_silent(self, start, end, *, observed_until):
+        """Require complete quiet coverage, using all labels already received.
+
+        Unlike cut ranking, this safety check must not hide a backdated speech
+        onset observed after the queued window's end. An unobserved tail or a
+        missing label is not evidence of silence.
+        """
+        # Sample-derived timestamps can differ by floating-point roundoff.
+        # This tolerance is far smaller than one 16 kHz sample (62.5 us).
+        tolerance = 1e-9
+        if not start < end or end > observed_until + tolerance:
+            return False
+        with self.lock:
+            return any(a <= start + tolerance and known <= observed_until + tolerance
+                       and (b is None or end <= b + tolerance)
+                       for a, b, known, _ in self.silences)
+
+    def speech_after_quiet(self, start, end):
+        """Bound a resumed text interval by the known end of leading quiet."""
+        with self.lock:
+            return next((b for a, b, _, _ in self.silences
+                         if a <= start and b is not None and start < b < end), None)
+
     def prune(self, before):
         with self.lock:
             self.silences = [row for row in self.silences if row[1] is None or row[1] >= before]
@@ -134,7 +157,7 @@ class ContinuousQwenPCM:
             self.transcription.observe_capture_event('silence_started', 0.)
         diag.event('asr_audio_policy', policy='original_pcm', silence_seconds=.5,
                    window_seconds=self.transcription.window_seconds, margin_seconds=5,
-                   reference_points=5, resume_context_seconds=1.,
+                   reference_points=5, quiet_policy='wait_with_recent_audio',
                    min_new_seconds=self.transcription.update_seconds,
                    max_new_seconds=self.transcription.MAX_NEW_SECONDS,
-                   zero_input='skip_entire_zero_window')
+                   zero_input='exclude_zero_blocks_keep_source_time')

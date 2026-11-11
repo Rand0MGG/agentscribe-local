@@ -108,3 +108,7 @@ Python 的 `test_qt_free_backend.py` 在拒绝 Qt 导入的条件下验证后台
 `test_desktop_protocol.py` 核对后端签名与共同接口定义、拒绝越权命令/多余路径/错误参数；前端编译检查必填参数、返回类型及不可访问的内部方法。修改 `linguaflow/desktop_contract.json` 后运行 `node desktop/scripts/protocol-types.cjs` 更新类型，`npm run build` 会拒绝过期产物。
 
 `test_platform_consolidation.py` 覆盖三平台目录规则、旧默认设置保留、公共文件锁，以及官方 Qwen 原始生成结果的审查/同输入恢复/失败路径；`test_mlx_repetition.py` 继续覆盖 MLX 适配。替身生成只证明控制逻辑，Windows 实际 GPU 推理质量、速度与安装升级仍需目标系统实测。
+
+整窗无人声回归见 `test_qwen_vad_guard.py`：检查非零环境音不调用模型、未知/混合窗口保留、等待期间无周期换窗/推理、近期缓存与 VAD 迟报恢复、未知覆盖唤醒、全零输入排除和恢复人声后的正常节奏。`test_qwen_audio_window.py` 同时检查窗口容量、长停顿后文字时间不跨静音，以及正常音频不被裁剪；真实整段文件重放须分别核对模型调用、原文与字幕一致性、翻译收尾，不能只用最终无重复词判定成功。
+
+全零输入边界须验证真实尾音只处理一次、失败可按原音频重试、前后声音不拼接、文字不被空观察确认、原录音时间空档保持。全零整块排除与混合块内零采样保留分别验收，不能用混合块测试代替前者。两个内部状态不新增用户界面状态文案。

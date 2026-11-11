@@ -91,7 +91,7 @@ def test_confirmation_cannot_jump_an_uncertain_piece_inside_one_sentence():
 
 
 @pytest.mark.p1
-def test_long_idle_resume_keeps_old_draft_open_until_eof():
+def test_long_quiet_rollover_keeps_old_draft_and_later_confirmation_until_eof():
     old_round = [0]
     def decode(audio):
         if audio[-1] < 40 * 16000:
@@ -101,10 +101,11 @@ def test_long_idle_resume_keeps_old_draft_open_until_eof():
     asr = QwenAccurateOnline(decode, 'en', token_type=SimpleNamespace, transcript_type=SimpleNamespace)
     store = install_revision_bridge(asr)
     mapper = CaptionMapper('en', predictor=sentences)
-    asr.observe_capture_event('silence_started', 0)
+    asr.observe_capture_event('silence_started', 1)
     asr.observe_capture_event('speech_started', 40)
     start = 0
-    for end in (41, 43, 45):
+    for end in (1, 41, 43, 45):
+        asr.observe_capture_event('audio_advanced', end)
         asr.insert_audio_chunk(np.arange(start * 16000, end * 16000, dtype=np.float32), end)
         asr.process_iter()
         mapper.update(snapshot(store))
