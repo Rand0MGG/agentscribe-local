@@ -2,6 +2,12 @@
 
 仅记录当前可核对的证据与限制；测试规则见 [TESTING](TESTING.md)，功能缺口见 [ROADMAP](ROADMAP.md)。历史逐轮记录已移至 [验证归档](archive/testing/VALIDATION_THROUGH_20261030.md)，不把旧通过数或“本地未提交”当作当前状态。
 
+## 2026-11-12 退出末尾解锁与断连恢复
+
+- 基线为 [`main@e8b9e5f`](https://github.com/Rand0MGG/agentscribe-local/tree/e8b9e5f1a6bfb5a3b4fe8f9dcc14e71cff41c271)，已包含 PR #2 文档；程序缺陷仍未修复。Linux / Python 3.12.14 的 12 组隔离场景包括 5 组真实后台 JSONL 子进程、7 组完整 DesktopService 调度：8 组正常/保护对照、1 组既有 R37 复核及 3 组新 R39 证据。
+- R39 的实际锁删除权限失败使退出收尾中断；恢复权限后观察 600 ms 仍未自行退出，有连接时再次 `app.close` 可退出，EOF 后的隔离子进程最终由测试清理终止。另确认停止重试计时器及普通命令被 closing 门禁拒绝。新旧字幕已持久化，没有证明数据丢失，详见 [退出补充记录](testing/EXPORT_RECOVERY_FINDINGS_20261111.md#r39退出末尾解锁失败没有完成或失败终态)。
+- 已保存的原文、未保存草稿、保存错误及备份失败均用合成数据；保存/备份错误采用定点注入，锁删除为非 root 用户的真实 Linux `EACCES`。76 个源码/参考 blob 与固定 main 一致且执行后未变。未运行完整仓库回归、原生 Electron 窗口、Mac/Windows、真实音频/模型或断电验收；程序、测试文件和 spec 不变。
+
 ## 2026-11-11 导出回执与恢复关闭
 
 - 固定最新 `main@203ede5`，两项新缺陷与证据集中在 [独立发现记录](testing/EXPORT_RECOVERY_FINDINGS_20261111.md)：R37 为解锁失败后的状态/重试不一致，R38 为恢复回执读取异常中断导出队列收尾。备份与源件仍完整，没有实际用户数据丢失证据。
