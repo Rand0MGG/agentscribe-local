@@ -2,6 +2,16 @@
 
 仅记录当前可核对的证据与限制；测试规则见 [TESTING](TESTING.md)，功能缺口见 [ROADMAP](ROADMAP.md)。历史逐轮记录已移至 [验证归档](archive/testing/VALIDATION_THROUGH_20261030.md)，不把旧通过数或“本地未提交”当作当前状态。
 
+## 2026-11-11 Windows 导出与恢复修复
+
+- 基线为已合并文档 PR #2 的 `e8b9e5f`，在已有 `windows` 分支修改；不改版本、模型、依赖或安装包。R36 的 Windows 发布保护、R37 解锁失败重试、R38 回执/队列收尾由正式后台实现修复。
+- Windows / Python 3.12.8：最终完整无音频回归 **1340 passed、39 skipped**，168.75 秒，无原生音频导入尝试。跳过项包括符号链接权限、Mac 专属功能、POSIX 文件大小限制和缺少原生恢复编译器；不是全部平台功能通过。原始结果在 `.work/reports/export-recovery-fix/windows-final.xml`。
+- 新增 22 项参数化检查，覆盖真实 Windows junction 越界拒绝、目录打开后改名拒绝、源临时对象替换拒绝与旧目标保留、非自有清理对象保留、准确 Unicode 文件名、真实锁文件占用失败及同回执重试、OSError/MemoryError、完成监听器失败及后续队列、相同字节的替换备份拒绝。Windows 目录句柄原先只申请属性权限，新增反例证实不能阻止改名；改为同时申请目录读取权限后反例通过。
+- 原生文件发布过程中发现文件名缓冲区缺少终止符，已修正并增加不同长度、中文/空格/表情文件名与覆盖旧文件检查。中间失败不计为通过；上述完整回归包含最终修正。
+- `ruff check linguaflow scripts tests`、差异空白检查和 Electron TypeScript/Vite 构建通过。最终 Electron `test:chain` 通过 11 组真实桌面/IPC/共享后台检查，包括连续三项导出和单次最终通知；原始证据在 `output/playwright/parity-fixed/chain-hlDhxe/`。`test:interaction` 的 28 组交互检查和 `test:audio-adapter` 无设备检查通过，交互证据在 `output/playwright/interaction-fixes/`。
+- 使用临时合成录音、隔离偏好和无音频保护，未访问用户录音、设备或模型。R37 在 Windows 使用真实拒绝删除共享的文件句柄；POSIX 测试注入权限异常，不能称为 Mac 原生权限验收。未重跑真实内存压力、断电、安装升级或真实录音。
+- **剩余 R36：** POSIX 最后一次源对象检查与命名替换之间仍有窗口；发布后能拒绝错误回执，不能保证该窗口下既有目标不被覆盖。因此不将 R36 标为跨平台完成，不把本轮 Windows 结果外推到 Mac；新安装包未发布。
+
 ## 2026-11-11 导出回执与恢复关闭
 
 - 固定最新 `main@203ede5`，两项新缺陷与证据集中在 [独立发现记录](testing/EXPORT_RECOVERY_FINDINGS_20261111.md)：R37 为解锁失败后的状态/重试不一致，R38 为恢复回执读取异常中断导出队列收尾。备份与源件仍完整，没有实际用户数据丢失证据。

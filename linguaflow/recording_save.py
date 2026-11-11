@@ -14,6 +14,7 @@ class SaveSnapshot:
     item: dict
     captions: tuple[Caption, ...]
     state: str | None
+    result: object = None
 
 
 class _SaveJob(Thread):
@@ -28,7 +29,8 @@ class _SaveJob(Thread):
     def run(self):
         item = self.snapshot.item.copy()
         try:
-            self.write(item, self.snapshot.captions, self.snapshot.state)
+            result = self.write(item, self.snapshot.captions, self.snapshot.state)
+            self.snapshot = replace(self.snapshot, result=result)
             self.saved_state = item['state']
         except Exception as exc:
             from .diagnostic_log import exception
@@ -41,6 +43,7 @@ class _SaveJob(Thread):
 
 class RecordingSaver(Owner):
     completed = Signal(object, str, str)
+    completion_failed = Signal(object, str)
     idle = Signal()
     _job_finished = Signal()
 
@@ -100,10 +103,17 @@ class RecordingSaver(Owner):
         if self.job.ident is not None:
             self.job.join()
         job, self.job = self.job, None
-        self.completed.emit(job.snapshot, job.saved_state or '', job.error)
-        self._start()
-        if not self.busy:
-            self.idle.emit()
+        try:
+            self.completed.emit(job.snapshot, job.saved_state or '', job.error)
+        except Exception as exc:
+            from .diagnostic_log import exception
+            exception('recording_completion_exception', exc)
+            self.completion_failed.emit(job.snapshot, f'完成处理失败（{type(exc).__name__}），请重试。')
+            raise
+        finally:
+            self._start()
+            if not self.busy:
+                self.idle.emit()
 
     def flush(self, timeout_ms=30000):
         """Wait for queued disk writes while Qt continues dispatching events.

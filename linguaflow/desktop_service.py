@@ -228,6 +228,7 @@ class DesktopService(DesktopModels, DesktopLibrary, DesktopKnowledge, Owner):
         self.native_updater.event.connect(self.on_native_update)
         self.native_updater.shutdown_complete.connect(lambda _: self._continue_close())
         self.exporter.completed.connect(self._exported)
+        self.exporter.completion_failed.connect(self._export_failed)
         self.exporter.idle.connect(self._exports_finished)
         self.exporter.idle.connect(self._continue_close)
         self.autosave = self.recording.autosave
