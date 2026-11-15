@@ -2,6 +2,12 @@
 
 仅记录当前可核对的证据与限制；测试规则见 [TESTING](TESTING.md)，功能缺口见 [ROADMAP](ROADMAP.md)。历史逐轮记录已移至 [验证归档](archive/testing/VALIDATION_THROUGH_20261030.md)，不把旧通过数或“本地未提交”当作当前状态。
 
+## 2026-11-16 个人笔记未确认保存与重试
+
+- 固定 [main e8b9e5f](https://github.com/Rand0MGG/agentscribe-local/tree/e8b9e5f1a6bfb5a3b4fe8f9dcc14e71cff41c271)。R40：编辑录音 A 的个人笔记，点击保存后、回执前切到 B，再回 A。隔离复现用 SQLite 写锁延迟操作；真实 [课程客户端](../linguaflow/knowledge/client.py#L135-L198) 成功关闭旧后台，无保存成功、错误或断连事件，重开 A 仍是旧笔记。另用真实 [React 组件](../desktop/src/Knowledge.tsx#L30-L72) 注入相同事件序列，草稿仍在，但输入、保存和取消一直禁用。未提交就切换、收到错误后重试、收到匹配回执均为正常对照。当前规避：等保存完成再切换录音。
+- R41：仅编辑本地笔记，真实 SQLite 写锁超时经 [课程后台](../linguaflow/knowledge/worker.py#L480-L518) 发出提示，错误指向依赖、网络与密钥；数据库内容未变、无成功回执，释放写锁后重试并重开可见新文字及个人编辑锁定。
+- Linux / Python 3.12.14；课程后台与客户端无音频定向回归 28 通过、2 跳过。以上为真实 SQLite/JSONL 后台与 React 事件分段验证，未跑原生 Electron 端到端、Mac/Windows、真实录音或模型；未发现既有落盘笔记损坏。
+
 ## 2026-11-12 退出末尾解锁与断连恢复
 
 - 基线为 [`main@e8b9e5f`](https://github.com/Rand0MGG/agentscribe-local/tree/e8b9e5f1a6bfb5a3b4fe8f9dcc14e71cff41c271)，已包含 PR #2 文档；程序缺陷仍未修复。Linux / Python 3.12.14 的 12 组隔离场景包括 5 组真实后台 JSONL 子进程、7 组完整 DesktopService 调度：8 组正常/保护对照、1 组既有 R37 复核及 3 组新 R39 证据。
