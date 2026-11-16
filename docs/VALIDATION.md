@@ -2,6 +2,12 @@
 
 仅记录当前可核对的证据与限制；测试规则见 [TESTING](TESTING.md)，功能缺口见 [ROADMAP](ROADMAP.md)。历史逐轮记录已移至 [验证归档](archive/testing/VALIDATION_THROUGH_20261030.md)，不把旧通过数或“本地未提交”当作当前状态。
 
+## 2026-11-17 垃圾桶恢复与名称冲突
+
+- 固定 [main e8b9e5f](https://github.com/Rand0MGG/agentscribe-local/tree/e8b9e5f1a6bfb5a3b4fe8f9dcc14e71cff41c271)。R42：把子文件夹中的录音移入垃圾桶，重命名原文件夹，再在原位置创建同名录音，最后恢复被删录音。[恢复逻辑](../linguaflow/library.py#L337-L352)返回成功，桌面后台更新列表；恢复项已离开垃圾桶，却没有进入录音索引，重开同样不显示。合成字幕快照字节未变，同名录音未被覆盖。原父目录未变或原位置空出时，恢复后均可见。修复前避免让同名录音占据待恢复项的原文件夹位置。
+- R43：将名为 `restore.json` 的录音移入垃圾桶，会与[内部回执](../linguaflow/library.py#L282-L297)重名；Linux 返回 `NotADirectoryError`，原录音保留。改为其他名字可绕开；合成对照 `course.json` 可正常移入。
+- Linux / Python 3.12.14，5 组隔离文件系统场景，另在真实桌面后台命令分发中复核两项异常。无用户数据、录音设备或模型；未运行原生 Electron、Mac/Windows 或完整测试套件。
+
 ## 2026-11-16 个人笔记未确认保存与重试
 
 - 固定 [main e8b9e5f](https://github.com/Rand0MGG/agentscribe-local/tree/e8b9e5f1a6bfb5a3b4fe8f9dcc14e71cff41c271)。R40：编辑录音 A 的个人笔记，点击保存后、回执前切到 B，再回 A。隔离复现用 SQLite 写锁延迟操作；真实 [课程客户端](../linguaflow/knowledge/client.py#L135-L198) 成功关闭旧后台，无保存成功、错误或断连事件，重开 A 仍是旧笔记。另用真实 [React 组件](../desktop/src/Knowledge.tsx#L30-L72) 注入相同事件序列，草稿仍在，但输入、保存和取消一直禁用。未提交就切换、收到错误后重试、收到匹配回执均为正常对照。当前规避：等保存完成再切换录音。
