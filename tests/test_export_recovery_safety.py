@@ -1,6 +1,7 @@
 """R36–R38: real queued exports and locks over synthetic recordings only."""
 import ctypes
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -58,7 +59,7 @@ def test_disconnected_recovery_uses_physical_temp_directory(desktop, tmp_path, m
         if mapped_temp:
             assert configured.resolve() == physical.resolve()
             if os.name == 'nt':
-                assert configured.is_junction()
+                assert configured.lstat().st_reparse_tag == stat.IO_REPARSE_TAG_MOUNT_POINT
                 configured.rmdir()
             else:
                 assert configured.is_symlink()

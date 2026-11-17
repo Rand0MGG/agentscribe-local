@@ -204,6 +204,58 @@ else: raise RuntimeError('lock timeout')
     assert not lock_path.exists()
 
 
+@pytest.mark.p0
+@pytest.mark.parametrize('release_during_wait', [False, True])
+def test_unlock_serializes_with_concurrent_owner_inspection(tmp_path, release_during_wait):
+    lock_path = tmp_path / '.recording.lock'
+    lock = FileLock(lock_path)
+    assert lock.tryLock()
+    program = '''
+import sys
+from linguaflow.file_lock import FileLock
+lock = FileLock(sys.argv[1])
+with lock._guard(), lock.path.open('rb') as stream:
+ print('reading', flush=True)
+ sys.stdin.readline()
+'''
+    reader = subprocess.Popen([sys.executable, '-c', program, str(lock_path)],
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    ready = Queue()
+    threading.Thread(target=lambda: ready.put(reader.stdout.readline()), daemon=True).start()
+    errors = []
+    started, finished = threading.Event(), threading.Event()
+    def release_owner():
+        started.set()
+        try:
+            lock.unlock()
+        except OSError as exc:
+            errors.append(exc)
+        finally:
+            finished.set()
+    worker = threading.Thread(target=release_owner)
+    try:
+        assert ready.get(timeout=5).strip() == 'reading'
+        worker.start()
+        assert started.wait(1)
+        # A reader briefly owns the same guard. Unlock must wait for it rather
+        # than race its open Windows handle or remove its POSIX path early.
+        assert not finished.wait(.02)
+        if not release_during_wait:
+            assert finished.wait(2)
+            assert len(errors) == 1 and lock.locked and lock_path.exists()
+    finally:
+        _, stderr = reader.communicate(input='release\n', timeout=5)
+        if worker.ident is not None:
+            worker.join(2)
+    assert reader.returncode == 0, stderr
+    assert finished.is_set()
+    if release_during_wait:
+        assert not errors, errors
+    else:
+        lock.unlock()
+    assert not lock.locked and not lock_path.exists()
+
+
 @pytest.mark.p2
 def test_packaged_source_inventory_excludes_all_qt_imports():
     import ast

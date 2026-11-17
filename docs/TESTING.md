@@ -107,6 +107,8 @@ Python 的 `test_qt_free_backend.py` 在拒绝 Qt 导入的条件下验证后台
 
 断连应急备份同时覆盖普通临时目录、Windows junction / POSIX 符号链接临时目录，以及原目录和备用目录均失败时的未保存状态与锁保留。使用真实临时目录映射和合成文字，原录音卷不可用及双重写入失败为定点注入；不代表真实断盘或桌面崩溃验收。
 
+`test_qt_free_backend.py` 使用独立进程持有录音锁检查 guard 及只读句柄，验证解锁等待检查结束后成功，以及 guard 超时保留身份、解除争用后可重试；保留六进程旧锁回收互斥测试。实际锁文件不可删除的错误另由恢复关闭测试覆盖，不能用 guard 重试掩盖。
+
 ## 接口与跨平台共用规则
 
 `test_desktop_protocol.py` 核对后端签名与共同接口定义、拒绝越权命令/多余路径/错误参数；前端编译检查必填参数、返回类型及不可访问的内部方法。修改 `linguaflow/desktop_contract.json` 后运行 `node desktop/scripts/protocol-types.cjs` 更新类型，`npm run build` 会拒绝过期产物。

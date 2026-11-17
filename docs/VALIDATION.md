@@ -4,6 +4,8 @@
 
 ## 2026-11-17 PR 集成前的断连备份复核
 
+- 集成 CI 另复现既有 Windows 录音锁竞争：检查者打开锁文件时，未参与 guard 的 `unlock` 可因共享冲突失败。新增真实子进程持 guard/只读句柄的反例在修复前失败；修复让解锁与检查共用 guard，仅对 guard 争用有界等待 250 ms，实际删除错误仍保留身份并上报。争用及时释放、争用超时后重试及原有恢复关闭权限失败定向回归 **33 passed、1 skipped**；跳过 Cocoa 专属入口。
+- 初次集成的 Python 3.11 Windows 任务已完成应急备份，但测试清理使用了 3.12 才提供的 `Path.is_junction`，因此失败；改用真实 reparse tag 核对后清理，保留映射验证，未跳过用例。
 - PR #3 `43af2f6` 的审查反例：原录音目录不可用且系统临时根目录为 Windows junction 时，`_recover_disconnected` 的备用写入被目录映射保护拒绝；同一合成场景使用 main 的旧写入器成功，PR 实现的普通目录对照成功。修复在创建恢复目录前解析系统临时根目录的实际路径，后续目录、对象与摘要保护不变。
 - 新增 3 项回归，覆盖普通/映射临时目录的原文与草稿落盘，以及两处备份均失败后的 dirty/save_error/录音锁保留。Windows 使用真实 junction，录音卷不可用及双重写入失败为定点注入；POSIX 符号链接分支由平台 CI 验证，不将本地结果外推为 Mac 实测。
 - Windows / Python 3.12.8：定向回归 66 通过；完整无音频回归 **1343 passed、39 skipped**，210.16 秒，无原生音频导入尝试。跳过原因包括符号链接权限、Mac 专属项目、POSIX 文件大小限制与缺少原生恢复编译器。报告：`.work/reports/pr-review-20261117/windows-full.xml`。Ruff、Electron 构建和 11 组桌面/IPC 链路通过。
