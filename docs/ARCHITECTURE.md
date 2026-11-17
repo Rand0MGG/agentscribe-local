@@ -47,6 +47,8 @@ Electron 服务拥有可复用的 `RuntimePreparation`，会话只借用；环�
 
 回听媒体服务只绑定 `127.0.0.1` 的随机端口，直接使用数字地址，不进行反向主机名查询；避免系统解析器阻塞后台 owner 线程。令牌校验、范围读取及旧录音代次拒绝仍由 `PlaybackController` 负责。
 
+`DesktopService.seek` 发布一次主动回放跳转回执；`locate` 仅发布播放位置，搜索/课程引用用自身回执定位文字，避免普通 seek 事件与响应交错清除高亮。`caption_languages` 随选择/启动录音冻结并进入 state，来源为已有录音设置；前端共用语言选择规则，不用全局偏好重标旧录音。
+
 源码入口、验证方法见 [TESTING](TESTING.md#electron-正式入口)，实现缺口见 [ROADMAP](ROADMAP.md#electron-迁移对照)。Qt-free 构建仍复用现有原生启动器和平台锁；安装版 Electron 后台由外层原生启动器以 `--python -m linguaflow.desktop_service` 承载，保留 Sparkle 的应用身份；检查更新不再切换界面，仍使用 Sparkle/WinSparkle，未引入 electron-updater。不要把本地构建或逻辑回归理解为跨平台发行验收。
 
 `desktop_launcher.py` 统一原 `python -m linguaflow` 与 console-script 入口，始终启动 Electron；显式 Qt 启动返回退役提示。`frontend_switch.py` 保留旧交接上下文及 Electron 重启支持，等待旧 owner 结束才启动目标；界面已移除 Qt 切换按钮。

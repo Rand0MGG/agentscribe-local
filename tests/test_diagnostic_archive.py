@@ -158,31 +158,44 @@ def test_utf8_rotation_and_failed_archive_keep_writing_without_losing_records(tm
 
 
 @pytest.mark.p2
-@pytest.mark.parametrize('budget', [4096, 8 * 1024 * 1024])
-def test_two_live_processes_share_budget_and_preserve_task_links(tmp_path, budget):
+@pytest.mark.parametrize('budget,fsync_delay', [(4096, 0), (8 * 1024 * 1024, 0), (4096, .12)])
+def test_two_live_processes_share_budget_and_preserve_task_links(tmp_path, budget, fsync_delay):
     program = '''
-import sys
+import sys, time
 from pathlib import Path
 from linguaflow import diagnostic_log as d
-root, role, budget = sys.argv[1:]
+from linguaflow import diagnostic_archive as archive
+root, role, budget, deadline, fsync_delay = sys.argv[1:]
+if float(fsync_delay):
+    fsync = archive.os.fsync
+    def slow_fsync(fd):
+        time.sleep(float(fsync_delay))
+        return fsync(fd)
+    archive.os.fsync = slow_fsync
 d.start_logging(role, root, max_bytes=1800, history_bytes=int(budget))
 d.set_session(role + '-session')
 for i in range(40):
     d.event('linked', index=i, translation_task_id=role + '-task-' + str(i), caption_id=i,
             mapping_id='mapping-' + str(i), source_version=i, metadata='中文' * 60)
-assert d.flush()
+# Share the parent's readiness deadline: the default two-second flush budget
+# is for application callers, not a throughput requirement on CI storage.
+assert d.flush(timeout=max(0., float(deadline) - time.monotonic())), d.log_error() or 'log flush timed out'
 Path(root, role + '.ready').write_text('ready')
 print('ready', flush=True)
 sys.stdin.readline()
 d.close_logging()
 assert not d.log_error(), d.log_error()
 '''
-    processes = [subprocess.Popen([sys.executable, '-c', program, str(tmp_path), role, str(budget)],
+    deadline = time.monotonic() + 10
+    processes = [subprocess.Popen([sys.executable, '-c', program, str(tmp_path), role, str(budget), str(deadline), str(fsync_delay)],
                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                  for role in ('desktop', 'worker')]
     try:
-        deadline = time.monotonic() + 10
         while len(list(tmp_path.glob('*.ready'))) < 2 and time.monotonic() < deadline:
+            for process in processes:
+                if process.poll() is not None:
+                    stdout, stderr = process.communicate(timeout=5)
+                    pytest.fail(f'Log process exited before ready ({process.returncode}): {stdout}\n{stderr}')
             time.sleep(.01)
         assert len(list(tmp_path.glob('*.ready'))) == 2
         assert len(list(tmp_path.glob('*.jsonl'))) == 2

@@ -56,6 +56,8 @@ h2 { font-size:21px; font-weight:600; margin:0 0 8px; }
 .timestamp { font-size:11px; margin-bottom:9px; }.source { font-size:16px; line-height:1.5; margin:0; white-space:pre-wrap; overflow-wrap:anywhere; user-select:text; }
 .translation { font-size:15px; line-height:1.5; color:var(--translation); margin:9px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; }.draft { color:var(--draft); }
 .caption-status { font-size:12px; color:var(--muted); margin:5px 0 0; }.caption.playing { background:var(--playback); }.caption.located { outline:1px solid var(--focus); }
+.caption-seek { min-height:24px; margin-left:8px; padding:2px 6px; border-radius:5px; }
+.caption-seek:hover { background:var(--ghost-hover); }
 .button.return-caption { position:absolute; left:50%; transform:translateX(-50%); width:40px; height:40px; min-height:40px; padding:0; border:1px solid var(--border); border-radius:50%; background:var(--control); box-shadow:none; cursor:pointer; }
 .button.return-caption:hover { background:var(--hover); }
 .empty { padding:70px 20px; text-align:center; color:var(--muted); }.empty>div { font-size:18px; }.empty p { font-size:13px; }
@@ -144,7 +146,8 @@ h2 { font-size:21px; font-weight:600; margin:0 0 8px; }
 .overlay-controls>span { font-size:11px; width:26px; color:var(--muted); }.overlay-controls>span:last-of-type { width:34px; }
 .overlay-controls .slider { min-width:40px; -webkit-app-region:no-drag; }.overlay-controls .button { width:32px; height:32px; min-height:32px; padding:0; }
 .overlay-text { flex:1; min-height:0; overflow:auto; padding:4px 6px 0 0; user-select:text; -webkit-app-region:no-drag; }
-.overlay-resize { width:20px; height:20px; align-self:flex-end; flex:none; cursor:nwse-resize; color:var(--muted); touch-action:none; }
+.overlay-resize { width:24px; height:24px; padding:2px; align-self:flex-end; flex:none; cursor:nwse-resize; color:var(--muted); touch-action:none; }
+.overlay-shell:focus-visible { outline-offset:-4px; }
 .diagnostics { flex:none; max-height:160px; overflow:auto; white-space:pre-wrap; margin:0 24px; padding:10px; color:var(--muted); font-size:12px; border:1px solid var(--border); border-radius:9px; }
 .title-editor { flex:1; min-width:0; }.title-editor .recording-title { max-width:100%; }.title-editor input { width:100%; font-size:16px; }.title-editor .error { position:absolute; background:var(--surface); padding:8px; z-index:10; }
 .pending-summary { position:absolute; left:0; right:0; top:42%; transform:translateY(-50%); text-align:center; color:var(--muted); padding:0 24px; }.pending-summary h2 { color:var(--text); font-size:18px; font-weight:600; margin-bottom:8px; }.pending-summary p { margin:10px 0; overflow-wrap:anywhere; }.pending-summary small { display:block; font-size:12px; margin-top:16px; }

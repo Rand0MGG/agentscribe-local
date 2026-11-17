@@ -220,7 +220,7 @@ export function NumberField({ id, label, value, min, max, step, help, onCommit }
   return <div className="numeric-control"><div className="number-field"><input id={fieldId} aria-label={label} type="number" min={min} max={max} step={step} value={text} disabled={saving}
     title={help} aria-invalid={!!error} aria-describedby={error ? `${fieldId}-error` : help ? `${fieldId}-help` : undefined}
     onFocus={() => { editing.current = true; }} onChange={event => { setText(event.target.value); setError(''); }} onBlur={save}
-    onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { setText(String(value)); setError(''); editing.current = false; } }} /><span>秒</span></div>
+    onKeyDown={event => { if (event.nativeEvent.isComposing) return; if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } if (event.key === 'Escape') { setText(String(value)); setError(''); editing.current = false; } }} /><span>秒</span></div>
     {help && <span className="sr-only" id={`${fieldId}-help`}>{help}</span>}{error && <p className="error" role="alert" id={`${fieldId}-error`}>{error}</p>}
   </div>;
 }

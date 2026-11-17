@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { CaptionText } from './CaptionText';
+import { CaptionText, captionLanguage } from './CaptionText';
 import { projectCaptionRows } from './captionPreview';
 import { Button, Tip } from './components';
 import { clock, type Page, type State, type Caption, type Interaction } from './types';
@@ -21,9 +21,12 @@ export function Captions({ seekRevision = 0, visible = true, page, state, positi
   const pointer = useRef<{ x: number; y: number; at: number; button: number } | null>(null);
   const playing = page.rows.find(row => row.start * 1000 <= position && row.end * 1000 > position)?.id;
   const active = state.state !== 'IDLE';
+  const [focusedCaption, setFocusedCaption] = useState<number | null>(null);
   // Reuse existing card/text nodes while projecting local ASR edits into them.
   const rows = page.rows;
   const projection = projectCaptionRows(rows, state.preview);
+  const playable = projection.views.filter(row => !row.hidden).map(row => row.caption.id);
+  const keyboardCaption = [focusedCaption, locate, playing, playable[0]].find(id => id != null && playable.includes(id));
   const extra = projection.extra.filter(row => !state.preview?.rows
     || row.index >= page.start && row.index < page.start + Math.max(200, rows.length));
   const animate = active && !state.preview;
@@ -89,6 +92,7 @@ export function Captions({ seekRevision = 0, visible = true, page, state, positi
   useEffect(() => {
     following.current = true; setFollow(true); anchor.current = null; playbackOffset.current = null; previousPlaying.current = undefined;
     humanScroll.current = false; pointer.current = null; lastPlaying.current = undefined; forceSeek.current = false; clearTimeout(clickTimer.current);
+    setFocusedCaption(null);
   }, [state.generation]);
   useEffect(() => { if (active) clearTimeout(clickTimer.current); }, [active]);
   useLayoutEffect(() => {
@@ -179,13 +183,25 @@ export function Captions({ seekRevision = 0, visible = true, page, state, positi
       {active && page.start > 0 && <Button variant="quiet" onClick={() => { stopFollowing(); onPage(Math.max(0, page.start - 200)); }}>较早的字幕</Button>}
       {!rows.length && !state.preview && (summary || <div className="empty"><div>{active ? state.failure || state.capture?.waiting || (state.state === 'PAUSED' ? '已暂停聆听' : state.status) : '无内容'}</div></div>)}
       {projection.views.map(({caption: row, hidden, drafting}) => <article key={row.id} data-caption={row.id} hidden={hidden} className={`caption ${playing === row.id && !active ? 'playing' : ''} ${locate === row.id ? 'located' : ''}`}>
-        <div className="timestamp">{clock(row.start).slice(row.start >= 3600 ? 0 : 3)}{drafting ? ' · 实时原文' : row.final ? ' · 已定稿' : ' · 优化中'}</div>
-        <p className={`source ${!row.final ? 'draft' : ''}`} onMouseDown={event => { pointer.current = { x: event.clientX, y: event.clientY, at: event.timeStamp, button: event.button }; }}
+        <div className="timestamp">{clock(row.start).slice(row.start >= 3600 ? 0 : 3)}{drafting ? ' · 实时原文' : row.final ? ' · 已定稿' : ' · 优化中'}
+          {!active && state.has_audio && <button className="caption-seek" aria-label={`回听此句（${clock(row.start)}）`} tabIndex={keyboardCaption === row.id ? 0 : -1}
+            onFocus={() => { setFocusedCaption(row.id); stopFollowing(); }}
+            onClick={() => { clearTimeout(clickTimer.current); onSeek(row.start * 1000); }}
+            onKeyDown={event => {
+              const index = playable.indexOf(row.id);
+              const next = event.key === 'ArrowDown' ? playable[index + 1] : event.key === 'ArrowUp' ? playable[index - 1] : event.key === 'Home' ? playable[0] : event.key === 'End' ? playable.at(-1) : undefined;
+              if (['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
+                event.preventDefault(); event.stopPropagation();
+                if (next != null) container.current?.querySelector<HTMLButtonElement>(`[data-caption="${next}"] .caption-seek`)?.focus();
+              }
+            }}>回听此句</button>}
+        </div>
+        <p lang={captionLanguage(row.language, state.caption_languages?.source)} className={`source ${!row.final ? 'draft' : ''}`} onMouseDown={event => { pointer.current = { x: event.clientX, y: event.clientY, at: event.timeStamp, button: event.button }; }}
           onClick={event => activate(event, row)} onDoubleClick={() => clearTimeout(clickTimer.current)}><CaptionText text={row.source} animate={animate} /></p>
-        {row.translation && <p className="translation" onMouseDown={event => { pointer.current = { x: event.clientX, y: event.clientY, at: event.timeStamp, button: event.button }; }} onClick={event => activate(event, row)} onDoubleClick={() => clearTimeout(clickTimer.current)}><CaptionText text={row.translation} animate={animate} /></p>}
+        {row.translation && <p lang={state.caption_languages?.target || ''} className="translation" onMouseDown={event => { pointer.current = { x: event.clientX, y: event.clientY, at: event.timeStamp, button: event.button }; }} onClick={event => activate(event, row)} onDoubleClick={() => clearTimeout(clickTimer.current)}><CaptionText text={row.translation} animate={animate} /></p>}
         {(row.error || row.translation && !['译文已定稿', '已保存译文'].includes(row.translation_status)) && <p className={`caption-status ${row.error ? 'error' : ''}`}>{row.error || row.translation_status}</p>}
       </article>)}
-      {extra.map(row => <article key={row.id ?? 'new'} className="caption preview"><div className="timestamp">{clock(row.start).slice(row.start >= 3600 ? 0 : 3)} · 实时原文</div><p className="source draft"><CaptionText text={row.source} animate={false} /></p></article>)}
+      {extra.map(row => <article key={row.id ?? 'new'} className="caption preview"><div className="timestamp">{clock(row.start).slice(row.start >= 3600 ? 0 : 3)} · 实时原文</div><p lang={state.caption_languages?.source || ''} className="source draft"><CaptionText text={row.source} animate={false} /></p></article>)}
       {active && page.start + page.rows.length < page.total && <Button variant="quiet" onClick={() => { stopFollowing(); onPage(page.start + 200); }}>较新的字幕</Button>}
     </div>
   </div>{!follow && returnDirection !== 0 && <Tip label={active ? '回到最新字幕' : `返回播放位置（${returnDirection < 0 ? '上方' : '下方'}）`}><Button className="return-caption" style={{bottom:returnBottom}} aria-label={active ? '回到最新字幕并恢复自动跟随' : '返回播放位置并恢复跟随'} onClick={() => { humanScroll.current = false; playbackOffset.current = null; anchor.current = null; following.current = true; onFollow(true); setFollow(true); onPage(); requestAnimationFrame(followTarget); }}>

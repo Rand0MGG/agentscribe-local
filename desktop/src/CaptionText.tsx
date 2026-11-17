@@ -1,5 +1,10 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 
+/** Keep detected language authoritative; preserve a configured script when it matches. */
+export function captionLanguage(detected?: string, configured = '') {
+  return !detected || detected === configured.split('-')[0] ? configured : detected;
+}
+
 /** Preserve complete selectable text/layout while revealing appended graphemes. */
 export function CaptionText({ text, animate }: { text: string; animate: boolean }) {
   const previous = useRef(''), current = useRef(text), started = useRef(0), deadline = useRef(0), from = useRef(0), frame = useRef(0);

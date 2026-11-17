@@ -117,6 +117,7 @@ async function main() {
  assert(visibleTarget);await clickWhileBusy(page.locator(`[data-caption="${visibleTarget}"] .translation`));
  await pause(900);assert.equal(await back.count(),0);assert.equal(media().at(-1).position,Number(visibleTarget)*2000);
  passed.push('Long press, drag selection and double-click do not seek; return follows without seeking; short translation click survives a busy renderer and resumes follow');
+ await require('./caption-accessibility-checks.cjs')(page,passed);
  await page.evaluate(()=>window.agentScribe.request('playback.seek',{milliseconds:1250000,play:false}));
  await page.locator('[data-caption="625"].playing').waitFor();
  assert.equal(await transcript.locator('[data-caption]').count(),650);
@@ -127,8 +128,22 @@ async function main() {
  await page.getByRole('button',{name:'更多操作',exact:true}).click();
  await page.getByRole('menuitem',{name:'查找字幕',exact:true}).click();
  await page.getByRole('textbox',{name:'搜索当前录音字幕'}).fill('Sentence 425:');
+ // Keep real seek notifications but deliver them after the locate reply.
+ // This reproduces the IPC ordering that used to erase the search highlight.
+ await app.evaluate(({BrowserWindow})=>{
+  const contents=BrowserWindow.getAllWindows().find(win=>!win.webContents.getURL().includes('#')).webContents;
+  const send=contents.send;globalThis.searchSeekNotifications=0;
+  contents.send=function(channel,value){
+   if(channel==='desktop:event'&&value?.event==='playback'&&value.data.seek){globalThis.searchSeekNotifications++;setTimeout(()=>send.call(this,channel,value),100);}
+   else return send.apply(this,arguments);
+  };
+  globalThis.restoreSearchSend=()=>{contents.send=send;};
+ });
  await page.getByRole('dialog').getByRole('button').filter({hasText:'Sentence 425:'}).click();
  await page.locator('[data-caption="425"].located').waitFor();
+ await pause(200);
+ assert.equal(await page.locator('[data-caption="425"].located').count(),1);
+ assert.equal(await app.evaluate(()=>{globalThis.restoreSearchSend();return globalThis.searchSeekNotifications;}),0);
  assert.equal(await transcript.locator('[data-caption]').count(),650);
  passed.push('Search locates saved text beyond the old page boundary without replacing the complete transcript');
  await page.getByRole('button',{name:'检查更新',exact:true}).click();

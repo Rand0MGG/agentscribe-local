@@ -93,6 +93,8 @@ Python 的 `test_qt_free_backend.py` 在拒绝 Qt 导入的条件下验证后台
 
 回听回归还验证主机名解析不可用时，真实本地 HTTP 加载、文件读取及定位仍完成。Electron 交互探针记录点击命中、播放请求/回执和媒体动作；初始化超过 5 秒仅输出 Python 调用栈，不改变原超时或断言。诊断仅用于隔离测试库，不进入正式用户日志。
 
+前端回归覆盖逐句回听的单一 Tab 入口、方向键/Home/End 与 Enter/空格，悬浮窗无鼠标唤出、鼠标移出后的焦点保持和键盘缩放，以及数值输入的组合输入事件。搜索定位测试延后真实 seek 通知，验证响应后的高亮不被清除；录音语言快照另验同步/异步打开及旧格式缺失值。合成组合事件不代替平台输入法和读屏实机验收。
+
 共享保存、迁移、准备或退出修改需完整无音频回归及 Electron `test:chain`、`test:interaction`、`test:audio-adapter`。原生探针等待窗口和记录的自有辅助进程实际退出；不能终止其他实例或强制卸载映像掩盖退出问题。
 
 按需外观对照使用 `scripts/preview_parity.py --capture`、`node desktop/scripts/parity.cjs` 和 `scripts/compare_desktop_ui.py`，同主题、尺寸、内容及动作核对。截图任务不并行争用焦点；记录实际窗口尺寸和 DPR，不把系统尺寸舍入或截图生成当作业务通过。
