@@ -2,6 +2,44 @@
 
 仅记录当前可核对的证据与限制；测试规则见 [TESTING](TESTING.md)，功能缺口见 [ROADMAP](ROADMAP.md)。历史逐轮记录已移至 [验证归档](archive/testing/VALIDATION_THROUGH_20261030.md)，不把旧通过数或“本地未提交”当作当前状态。
 
+## 2026-11-17 PR 集成前的断连备份复核
+
+- 集成 CI 另复现既有 Windows 录音锁竞争：检查者打开锁文件时，未参与 guard 的 `unlock` 可因共享冲突失败。新增真实子进程持 guard/只读句柄的反例在修复前失败；修复让解锁与检查共用 guard，仅对 guard 争用有界等待 250 ms，实际删除错误仍保留身份并上报。争用及时释放、争用超时后重试及原有恢复关闭权限失败定向回归 **33 passed、1 skipped**；跳过 Cocoa 专属入口。
+- 初次集成的 Python 3.11 Windows 任务已完成应急备份，但测试清理使用了 3.12 才提供的 `Path.is_junction`，因此失败；改用真实 reparse tag 核对后清理，保留映射验证，未跳过用例。
+- PR #3 `43af2f6` 的审查反例：原录音目录不可用且系统临时根目录为 Windows junction 时，`_recover_disconnected` 的备用写入被目录映射保护拒绝；同一合成场景使用 main 的旧写入器成功，PR 实现的普通目录对照成功。修复在创建恢复目录前解析系统临时根目录的实际路径，后续目录、对象与摘要保护不变。
+- 新增 3 项回归，覆盖普通/映射临时目录的原文与草稿落盘，以及两处备份均失败后的 dirty/save_error/录音锁保留。Windows 使用真实 junction，录音卷不可用及双重写入失败为定点注入；POSIX 符号链接分支由平台 CI 验证，不将本地结果外推为 Mac 实测。
+- Windows / Python 3.12.8：定向回归 66 通过；完整无音频回归 **1343 passed、39 skipped**，210.16 秒，无原生音频导入尝试。跳过原因包括符号链接权限、Mac 专属项目、POSIX 文件大小限制与缺少原生恢复编译器。报告：`.work/reports/pr-review-20261117/windows-full.xml`。Ruff、Electron 构建和 11 组桌面/IPC 链路通过。
+- PR #4 的 Mac CI 第一次在 `keyboard caption tail` 超时，单次复跑已通过该步骤，但随后在导出通知数量断言失败：测试仅等文件发布，未等后台完成及 IPC 回执。探针改为有期限地等待真实终态，再断言唯一成功通知；没有增加产品重试、跳过检查或修改正常导出逻辑。键盘间歇性问题未据此宣称修复。
+- 仅使用隔离合成数据和无音频入口；未做真实音频/模型、断盘、真实桌面崩溃或安装升级验收。R36 的 POSIX 发布竞争窗口仍保留待修复；本次不发布安装包。
+
+## 2026-11-17 垃圾桶恢复与名称冲突
+
+- 固定 [main e8b9e5f](https://github.com/Rand0MGG/agentscribe-local/tree/e8b9e5f1a6bfb5a3b4fe8f9dcc14e71cff41c271)。R42：把子文件夹中的录音移入垃圾桶，重命名原文件夹，再在原位置创建同名录音，最后恢复被删录音。[恢复逻辑](../linguaflow/library.py#L337-L352)返回成功，桌面后台更新列表；恢复项已离开垃圾桶，却没有进入录音索引，重开同样不显示。合成字幕快照字节未变，同名录音未被覆盖。原父目录未变或原位置空出时，恢复后均可见。修复前避免让同名录音占据待恢复项的原文件夹位置。
+- R43：将名为 `restore.json` 的录音移入垃圾桶，会与[内部回执](../linguaflow/library.py#L282-L297)重名；Linux 返回 `NotADirectoryError`，原录音保留。改为其他名字可绕开；合成对照 `course.json` 可正常移入。
+- Linux / Python 3.12.14，5 组隔离文件系统场景，另在真实桌面后台命令分发中复核两项异常。无用户数据、录音设备或模型；未运行原生 Electron、Mac/Windows 或完整测试套件。
+
+## 2026-11-16 个人笔记未确认保存与重试
+
+- 固定 [main e8b9e5f](https://github.com/Rand0MGG/agentscribe-local/tree/e8b9e5f1a6bfb5a3b4fe8f9dcc14e71cff41c271)。R40：编辑录音 A 的个人笔记，点击保存后、回执前切到 B，再回 A。隔离复现用 SQLite 写锁延迟操作；真实 [课程客户端](../linguaflow/knowledge/client.py#L135-L198) 成功关闭旧后台，无保存成功、错误或断连事件，重开 A 仍是旧笔记。另用真实 [React 组件](../desktop/src/Knowledge.tsx#L30-L72) 注入相同事件序列，草稿仍在，但输入、保存和取消一直禁用。未提交就切换、收到错误后重试、收到匹配回执均为正常对照。当前规避：等保存完成再切换录音。
+- R41：仅编辑本地笔记，真实 SQLite 写锁超时经 [课程后台](../linguaflow/knowledge/worker.py#L480-L518) 发出提示，错误指向依赖、网络与密钥；数据库内容未变、无成功回执，释放写锁后重试并重开可见新文字及个人编辑锁定。
+- Linux / Python 3.12.14；课程后台与客户端无音频定向回归 28 通过、2 跳过。以上为真实 SQLite/JSONL 后台与 React 事件分段验证，未跑原生 Electron 端到端、Mac/Windows、真实录音或模型；未发现既有落盘笔记损坏。
+
+## 2026-11-12 退出末尾解锁与断连恢复
+
+- 基线为 [`main@e8b9e5f`](https://github.com/Rand0MGG/agentscribe-local/tree/e8b9e5f1a6bfb5a3b4fe8f9dcc14e71cff41c271)，已包含 PR #2 文档；程序缺陷仍未修复。Linux / Python 3.12.14 的 12 组隔离场景包括 5 组真实后台 JSONL 子进程、7 组完整 DesktopService 调度：8 组正常/保护对照、1 组既有 R37 复核及 3 组新 R39 证据。
+- R39 的实际锁删除权限失败使退出收尾中断；恢复权限后观察 600 ms 仍未自行退出，有连接时再次 `app.close` 可退出，EOF 后的隔离子进程最终由测试清理终止。另确认停止重试计时器及普通命令被 closing 门禁拒绝。新旧字幕已持久化，没有证明数据丢失，详见 [退出补充记录](testing/EXPORT_RECOVERY_FINDINGS_20261111.md#r39退出末尾解锁失败没有完成或失败终态)。
+- 已保存的原文、未保存草稿、保存错误及备份失败均用合成数据；保存/备份错误采用定点注入，锁删除为非 root 用户的真实 Linux `EACCES`。76 个源码/参考 blob 与固定 main 一致且执行后未变。未运行完整仓库回归、原生 Electron 窗口、Mac/Windows、真实音频/模型或断电验收；程序、测试文件和 spec 不变。
+
+## 2026-11-11 Windows 导出与恢复修复
+
+- 基线为已合并文档 PR #2 的 `e8b9e5f`，在已有 `windows` 分支修改；不改版本、模型、依赖或安装包。R36 的 Windows 发布保护、R37 解锁失败重试、R38 回执/队列收尾由正式后台实现修复。
+- Windows / Python 3.12.8：最终完整无音频回归 **1340 passed、39 skipped**，168.75 秒，无原生音频导入尝试。跳过项包括符号链接权限、Mac 专属功能、POSIX 文件大小限制和缺少原生恢复编译器；不是全部平台功能通过。原始结果在 `.work/reports/export-recovery-fix/windows-final.xml`。
+- 新增 22 项参数化检查，覆盖真实 Windows junction 越界拒绝、目录打开后改名拒绝、源临时对象替换拒绝与旧目标保留、非自有清理对象保留、准确 Unicode 文件名、真实锁文件占用失败及同回执重试、OSError/MemoryError、完成监听器失败及后续队列、相同字节的替换备份拒绝。Windows 目录句柄原先只申请属性权限，新增反例证实不能阻止改名；改为同时申请目录读取权限后反例通过。
+- 原生文件发布过程中发现文件名缓冲区缺少终止符，已修正并增加不同长度、中文/空格/表情文件名与覆盖旧文件检查。中间失败不计为通过；上述完整回归包含最终修正。
+- `ruff check linguaflow scripts tests`、差异空白检查和 Electron TypeScript/Vite 构建通过。最终 Electron `test:chain` 通过 11 组真实桌面/IPC/共享后台检查，包括连续三项导出和单次最终通知；原始证据在 `output/playwright/parity-fixed/chain-hlDhxe/`。`test:interaction` 的 28 组交互检查和 `test:audio-adapter` 无设备检查通过，交互证据在 `output/playwright/interaction-fixes/`。
+- 使用临时合成录音、隔离偏好和无音频保护，未访问用户录音、设备或模型。R37 在 Windows 使用真实拒绝删除共享的文件句柄；POSIX 测试注入权限异常，不能称为 Mac 原生权限验收。未重跑真实内存压力、断电、安装升级或真实录音。
+- **剩余 R36：** POSIX 最后一次源对象检查与命名替换之间仍有窗口；发布后能拒绝错误回执，不能保证该窗口下既有目标不被覆盖。因此不将 R36 标为跨平台完成，不把本轮 Windows 结果外推到 Mac；新安装包未发布。
+
 ## 2026-11-11 导出回执与恢复关闭
 
 - 固定最新 `main@203ede5`，两项新缺陷与证据集中在 [独立发现记录](testing/EXPORT_RECOVERY_FINDINGS_20261111.md)：R37 为解锁失败后的状态/重试不一致，R38 为恢复回执读取异常中断导出队列收尾。备份与源件仍完整，没有实际用户数据丢失证据。

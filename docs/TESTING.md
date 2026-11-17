@@ -103,6 +103,12 @@ Python 的 `test_qt_free_backend.py` 在拒绝 Qt 导入的条件下验证后台
 
 临时证据放 `.work/` 或 `output/playwright/`，私人全文、音频、模型与密钥不进 Git。当前规则留在本文，精确运行结果留在 [VALIDATION](VALIDATION.md)，历史审查见 [2026-10-23 报告](testing/TEST_CODE_REVIEW_20261023.md)。历史报告的待办按当前源码复核，不直接当作仍存在的问题。
 
+独立导出与恢复关闭回归见 `test_export_recovery_safety.py`：真实串行队列、冻结目录与回执、目录替换/映射、文件替换与归属清理、解锁失败后重试、摘要/完成监听器异常后的后续任务与退出资格。Windows 用真实 junction 和拒绝删除共享的文件句柄；POSIX 的解锁失败使用边界注入，不能标为原生权限验收。发布边界替换在 Windows 必须被占用拒绝且旧目标保留；POSIX 当前只核对错误回执被拒绝，剩余窗口在 R36 记录。`test_recording_export.py` 同时核对中文/表情及不同长度名称的准确发布与旧文件替换。
+
+断连应急备份同时覆盖普通临时目录、Windows junction / POSIX 符号链接临时目录，以及原目录和备用目录均失败时的未保存状态与锁保留。使用真实临时目录映射和合成文字，原录音卷不可用及双重写入失败为定点注入；不代表真实断盘或桌面崩溃验收。
+
+`test_qt_free_backend.py` 使用独立进程持有录音锁检查 guard 及只读句柄，验证解锁等待检查结束后成功，以及 guard 超时保留身份、解除争用后可重试；保留六进程旧锁回收互斥测试。实际锁文件不可删除的错误另由恢复关闭测试覆盖，不能用 guard 重试掩盖。
+
 ## 接口与跨平台共用规则
 
 `test_desktop_protocol.py` 核对后端签名与共同接口定义、拒绝越权命令/多余路径/错误参数；前端编译检查必填参数、返回类型及不可访问的内部方法。修改 `linguaflow/desktop_contract.json` 后运行 `node desktop/scripts/protocol-types.cjs` 更新类型，`npm run build` 会拒绝过期产物。

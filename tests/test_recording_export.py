@@ -5,6 +5,7 @@ import pytest
 
 from linguaflow.core import Caption, export_md, export_srt, export_txt, srt_time
 from linguaflow.recording_export import FORMATS, export_target, write_export
+from linguaflow.storage_io import Directory
 
 
 def captions():
@@ -44,6 +45,16 @@ def test_all_formats_write_unicode(tmp_path, suffix):
     assert 'Draft' not in text and 'Unconfirmed' not in text
 
 
+@pytest.mark.p2
+@pytest.mark.parametrize('name', ['a.txt', 'ab.txt', 'abc.txt', '中文 空格 🧪.txt'])
+def test_publication_uses_exact_unicode_name_and_replaces_existing_export(tmp_path, name):
+    target = tmp_path / name
+    target.write_bytes(b'old export')
+    write_export(dict(path=str(target), format='txt'), captions())
+    assert list(tmp_path.iterdir()) == [target]
+    assert '你好' in target.read_text('utf-8-sig')
+
+
 @pytest.mark.p0
 @pytest.mark.parametrize('suffix', FORMATS)
 def test_publish_failure_preserves_existing_export_and_cleans_temp(tmp_path, monkeypatch, suffix):
@@ -51,9 +62,12 @@ def test_publish_failure_preserves_existing_export_and_cleans_temp(tmp_path, mon
     target.write_bytes(b'existing user export')
     item = dict(path=str(target), format=suffix)
     before = target.read_bytes()
-    def fail(*args):
-        raise OSError('disk full')
-    monkeypatch.setattr('linguaflow.recording_export.os.replace', fail)
+    publish = Directory.publish
+    def fail(directory, source, destination, fd, **kwargs):
+        if destination == target.name:
+            raise OSError('disk full')
+        return publish(directory, source, destination, fd, **kwargs)
+    monkeypatch.setattr(Directory, 'publish', fail)
     with pytest.raises(OSError, match='disk full'):
         write_export(item, [])
     assert target.read_bytes() == before
@@ -86,9 +100,12 @@ def test_recovery_publish_failure_preserves_existing_file_and_cleans_temp(tmp_pa
     target = tmp_path / '全部文字.txt'
     target.write_bytes(b'existing recovery text')
     before = target.read_bytes()
-    def fail(*args):
-        raise OSError('disk full')
-    monkeypatch.setattr('linguaflow.recording_export.os.replace', fail)
+    publish = Directory.publish
+    def fail(directory, source, destination, fd, **kwargs):
+        if destination == target.name:
+            raise OSError('disk full')
+        return publish(directory, source, destination, fd, **kwargs)
+    monkeypatch.setattr(Directory, 'publish', fail)
     with pytest.raises(OSError, match='disk full'):
         write_recovery({'path': str(target)}, [])
     assert target.read_bytes() == before

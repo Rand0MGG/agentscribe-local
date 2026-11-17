@@ -31,10 +31,16 @@ class Directory:
                 create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
                                    wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
                 create.restype = wintypes.HANDLE
+                self.create_file = create
+                self.set_file_info = kernel.SetFileInformationByHandle
+                self.set_file_info.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+                self.set_file_info.restype = wintypes.BOOL
                 self.close_handle = kernel.CloseHandle
                 self.close_handle.argtypes = [wintypes.HANDLE]
                 for p in reversed([self.path, *self.path.parents]):
-                    handle = create(str(p), 0x80, 3, None, 3, 0x02200000, None)
+                    # Attribute-only handles do not enforce delete sharing.
+                    # FILE_LIST_DIRECTORY makes the no-delete share effective.
+                    handle = create(str(p), 0x81, 3, None, 3, 0x02200000, None)
                     if handle == ctypes.c_void_p(-1).value:
                         raise ctypes.WinError(ctypes.get_last_error())
                     self.handles.append(handle)
@@ -90,6 +96,40 @@ class Directory:
 
     def unlink(self, name, directory=False):
         (os.rmdir if directory else os.unlink)(self.name(name), **self.kwargs())
+
+    def create_temporary(self, name):
+        """Keep the export object owned through publication, not just its name."""
+        if self.fd is not None:
+            return self.open(name, os.O_RDWR | os.O_CREAT | os.O_EXCL)
+        import msvcrt
+        # READ | WRITE | DELETE, sharing reads only. Other handles cannot modify,
+        # rename or delete this object before its owned handle publishes it.
+        handle = self.create_file(str(self.name(name)), 0xC0010000, 1, None, 1, 0x80, None)
+        if handle == ctypes.c_void_p(-1).value:
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            return msvcrt.open_osfhandle(handle, os.O_RDWR | os.O_BINARY)
+        except BaseException:
+            self.close_handle(handle)
+            raise
+
+    def publish(self, source, target, fd, *, exclusive=False):
+        if self.fd is not None:
+            return self.rename(source, target, exclusive=exclusive)
+        import msvcrt
+        from ctypes import wintypes
+        # FileRenameInfo renames the still-open object, avoiding a second source
+        # path lookup. Filename length is UTF-16 bytes (including surrogate pairs).
+        encoded = str(self.name(target)).encode('utf-16-le')
+        class RenameInfo(ctypes.Structure):
+            _fields_ = [('ReplaceIfExists', ctypes.c_ubyte), ('RootDirectory', wintypes.HANDLE),
+                        ('FileNameLength', wintypes.DWORD), ('FileName', ctypes.c_byte * (len(encoded) + 2))]
+        info = RenameInfo()
+        info.ReplaceIfExists = not exclusive
+        info.FileNameLength = len(encoded)
+        ctypes.memmove(ctypes.addressof(info) + RenameInfo.FileName.offset, encoded, len(encoded))
+        if not self.set_file_info(msvcrt.get_osfhandle(fd), 3, ctypes.byref(info), ctypes.sizeof(info)):
+            raise ctypes.WinError(ctypes.get_last_error())
 
     def rename(self, source, target, *, exclusive=False):
         a, b = self.name(source), self.name(target)
@@ -151,20 +191,32 @@ def remove_owned(directory, name, expected, digest=None, is_directory=False, val
         return False
 
 
-def atomic_write(path, content, *, exclusive=False):
+def atomic_write(path, content, *, exclusive=False, expected_parent=None):
     path = Path(path)
     with Directory(path.parent) as directory:
+        if expected_parent is not None and identity(directory.info) != expected_parent:
+            raise OSError('目标目录已变化，请重新选择保存位置。')
         temporary = '.agentscribe-write-' + uuid4().hex + '.tmp'
         owned = None
         try:
-            with os.fdopen(directory.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL), 'wb') as stream:
+            fd = (directory.create_temporary(temporary) if expected_parent is not None
+                  else directory.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL))
+            with os.fdopen(fd, 'w+b' if expected_parent is not None else 'wb') as stream:
                 owned = identity(os.fstat(stream.fileno()))
                 stream.write(content)
                 stream.flush()
                 os.fsync(stream.fileno())
+                if expected_parent is not None:
+                    stream.seek(0)
+                    if (identity(directory.stat(temporary)) != owned
+                            or hashlib.file_digest(stream, 'sha256').hexdigest() != hashlib.sha256(content).hexdigest()):
+                        raise OSError('临时文件已变化，导出未完成。')
+                    directory.publish(temporary, path.name, stream.fileno(), exclusive=exclusive)
+                    return owned
             if identity(directory.stat(temporary)) != owned:
                 raise OSError('临时文件已被替换，保存未完成。')
             directory.rename(temporary, path.name, exclusive=exclusive)
+            return owned
         finally:
             if owned is not None:
                 try:

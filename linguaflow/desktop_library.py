@@ -1,5 +1,4 @@
 """DesktopLibrary commands on the single DesktopService owner; no separate business state."""
-import hashlib
 from dataclasses import asdict
 from pathlib import Path
 
@@ -200,11 +199,14 @@ class DesktopLibrary:
         # reject overwriting source/session data inside any recording directory.
         if target == self.library.root or self.library.root in target.parents:
             raise ValueError('请导出到录音库之外，避免覆盖录音或课程原件。')
+        from .storage_io import Directory, identity
+        with Directory(target.parent) as directory:
+            parent_identity = identity(directory.info)
         if not self.exporter.busy:
             self.export_errors = []
         self.export_sequence += 1
         item = {'recording_token': (self.generation, self.item['id']), 'path': str(target), 'format': format, 'name': self.item['name'], 'recovery': recovery,
-                'state': 'recovery' if recovery else 'export'}
+                'state': 'recovery' if recovery else 'export', 'parent_identity': parent_identity}
         self.exporter.submit(write_recovery if recovery else write_export,
                              (-self.export_sequence, str(target)), self.revision, item,
                              preview_captions(self.captions, self.preview))
@@ -212,14 +214,21 @@ class DesktopLibrary:
 
     def _exported(self, snapshot, _state, error):
         if not error and snapshot.item.get('recovery'):
-            try:
-                digest = hashlib.sha256(Path(snapshot.item['path']).read_bytes()).hexdigest()
-                self.recovery_receipt = (snapshot, digest)
-            except OSError as exc:
-                error = str(exc)
-        self.changed()
+            from .recording_export import ExportReceipt
+            if isinstance(snapshot.result, ExportReceipt):
+                self.recovery_receipt = (snapshot, snapshot.result)
+            else:
+                error = '未取得有效备份回执，请重新备份。'
         if error:
-            self.export_errors.append(f"{Path(snapshot.item['path']).name}：{error}")
+            self._export_failed(snapshot, error)
+        else:
+            self.changed()
+
+    def _export_failed(self, snapshot, error):
+        if self.recovery_receipt and self.recovery_receipt[0].token == snapshot.token:
+            self.recovery_receipt = None
+        self.export_errors.append(f"{Path(snapshot.item['path']).name}：{error}")
+        self.changed()
 
     def _exports_finished(self):
         self.emit('notice', {'key': 'export', 'text': '导出失败：' + '；'.join(self.export_errors)
@@ -227,20 +236,19 @@ class DesktopLibrary:
 
     def _recovery_ready(self):
         receipt = self.recovery_receipt
-        return bool(receipt and self.item and not self.session and not self.saver.busy and self.dirty
+        return bool(receipt and self.item and not self.session and not self.saver.busy and not self.exporter.busy and self.dirty
                     and self.save_error and receipt[0].item.get('recording_token') == (self.generation, self.item['id'])
                     and receipt[0].revision == self.revision)
 
     def close_recovered(self):
         if not self._recovery_ready():
             raise ValueError('录音内容已变化，请先停止并重新备份全部文字。')
-        snapshot, digest = self.recovery_receipt
-        if hashlib.sha256(Path(snapshot.item['path']).read_bytes()).hexdigest() != digest:
-            raise ValueError('备份已被修改，请重新备份再关闭。')
+        from .recording_export import check_export
+        snapshot, receipt = self.recovery_receipt
+        check_export(snapshot.item['path'], receipt)
+        if not self.recording.release_lock(recovered=True):
+            raise ValueError('录音仍在处理，请等待完成后重试关闭。')
         self.autosave.stop()
-        self.dirty = False
-        self.save_error = ''
-        self._release_lock()
         self._select(None)
         self.refresh()
 

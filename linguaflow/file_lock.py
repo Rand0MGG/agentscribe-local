@@ -1,8 +1,9 @@
 """Exclusive file ownership; understand live legacy QLockFile owners on upgrade."""
+import errno
 import os
 import socket
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 import psutil
@@ -20,10 +21,19 @@ class FileLock:
         pass
 
     @contextmanager
-    def _guard(self):
+    def _guard(self, wait=0):
         # A persistent OS-locked sidecar serializes reclaim/create/unlink. Never
         # unlink this inode: waiters must continue to share the same lock.
-        with self.path.with_name(self.path.name + ".guard").open("a+b") as stream, exclusive_lock(stream):
+        with self.path.with_name(self.path.name + ".guard").open("a+b") as stream, ExitStack() as guard:
+            deadline = time.monotonic() + wait
+            while True:
+                try:
+                    guard.enter_context(exclusive_lock(stream))
+                    break
+                except OSError as exc:
+                    if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK) or time.monotonic() >= deadline:
+                        raise
+                    time.sleep(.005)
             yield
 
     def _acquire(self):
@@ -68,9 +78,14 @@ class FileLock:
 
     def unlock(self):
         if self.identity is not None:
+            # Readers also take the guard: do not delete while another process
+            # inspects the owner with a Windows handle that denies deletion.
+            # Only guard contention is retried, briefly; real unlink errors
+            # still retain ownership and propagate to the recovery workflow.
             try:
-                if self.path.stat().st_ino == self.identity:
-                    self.path.unlink()
+                with self._guard(wait=.25):
+                    if self.path.stat().st_ino == self.identity:
+                        self.path.unlink()
             except FileNotFoundError:
                 pass
             self.identity = None
