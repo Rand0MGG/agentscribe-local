@@ -121,6 +121,41 @@ def test_text_location_does_not_create_audio_player(desktop):
     assert desktop.located_position is None
 
 
+@pytest.mark.p2
+def test_text_location_does_not_emit_playback_seek_that_clears_highlight(desktop, monkeypatch):
+    from linguaflow.playback_controller import PlaybackController
+    desktop._create_recording(name='定位事件顺序')
+    desktop.captions[1] = Caption(1, 0, 2, 'find', 'en', final=True)
+    with wave.open(str(desktop.library.directory(desktop.item['id']) / '录音.wav'), 'wb') as audio:
+        audio.setparams((1, 2, 8000, 0, 'NONE', 'not compressed'))
+        audio.writeframes(bytes(32000))
+    monkeypatch.setattr(desktop, '_audio_allowed', lambda: None)
+    events = []
+    desktop.output.connect(events.append)
+    try:
+        controller = desktop._player()
+        assert isinstance(controller, PlaybackController)
+        events.clear()
+        desktop.locate(identifier=desktop.item['id'], generation=desktop.generation, caption_id=1)
+        assert not any(row.get('event') == 'playback' and row['data'].get('seek') for row in events)
+        assert any(row.get('event') == 'playback' and row['data'].get('caption_id') == 1 for row in events)
+        events.clear()
+        desktop.seek(1000)
+        seeks = [row['data'] for row in events if row.get('event') == 'playback' and row['data'].get('seek')]
+        assert seeks == [{'position': 1000, 'caption_id': 1, 'seek': True}]
+        controller.release()
+        audio_path = desktop.library.directory(desktop.item['id']) / '录音.wav'
+        audio_path.write_bytes(audio_path.read_bytes()[:100])
+        desktop.item['state'] = 'complete'
+        events.clear()
+        desktop.seek(1000)
+        assert any(row.get('event') == 'notice' and row['data'].get('error') for row in events)
+        assert not any(row.get('event') == 'playback' and row['data'].get('seek') for row in events)
+    finally:
+        desktop.player.release()
+        desktop.player = None
+
+
 @pytest.mark.p1
 def test_document_preparation_does_not_block_capture(desktop, monkeypatch):
     desktop.values['beta_features'] = True

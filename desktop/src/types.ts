@@ -8,6 +8,7 @@ export type PreviewRow = { id: number | null; index: number; source: string; sta
 export type Preview = { source: string; start: number; end?: number; keep_ids: number[]; sequence: number; rows?: PreviewRow[] };
 export type RecordingState = 'IDLE' | 'STARTING' | 'LISTENING' | 'PAUSING' | 'PAUSED' | 'RESUMING' | 'STOPPING';
 export type State = { item: Item | null; draft: { name: string; folder: string } | null; state: RecordingState; status: string; failure: string; save_error: string;
+  caption_languages?: { source: string; target: string };
   update_fenced?: boolean; capture?: { label: string; volume_label: string; waiting: string; model_loading: boolean };
   model_missing?: string[] | null; playback?: { duration: number; supports_gain: boolean; volume: number }; translating?: boolean; saving: boolean; dirty: boolean; generation: number; revision: number; count: number; preview: Preview | null;
   preparing: boolean; preparation_blocks_recording?: boolean; preparation_kind?: string | null; preparation_cancelling: boolean; preparation_recovery: string; preparation_status: string; checking_models: boolean; translation_available: boolean; progress: Record<string, unknown> | null; closing: boolean; has_audio: boolean; migrating: boolean; recovery_ready: boolean };

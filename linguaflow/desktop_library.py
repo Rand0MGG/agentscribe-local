@@ -2,6 +2,7 @@
 from dataclasses import asdict
 from pathlib import Path
 
+from .core import LANGUAGES
 from .library import default_recording_name
 from .library_access import check_library_access
 from .source_preview import preview_captions
@@ -52,14 +53,15 @@ class DesktopLibrary:
             else:
                 data, captions = loaded
                 self.status = '已打开录音'
-                self._select(item, captions, data.get('settings', {}).get('translate', True))
+                settings = data.get('settings', {})
+                self._select(item, captions, settings.get('translate', True), settings=settings)
                 value = self.snapshot()
             self.output.emit({'id': request_id, 'result': value})
         except Exception as exc:
             self.output.emit({'id': request_id, 'error': {'message': str(exc), 'kind': type(exc).__name__}})
         self._continue_close()
 
-    def _select(self, item, captions=(), translating=None):
+    def _select(self, item, captions=(), translating=None, *, settings=None):
         self.located_position = None
         self.audio_stage = ''
         self.generation += 1
@@ -74,6 +76,12 @@ class DesktopLibrary:
         self.save_target = None
         self.recovery_receipt = None
         self.translating = self.values['translate'] if translating is None else translating
+        # Freeze the recording's languages, not the preferences for the next
+        # recording. Legacy files without language metadata remain unknown.
+        settings = asdict(self.settings()) if settings is None else settings
+        tags = {token: f'{code}-{token.split("_")[1]}' for _, code, token in LANGUAGES}
+        self.caption_languages = {'source': tags.get(settings.get('source_nllb'), settings.get('source') or ''),
+                                  'target': tags.get(settings.get('target'), '')}
         self.changed()
         self.emit('captions', self.page())
         self.attach_knowledge()
@@ -86,7 +94,8 @@ class DesktopLibrary:
         data, captions = self.library.load(item)
         self._close_resources()
         self.status = '已打开录音'
-        self._select(item, captions, data.get('settings', {}).get('translate', True))
+        settings = data.get('settings', {})
+        self._select(item, captions, settings.get('translate', True), settings=settings)
         return self.snapshot()
 
     def new_recording(self, folder_id=None, name=None):

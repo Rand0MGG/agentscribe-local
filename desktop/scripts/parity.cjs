@@ -68,7 +68,7 @@ library.save(item,[Caption(1,0,5,'Language is more than a sequence of words. It 
     await page.getByText('Context helps us understand what comes next.', { exact: true }).waitFor();
     async function size(width, height) {
       await app.evaluate(({ BrowserWindow, screen }, size) => { const win = BrowserWindow.getAllWindows().find(w => !w.webContents.getURL().includes('#')); const area=screen.getDisplayMatching(win.getBounds()).workArea; win.setPosition(area.x,area.y,false); win.setContentSize(...size); win.show(); win.focus(); }, [width, height]);
-      await page.waitForFunction(([width,height]) => innerWidth === width && innerHeight === height, [width,height], {timeout:3000}).catch(async error => { throw new Error(`Requested ${width}x${height}; got ${await page.evaluate(()=>innerWidth+'x'+innerHeight)}: ${error.message}`); });
+  await page.waitForFunction(([width,height]) => innerWidth === width && innerHeight === height, [width,height], {timeout:3000}).catch(async error => { throw new Error(`Requested ${width}x${height}; got ${await page.evaluate(()=>innerWidth+'x'+innerHeight)}: ${error.message}`, { cause: error }); });
       await pause(120);
     }
     async function settings(values) { await page.evaluate(values => window.agentScribe.request('settings.set', { values }), values); }

@@ -2,6 +2,15 @@
 
 仅记录当前可核对的证据与限制；测试规则见 [TESTING](TESTING.md)，功能缺口见 [ROADMAP](ROADMAP.md)。历史逐轮记录已移至 [验证归档](archive/testing/VALIDATION_THROUGH_20261030.md)，不把旧通过数或“本地未提交”当作当前状态。
 
+## 2026-11-17 前端可访问性与 CI 复核
+
+- 基线 `f2e5d0e` 的 [main](https://github.com/Rand0MGG/agentscribe-local/actions/runs/44056337296) 与 [windows](https://github.com/Rand0MGG/agentscribe-local/actions/runs/44056551778) Code checks 各 13 项成功；[mac 分支运行](https://github.com/Rand0MGG/agentscribe-local/actions/runs/44056551722) 的 Windows/Python 3.12 日志双进程测试只收到一份 ready，其余 12 项通过。分支名称不等于失败平台。
+- 日志并发用例本地原路径连续 15 轮通过；旧 CI 未打印子进程 stderr，不能证明历史每次超时同源。受控每次 fsync 延迟 180 ms 时，旧默认 2 秒 flush 先失败，仍在父进程 10 秒期限内的 flush 成功。测试改为共享原有 10 秒截止时间，提前退出打印 stdout/stderr，加入双进程慢 fsync 场景；生产 flush 默认值、预算、归档字节和完整性断言未变。
+- Windows/Electron 45 原生隔离窗口复现审查问题：字幕无可聚焦回听入口、悬浮控件鼠标移出后移除已聚焦滑块、原文/译文无语言标签，以及数值输入收到组合 Enter 后失焦。修复保留鼠标选择及原交互，新增单一 Tab 入口、句间导航、悬浮键盘缩放/焦点保护和组合输入保护；语言快照取自当前录音，旧格式未知值不套用当前偏好。
+- R18：文字查找原本同时产生普通播放 seek 事件，前端会用它清除搜索高亮。主动回听跳转现在由服务入口独立发出一次 seek，文字查找只通知位置；后台真实 WAV/播放器回归及 Electron 延迟真实 seek 通知的回归同时验证。没有放宽原搜索定位超时、跳过断言或增加产品重试。
+- Windows 完整无音频回归 **1349 passed、39 skipped**（175.14 秒），定向后台回归 **81 passed、1 skipped**；完整运行后的回听失败通知保护另经定向回归验证。跳过项为平台专属入口、符号链接权限和原生恢复编译器限制。Electron 构建、`npm test`、29 组交互检查、11 组 IPC 全链路、无设备音频适配器及 Ruff 通过。已检查浅色回听与深色/窄窗口截图；`modern-web-guidance` 确定性扫描从 2 项到 0 项，仅覆盖其约 20% 的指南，不是完整安全/可访问性认证。
+- 原始桌面证据保留在 `output/playwright/modern-web-audit/`、`output/playwright/electron/`、`output/playwright/interaction-fixes/` 与 `output/playwright/parity-fixed/chain-9WotIi/`。所有录音/配置为隔离合成数据；无原生音频导入。不将合成组合事件视为真实 Windows/Mac 输入法、读屏发音或真实设备验收；不发布安装包。
+
 ## 2026-11-17 PR 集成前的断连备份复核
 
 - 集成 CI 另复现既有 Windows 录音锁竞争：检查者打开锁文件时，未参与 guard 的 `unlock` 可因共享冲突失败。新增真实子进程持 guard/只读句柄的反例在修复前失败；修复让解锁与检查共用 guard，仅对 guard 争用有界等待 250 ms，实际删除错误仍保留身份并上报。争用及时释放、争用超时后重试及原有恢复关闭权限失败定向回归 **33 passed、1 skipped**；跳过 Cocoa 专属入口。

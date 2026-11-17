@@ -50,6 +50,27 @@ def drain(service):
 
 
 @pytest.mark.p2
+@pytest.mark.parametrize('asynchronous', [False, True])
+def test_caption_languages_belong_to_recording_not_current_preferences(desktop, asynchronous):
+    folder = desktop.library.ensure_default_folder()
+    item = desktop.library.create(folder['id'], {'source': 'en', 'source_nllb': 'eng_Latn', 'target': 'zho_Hant'}, '语言快照')
+    desktop.library.save(item, [Caption(1, 0, 1, 'source', 'en', '譯文', final=True)], 'complete')
+    desktop.values.update(source='日本語', target='Français')
+    if asynchronous:
+        desktop._read_library('read-languages', identifier=item['id'])
+        drain(desktop)
+    else:
+        desktop.open_recording(item['id'])
+    expected = {'source': 'en-Latn', 'target': 'zh-Hant'}
+    assert desktop.snapshot()['caption_languages'] == expected
+    desktop.values.update(source='한국어', target='Deutsch')
+    assert desktop.snapshot()['caption_languages'] == expected
+    legacy = desktop.library.create(folder['id'], {}, '旧版未知语言')
+    desktop.open_recording(legacy['id'])
+    assert desktop.snapshot()['caption_languages'] == {'source': '', 'target': ''}
+
+
+@pytest.mark.p2
 def test_sidebar_width_is_validated_and_persisted_without_changing_model_settings(desktop):
     original = dict(desktop.values)
     assert desktop.bootstrap()['layout']['sidebar_width'] is None

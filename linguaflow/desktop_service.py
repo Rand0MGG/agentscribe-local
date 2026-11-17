@@ -156,6 +156,7 @@ class DesktopService(DesktopModels, DesktopLibrary, DesktopKnowledge, Owner):
         self.playback_metadata = {"duration": 0, "supports_gain": False}
         self.playback_volume = 100
         self.located_position = None
+        self.caption_languages = {'source': '', 'target': ''}
         self.captions = Transcript()
         self.preview = None
         self.preview_sequence = 0
@@ -292,6 +293,7 @@ class DesktopService(DesktopModels, DesktopLibrary, DesktopKnowledge, Owner):
                 'failure': self.failure, 'save_error': self.save_error,
                 'saving': self.saver.busy, 'dirty': self.dirty, 'generation': self.generation,
                 'revision': self.revision, 'count': len(self.captions), 'preview': self.preview,
+                'caption_languages': self.caption_languages,
                 'preparing': self.preparation is not None or self.runtime_action is not None, 'preparation_status': self.preparation_status,
                 'preparation_kind': self.preparation_command[1] if self.preparation_command else None,
                 'preparation_blocks_recording': preparation_blocks_recording(self.preparation) or self.runtime_action is not None,
@@ -571,7 +573,7 @@ class DesktopService(DesktopModels, DesktopLibrary, DesktopKnowledge, Owner):
         if self.values['beta_features'] and settings.backend in ('qwen3-streaming', 'qwen3-mlx'):
             from .knowledge.session import session_context
             settings = replace(settings, asr_context=session_context(self.library, self.item['id']))
-        self._select(self.item)
+        self._select(self.item, settings=asdict(settings))
         try:
             self.recording.start(settings, self._launch_session)
         except Exception:
@@ -828,7 +830,9 @@ class DesktopService(DesktopModels, DesktopLibrary, DesktopKnowledge, Owner):
         # Position an existing player only. Navigating text must not open audio devices.
         if self.player is not None:
             self.player.seek(round(seconds * 1000), play=False)
-        self.emit('playback', {'position': round(seconds * 1000), 'caption_id': caption_id, 'seek': True})
+        # Text navigation must not send the playback-seek command that clears
+        # the renderer's search highlight. Position and navigation are distinct.
+        self.emit('playback', {'position': round(seconds * 1000), 'caption_id': caption_id})
         return {'page': self.page(seconds=seconds), 'identifier': caption_id}
 
     def _player(self):
@@ -842,8 +846,6 @@ class DesktopService(DesktopModels, DesktopLibrary, DesktopKnowledge, Owner):
             self.player.command.connect(lambda value: self.emit('audio-command', value))
             self.player.position_changed.connect(lambda value: self.emit('playback', {
                 'position': value, 'caption_id': self.player.index.at(value / 1000)}))
-            self.player.seeked.connect(lambda value: self.emit('playback', {
-                'position': value, 'caption_id': self.player.index.at(value / 1000), 'seek': True}))
             self.player.duration_changed.connect(lambda value: self.emit('playback', {'duration': value}))
             self.player.state_changed.connect(lambda value: self.emit('playback', {'state': value}))
             self.player.failed.connect(lambda value: self.emit('notice', {'text': value, 'error': True}))
@@ -871,6 +873,9 @@ class DesktopService(DesktopModels, DesktopLibrary, DesktopKnowledge, Owner):
             raise ValueError('无效的播放位置。')
         controller = self._player()
         controller.seek(milliseconds, play=play)
+        if controller.stream is not None:
+            self.emit('playback', {'position': controller.position,
+                                  'caption_id': controller.index.at(controller.position / 1000), 'seek': True})
 
     def volume(self, value):
         if type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= 300:
