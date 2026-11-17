@@ -3,6 +3,7 @@ import ctypes
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from threading import Event
 
@@ -23,6 +24,63 @@ def prepare(service):
     service.autosave.stop()
     service.save_error = 'synthetic prior save failure'
     service.recording_lock = acquire_recording_lock(service.library.directory(service.item['id']))
+
+
+@pytest.mark.p1
+@pytest.mark.parametrize('mapped_temp', [False, True])
+def test_disconnected_recovery_uses_physical_temp_directory(desktop, tmp_path, monkeypatch, mapped_temp):
+    prepare(desktop)
+    desktop.connection_lost = True
+    physical = tmp_path / 'physical-temp'
+    physical.mkdir()
+    configured = tmp_path / 'configured-temp'
+    if mapped_temp:
+        if os.name == 'nt':
+            result = subprocess.run(['cmd', '/c', 'mklink', '/J', str(configured), str(physical)],
+                                    capture_output=True, timeout=5)
+            assert result.returncode == 0, result.stdout + result.stderr
+        else:
+            configured.symlink_to(physical, target_is_directory=True)
+    else:
+        configured = physical
+    def unavailable(_identifier):
+        raise OSError('recording volume unavailable')
+    monkeypatch.setattr(desktop.library, 'directory', unavailable)
+    monkeypatch.setattr(tempfile, 'tempdir', str(configured))
+    try:
+        assert desktop._shutdown_save()
+        backups = list(physical.glob('agentscribe-recovery-*/*.txt'))
+        assert len(backups) == 1
+        text = backups[0].read_text('utf-8-sig')
+        assert 'Preserved source' in text and 'Preserved draft' in text
+        assert not desktop.dirty and not desktop.save_error
+    finally:
+        if mapped_temp:
+            assert configured.resolve() == physical.resolve()
+            if os.name == 'nt':
+                assert configured.is_junction()
+                configured.rmdir()
+            else:
+                assert configured.is_symlink()
+                configured.unlink()
+
+
+@pytest.mark.p1
+def test_disconnected_recovery_failure_keeps_unsaved_state_and_lock(desktop, tmp_path, monkeypatch):
+    prepare(desktop)
+    desktop.connection_lost = True
+    before = desktop.dirty, desktop.save_error, desktop.recording_lock
+    attempts = []
+    def denied(item, captions, state=None):
+        attempts.append(item['path'])
+        raise PermissionError('backup storage unavailable')
+    monkeypatch.setattr(recording_export, 'write_recovery', denied)
+    monkeypatch.setattr(tempfile, 'tempdir', str(tmp_path))
+    with pytest.raises(PermissionError, match='backup storage unavailable'):
+        desktop._shutdown_save()
+    assert len(attempts) == 2 and attempts[0] != attempts[1]
+    assert (desktop.dirty, desktop.save_error, desktop.recording_lock) == before
+    assert desktop.recording_lock.locked
 
 
 @pytest.mark.p0

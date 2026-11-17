@@ -959,7 +959,11 @@ class DesktopService(DesktopModels, DesktopLibrary, DesktopKnowledge, Owner):
         except (OSError, ValueError):
             # An unwritable recording volume must not discard the only remaining
             # transcript after its UI has crashed. The recovery path is unique.
-            directory = Path(tempfile.mkdtemp(prefix='agentscribe-recovery-'))
+            # The configured temp root may legitimately be a junction/symlink.
+            # Resolve it before creating our directory; the writer still binds
+            # and checks the resulting physical path against later replacement.
+            temp_root = Path(tempfile.gettempdir()).resolve(strict=True)
+            directory = Path(tempfile.mkdtemp(prefix='agentscribe-recovery-', dir=temp_root))
             path = directory / name
             write_recovery({'path': str(path), 'name': self.item['name']}, preview_captions(self.captions, self.preview))
         sys.stderr.write(f'桌面中断，文字恢复备份：{path}\n')

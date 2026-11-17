@@ -67,8 +67,11 @@ async function main() {
  assert(!fs.existsSync(path.join(fixture,'export-1.txt')));fs.unlinkSync(path.join(fixture,'hold-export'));
  await until(()=>[1,2,3].every(i=>fs.existsSync(path.join(fixture,`export-${i}.txt`))),'all explicit export files');
  for(const i of [1,2,3]) assert(fs.readFileSync(path.join(fixture,`export-${i}.txt`),'utf8').includes('Sentence 120'));
+ // Publication precedes worker completion and delivery through backend/IPC.
+ // Wait for the actual final receipt before checking its count and outcome.
+ await until(()=>page.evaluate(()=>window.chainEvents.some(e=>e.event==='notice'&&e.data.key==='export'&&!e.data.busy)),'final export receipt');
  const notices=await page.evaluate(()=>window.chainEvents.filter(e=>e.event==='notice'&&e.data.key==='export').map(e=>e.data));
- assert.equal(notices.filter(n=>!n.busy).length,1);passed.push('three queued exports retain every request and one final receipt');
+ const completed=notices.filter(n=>!n.busy);assert.equal(completed.length,1);assert.equal(completed[0].error,false);passed.push('three queued exports retain every request and one final receipt');
  // Exercise real validation, then full preparation despite translation being off.
  await assert.rejects(()=>rpc('models.prepare',{only:''}),/无效的准备范围/);
  await rpc('settings.set',{values:{translate:false}});await rpc('models.check').catch(()=>{});
