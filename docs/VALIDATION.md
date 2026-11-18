@@ -2,6 +2,12 @@
 
 仅记录当前可核对的证据与限制；测试规则见 [TESTING](TESTING.md)，功能缺口见 [ROADMAP](ROADMAP.md)。历史逐轮记录已移至 [验证归档](archive/testing/VALIDATION_THROUGH_20261030.md)，不把旧通过数或“本地未提交”当作当前状态。
 
+## 2026-11-18 回听状态与前端复查
+
+- **已合并。** [PR #5](https://github.com/Rand0MGG/agentscribe-local/pull/5) 合并提交为 `443a914`。[main](https://github.com/Rand0MGG/agentscribe-local/actions/runs/44065122492)、[windows](https://github.com/Rand0MGG/agentscribe-local/actions/runs/44065249330)、[mac](https://github.com/Rand0MGG/agentscribe-local/actions/runs/44065248374) 各 13 项检查通过。该版本的回听交互夹具直接把媒体回报传给播放器，绕过了后台请求参数校验。
+- **Windows 本地回听验证。** 在上述提交上，用真实播放器生成的字符串标识复现了 `操作参数类型无效：epoch`。Windows 工作区已修正接口类型，并让交互夹具校验回报；逐句回听检查收到“暂停回听”。另用 Electron 媒体组件读取合成 WAV，在关闭硬件输出时，`PlayingState` 的播放位置由 1000 ms 前进至约 1273 ms。完整无音频回归 1349 项通过、39 项跳过（178.09 秒），构建、交互、IPC 链路、音频适配器及 Ruff 通过。真实扬声器出声待验。原始记录为 `.work/reports/playback-epoch-full.log` 和 `.work/reports/epoch-media-states.jsonl`。
+- **仍可复现的前端问题。** Windows 隔离窗口中，650 条搜索结果翻到第 2 页后，界面显示 101–200，却仍能点中第 1 句；键盘打开和退出设置、按 Escape 取消录音改名后，焦点均落在页面主体。课程窗口接收合成刷新快照后，原选中的 Beta 变为 Alpha，移除操作从草稿移除了 Alpha；三条笔记各占一个 Tab 停靠点，按 ↓ 后焦点与选择仍在第一条。分别列入 R22 和 R18。本地报告在 `output/playwright/modern-web-audit/` 下的 `probe-y3OU0r/report.json` 和 `probe-VHf7Vm/report.json`。
+
 ## 2026-11-17 前端可访问性与 CI 复核
 
 - 基线 `f2e5d0e` 的 [main](https://github.com/Rand0MGG/agentscribe-local/actions/runs/44056337296) 与 [windows](https://github.com/Rand0MGG/agentscribe-local/actions/runs/44056551778) Code checks 各 13 项成功；[mac 分支运行](https://github.com/Rand0MGG/agentscribe-local/actions/runs/44056551722) 的 Windows/Python 3.12 日志双进程测试只收到一份 ready，其余 12 项通过。分支名称不等于失败平台。

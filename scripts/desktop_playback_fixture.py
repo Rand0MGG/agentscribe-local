@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from threading import Thread
 
+from linguaflow.desktop_protocol import validate_params
 from linguaflow.events import Dispatcher
 
 
@@ -25,7 +26,8 @@ def install():
             def read():
                 for line in adapter.stdout:
                     value = json.loads(line)
-                    dispatcher.call(lambda value=value: service.player.receive(**value) if service.player else None)
+                    validate_params('playback.event', value)
+                    dispatcher.call(lambda value=value: service.playback_event(**value))
             reader = Thread(target=read, daemon=True)
             reader.start()
             original_player, original_emit = service._player, service.emit
