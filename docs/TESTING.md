@@ -89,7 +89,7 @@ git diff --check
 | `npm run test:migration` | 历史迁移交互对照；正式入口始终是 Electron |
 | `npm run components` | 按需组件演示，不能替代正式流程验收 |
 
-Python 的 `test_qt_free_backend.py` 在拒绝 Qt 导入的条件下验证后台、设置迁移、竞争锁与退出；`test_playback_controller.py` 验证合成 WAV 的 HTTP 范围读取、旧代次拒绝及原件保护。Node 音频适配器由独立入口验证，不再通过 Python 包装重复运行。图像夹具是仓库内的合成图片；像素断言使用标准库 PNG 解码，不再运行 Qt。历史升级探针仅为旧已发行包保留兼容分支。
+Python 的 `test_qt_free_backend.py` 在拒绝 Qt 导入的条件下验证后台、设置迁移、竞争锁与退出；`test_playback_controller.py` 验证合成 WAV 的 HTTP 范围读取、旧代次拒绝及原件保护。逐句回听交互还应让媒体回报通过生产接口的参数校验，并断言播放按钮切换为“暂停回听”；进度条跳到目标或字幕高亮只能证明定位。Node 音频适配器由独立入口验证，不再通过 Python 包装重复运行。图像夹具是仓库内的合成图片；像素断言使用标准库 PNG 解码，不再运行 Qt。历史升级探针仅为旧已发行包保留兼容分支。
 
 回听回归还验证主机名解析不可用时，真实本地 HTTP 加载、文件读取及定位仍完成。Electron 交互探针记录点击命中、播放请求/回执和媒体动作；初始化超过 5 秒仅输出 Python 调用栈，不改变原超时或断言。诊断仅用于隔离测试库，不进入正式用户日志。
 

@@ -18,35 +18,35 @@
 
 ### A01：无音频防护缺少真实拒绝路径自测（先处理）
 
-- 位置：[test_no_audio_runner.py](../../tests/test_no_audio_runner.py) 的两个测试；[test_no_audio.py](../../scripts/test_no_audio.py) 的 `GUARD`。
+- 位置：[test_no_audio_runner.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/tests/test_no_audio_runner.py) 的两个测试；[test_no_audio.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/scripts/test_no_audio.py) 的 `GUARD`。
 - 现状：一个测试比较生成的字符串是否等于 `runner.GUARD`，另一个手工写入 `blocked.log`；二者均替换了子进程运行，未实际执行防护代码。
 - 反例：在内存中把 `GUARD` 改为空串，现有 4 个参数展开项仍全部通过。没有导入任何音频模块，也没有访问设备。
 - 处理：保留入口参数/返回码单元测试，另用受控子进程验证 finder 拒绝目标模块并记录日志，以及防护可继承到 Python 后代。不能通过真的打开设备来验证。
 
 ### A02：P0 清理保护只检查目录存在，不能证明文件未损坏（先处理）
 
-- 位置：[test_runtime_cleanup.py](../../tests/test_runtime_cleanup.py) 的 `test_environment_cleanup_preserves_user_changes_and_unconfirmed_ownership`。
+- 位置：[test_runtime_cleanup.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/tests/test_runtime_cleanup.py) 的 `test_environment_cleanup_preserves_user_changes_and_unconfirmed_ownership`。
 - 现状：6 类保护情形最后都只断言 `protected.exists()`。
 - 反例：替身清理函数把本次新建的合成 `lecture.wav` 内容截断，但留下目录，`extra-recording` 分支仍通过。所有操作严格限制在新建审查夹具内。
 - 处理：按分支验证受保护文件的字节、清单和相关归属标记；“目录还在”不能替代“用户数据没被改变”。保留 6 个不同分支，不因断言相似合并掉边界。
 
 ### A03：闲置释放测试在断言前主动关闭 worker，掩盖自动释放缺陷（先处理）
 
-- 位置：[test_runtime_preparation.py](../../tests/test_runtime_preparation.py) 的 `test_idle_expiry_releases_imports_and_active_lease_is_protected`。
+- 位置：[test_runtime_preparation.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/tests/test_runtime_preparation.py) 的 `test_idle_expiry_releases_imports_and_active_lease_is_protected`。
 - 现状：等到指针清空后先调用 `worker.close()`，才检查进程已退出。
 - 反例：用“到期只清指针、不关闭 worker”的替身运行原测试，仍然通过；关闭由测试自身补做。探针没有启动真实进程。
 - 处理：先确认闲置回收自身完成退出，再在 `finally` 做兜底清理。活跃租用保护仍独立断言，不能因合并而取消。
 
 ### A04：真实 llama 验收脚本关闭后访问已清空的对象（先处理）
 
-- 位置：[check_llama.py](../../scripts/check_llama.py) 的 `main`；[llama_translation.py](../../linguaflow/llama_translation.py) 的 `LlamaTranslator.close`。
+- 位置：[check_llama.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/scripts/check_llama.py) 的 `main`；[llama_translation.py](../../linguaflow/llama_translation.py) 的 `LlamaTranslator.close`。
 - 现状：`translator.close()` 成功后将 `process`、`reader` 设为 `None`，脚本随后访问 `translator.process.returncode`、`translator.reader.is_alive()`。
 - 证据：使用真实 `close()` 和内存流替身，两个后置访问均产生 `AttributeError`。没有加载模型、启动进程或完整运行验收脚本。
 - 处理：关闭前保留待核对的进程/线程引用，关闭后检查这些引用及适配器释放状态；确保翻译错误也能留下摘要，不被收尾报告异常覆盖。
 
 ### A05：本地回归入口没有进程外总期限或停滞诊断（先处理）
 
-- 位置：[test_no_audio.py](../../scripts/test_no_audio.py) 的 `subprocess.run`；[test_diagnostic_log.py](../../tests/test_diagnostic_log.py) 的 `test_worker_exit_releases_diagnostic_output`。
+- 位置：[test_no_audio.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/scripts/test_no_audio.py) 的 `subprocess.run`；[test_diagnostic_log.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/tests/test_diagnostic_log.py) 的 `test_worker_exit_releases_diagnostic_output`。
 - 现状：CI 有 15 分钟 job 上限，本地入口没有相应进程外期限；`PYTHONFAULTHANDLER=1` 不会自动定时转储卡死堆栈。
 - 既有证据：上一轮全量运行停在 worker 日志用例；单独标准库事件循环初始化也阻塞在 Windows `socketpair/accept`。协程内部的 `wait_for` 无法限制事件循环创建阶段。
 - 处理：给本地执行提供明确的外部总期限和停滞堆栈，终止时只处理本次测试拥有的进程。不得改套接字实现、换假事件循环或跳过相关测试换绿。
@@ -59,74 +59,74 @@
 
 ### A07：三处正式窗口测试绕过共享 Qt 错误门禁（随后处理）
 
-- 位置：[test_model_options.py](../../tests/test_model_options.py) 的双平台设置往返；[test_macos_support.py](../../tests/test_macos_support.py) 的设置恢复；[test_mlx_asr.py](../../tests/test_mlx_asr.py) 的 Mac profile 往返。
+- 位置：[test_model_options.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/tests/test_model_options.py) 的双平台设置往返；[test_macos_support.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/tests/test_macos_support.py) 的设置恢复；[test_mlx_asr.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/tests/test_mlx_asr.py) 的 Mac profile 往返。
 - 现状：直接 `subprocess.run` 后仅检查返回码，不调用 `assert_ui_process`；其他 UI 用例会拒绝绘制回调、QThread/QProcess 销毁警告。
 - 处理：复用共同退出/日志检查，同时保留各自的平台环境、UTF-8 解码和原期限。不把原生探针等有专属协议的子进程强行改成普通 Window 测试。
 
 ### A08：Session 辅助入口的失败路径回收不完整（随后处理）
 
-- 位置：[test_wlk_session.py](../../tests/test_wlk_session.py) 的 `execute`；[test_runtime_preparation.py](../../tests/test_runtime_preparation.py) 的 `execute`。
+- 位置：[test_wlk_session.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/tests/test_wlk_session.py) 的 `execute`；[test_runtime_preparation.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/tests/test_runtime_preparation.py) 的 `execute`。
 - 现状：前者在 Session 启动后的事件循环/`tick` 异常时没有统一 `finally`；超时分支二次 `session.wait(5000)` 的返回值也未确认。后者的二次等待同样未检查。
 - 影响：产品缺陷导致测试失败时，测试对象可能尚在运行；后续 Qt 对象销毁和其他用例会被污染，原始失败也可能被退出错误盖住。
 - 处理：保存本次资源引用，失败后有界停止并确认退出；回收失败独立报告，不能吞掉原始异常。平台生产代码已有的 Job/进程组保护不能代替测试确认资源已释放。
 
 ### A09：部分正向状态检查依赖固定短等待（随后处理）
 
-- 位置：[test_model_ui_boundaries.py](../../tests/test_model_ui_boundaries.py) 的 `QTest.qWait(250)`；[test_workflow_preview.py](../../tests/test_workflow_preview.py) 的 50/80/100ms 等待。
+- 位置：[test_model_ui_boundaries.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/tests/test_model_ui_boundaries.py) 的 `QTest.qWait(250)`；[test_workflow_preview.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/tests/test_workflow_preview.py) 的 50/80/100ms 等待。
 - 现状：等待固定时间后立刻检查后台合并、页面切换或任务进度。在较慢环境中可能尚未到达目标状态。
 - 处理：等待实际回调/卡片/任务状态并设期限，布局稳定另行判断。验证双击抑制所需的 `doubleClickInterval` 和用于模拟慢任务的 sleep 不属于此项，不能机械删除。
 
 ### A10：部分外部命令没有自身的执行期限（随后处理）
 
-- 位置：[test_packaging.py](../../tests/test_packaging.py) 的临时 Git 仓库命令；[test_sparkle_cycle.py](../../tests/test_sparkle_cycle.py) 的 clang/codesign；[test_ux_recovery.py](../../tests/test_ux_recovery.py) 的跨进程录音锁探针；[benchmark_ami.py](../../scripts/benchmark_ami.py) 的编排/版本探针和 [probe_macos_update.py](../../scripts/probe_macos_update.py) 的部分外部工具。
+- 位置：[test_packaging.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/tests/test_packaging.py) 的临时 Git 仓库命令；[test_sparkle_cycle.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/tests/test_sparkle_cycle.py) 的 clang/codesign；[test_ux_recovery.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/tests/test_ux_recovery.py) 的跨进程录音锁探针；[benchmark_ami.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/scripts/benchmark_ami.py) 的编排/版本探针和 [probe_macos_update.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/scripts/probe_macos_update.py) 的部分外部工具。
 - 现状：这些明确写出的调用没有 `timeout`。录音锁探针在 UI 子进程内还有外层 35 秒限制，不能说整条测试完全无期限，但子探针仍缺少独立诊断边界。
 - 处理：按任务成本限制外部命令，并回收自有后代。对通过 `**kwargs` 包装的调用先追踪调用方，不能仅凭缺少字面量 `timeout` 就判为无期限。
 
 ### A11：模型边界用例混合四种职责，P2 标注漏掉 P0 保护（先拆分）
 
-- 位置：[test_model_ui_boundaries.py](../../tests/test_model_ui_boundaries.py) 的 `test_inventory_interfaces_and_background_export`。
+- 位置：[test_model_ui_boundaries.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/tests/test_model_ui_boundaries.py) 的 `test_inventory_interfaces_and_background_export`。
 - 现状：一个用例包含浏览器契约、模型变更的检查合并、三格式导出快照，以及补扩展名后拒绝覆盖已有文件；整个函数标 P2。
 - 处理：独立出 P0 防覆盖场景；其他职责按组件或 UI 接线边界整理。格式断言的下移见 B03，不能简单把该用例整项降级或删除。
 
 ### A12：用户术语草稿保护仍有 P2 误标（先复核等级）
 
-- 位置：[test_ui_feedback.py](../../tests/test_ui_feedback.py) 的 `test_course_disconnect_disables_actions_and_keeps_unsaved_terms_for_reconnect`、`test_real_course_worker_exit_and_reconnect_preserve_draft`。
+- 位置：[test_ui_feedback.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/tests/test_ui_feedback.py) 的 `test_course_disconnect_disables_actions_and_keeps_unsaved_terms_for_reconnect`、`test_real_course_worker_exit_and_reconnect_preserve_draft`。
 - 现状：既检查断开后的控件，又检查用户手动输入的术语在断开/重连后不丢失；当前均为 P2。
 - 处理：控件可用性为 P2，用户不可恢复的手动草稿保护应按已接受标准列 P0。拆开可独立运行的场景，或在同一因果链中按数据保护的主要风险标注，不把数据保护断言挪成无实际操作的空检查。
 
 ### A13：清理 pending 的归属测试没有覆盖“不属于自己”的分支（随后补齐）
 
-- 位置：[test_update_recovery.py](../../tests/test_update_recovery.py) 的 `test_failed_prepare_clears_only_its_own_pending`；实现的 `clear_pending` 有 token 比较。
+- 位置：[test_update_recovery.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/tests/test_update_recovery.py) 的 `test_failed_prepare_clears_only_its_own_pending`；实现的 `clear_pending` 有 token 比较。
 - 现状：只创建 token 正好相等的 pending，再断言被删除。即使实现无条件删除 pending，这个用例仍会通过。
 - 处理：补不同 token 时原文件字节不变，并核对缺失/损坏 pending 的既有契约。它与崩溃回滚或普通成功更新不是同一个边界，不能拿后者冒充覆盖。
 
 ### A14：本地课件 UI 预览只验证 `<img>` 标签，未验证 Qt 实际解码（随后补齐）
 
-- 位置：[test_knowledge_ui.py](../../tests/test_knowledge_ui.py) 的 `test_new_format_import_filter_and_local_preview_without_cloud` 及视觉页面展示用例。
+- 位置：[test_knowledge_ui.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/tests/test_knowledge_ui.py) 的 `test_new_format_import_filter_and_local_preview_without_cloud` 及视觉页面展示用例。
 - 现状：检查 HTML 含 `<img>`、页数和文字，但没有检查 QTextDocument 中图片资源是否有效。后台的图片解码测试不能独立证明 UI 的 URL/资源传输成功。
 - 处理：保留一个真实图片进入正式面板后的资源/尺寸检查；控件过滤器、宽窄布局可使用轻量面板数据。不能用更多字符串或截图文件存在检查替代实际资源验证。
 
 ### A15：搜索用例没有完整验证名称承诺的已保存原文/译文场景（随后修正）
 
-- 位置：[test_user_workflows.py](../../tests/test_user_workflows.py) 的 `test_search_locates_saved_source_and_translation_without_starting_playback`。
+- 位置：[test_user_workflows.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/tests/test_user_workflows.py) 的 `test_search_locates_saved_source_and_translation_without_starting_playback`。
 - 现状：创建录音、注入字幕后直接打开当前内存搜索，只检索译文“上下文”；没有明确保存并重开，`persist_session` 位于断言之后，也没有原文检索断言。自动保存可能发生，不等于明确验证重开后的内容。
 - 处理：用保存后重开的录音准备数据，分别检索原文和译文，保留不自动播放检查。大历史测试覆盖了其他分页场景，不能直接当成这一组合已被证明。
 
 ### A16：全量分级审计没有接入日常校验（随后处理）
 
-- 位置：[conftest.py](../../tests/conftest.py)、[pyproject.toml](../../pyproject.toml)、[checks.yml](../../.github/workflows/checks.yml)。
+- 位置：[conftest.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/tests/conftest.py)、[pyproject.toml](../../pyproject.toml)、[checks.yml](../../.github/workflows/checks.yml)。
 - 现状：声明了四种 marker，但“恰好一个等级”的检查仅由本地 `.work` 审计插件执行；默认 CI 不拒绝新增漏标或同时标两个等级。`--strict-markers` 单独使用也不能保证恰好一个等级。
 - 处理：用轻量收集检查维护该不变量，并给检查自身提供缺失/重复标记的反例；默认执行范围不缩减。当前 1100 项的一次性检查通过，不代表未来自动受保护。
 
 ### A17：日常功能回归夹带无断言的截图及外观切换（可独立移出）
 
-- 位置：[test_installation_ui.py](../../tests/test_installation_ui.py) 的 `test_update_settings_and_inline_storage_path`；[test_workflow_preview.py](../../tests/test_workflow_preview.py) 的取消/迟到进度用例。
+- 位置：[test_installation_ui.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/tests/test_installation_ui.py) 的 `test_update_settings_and_inline_storage_path`；[test_workflow_preview.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/tests/test_workflow_preview.py) 的取消/迟到进度用例。
 - 现状：默认生成 PNG；取消用例还循环明暗主题、窗口尺寸并等待截图。这些图像没有自动内容判断，保存的布尔结果也未检查。正常准备流程还夹带控件高度、相对位置等断言。
 - 处理：功能回归保留取消、迟到结果和重试；外观取证放到已有预览/按需截图入口，不能把生成 PNG 宣称为外观验收。其他受 `AGENTSCRIBE_SCREENSHOTS` 控制的按需截图与此不同。
 
 ### A18：核心正常流程中串入多种独立故障，失败定位与等级职责混杂（需整理）
 
-- 位置：[test_ui.py](../../tests/test_ui.py) 的 150 行 `test_named_recording_start_finish_and_settings_routes`。
+- 位置：[test_ui.py](https://github.com/Rand0MGG/agentscribe-local/blob/dd313637a99a8f35e4d0af1519c9f7477a191438/tests/test_ui.py) 的 150 行 `test_named_recording_start_finish_and_settings_routes`。
 - 现状：正常命名/暂停/保存后，继续执行空录音停止、begin 写失败、删除恢复、迟到状态、暂停时关闭、Session 构造失败，还检查设置页搜索。前面的无关失败会阻止后续边界执行。
 - 处理：保留一条完整正常流程及随流程必要的保存/释放断言；独立故障放到对应已有边界测试，缺失时再增加最小场景。不能为了减少函数数继续扩大它，也不能把所有失败分支删掉后称覆盖等价。
 

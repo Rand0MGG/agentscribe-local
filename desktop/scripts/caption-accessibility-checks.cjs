@@ -10,6 +10,7 @@ module.exports = async function captionAccessibility(page, passed) {
   assert.equal(await buttons.nth(1).evaluate(el => document.activeElement === el), true);
   await page.keyboard.press('Enter');
   await page.locator('[data-caption="2"].playing').waitFor();
+  await page.getByRole('button', { name: '暂停回听', exact: true }).waitFor();
   await page.keyboard.press('End');
   assert.equal(await buttons.last().evaluate(el => document.activeElement === el), true);
   await page.keyboard.press('Space');

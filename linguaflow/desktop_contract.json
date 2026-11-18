@@ -269,7 +269,7 @@
     "forward": false,
     "params": {
       "epoch": {
-        "type": "number"
+        "type": "string"
       },
       "state": {
         "type": "string"

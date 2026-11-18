@@ -5,6 +5,7 @@ import wave
 
 import pytest
 
+from linguaflow.desktop_protocol import validate_params
 from linguaflow.playback_controller import PlaybackController
 
 
@@ -65,7 +66,9 @@ def test_bounded_media_ranges_stale_events_and_release_preserve_original(tmp_pat
                 urllib.request.urlopen(urllib.request.Request(url,headers=headers),timeout=2)
             assert error.value.code == code
         controller.seek(1000,play=True)
-        controller.receive(load['epoch'],'PlayingState',1000)
+        report = dict(epoch=load['epoch'], state='PlayingState', position=1000, error='')
+        validate_params('playback.event', report)
+        controller.receive(**report)
         assert controller.playing and positions[-1] == 1000
         controller.load(path,[])
         controller.receive(load['epoch'],'PlayingState',1500)

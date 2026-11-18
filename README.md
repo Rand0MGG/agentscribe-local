@@ -30,6 +30,6 @@
 
 ## UI Demo 与开发基准
 
-[界面规范与 Demo 入口](docs/UI_DESIGN.md#demo-一致性与优先复用) 是产品 spec 的一部分。后续界面优先复用组件 Demo 与正式流程 Demo 使用的共享实现，保持交互逻辑、视觉风格、外观及状态反馈一致；新增能力同步维护 Demo 与正式页面。
+[界面规范与 Demo 入口](docs/UI_DESIGN.md#demo-一致性与优先复用) 是产品 spec 的一部分。后续界面优先复用Electron 组件 Demo 与正式页面使用的共享实现，保持交互逻辑、视觉风格、外观及状态反馈一致；新增能力同步维护示例与对应的流程探针。
 
 [全部发行](https://github.com/Rand0MGG/agentscribe-local/releases) · [反馈问题](https://github.com/Rand0MGG/agentscribe-local/issues) · [文档地图](docs/PROJECT_STRUCTURE.md) · [开发约定](AGENTS.md) · [第三方说明](THIRD_PARTY_NOTICES.md)

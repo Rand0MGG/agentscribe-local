@@ -152,18 +152,17 @@ Qwen 的 `asr_decode_start/end` 可按 `session + decode_id` 关联：窗口范�
 
 ### 桌面模块边界
 
-主窗口保留对外操作入口、控件绑定和显示反馈；录音、保存、模型准备、迁移与退出事务由上文的共享后台流程负责。以下显示与数据模块不导入 `app`，也不通过持有整个 Window 或动态代理访问业务状态：
+主窗口在 [App.tsx](../desktop/src/App.tsx) 连接控件、桌面请求和后台通知。保存资格、录音锁和退出门禁由 Python 后台判断。
 
-| 模块 | 独立职责与接口 |
+| 模块 | 职责 |
 | --- | --- |
-| `transcript.py` | 字幕映射与惰性 ID 顺序；内容修订复用顺序，增删才失效 |
-| `caption_feed.py` | 实时字幕的 200 条显示窗口、分页、预览与跟随；已保存加载及回放模式展示全部卡片，通过信号请求定位播放 |
-| `library_browser.py` | 录音树的构建、展开与选择显示；接收库索引，不自行执行迁移或删除 |
-| `playback_controller.py` | 播放器、音频输出及文件流的唯一所有者；接收文件和恢复许可，通过信号反馈状态、错误和位置 |
-| `recording_controls.py` | 录音/播放控制区的布局与控件；不发现设备，不启动会话，操作由窗口连接 |
-| `window_chrome.py` | 窗口按钮、外框和图标；正式窗口与组件 Demo 共用 |
+| [transcript.py](../linguaflow/transcript.py) 与 [Captions.tsx](../desktop/src/Captions.tsx) | 后台维护字幕和排序，前端负责卡片、预览、滚动跟随与逐句回听入口。 |
+| [LibraryTree.tsx](../desktop/src/LibraryTree.tsx) | 根据库索引显示文件夹及录音，管理展开、选择和键盘导航。 |
+| [RecordingIsland.tsx](../desktop/src/RecordingIsland.tsx) 与 [Playback.tsx](../desktop/src/Playback.tsx) | 显示录音与回放控件，将操作交给主窗口。 |
+| [playback_controller.py](../linguaflow/playback_controller.py) | 持有 WAV 文件流、回环服务和播放位置，发出加载及跳转命令，为每次加载生成字符串标识 `epoch`。 |
+| [audio-host.cjs](../desktop/electron/audio-host.cjs) 与 [audio-preload.cjs](../desktop/electron/audio-preload.cjs) | Electron 音频窗口执行定位、解码和输出，携带同一 `epoch` 回报播放状态、位置或错误。 |
 
-Window 的薄转发入口和控件引用用于现有调用方组合；旧录音属性直接指向 RecordingData，不保留第二套业务状态。跨模块的保存资格、录音锁、迟到结果与退出门禁由共享后台流程判断，不分散到纯显示组件。
+点击“回听此句”后，定位回执可先更新进度条。媒体开始播放后，主进程将音频窗口的回报送入后台的 `playback.event` 接口，经[协议校验](../linguaflow/desktop_contract.json)和当前播放标识核对，界面收到 `PlayingState` 才显示“暂停回听”。
 
 ### 保存与迁移的文件归属
 
