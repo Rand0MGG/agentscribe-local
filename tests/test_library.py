@@ -260,6 +260,53 @@ def test_legacy_migration_is_repeatable_and_keeps_originals(tmp_path):
 
 
 @pytest.mark.p0
+@pytest.mark.parametrize("change", ["retry", "during_import"])
+def test_legacy_import_publishes_only_current_source(tmp_path, monkeypatch, change):
+    identifier = "a" * 32
+    source = tmp_path / "old"
+    recording = source / identifier
+    recording.mkdir(parents=True)
+    item = {"id": identifier, "name": "旧录音", "folder": "inbox",
+            "created": "2026-09-14", "state": "complete"}
+    Library._write(source / "library.json", {
+        "folders": [{"id": "inbox", "name": "我的录音"}], "sessions": [item],
+    })
+    Library._write(recording / "session.json", {"captions": [], "settings": {}})
+    original = (recording / "session.json").read_bytes()
+    audio = recording / "片段.wav"
+    audio.write_bytes(b"old")
+    library = Library(tmp_path / "new")
+    marker = library.root / ".legacy-imported.json"
+    write = library._write
+
+    def interrupt(path, data):
+        if path.name == "session.json":
+            if change == "retry":
+                raise OSError("模拟转换失败")
+            audio.write_bytes(b"new")
+        write(path, data)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(library, "_write", interrupt)
+        with pytest.raises(OSError):
+            library.import_legacy(source)
+    assert not marker.exists()
+    reopened = Library(library.root)
+    assert identifier not in reopened.paths
+    if change == "retry":
+        audio.unlink()
+    assert reopened.import_legacy(source) == 1
+    imported_audio = reopened.directory(identifier) / audio.name
+    if change == "retry":
+        assert not imported_audio.exists()
+    else:
+        assert imported_audio.read_bytes() == audio.read_bytes() == b"new"
+    assert (recording / "session.json").read_bytes() == original
+    assert Library._read(marker) == [str(source.resolve())]
+    assert reopened.import_legacy(source) == 0
+
+
+@pytest.mark.p0
 def test_begin_never_overwrites_existing_recording(tmp_path):
     library = Library(tmp_path)
     item = library.create("inbox", {}, name="已有录音")
