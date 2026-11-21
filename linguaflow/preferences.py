@@ -1,8 +1,17 @@
 """Preference keys, defaults and codecs, independent of Qt and window layout."""
 import json
+import math
 from contextlib import nullcontext
 from dataclasses import dataclass
 
+from .core import LANGUAGES
+from .model_options import (
+    ASR_DEVICE_LABELS,
+    asr_backends,
+    asr_device_code,
+    backend_devices,
+    translation_devices,
+)
 from .translation_config import CONTEXT_COUNTS, context_count
 
 
@@ -55,11 +64,17 @@ def read_preferences(store):
 
 
 def write_preferences(store, values):
+    changes = {pref.key: values[pref.key] for pref in PREFERENCES}
+    if values.get('audio_device') is not None:
+        changes['audio_device'] = json.dumps(values['audio_device'])
+    if hasattr(store, 'commit_values'):
+        if not store.commit_values(changes):
+            raise OSError('设置写入失败，请检查配置目录权限。')
+        return
     with store.batch() if hasattr(store, 'batch') else nullcontext():
-        for pref in PREFERENCES:
-            store.setValue(pref.key, values[pref.key])
-        if values.get('audio_device') is not None:
-            store.setValue('audio_device', json.dumps(values['audio_device']))
+        for key, value in changes.items():
+            store.setValue(key, value)
+
 
 
 def read_audio_device(store):
@@ -70,3 +85,44 @@ def read_audio_device(store):
     except (ValueError, TypeError):
         pass
     return None
+
+
+def validated_preferences(current, values):
+    if not isinstance(values, dict) or set(values) - {p.key for p in PREFERENCES}:
+        raise ValueError('无效的设置项。')
+    candidate = {**current, **values}
+    for pref in PREFERENCES:
+        value = candidate[pref.key]
+        if pref.kind == 'bool' and type(value) is not bool:
+            raise ValueError('开关设置必须是布尔值。')
+        if pref.kind == 'float' and (type(value) not in (float, int) or not math.isfinite(value)
+                                    or not (.25 if pref.key == 'draft_seconds' else .5) <= value <= 3):
+            raise ValueError('字幕时间参数超出范围。')
+        if pref.kind in ('text', 'editable') and (not isinstance(value, str) or len(value) > 4096):
+            raise ValueError('无效的文字设置。')
+    if candidate['backend'] not in asr_backends() or candidate['appearance'] not in ('light', 'dark'):
+        raise ValueError('不支持的引擎或外观。')
+    if candidate['translation_engine'] not in ('llama', 'pytorch'):
+        raise ValueError('不支持的翻译引擎。')
+    if candidate['backend'] == 'qwen3-streaming' and candidate['qwen_model'].startswith('mlx-community/'):
+        raise ValueError('MLX 权重需要 Apple Silicon Mac 的 MLX 引擎，当前引擎不能使用。')
+    if candidate['translation_engine'] == 'llama' and candidate['llama_model'].startswith('hf://'):
+        from .llama_assets import hub_gguf
+        hub_gguf(candidate['llama_model'])
+    if candidate['translation_device'] not in translation_devices(candidate['translation_engine']):
+        raise ValueError('翻译设备不适用于当前平台和引擎。')
+    if candidate['source'] not in ['自动检测', *(row[0] for row in LANGUAGES)] or candidate['target'] not in [row[0] for row in LANGUAGES]:
+        raise ValueError('不支持的语言。')
+    if candidate['backend'] != 'wlk-whisper' and candidate['source'] == '自动检测':
+        candidate['source'] = 'English'
+    if candidate['source'] == candidate['target']:
+        candidate['translate'] = False
+    compute = asr_device_code(candidate['compute'])
+    devices = backend_devices(candidate['backend'])
+    if 'compute' not in values and candidate['backend'] != current['backend'] and compute not in devices:
+        compute = devices[0]
+    if compute not in devices:
+        raise ValueError('识别设备不适用于当前平台和引擎。')
+    candidate['compute'] = ASR_DEVICE_LABELS[compute]
+    candidate.update({key: default for key, (default, _maximum) in CONTEXT_COUNTS.items()})
+    return candidate

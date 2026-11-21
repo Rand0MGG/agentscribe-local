@@ -332,7 +332,7 @@ else {
     session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     session.defaultSession.setPermissionCheckHandler(() => false);
     session.defaultSession.on('will-download', event => event.preventDefault());
-    const python = process.env.AGENTSCRIBE_DESKTOP_PYTHON || path.join(root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
+    const python = desktopPython();
     try {
       const result = await platformHelpers.run(python, ['-m', 'linguaflow.desktop_platform'], {
         cwd: root, env: { ...process.env, PYTHONIOENCODING: 'utf-8' }, timeout: 15000, windowsHide: true,

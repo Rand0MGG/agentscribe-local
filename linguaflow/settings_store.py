@@ -147,10 +147,13 @@ class SettingsStore:
 
     def commit_value(self, key, value):
         """One durable write; a failed replace leaves the old disk and memory value."""
+        return self.commit_values({key: value})
+
+    def commit_values(self, values):
         previous = dict(self.values), dict(self.dirty), set(self.removed)
-        self.values[key] = value
-        self.dirty[key] = value
-        self.removed.discard(key)
+        self.values.update(values)
+        self.dirty.update(values)
+        self.removed.difference_update(values)
         try:
             self.sync()
         except Exception:

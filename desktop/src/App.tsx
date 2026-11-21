@@ -4,13 +4,14 @@ import { LibraryTree, ResizableSidebar, SidebarToggle } from './LibraryTree';
 import { useEffect, useRef, useState } from 'react';
 import { Tooltip } from 'radix-ui';
 import { ActionMenu, Button, Choice, ConfirmDialog, ControlPopover, EditDialog, Icon, IconMenu, InlineTitle, Modal, Tip, Toggle, type MenuAction } from './components';
+import { CaptionSearch } from './CaptionSearch';
 import { Captions } from './Captions';
 import { SettingsPage, progressText, prepareRecommended } from './Settings';
 import { Playback } from './Playback';
 import { LevelMeter, RecordingIsland } from './RecordingIsland';
 import { useMaterial, usePageTransition } from './motion';
 import { useNotifications } from './notifications';
-import { bridge, clock, request, type Bootstrap, type Caption, type Item, type Page, type Settings, type State, type Method, type RequestArgs, type DeletedItem } from './types';
+import { bridge, clock, request, type Bootstrap, type Item, type Page, type Settings, type State, type Method, type RequestArgs, type DeletedItem } from './types';
 
 const blockingCommands = new Set(['recording.new', 'recording.open', 'recording.start', 'recording.stop', 'recording.pause', 'recording.save', 'recording.close_recovered', 'library.refresh', 'library.migrate']);
 
@@ -29,8 +30,7 @@ export function App() {
   const [playback, setPlayback] = useState<{ position: number; duration: number; state: string; caption_id: number | null }>({ position: 0, duration: 0, state: 'StoppedState', caption_id: null }), [volume, setVolume] = useState(100);
   const scrubbing = useRef(false);
   const [deleted, setDeleted] = useState<DeletedItem[] | null>(null), [moving, setMoving] = useState<Item | null>(null), [moveTo, setMoveTo] = useState('');
-  const [search, setSearch] = useState<string | null>(null), [searchMatches, setSearchMatches] = useState<{ rows: Caption[]; identifier: string | null; generation: number }>({ rows: [], identifier: null, generation: -1 }), [locate, setLocate] = useState<number | null>(null);
-  const [searchPage, setSearchPage] = useState(0), [searchTotal, setSearchTotal] = useState(0);
+  const [searchOpen, setSearchOpen] = useState(false), [locate, setLocate] = useState<number | null>(null);
   const [diagnostics, setDiagnostics] = useState<string[]>([]), [showDiagnostics, setShowDiagnostics] = useState(false);
   const [loadingModel, setLoadingModel] = useState(false), [loadingHidden, setLoadingHidden] = useState(false), [preparationHidden, setPreparationHidden] = useState(false);
   const modelLoading = data?.state.capture?.model_loading ?? loadingModel;
@@ -38,10 +38,9 @@ export function App() {
   const [settingsCategory, setSettingsCategory] = useState('常规');
   const [folder, setFolder] = useState('');
   const [audioBusy, setAudioBusy] = useState(false), [audioMessage, setAudioMessage] = useState('');
-  const dataRef = useRef(data), tail = useRef(true), searchGeneration = useRef(0), commands = useRef(new Set<string>());
+  const dataRef = useRef(data), tail = useRef(true), commands = useRef(new Set<string>());
   const stateGeneration = useRef(0);
   const [seekRevision, setSeekRevision] = useState(0);
-  const matches = searchMatches.rows;
   const [updatesBusy, setUpdatesBusy] = useState(false);
   const [updateEvent, setUpdateEvent] = useState<any>(null), [updateNotes, setUpdateNotes] = useState(false);
   dataRef.current = data;
@@ -166,17 +165,6 @@ export function App() {
   useEffect(() => { if (!data?.state.preparing) setPreparationHidden(false); }, [data?.state.preparing]);
   useEffect(() => { if (!modelLoading) setLoadingHidden(false); setNotice(modelLoading && !loadingHidden ? { text: '正在加载模型', busy: true } : null, 'model-loading'); }, [modelLoading, loadingHidden, setNotice]);
   useEffect(() => { setNotice(data?.state.preparing && !preparationHidden && !(section === 'settings' && ['模型管理', '运行环境'].includes(settingsCategory)) ? { text: data.state.preparation_status + (data.state.progress ? ` · ${progressText(data.state.progress)}` : ''), busy: true } : null, 'preparation'); }, [data?.state.preparing, data?.state.preparation_status, data?.state.progress, preparationHidden, section, settingsCategory, setNotice]);
-  useEffect(() => {
-    if (search === null) return;
-    const ticket = ++searchGeneration.current;
-    const timer = setTimeout(() => {
-      const owner = dataRef.current?.state;
-      request('captions.search', { query: search, start: searchPage * 100 }).then(result => {
-        if (owner && ticket === searchGeneration.current && result.generation === owner.generation && result.generation === dataRef.current?.state.generation) { setSearchMatches({ rows: result.rows, identifier: owner.item?.id ?? null, generation: result.generation }); setSearchTotal(result.total); }
-      }).catch(e => setNotice({ text: e.message, error: true }));
-    }, 150);
-    return () => clearTimeout(timer);
-  }, [search, searchPage, data?.state.generation]);
 
   if (!data) return <div className="startup"><h1>AgentScribe</h1><p role={error ? 'alert' : 'status'}>{error || '正在打开本地工作区…'}</p>{error && <Button onClick={async () => { try { await request('library.recover'); } catch (error) { setError((error as Error).message); } }}>选择其他录音保存位置</Button>}</div>;
   const state = data.state, active = state.state !== 'IDLE';
@@ -232,7 +220,7 @@ export function App() {
             { label: '悬浮字幕', run: () => perform('overlay.toggle') },
             { label: '导出定稿', disabled: !canExport, run: () => perform('recording.export') },
             ...(data.settings.beta_features ? [{ label: '课程资料与笔记 · Beta', disabled: !state.item, run: () => perform('knowledge.window') }] : []),
-            { label: '查找字幕', disabled: !state.item, run: () => { setSearchPage(0); setSearch(''); } },
+            { label: '查找字幕', disabled: !state.item, run: () => setSearchOpen(true) },
             { label: '导出 TXT', disabled: !canExport, run: () => { perform('recording.export', { format: 'txt' }); } },
             { label: '导出 Markdown', disabled: !canExport, run: () => { perform('recording.export', { format: 'md' }); } },
             { label: '重试保存', disabled: !state.dirty || state.saving, run: () => { perform('recording.save'); } },
@@ -284,7 +272,11 @@ export function App() {
     }}>移动</Button></>}><Choice label="目标文件夹" value={moveTo} options={data.library.folders.filter(row => row.id !== moving.id).map(row => ({ value: row.id, label: row.name }))} onChange={setMoveTo} /></Modal>}
     {deleted && <Deleted rows={deleted} disabled={blocked} onChange={setDeleted} onClose={() => setDeleted(null)} />}
     {updateNotes && <Modal title={'更新到 ' + (updateEvent?.version || '')} description="更新保留录音、模型与设置。录音中可以下载，结束并保存后才能安装。" open onClose={() => { setUpdateNotes(false); perform('updates.action', { action: 'cancel' }); }} actions={<><Button onClick={() => { setUpdateNotes(false); perform('updates.action', { action: 'cancel' }); }}>稍后</Button><Button variant="primary" onClick={() => { setUpdateNotes(false); perform('updates.action', { action: 'download' }); }}>下载更新</Button></>}><p>{String(updateEvent?.notes || '此版本未提供更新说明。').replace(/<[^>]+>/g, '')}</p></Modal>}
-    {search !== null && <Modal title="查找字幕" description="搜索原文或译文，选择结果定位，不会自动播放。" open onClose={() => { setSearch(null); searchGeneration.current++; }}><input aria-label="搜索当前录音字幕" placeholder="搜索原文或译文…" value={search} onChange={event => { setSearchPage(0); setSearch(event.target.value); }} autoFocus /><div className="search-results">{matches.map(row => <button key={row.id} onClick={async () => { if (!searchMatches.identifier) return; const result = await perform('captions.locate', { identifier: searchMatches.identifier, generation: searchMatches.generation, caption_id: row.id }); if (result && result.page.generation === dataRef.current?.state.generation) { setPage(result.page); setLocate(row.id); setSearch(null); } }}>{clock(row.start).slice(row.start >= 3600 ? 0 : 3)}　{row.source}<span>{row.translation}</span></button>)}{!matches.length && <p>没有匹配内容。</p>}</div><div className="settings-actions"><span>共 {searchTotal} 条，显示 {matches.length ? searchPage * 100 + 1 : 0}–{searchPage * 100 + matches.length}</span><Button disabled={searchPage === 0} onClick={() => setSearchPage(searchPage - 1)}>上一页</Button><Button disabled={(searchPage + 1) * 100 >= searchTotal} onClick={() => setSearchPage(searchPage + 1)}>下一页</Button></div></Modal>}
+    {searchOpen && state.item && <CaptionSearch key={state.generation} identifier={state.item.id} generation={state.generation}
+      onClose={() => setSearchOpen(false)} onLocate={(result, id) => {
+        if (result.generation !== dataRef.current?.state.generation) return;
+        setPage(result); setLocate(id); setSearchOpen(false);
+      }} />}
 
   </div></Tooltip.Provider>;
 }

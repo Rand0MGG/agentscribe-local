@@ -70,6 +70,21 @@ def asr_devices(system=None):
     return ('cpu', 'mlx') if (system or sys.platform) == 'darwin' else ('cpu', 'cuda')
 
 
+ASR_DEVICE_LABELS = {'cpu': 'CPU（通用）', 'cuda': 'NVIDIA GPU · 半精度', 'mlx': 'Apple GPU · Metal / MLX'}
+
+
+def asr_device_code(value):
+    return next((code for code, label in ASR_DEVICE_LABELS.items() if value == label), value)
+
+
+def backend_devices(backend, system=None):
+    if backend not in asr_backends(system):
+        return ()
+    if backend == 'qwen3-mlx':
+        return ('mlx',)
+    return tuple(code for code in asr_devices(system) if code != 'mlx')
+
+
 def qwen_models(system=None):
     return QWEN_MODELS + (MLX_MODEL, MLX_8BIT_MODEL) if (system or sys.platform) == 'darwin' else QWEN_MODELS
 

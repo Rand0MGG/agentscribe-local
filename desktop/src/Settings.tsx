@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import { usePageTransition } from './motion';
 import { Button, Choice, ConfirmDialog, Modal, NumberField, SettingsRow, Toggle } from './components';
-import { bridge, request, type Bootstrap, type Settings, type State, type Method, type RequestArgs, type RequestResults } from './types';
+import { bridge, request, type ModelEntry, type Bootstrap, type Settings, type State, type Method, type RequestArgs, type RequestResults } from './types';
 
 const categories = ['常规', '聆听', '模型管理', '字幕与延迟', '运行环境', '使用指南'];
 const backendNames: Record<string, string> = { 'wlk-whisper': 'WhisperLiveKit · Whisper / AlignAtt', 'qwen3-streaming': 'WhisperLiveKit · Qwen3-ASR 流式', 'qwen3-mlx': 'Qwen3-ASR · MLX（试验）' };
-const deviceNames: Record<string, string> = { cpu: 'CPU（通用）', cuda: 'NVIDIA GPU · 半精度', mlx: 'Apple GPU · Metal / MLX', metal: 'Apple GPU · Metal' };
+function deviceLabel(data: Bootstrap, device: string) {
+  return data.options.asr_device_labels[device] ?? (device === 'metal' ? 'Apple GPU · Metal' : device);
+}
 
 export function SettingsPage({ data, values, state, updatesBusy, update, audioBusy, audioMessage, onClose, onDeleted, perform, onPatch, onCategory, initialCategory = '常规' }: {
   audioBusy: boolean; audioMessage: string; data: Bootstrap; values: Settings; state: State; updatesBusy: boolean; update?: { text?: string }; onClose: () => void; onDeleted: () => void;
@@ -15,9 +17,9 @@ export function SettingsPage({ data, values, state, updatesBusy, update, audioBu
   const [category, setCategory] = useState(initialCategory), [query, setQuery] = useState('');
   useEffect(() => { onCategory?.(category); }, [category, onCategory]);
   const [advanced, setAdvanced] = useState(false);
-  const [inventory, setInventory] = useState<any[]>([]), [checking, setChecking] = useState(false), [loaded, setLoaded] = useState(false), [deleting, setDeleting] = useState<any>(null);
+  const [inventory, setInventory] = useState<ModelEntry[]>([]), [checking, setChecking] = useState(false), [loaded, setLoaded] = useState(false), [deleting, setDeleting] = useState<ModelEntry | null>(null);
   const [selectedId, setSelectedId] = useState(''), [inventoryMessage, setInventoryMessage] = useState('');
-  const [catalog, setCatalog] = useState(false), [modelEditor, setModelEditor] = useState<{ kind: 'asr' | 'translation'; entry?: any } | null>(null);
+  const [catalog, setCatalog] = useState(false), [modelEditor, setModelEditor] = useState<{ kind: 'asr' | 'translation'; entry?: Exclude<ModelEntry, { kind: 'alignment' }> } | null>(null);
   const [modelCheck, setModelCheck] = useState(''), [updateAvailable, setUpdateAvailable] = useState(false);
   const pageTransition = usePageTransition(category);
   useEffect(() => bridge?.subscribe(({ event, data }) => {
@@ -36,21 +38,38 @@ export function SettingsPage({ data, values, state, updatesBusy, update, audioBu
   const visibleCategories = categories.filter(value => query.trim().toLowerCase().split(/\s+/).every(term => (value + ' ' + aliases[value]).toLowerCase().includes(term)));
   const firstMatch = visibleCategories[0], categoryVisible = visibleCategories.includes(category);
   useEffect(() => { if (firstMatch && !categoryVisible) setCategory(firstMatch); }, [firstMatch, categoryVisible]);
-  function inspect(model: any) {
-    const reason = model.kind === 'alignment' ? '此模型用于时间戳对齐，当前识别流程不加载它，不能选作识别模型。'
-      : model.kind === 'asr' ? (data.options.backends.includes(model.engine) ? '' : '这个识别模型的引擎不适用于当前平台。')
-      : model.kind === 'translation' && ['llama', 'pytorch'].includes(model.engine) ? '' : '此模型不能用于当前识别或翻译流程。';
-    if (reason) setInventoryMessage(reason); else setModelEditor({ kind: model.kind, entry: model });
+  function inspect(model: ModelEntry) {
+    if (model.kind === 'alignment') {
+      setInventoryMessage('此模型用于时间戳对齐，当前识别流程不加载它，不能选作识别模型。');
+    } else if (model.kind === 'asr' && !data.options.backends.includes(model.engine)) {
+      setInventoryMessage('这个识别模型的引擎不适用于当前平台。');
+    } else if (model.kind === 'translation' && !['llama', 'pytorch'].includes(model.engine)) {
+      setInventoryMessage('此模型不能用于当前识别或翻译流程。');
+    } else {
+      setModelEditor({ kind: model.kind, entry: model });
+    }
   }
   function role(kind: 'asr' | 'translation', label: string) {
     const engine = String(values[kind === 'asr' ? 'backend' : 'translation_engine']);
     const modelPath = String(values[kind === 'asr' ? engine === 'wlk-whisper' ? 'asr' : 'qwen_model' : engine === 'llama' ? 'llama_model' : 'translation']);
     const current = inventory.find(model => model.engine === engine && [model.path, model.selection].includes(modelPath));
+    function selectModel(value: string) {
+      if (value === 'settings') { setModelEditor({ kind }); return; }
+      const model = inventory.find(row => row.id === value);
+      if (model?.kind !== kind) return;
+      if (kind === 'asr') {
+        onPatch({ backend: model.engine, [model.engine === 'wlk-whisper' ? 'asr' : 'qwen_model']: model.path,
+          compute: modelDevice(data, kind, model.engine, values.compute) });
+      } else {
+        onPatch({ translation_engine: model.engine, [model.engine === 'llama' ? 'llama_model' : 'translation']: model.path,
+          translation_device: modelDevice(data, kind, model.engine, values.translation_device) });
+      }
+    }
     return <div className="model-role"><label>{label}</label><Choice label={`${label}模型`} disabled={active} value="current" options={[
       { value: 'current', label: current?.name || modelPath.replaceAll('\\', '/').split('/').pop() + (loaded ? ' · 已选择，未在本地找到' : ' · 当前选择') },
       ...inventory.filter(model => model.kind === kind && model.id !== current?.id && (kind !== 'asr' || data.options.backends.includes(model.engine))).map(model => ({ value: model.id, label: model.name })),
       { value: 'settings', label: '模型设置…' },
-    ]} onChange={value => { if (value === 'settings') setModelEditor({ kind }); else { const model = inventory.find(row => row.id === value); if (model) onPatch({ [kind === 'asr' ? 'backend' : 'translation_engine']: model.engine, [kind === 'asr' ? model.engine === 'wlk-whisper' ? 'asr' : 'qwen_model' : model.engine === 'llama' ? 'llama_model' : 'translation']: model.path, ...(kind === 'asr' ? {compute: modelDevice(data,kind,model.engine,values.compute)} : {translation_device: modelDevice(data,kind,model.engine,values.translation_device)}) }); } }} /></div>;
+    ]} onChange={selectModel} /></div>;
   }
   return <div className="settings-page"><aside className="settings-nav"><Button variant="quiet" onClick={onClose}>←  返回录音</Button>
     <input aria-label="搜索设置" placeholder="搜索设置…" value={query} onChange={e => setQuery(e.target.value)} />
@@ -85,9 +104,9 @@ export function SettingsPage({ data, values, state, updatesBusy, update, audioBu
         const index = rows.indexOf(event.currentTarget), next = event.key === 'Home' ? 0 : event.key === 'End' ? rows.length - 1 : Math.max(0, Math.min(rows.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)));
         rows[next]?.focus();
       }}>
-        <span>{{ asr: '识别', translation: '翻译', alignment: '时间对齐 · 当前流程未使用' }[model.kind as string] || '模型'}  ·  {model.name}</span><span>{backendNames[model.engine] || model.engine || '独立组件'} · {(model.size / 1024 ** 3).toFixed(2)} GB</span>
+        <span>{{ asr: '识别', translation: '翻译', alignment: '时间对齐 · 当前流程未使用' }[model.kind] || '模型'}  ·  {model.name}</span><span>{model.engine ? backendNames[model.engine] || model.engine : '独立组件'} · {(model.size / 1024 ** 3).toFixed(2)} GB</span>
       </button>)}</div>
-      <div className="settings-actions"><Button disabled={checking} onClick={() => perform('models.inventory')}>刷新</Button><Button variant="danger" disabled={!selected?.deletable || active || checking || state.preparing} onClick={() => setDeleting(selected)}>删除模型</Button></div>
+      <div className="settings-actions"><Button disabled={checking} onClick={() => perform('models.inventory')}>刷新</Button><Button variant="danger" disabled={!selected?.deletable || active || checking || state.preparing} onClick={() => setDeleting(selected ?? null)}>删除模型</Button></div>
       <Button className="fit-button" variant="primary" disabled={active || state.preparing} onClick={() => perform('models.prepare')}>检查 / 补齐当前模型</Button>
       {modelCheck && <p role="status">{modelCheck}</p>}
     </>}
@@ -171,15 +190,15 @@ function ModelCatalog({ data, values, disabled, onClose, onAdvanced }: { data: B
 }
 
 function modelDevices(data: Bootstrap, kind: 'asr' | 'translation', engine: string) {
-  return kind === 'asr' ? engine === 'qwen3-mlx' ? ['mlx'] : data.options.devices : data.options.translation_devices[engine];
+  return kind === 'asr' ? data.options.asr_devices[engine] || [] : data.options.translation_devices[engine];
 }
 
 function modelDevice(data: Bootstrap, kind: 'asr' | 'translation', engine: string, current: unknown) {
-  const choices = modelDevices(data, kind, engine).map(device => kind === 'asr' ? deviceNames[device] : device);
+  const choices = modelDevices(data, kind, engine).map(device => kind === 'asr' ? deviceLabel(data, device) : device);
   return choices.includes(String(current)) ? String(current) : choices[0];
 }
 
-function ModelEditor({ kind, entry, data, values, disabled, onClose }: { kind: 'asr' | 'translation'; entry?: any; data: Bootstrap; values: Settings; disabled: boolean; onClose: () => void }) {
+function ModelEditor({ kind, entry, data, values, disabled, onClose }: { kind: 'asr' | 'translation'; entry?: Exclude<ModelEntry, { kind: 'alignment' }>; data: Bootstrap; values: Settings; disabled: boolean; onClose: () => void }) {
   const [draft, setDraft] = useState<Settings>(() => {
     const initial: Settings = { ...values, ...(entry ? kind === 'asr' ? { backend: entry.engine, [entry.engine === 'wlk-whisper' ? 'asr' : 'qwen_model']: entry.path } : { translation_engine: entry.engine, [entry.engine === 'llama' ? 'llama_model' : 'translation']: entry.path } : {}) };
     const engine = String(initial[kind === 'asr' ? 'backend' : 'translation_engine']);
@@ -214,7 +233,7 @@ function ModelEditor({ kind, entry, data, values, disabled, onClose }: { kind: '
     }} /></SettingsRow>
     <p className="muted">{modelHints[engine]}</p>{kind === 'translation' && <p className="document-text muted">{data.options.generation?.[engine === 'llama' || String(draft[modelKey]).toLowerCase().includes('hy-mt2') ? 'hy' : 'nllb']}</p>}
     <SettingsRow title="模型 / 下载地址"><ModelField label="模型 / 下载地址" value={String(draft[modelKey])} options={data.options.models[engine]} onChange={value => patch({ [modelKey]: value })} /></SettingsRow>
-    <SettingsRow title="计算设备"><Choice label="计算设备" value={String(draft[deviceKey])} options={devices.map(value => ({ value: kind === 'asr' ? deviceNames[value] : value, label: deviceNames[value] }))} onChange={value => patch({ [deviceKey]: value })} /></SettingsRow>
+    <SettingsRow title="计算设备"><Choice label="计算设备" value={String(draft[deviceKey])} options={devices.map(value => ({ value: kind === 'asr' ? deviceLabel(data, value) : value, label: deviceLabel(data, value) }))} onChange={value => patch({ [deviceKey]: value })} /></SettingsRow>
     {kind === 'asr' && [['draft_seconds', '草稿刷新目标'], ['update_seconds', '音频合并间隔'], ['endpoint_seconds', '停顿检测阈值']].filter(([key]) => engine !== 'wlk-whisper' || key !== 'draft_seconds').map(([key, label]) => <SettingsRow key={key} title={label}><NumberField label={label} help={parameterHelp[key]} value={Number(draft[key])} min={key === 'draft_seconds' ? .25 : .5} max={3} step={key === 'draft_seconds' ? .25 : .5} onCommit={value => patch({ [key]: value })} /></SettingsRow>)}
     <div className="settings-actions"><Button disabled={busy} onClick={async () => { try { const result = await request('models.choose', { key: modelKey, apply: false }); if (result.path) patch({ [modelKey]: result.path }); } catch (error) { setError((error as Error).message); } }}>导入本地模型…</Button><Button disabled={disabled || busy} onClick={() => submit(true)}>下载模型</Button></div></>}
     {error && <p className="error" role="alert">{error}</p>}</div>

@@ -353,3 +353,61 @@ def test_deferred_title_survives_save_reload_and_conflict_without_moving_audio(t
     assert reopened.directory(item['id']).name == '新名称'
     assert (reopened.directory(item['id']) / '录音.wav').read_bytes() == b'keep audio'
     assert 'pending_name' not in reopened.load(restored)[0]['session']
+
+
+@pytest.mark.p1
+def test_failed_create_never_indexes_an_empty_folder(tmp_path, monkeypatch):
+    library = Library(tmp_path)
+    def disk_full(*args):
+        raise OSError('disk full')
+    with monkeypatch.context() as patch:
+        patch.setattr(library, '_write', disk_full)
+        with pytest.raises(OSError, match='disk full'):
+            library.create('inbox', {}, '讲座')
+    assert {p.name for p in library.directory('inbox').iterdir()} == {Library.folder_file}
+    assert Library(tmp_path).create('inbox', {}, '讲座')['name'] == '讲座'
+
+
+@pytest.mark.p1
+def test_case_only_rename_persists_after_reopen(tmp_path):
+    library = Library(tmp_path)
+    item = library.create('inbox', {}, 'Lecture')
+    library.rename(item, 'lecture')
+    assert Library(tmp_path).directory(item['id']).name == 'lecture'
+
+
+@pytest.mark.p0
+@pytest.mark.parametrize('previously_marked', [False, True])
+def test_legacy_import_requires_indexable_metadata_and_allows_repair(tmp_path, previously_marked):
+    source = tmp_path / '旧库'
+    library = Library(tmp_path / '新库')
+    marker = library.root / '.legacy-imported.json'
+    item = {'id': 'a' * 32, 'folder': 'inbox', 'name': '讲座', 'state': 'complete'}
+    catalog = {'folders': [{'id': 'inbox', 'name': '录音'}], 'sessions': [item]}
+    metadata = {'captions': [], 'settings': {}}
+    original = source / item['id']
+    original.mkdir(parents=True)
+    Library._write(original / 'session.json', metadata)
+    Library._write(source / 'library.json', catalog)
+    if previously_marked:
+        damaged = library.directory('inbox') / item['name']
+        damaged.mkdir()
+        Library._write(damaged / 'session.json', {**metadata, 'version': 2, 'session': item})
+        (damaged / '保留.wav').write_bytes(b'fixture')
+        Library._write(marker, [str(source.resolve())])
+        library = Library(library.root)
+        assert library.import_legacy(source) == 0
+        assert library.warnings
+    else:
+        with pytest.raises(ValueError, match='元数据'):
+            library.import_legacy(source)
+        assert not marker.exists()
+        assert {p.name for p in library.directory('inbox').iterdir()} == {Library.folder_file}
+    item['created'] = '2026-09-01'
+    Library._write(source / 'library.json', catalog)
+    assert library.import_legacy(source) == 1
+    assert Library(library.root).load(item)[0]['session']['created'] == item['created']
+    if previously_marked:
+        assert (damaged / '保留.wav').read_bytes() == b'fixture'
+    assert library.import_legacy(source) == 0
+    assert Library._read(original / 'session.json') == metadata

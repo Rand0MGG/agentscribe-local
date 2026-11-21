@@ -1,14 +1,14 @@
 """Build the same immutable recording settings from either frontend's values."""
 from .audio_processing.config import automatic_audio_config
 from .core import LANGUAGES, Settings
+from .model_options import asr_device_code
 
 
 def session_settings(values, device):
     from .llama_assets import normalize_model_reference
     language = next((row for row in LANGUAGES if row[0] == values['source']), (None, None, None))
     target = next((row[2] for row in LANGUAGES if row[0] == values['target']), 'zho_Hans')
-    compute = {'CPU（通用）': 'cpu', 'NVIDIA GPU · 半精度': 'cuda',
-               'Apple GPU · Metal / MLX': 'mlx'}.get(values['compute'], values['compute'])
+    compute = asr_device_code(values['compute'])
     shared = {key: values[key] for key in (
         'translate', 'backend', 'qwen_model', 'llama_model', 'translation_engine', 'translation_device',
         'translation_before', 'translation_after', 'translation_initial_before',

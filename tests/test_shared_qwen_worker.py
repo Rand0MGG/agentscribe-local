@@ -349,3 +349,13 @@ def test_source_lock_waiters_do_not_starve_live_translation(monkeypatch):
             await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(exercise())
+
+
+@pytest.mark.p1
+@pytest.mark.parametrize(('backend', 'device'), [('whisper', 'mlx'), ('qwen3-mlx', 'cpu')])
+def test_macos_worker_rejects_mismatched_backend_device(monkeypatch, backend, device):
+    configured, _, _ = stub_worker(monkeypatch, 'darwin')
+    settings = Settings('fixture', backend=backend, asr_device=device)
+    with pytest.raises(ValueError, match='识别设备不适用于当前平台和引擎'):
+        asyncio.run(wlk_worker.serve(asdict(settings), lambda _: None, None))
+    assert not configured

@@ -16,7 +16,7 @@ export type Settings = Record<string, string | number | boolean>;
 export type Device = { id: string; name: string; loopback: boolean };
 export type Library = { folders: Item[]; sessions: Item[] };
 export type Page = { generation: number; revision: number; start: number; total: number; rows: Caption[] };
-export type Options = { generation?: Record<string, string>; downloads: [string, string, string, string, string][]; languages: [string, string, string][]; backends: string[]; devices: string[];
+export type Options = { generation?: Record<string, string>; downloads: [string, string, string, string, string][]; languages: [string, string, string][]; backends: string[]; devices: string[]; asr_devices: Record<string, string[]>; asr_device_labels: Record<string, string>;
   models: Record<string, [string, string][]>; translation_devices: Record<string, string[]>;
   recommended: { backend: string; asr_model: string; translation_engine: string; translation_model: string; translation_device: string } };
 export type Interaction = { doubleClickInterval: number; dragDistance: number };
@@ -27,7 +27,10 @@ export type CaptionLocation = { page: Page; identifier: number | null };
 export type OverlayOptions = { font: number; opacity: number; bounds?: { x: number; y: number; width: number; height: number } };
 export type Material = { appearance: string; image: string; width: number; height: number; x: number; y: number };
 export type Term = { canonical: string; aliases: string[]; aliasesText?: string; evidence_ids: string[]; approved: boolean; origin: string };
-export type ModelEntry = { id: string; name: string; kind: string; engine: string; path: string; selection: string; [key: string]: unknown };
+export type ModelEntry = { id: string; name: string; path: string; selection: string | null; size: number; deletable: boolean } & (
+  | { kind: 'alignment'; engine: null }
+  | { kind: 'asr' | 'translation'; engine: string }
+);
 export type UpdateEvent = { stage?: string; text?: string; releasing?: boolean; busy?: boolean; error?: string; result?: { url?: string; message?: string; kind?: string }; [key: string]: unknown };
 // Knowledge views are extensible documents; fields read at the transport boundary
 // are explicit, while additional document content remains unknown.

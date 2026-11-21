@@ -100,7 +100,7 @@ library.save(item, [
     await page.getByRole('button', { name: '更多操作', exact: true }).click();
     await page.getByRole('menuitem', { name: '查找字幕', exact: true }).click();
     await page.getByRole('textbox', { name: '搜索当前录音字幕' }).fill('上下文');
-    await page.getByRole('dialog').getByRole('button').filter({ hasText: 'Context helps' }).click();
+    await page.getByRole('dialog').getByRole('option').filter({ hasText: 'Context helps' }).click();
     await page.locator('.caption.located').waitFor();
     await page.getByRole('button', { name: '新建文件夹', exact: true }).click();
     await page.getByRole('textbox', { name: '名称', exact: true }).fill('中文 新文件夹');

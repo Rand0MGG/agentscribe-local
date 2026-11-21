@@ -134,7 +134,12 @@ h2 { font-size:21px; font-weight:600; margin:0 0 8px; }
 .inventory-status { margin:0; line-height:1.5; }
 .model-inventory { flex:1; min-height:110px; overflow:auto; }.model-inventory>button { display:block; width:100%; padding:14px 16px; text-align:left; border:1px solid var(--border); border-radius:10px; margin-bottom:8px; }.model-inventory>button:hover { background:var(--row-hover); }.model-inventory>button span { display:block; line-height:1.5; }
 .model-field { display:flex; gap:6px; flex-wrap:wrap; max-width:100%; }.model-field input { flex:1; min-width:180px; }.preparation { padding:16px; background:var(--control); border-radius:10px; overflow-wrap:anywhere; white-space:pre-wrap; }
-.deleted-row { display:flex; gap:8px; align-items:center; padding:12px 0; }.deleted-row>span { flex:1; min-width:0; overflow-wrap:anywhere; }.search-results { max-height:45vh; overflow:auto; margin-top:12px; }.search-results button { display:block; width:100%; text-align:left; padding:12px; border-radius:9px; line-height:1.6; }.search-results button:hover { background:var(--hover); }.search-results span { display:block; color:var(--muted); }
+.deleted-row { display:flex; gap:8px; align-items:center; padding:12px 0; }.deleted-row>span { flex:1; min-width:0; overflow-wrap:anywhere; }
+.search-results { max-height:45vh; overflow:auto; position:relative; }
+.search-hit { position:absolute; inset-inline:0; box-sizing:border-box; padding:8px 12px; border-radius:9px; cursor:pointer; }
+.search-hit:hover, .search-results:focus-visible .search-hit[aria-selected=true] { background:var(--hover); }
+.search-hit span { display:block; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; line-height:24px; }
+.search-hit span + span { color:var(--muted); }
 .document-text { white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.7; margin:0; }
 .material-image { width:100%; height:auto; margin-top:16px; }.reference-list { display:flex; flex-wrap:wrap; gap:4px; }.reference-list .button { white-space:normal; text-align:left; }
 .startup { padding:80px 40px; background:var(--surface); height:100vh; }.startup p { max-width:640px; overflow-wrap:anywhere; }

@@ -894,3 +894,54 @@ os._exit(0)
     assert path.read_bytes() == original
     lock = acquire_recording_lock(path.parent)
     lock.unlock()
+
+
+@pytest.mark.p0
+def test_failed_settings_cannot_leak_into_later_overlay_save(desktop, monkeypatch):
+    prefs = desktop.prefs
+    desktop.set_settings({'beta_features': False})
+    desktop.set_overlay_preferences(font=22, opacity=80)
+    def disk_full(*args, **kwargs):
+        raise OSError('disk full')
+    with monkeypatch.context() as patch:
+        patch.setattr('linguaflow.storage_io.atomic_write', disk_full)
+        with pytest.raises(OSError, match='写入失败'):
+            desktop.set_settings({'beta_features': True})
+        with pytest.raises(OSError, match='写入失败'):
+            desktop.set_overlay_preferences(font=35, opacity=30)
+    assert desktop.values['beta_features'] is False
+    assert desktop.overlay_preferences()['font'] == 22
+    desktop.set_overlay_preferences(font=27)
+    reopened = QSettings(prefs.fileName(), 1)
+    assert reopened.value('overlay_font_size') == 27
+    assert reopened.value('overlay_background_opacity') == 80
+    assert reopened.value('beta_features') is False
+
+
+@pytest.mark.p1
+def test_macos_whisper_only_offers_and_accepts_cpu(desktop, monkeypatch):
+    from linguaflow.model_options import backend_devices
+    monkeypatch.setattr(sys, 'platform', 'darwin')
+    assert backend_devices('wlk-whisper') == ('cpu',)
+    assert backend_devices('qwen3-mlx') == ('mlx',)
+    desktop.set_settings({'backend': 'qwen3-mlx', 'compute': 'mlx', 'translation_device': 'cpu'})
+    with pytest.raises(ValueError, match='识别设备'):
+        desktop.set_settings({'backend': 'wlk-whisper', 'compute': 'mlx'})
+    desktop.set_settings({'backend': 'wlk-whisper'})
+    assert desktop.settings().asr_device == 'cpu'
+
+
+@pytest.mark.p1
+def test_search_serializes_only_requested_window(desktop, monkeypatch):
+    import linguaflow.desktop_service as service
+    for index in range(650):
+        desktop.captions[index] = Caption(index, index, index + 1, 'match', 'en')
+    converted = []
+    encode = service.caption_value
+    def trace(row):
+        converted.append(row.id)
+        return encode(row)
+    monkeypatch.setattr(service, 'caption_value', trace)
+    result = desktop.search('MATCH', 550)
+    assert result['total'] == 650
+    assert converted == [row['id'] for row in result['rows']] == list(range(550, 650))

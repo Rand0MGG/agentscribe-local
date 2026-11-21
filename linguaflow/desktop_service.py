@@ -31,14 +31,17 @@ from .library_access import (
 from .library_loading import LibraryReader
 from .library_startup import open_library
 from .model_options import (
+    ASR_DEVICE_LABELS,
     asr_backends,
+    asr_device_code,
     asr_devices,
+    backend_devices,
     download_catalog,
     model_catalog,
     recommended_selection,
     translation_devices,
 )
-from .preferences import PREFERENCES, read_audio_device, read_preferences, write_preferences
+from .preferences import read_audio_device, read_preferences, validated_preferences, write_preferences
 from .preparation_workflow import PreparationWorkflow
 from .recording_save import RecordingSaver
 from .recording_state import RecordingState
@@ -52,7 +55,6 @@ from .runtime_paths import packaged, resource_root
 from .settings_store import SettingsStore
 from .source_preview import preview_captions
 from .transcript import Transcript
-from .translation_config import CONTEXT_COUNTS
 
 PROTOCOL = 1
 MAX_REQUEST_BYTES = 1024 * 1024
@@ -144,8 +146,8 @@ class DesktopService(DesktopModels, DesktopLibrary, DesktopKnowledge, Owner):
                                llama_model=recommended['translation_model'],
                                translation_device=recommended['translation_device'],
                                compute='mlx' if sys.platform == 'darwin' else 'cuda')
-        self.values['compute'] = {'cpu': 'CPU（通用）', 'cuda': 'NVIDIA GPU · 半精度',
-                                  'mlx': 'Apple GPU · Metal / MLX'}.get(self.values['compute'], self.values['compute'])
+        compute = asr_device_code(self.values['compute'])
+        self.values['compute'] = ASR_DEVICE_LABELS.get(compute, compute)
         if self.values['backend'] != 'wlk-whisper' and self.values['source'] == '自动检测':
             self.values['source'] = 'English'
         self.device = read_audio_device(self.prefs)
@@ -320,6 +322,8 @@ class DesktopService(DesktopModels, DesktopLibrary, DesktopKnowledge, Owner):
                 'layout': {'sidebar_width': self.prefs.value('electron_sidebar_width', type=int)
                            if self.prefs.contains('electron_sidebar_width') else None},
                 'options': {'languages': LANGUAGES, 'backends': asr_backends(), 'devices': asr_devices(),
+                            'asr_device_labels': ASR_DEVICE_LABELS,
+                            'asr_devices': {key: backend_devices(key) for key in asr_backends()},
                             'models': {key: model_catalog(key) for key in (*asr_backends(), 'llama', 'pytorch')},
                             'translation_devices': {key: translation_devices(key) for key in ('llama', 'pytorch')},
                             'recommended': recommended_selection(), 'downloads': download_catalog(),
@@ -414,54 +418,21 @@ class DesktopService(DesktopModels, DesktopLibrary, DesktopKnowledge, Owner):
         if not isinstance(query, str) or len(query) > 1024 or type(start) is not int or start < 0:
             raise ValueError('无效的搜索条件。')
         query = query.strip().casefold()
-        rows = [caption_value(self.captions[key]) for key in self.captions.ordered_ids
-                if query in (self.captions[key].source + '\n' + self.captions[key].translation).casefold()]
-        return {'generation': self.generation, 'total': len(rows), 'rows': rows[start:start+100]}
+        rows, total = [], 0
+        for key in self.captions.ordered_ids:
+            caption = self.captions[key]
+            if query and query not in (caption.source + '\n' + caption.translation).casefold():
+                continue
+            if start <= total < start + 100:
+                rows.append(caption_value(caption))
+            total += 1
+        return {'generation': self.generation, 'total': total, 'rows': rows}
 
     def set_settings(self, values):
-        if not isinstance(values, dict) or set(values) - {p.key for p in PREFERENCES}:
-            raise ValueError('无效的设置项。')
-        candidate = {**self.values, **values}
-        for pref in PREFERENCES:
-            value = candidate[pref.key]
-            if pref.kind == 'bool' and type(value) is not bool:
-                raise ValueError('开关设置必须是布尔值。')
-            if pref.kind == 'float' and (type(value) not in (float, int) or not math.isfinite(value)
-                                        or not (.25 if pref.key == 'draft_seconds' else .5) <= value <= 3):
-                raise ValueError('字幕时间参数超出范围。')
-            if pref.kind in ('text', 'editable') and (not isinstance(value, str) or len(value) > 4096):
-                raise ValueError('无效的文字设置。')
-        if candidate['backend'] not in asr_backends() or candidate['appearance'] not in ('light', 'dark'):
-            raise ValueError('不支持的引擎或外观。')
-        if candidate['translation_engine'] not in ('llama', 'pytorch'):
-            raise ValueError('不支持的翻译引擎。')
-        if candidate['backend'] == 'qwen3-streaming' and candidate['qwen_model'].startswith('mlx-community/'):
-            raise ValueError('MLX 权重需要 Apple Silicon Mac 的 MLX 引擎，当前引擎不能使用。')
-        if candidate['translation_engine'] == 'llama' and candidate['llama_model'].startswith('hf://'):
-            from .llama_assets import hub_gguf
-            hub_gguf(candidate['llama_model'])
-        if candidate['translation_device'] not in translation_devices(candidate['translation_engine']):
-            raise ValueError('翻译设备不适用于当前平台和引擎。')
-        if candidate['source'] not in ['自动检测', *(row[0] for row in LANGUAGES)] or candidate['target'] not in [row[0] for row in LANGUAGES]:
-            raise ValueError('不支持的语言。')
-        if candidate['backend'] != 'wlk-whisper' and candidate['source'] == '自动检测':
-            candidate['source'] = 'English'
-        if candidate['source'] == candidate['target']:
-            candidate['translate'] = False
-        if candidate['compute'] not in ('cpu', 'cuda', 'mlx', 'CPU（通用）', 'NVIDIA GPU · 半精度', 'Apple GPU · Metal / MLX'):
-            raise ValueError('不支持的识别设备。')
-        compute = {'CPU（通用）': 'cpu', 'NVIDIA GPU · 半精度': 'cuda',
-                   'Apple GPU · Metal / MLX': 'mlx'}.get(candidate['compute'], candidate['compute'])
-        if compute not in asr_devices():
-            raise ValueError('识别设备不适用于当前平台。')
-        candidate['compute'] = {'cpu': 'CPU（通用）', 'cuda': 'NVIDIA GPU · 半精度', 'mlx': 'Apple GPU · Metal / MLX'}[compute]
-        candidate.update({key: default for key, (default, _maximum) in CONTEXT_COUNTS.items()})
+        candidate = validated_preferences(self.values, values)
         if self.knowledge is not None and not candidate['beta_features'] and not self.knowledge.close():
             raise ValueError('课程后台尚未退出，设置未保存。')
         write_preferences(self.prefs, candidate)
-        self.prefs.sync()
-        if self.prefs.status().value != 0:
-            raise OSError('设置写入失败，请检查配置目录权限。')
         selection_changed = any(candidate[key] != self.values[key] for key in (
             'backend', 'asr', 'qwen_model', 'translation_engine', 'translation', 'llama_model', 'translation_device', 'translate'))
         self.values = candidate
@@ -506,11 +477,12 @@ class DesktopService(DesktopModels, DesktopLibrary, DesktopKnowledge, Owner):
         for value, minimum, maximum in ((font, 12, 56), (opacity, 0, 100)):
             if value is not None and (type(value) is not int or not minimum <= value <= maximum):
                 raise ValueError('无效的悬浮字幕设置。')
-        for value, key in ((font, 'overlay_font_size'), (opacity, 'overlay_background_opacity')):
-            if value is not None:
-                self.prefs.setValue(key, value)
+        changes = {key: value for key, value in (('overlay_font_size', font), ('overlay_background_opacity', opacity))
+                   if value is not None}
         if bounds is not None:
-            self.prefs.setValue('electron_overlay_bounds', json.dumps(bounds))
+            changes['electron_overlay_bounds'] = json.dumps(bounds)
+        if changes and not self.prefs.commit_values(changes):
+            raise OSError('悬浮字幕设置写入失败，请检查配置目录权限。')
         return self.overlay_preferences()
 
     def refresh_devices(self):
@@ -559,12 +531,14 @@ class DesktopService(DesktopModels, DesktopLibrary, DesktopKnowledge, Owner):
             raise ValueError('推理环境尚未安全释放，请重试修复运行环境或关闭应用。')
         if not self.device or not any(row['id'] == self.device[0] and row['loopback'] == self.device[1] for row in self.devices):
             raise ValueError('请刷新并选择音频来源。')
+        settings = self.settings()
+        if settings.asr_device not in backend_devices(settings.backend):
+            raise ValueError('已保存的识别设备不适用于当前引擎，请在模型设置中重新选择。')
         self.cancel_model_check()
         if not self.item or self.item['state'] != 'draft':
             draft = self.draft or {'name': default_recording_name(), 'folder': self.item['folder']}
             self._create_recording(folder_id=draft['folder'], name=draft['name'])
         self._close_resources()
-        settings = self.settings()
         # Session starts capture and loading in parallel. Do not scan model
         # caches or import inference environments on the command event loop.
         if settings.translate and not self.snapshot()['translation_available']:
@@ -710,14 +684,7 @@ class DesktopService(DesktopModels, DesktopLibrary, DesktopKnowledge, Owner):
     def set_sidebar_width(self, width):
         if type(width) is not int or not 180 <= width <= 420:
             raise ValueError('录音库宽度必须在 180–420 之间。')
-        previous = self.prefs.value('electron_sidebar_width')
-        self.prefs.setValue('electron_sidebar_width', width)
-        self.prefs.sync()
-        if self.prefs.status().value != 0:
-            if previous is None:
-                self.prefs.remove('electron_sidebar_width')
-            else:
-                self.prefs.setValue('electron_sidebar_width', previous)
+        if not self.prefs.commit_value('electron_sidebar_width', width):
             raise OSError('录音库宽度未能保存，请检查设置目录权限。')
         return width
 

@@ -127,7 +127,22 @@ async function main() {
  passed.push('Seeking beyond the former 200/400 boundaries and back retains every caption');
  await page.getByRole('button',{name:'更多操作',exact:true}).click();
  await page.getByRole('menuitem',{name:'查找字幕',exact:true}).click();
- await page.getByRole('textbox',{name:'搜索当前录音字幕'}).fill('Sentence 425:');
+ const searchInput=page.getByRole('textbox',{name:'搜索当前录音字幕'});
+ const hits=page.getByRole('listbox',{name:'匹配字幕'});
+ await searchInput.fill('Sentence');
+ await hits.getByRole('option').first().waitFor();
+ assert.equal(await hits.getByRole('option').first().getAttribute('aria-setsize'),'650');
+ assert.ok(await hits.getByRole('option').count()<20);
+ await hits.focus(); await hits.press('End');
+ await hits.locator('[aria-posinset="650"][aria-selected="true"]').waitFor();
+ await hits.press('Home');
+ await hits.locator('[aria-posinset="1"][aria-selected="true"]').waitFor();
+ await hits.evaluate(area=>{area.scrollTop=400*64;});
+ await hits.locator('[aria-posinset="401"]').waitFor();
+ await searchInput.fill('Sentence 425:');
+ assert.equal(await page.getByRole('option',{name:/Sentence 401:/}).count(),0);
+ await page.getByRole('option',{name:/Sentence 425:/}).waitFor();
+ assert.equal(await hits.getByRole('option').count(),1);
  // Keep real seek notifications but deliver them after the locate reply.
  // This reproduces the IPC ordering that used to erase the search highlight.
  await app.evaluate(({BrowserWindow})=>{
@@ -139,7 +154,7 @@ async function main() {
   };
   globalThis.restoreSearchSend=()=>{contents.send=send;};
  });
- await page.getByRole('dialog').getByRole('button').filter({hasText:'Sentence 425:'}).click();
+ await page.getByRole('dialog').getByRole('option').filter({hasText:'Sentence 425:'}).click();
  await page.locator('[data-caption="425"].located').waitFor();
  await pause(200);
  assert.equal(await page.locator('[data-caption="425"].located').count(),1);

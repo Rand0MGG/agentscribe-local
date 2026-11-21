@@ -31,10 +31,9 @@ async def serve(settings, emit, read_message):
     qwen = settings["backend"] in ("qwen3-streaming", "qwen3-mlx")
     from .knowledge.glossary import context_text
     asr_context = context_text(settings.get('asr_context', {}))
-    if mlx and (sys.platform != 'darwin' or settings.get('asr_device') != 'mlx'):
-        raise ValueError('MLX 后端需要 macOS 和 Apple GPU 识别设备。')
-    if not mlx and settings.get('asr_device') == 'mlx':
-        raise ValueError('Apple GPU 设备需要选择 Qwen · MLX 4-bit 识别引擎。')
+    from .model_options import backend_devices
+    if settings.get('asr_device', 'cpu') not in backend_devices(settings['backend'] if qwen else 'wlk-whisper', sys.platform):
+        raise ValueError('识别设备不适用于当前平台和引擎，请重新选择。')
     # Request fresh hypotheses independently of semantic readiness. Upstream
     # serializes decoding and coalesces queued PCM; no audio is discarded.
     draft_seconds = max(0.25, min(3., float(settings.get("draft_seconds", .5))))

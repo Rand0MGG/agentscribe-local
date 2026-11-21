@@ -134,6 +134,7 @@ class Library:
 
     def refresh(self):
         folders, sessions, paths, warnings = [], [], {}, []
+        incomplete_imports = {}
 
         def scan(directory, parent=None):
             try:
@@ -156,6 +157,10 @@ class Library:
                             continue  # v1 files are migrated separately.
                         item = dict(data["session"])
                         if any(not isinstance(item.get(key), str) for key in ('created', 'state')):
+                            # Older v1 imports could mark this copy complete before indexing it.
+                            if (data.get('version') == 2 and isinstance(item.get('id'), str)
+                                    and item.get('folder') == parent and item.get('name') == child.name):
+                                incomplete_imports.setdefault((item['id'], parent), []).append(metadata)
                             raise ValueError('录音创建时间或状态格式无效')
                         identifier = item["id"]
                         if parent is None:
@@ -185,6 +190,7 @@ class Library:
         scan(self.root)
         self.index = {"folders": folders, "sessions": sorted(sessions, key=lambda x: x.get("created", ""), reverse=True)}
         self.paths, self.warnings = paths, warnings
+        self._incomplete_imports = incomplete_imports
 
     def directory(self, identifier):
         if not isinstance(identifier, str) or not re.fullmatch(r"[0-9a-f]{32}|inbox", identifier):
@@ -229,10 +235,12 @@ class Library:
         base = self.directory(folder_id)
         name = default_recording_name() if name is None else name
         directory = self._destination(base, name, unique=True)
-        directory.mkdir()
         item = {"id": uuid4().hex, "folder": folder_id, "name": directory.name,
                 "created": datetime.now().isoformat(), "state": "draft"}
-        self._write(directory / "session.json", {"version": 2, "session": item, "settings": settings, "captions": []})
+        with TemporaryDirectory(dir=base, prefix=".new-recording-") as staging:
+            self._write(Path(staging) / "session.json", {"version": 2, "session": item, "settings": settings, "captions": []})
+            with Directory(base) as parent:
+                parent.rename(Path(staging).name, directory.name, exclusive=True)
         self.refresh()
         return next(i for i in self.index["sessions"] if i["id"] == item["id"])
 
@@ -281,7 +289,7 @@ class Library:
             item.update(name=destination.name, pending_name=destination.name)
             self.refresh()
             return
-        if source != destination:
+        if source.name != destination.name:
             source.rename(destination)
         if 'pending_name' in item:
             data = self._read(destination / 'session.json')
@@ -406,15 +414,44 @@ class Library:
         source = Path(source).resolve()
         marker = self.root / ".legacy-imported.json"
         done = self._read(marker) if marker.exists() else []
-        if str(source) in done or not (source / "library.json").exists():
+        completed = str(source) in done
+        if (completed and not self._incomplete_imports) or not (source / "library.json").exists():
             return 0
         old = self._read(source / "library.json")
+        if completed:
+            # The previous importer published v2 metadata without validating these index fields.
+            # Repair only the matching copy, preserving its captions, settings, audio and directory.
+            repaired = 0
+            for item in old["sessions"]:
+                paths = self._incomplete_imports.get((item["id"], item["folder"]), [])
+                if not paths or item["id"] in self.paths:
+                    continue
+                if len(paths) != 1 or any(not isinstance(item.get(k), str) for k in ('created', 'state')):
+                    continue  # refresh already reports the invalid entry; other recordings remain available.
+                path = self._safe(paths[0])
+                data = self._read(path)
+                session = data["session"]
+                if (session.get("id"), session.get("folder"), session.get("name")) != (
+                        item["id"], item["folder"], path.parent.name):
+                    continue
+                for key in ("created", "state"):
+                    if not isinstance(session.get(key), str):
+                        session[key] = item[key]
+                try:
+                    read_recording_document(data)
+                except ValueError:
+                    continue  # Other damage requires manual recovery; never partially repair a document.
+                self._write(path, data)
+                self._index_import(item["id"], path.parent)
+                repaired += 1
+            return repaired
         mapping, copied = {}, 0
         for folder in old["folders"]:
             existing = next((f for f in self.index["folders"] if f["id"] == folder["id"]), None)
             mapping[folder["id"]] = existing or self.folder(folder["name"], identifier=folder["id"])
         for item in old["sessions"]:
             if item["id"] in self.paths:
+                self.load(item)  # An existing folder or unreadable recording cannot satisfy this entry.
                 continue
             if not re.fullmatch(r"[0-9a-f]{32}", item["id"]):
                 raise ValueError("旧录音标识无效")
@@ -431,11 +468,17 @@ class Library:
                 copied_files = _legacy_manifest(temporary)
                 data = self._read(temporary / "session.json")
                 data.update(version=2, session={**item, "name": destination.name})
+                read_recording_document(data)
                 self._write(temporary / "session.json", data)
                 if _legacy_manifest(origin) != copied_files:
                     raise OSError("导入期间旧录音已变化，原件已保留；请在文件停止变化后重试。")
                 temporary.rename(destination)
-            self.refresh()
+            self._index_import(item["id"], destination)
             copied += 1
         self._write(marker, done + [str(source)])
         return copied
+
+    def _index_import(self, identifier, directory):
+        self.refresh()
+        if self.paths.get(identifier) != directory:
+            raise OSError("导入的录音未能载入，请检查录音目录后重试。")

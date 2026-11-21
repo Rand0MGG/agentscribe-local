@@ -54,7 +54,8 @@ async function main() {
  await page.getByRole('button',{name:'更多操作',exact:true}).click();
  await page.getByRole('menuitem',{name:'查找字幕',exact:true}).click();
  await page.getByRole('textbox',{name:'搜索当前录音字幕'}).fill('Sentence 5:');
- await page.getByRole('dialog').getByRole('button').filter({hasText:'Sentence 5:'}).click();
+ await page.getByRole('dialog').getByRole('option').filter({hasText:'Sentence 5:'}).waitFor();
+ await page.getByRole('listbox',{name:'匹配字幕'}).press('Enter');
  await page.locator('[data-caption="5"].located').waitFor();
  const seeks=media().filter(row=>row.action==='seek');
  comparisons.push({id:'search-position',qt_expected_position:10000,electron_position:seeks.at(-1).position,match:seeks.at(-1).position===10000});
@@ -99,23 +100,24 @@ async function main() {
  await page.getByRole('dialog',{name:'更新到 test'}).waitFor();
  await page.getByRole('dialog').getByRole('button',{name:'稍后',exact:true}).click();
  comparisons.push({id:'update-confirmation-persists-until-choice',match:true});
- // Freeze only the search debounce so an old result remains visible after a
- // real recording switch; identical caption IDs must not retarget the new file.
+ // Hold the next query while switching recordings. Old options disappear immediately;
+ // even a late locate request with the former owner must be rejected.
  await page.getByRole('button',{name:'更多操作',exact:true}).click();
  await page.getByRole('menuitem',{name:'查找字幕',exact:true}).click();
  await page.getByRole('textbox',{name:'搜索当前录音字幕'}).fill('Sentence 1:');
- await page.getByRole('dialog').getByRole('button').filter({hasText:'Sentence 1:'}).waitFor();
+ await page.getByRole('dialog').getByRole('option').filter({hasText:'Sentence 1:'}).waitFor();
  await page.clock.install({time:Date.now()}); await page.clock.pauseAt(Date.now());
- await page.evaluate(async()=>{
+ const oldOwner=await page.evaluate(async()=>{
   const data=await window.agentScribe.request('bootstrap');
   const item=data.library.sessions.find(row=>row.name==='跨文件夹录音 B');
   await window.agentScribe.request('recording.open',{identifier:item.id});
+  return {identifier:data.state.item.id,generation:data.state.generation,caption_id:1};
  });
  deadline=Date.now()+10000;
  while(!(await page.locator('.workspace-header').textContent()).includes('跨文件夹录音 B')){assert(Date.now()<deadline);await pause(25);}
- await page.getByRole('dialog').getByRole('button').filter({hasText:'Sentence 1:'}).dispatchEvent('click');
- deadline=Date.now()+10000;
- while(!(await page.locator('.notification').textContent()).includes('录音内容已变化')){assert(Date.now()<deadline);await pause(25);}
+ assert.equal(await page.getByRole('dialog').getByRole('option').count(),0);
+ await assert.rejects(page.evaluate(owner=>window.agentScribe.request('captions.locate',owner),oldOwner),/录音内容已变化/);
+ assert.equal(await page.locator('.caption.located').count(),0);
  await page.clock.resume(); await page.keyboard.press('Escape');
  comparisons.push({id:'stale-search-result-cannot-retarget-another-recording',match:true});
  for (const result of comparisons) assert(result.match, JSON.stringify(result));
