@@ -136,6 +136,11 @@ library.save(item, [
     // Inventory can contain alignment weights and engines from another platform.
     // Inject only display records; never touch or download actual model files.
     const initialSettings = await page.evaluate(async () => (await window.agentScribe.request('bootstrap')).settings);
+    // Consume the offline fixture's first missing-model prompt before opening other dialogs.
+    await page.evaluate(() => window.agentScribe.request('models.check'));
+    const guidance = page.getByRole('dialog', { name: '准备本地模型', exact: true });
+    await guidance.getByRole('button', { name: '稍后', exact: true }).click();
+    await guidance.waitFor({ state: 'hidden' });
     await page.evaluate(() => window.agentScribe.request('settings.set', { values: { backend: 'wlk-whisper', compute: 'CPU（通用）' } }));
     await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('desktop:event', {
       event: 'inventory', data: { busy: false, result: [
@@ -169,8 +174,9 @@ library.save(item, [
     // Real renderer -> preload -> host -> Python validator -> Preparation -> supervised subprocess.
     const beforeBundle=await page.evaluate(()=>window.agentScribe.request('bootstrap'));
     await page.getByRole('button',{name:'下载模型…',exact:true}).click();
-    await page.getByRole('button',{name:'下载并使用推荐组合',exact:true}).click();
-    await page.getByRole('dialog').waitFor({state:'hidden'});
+    const catalog = page.getByRole('dialog', { name: '下载模型', exact: true });
+    await catalog.getByRole('button',{name:'下载并使用推荐组合',exact:true}).click();
+    await catalog.waitFor({state:'hidden'});
     await page.waitForFunction(() => document.querySelector('.preparation')?.textContent.includes('准备完成'));
     const bundle = readFileSync(path.join(fixture, 'commands.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line)).filter(args => args[0] === 'linguaflow.recommended_prepare' && !args.includes('--check'));
     assert.equal(bundle.length, 1); assert(!bundle[0].includes('--only'));
