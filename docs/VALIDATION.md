@@ -2,6 +2,11 @@
 
 仅记录当前可核对的证据与限制；测试规则见 [TESTING](TESTING.md)，功能缺口见 [ROADMAP](ROADMAP.md)。历史逐轮记录已移至 [验证归档](archive/testing/VALIDATION_THROUGH_20261030.md)，不把旧通过数或“本地未提交”当作当前状态。
 
+## 2026-11-19 旧录音导入重试
+
+- 固定 [main 4c6d314](https://github.com/Rand0MGG/agentscribe-local/tree/4c6d3146e33c4750c477b3f992968d446b068aa6)。R44：在独立 Linux 临时库中，用合成旧录音和真实文件复制，在复制后注入元数据写入失败。首次没有发布且无完成标记；在来源移除音频后重试，同名暂存目录里的旧音频被发布，随后标记导入完成。无中断对照不带入已移除的音频，源元数据原样保留。
+- 库迁移、启动与存储安全无音频定向回归 61 项通过；此反例是旧格式导入而非移动录音库。未验证真实设备、Windows/macOS 或应用入口触发条件。
+
 ## 2026-11-18 回听状态与前端复查
 
 - **已合并。** [PR #5](https://github.com/Rand0MGG/agentscribe-local/pull/5) 合并提交为 `443a914`。[main](https://github.com/Rand0MGG/agentscribe-local/actions/runs/44065122492)、[windows](https://github.com/Rand0MGG/agentscribe-local/actions/runs/44065249330)、[mac](https://github.com/Rand0MGG/agentscribe-local/actions/runs/44065248374) 各 13 项检查通过。该版本的回听交互夹具直接把媒体回报传给播放器，绕过了后台请求参数校验。
