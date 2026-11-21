@@ -136,7 +136,7 @@ library.save(item, [
     // Inventory can contain alignment weights and engines from another platform.
     // Inject only display records; never touch or download actual model files.
     const initialSettings = await page.evaluate(async () => (await window.agentScribe.request('bootstrap')).settings);
-    await page.evaluate(() => window.agentScribe.request('settings.set', { values: { compute: 'CPU（通用）' } }));
+    await page.evaluate(() => window.agentScribe.request('settings.set', { values: { backend: 'wlk-whisper', compute: 'CPU（通用）' } }));
     await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('desktop:event', {
       event: 'inventory', data: { busy: false, result: [
         { id: 'probe-alignment', name: '仅对齐示例', kind: 'alignment', engine: null, path: '/example/alignment', size: 1024, deletable: true },
@@ -157,9 +157,11 @@ library.save(item, [
       await page.getByRole('button', { name: '高级设置…', exact: true }).click();
       assert.match(await page.getByRole('combobox', { name: '计算设备', exact: true }).innerText(), /Apple GPU · Metal \/ MLX/);
       await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click();
-      assert.equal(await page.evaluate(async () => (await window.agentScribe.request('bootstrap')).settings.compute), 'CPU（通用）');
+      const saved = await page.evaluate(async () => (await window.agentScribe.request('bootstrap')).settings);
+      assert.equal(saved.backend, 'wlk-whisper');
+      assert.equal(saved.compute, 'CPU（通用）');
     }
-    await page.evaluate(values => window.agentScribe.request('settings.set', { values }), { compute: initialSettings.compute });
+    await page.evaluate(values => window.agentScribe.request('settings.set', { values }), initialSettings);
     await page.getByRole('button', { name: '刷新', exact: true }).click();
     await page.getByRole('button', { name: '下载模型…', exact: true }).click();
     await page.screenshot({ path: path.join(evidence, 'model-catalog-dark.png'), scale: 'css' });
