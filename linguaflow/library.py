@@ -4,14 +4,16 @@ import json
 import os
 import re
 import shutil
+import stat
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from .core import export_srt, export_txt
 from .recording_document import read_recording_document
-from .storage_io import atomic_write
+from .storage_io import Directory, atomic_write, file_digest
 
 
 def default_recording_name(now: datetime | None = None) -> str:
@@ -32,6 +34,29 @@ def _export_matches(path, encoded):
             return not stream.read(1)
     except (FileNotFoundError, PermissionError):
         return False
+
+
+def _legacy_manifest(root):
+    """Include empty directories and hash original-format files before conversion."""
+    entries = {}
+
+    def visit(path):
+        with Directory(path) as directory:
+            for child in path.iterdir():
+                info = child.lstat()
+                relative = child.relative_to(root)
+                if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+                    raise ValueError("旧录音目录包含外部映射")
+                if stat.S_ISDIR(info.st_mode):
+                    entries[relative] = None
+                    visit(child)
+                elif stat.S_ISREG(info.st_mode):
+                    entries[relative] = file_digest(directory, child.name)[1]
+                else:
+                    raise ValueError("旧录音目录包含非普通文件，请检查后重试。")
+
+    visit(root)
+    return entries
 
 
 class Library:
@@ -400,12 +425,16 @@ class Library:
                 raise ValueError("旧录音目录包含外部映射")
             name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '-', item["name"]).strip('. ')[:64] or "导入录音"
             destination = self._destination(self.directory(mapping[item["folder"]]["id"]), name, unique=True)
-            temporary = self._safe(destination.parent / (".import-" + item["id"]))
-            shutil.copytree(origin, temporary, dirs_exist_ok=True)
-            data = self._read(temporary / "session.json")
-            data.update(version=2, session={**item, "name": destination.name})
-            self._write(temporary / "session.json", data)
-            temporary.rename(destination)
+            with TemporaryDirectory(dir=destination.parent, prefix=".import-") as staging:
+                temporary = Path(staging) / "recording"
+                shutil.copytree(origin, temporary, symlinks=True)
+                copied_files = _legacy_manifest(temporary)
+                data = self._read(temporary / "session.json")
+                data.update(version=2, session={**item, "name": destination.name})
+                self._write(temporary / "session.json", data)
+                if _legacy_manifest(origin) != copied_files:
+                    raise OSError("导入期间旧录音已变化，原件已保留；请在文件停止变化后重试。")
+                temporary.rename(destination)
             self.refresh()
             copied += 1
         self._write(marker, done + [str(source)])
