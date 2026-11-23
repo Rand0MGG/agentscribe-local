@@ -2,11 +2,34 @@ from types import SimpleNamespace as Item
 
 import pytest
 
+from linguaflow import diagnostic_log
+from linguaflow.asr_stability import confirmed_until, units
 from linguaflow.wlk_captions import BoundaryPolicy, CaptionMapper, caption_snapshot
 
 
 def line(text, start=0, end=1):
     return {"text": text, "start": start, "end": end}
+
+
+@pytest.mark.p1
+def test_following_units_match_direct_counts_across_partial_words_and_stability_gaps(monkeypatch):
+    value = 'abcDEF 一二三 beta?! gap xyZ 四五 alpha end'
+    cuts = [1, 3, 6, 8, 10, 14, 18, 22, 24, 28, 34]
+    mapper = CaptionMapper('zh', predictor=lambda _: cuts)
+    counts = []
+
+    def observe(event, **fields):
+        if event == 'caption_revision':
+            counts.append((fields['source_start'], fields['source_end'], fields['following_stable_units']))
+
+    monkeypatch.setattr(diagnostic_log, 'event', observe)
+    ranges = [(0, 15), (22, len(value))]
+    mapper.update(dict(revision_text=value, revision_spans=[], stable_end=15, stable_ranges=ranges))
+    assert len(counts) == len(cuts) + 1
+    for start, end, count in counts:
+        limit = confirmed_until(value, ranges, start)
+        assert count == len(units(value[end:limit]))
+    assert {0, 3, 4}.issubset({count for _, _, count in counts})
 
 
 @pytest.mark.p1
