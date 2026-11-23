@@ -4,9 +4,38 @@ from types import SimpleNamespace
 import pytest
 
 from linguaflow.core import export_srt
+from linguaflow.qwen_audio import KeptAudioClock
 from linguaflow.qwen_revisions import RevisionStore, install_revision_bridge
 from linguaflow.revision_audit import audit
 from linguaflow.wlk_captions import CaptionMapper
+
+
+@pytest.mark.p1
+def test_snapshot_reuse_preserves_refresh_clock_boundaries_and_caller_ownership():
+    store = RevisionStore('lecture')
+    clock = store.audio_clock = KeptAudioClock(10)
+    clock.append(0, 10)
+    store.update(0, 0, 2, 'ab', 0)
+    first, second = {}, {}
+    store.augment_snapshot(first)
+    first['stable_ranges'].append((0, 1))
+    first['closed_ends'].append(1)
+    store.augment_snapshot(second)
+    assert first['revision_spans'] is second['revision_spans']
+    assert second['stable_ranges'] == second['closed_ends'] == []
+
+    clock.append(30, 10)
+    store.augment_snapshot(second)
+    assert first['revision_spans'][1][2:4] == (1, 1)
+    assert second['revision_spans'][0][3] == 1
+    assert second['revision_spans'][1][2:4] == (3, 4)
+    assert first['_diagnostic_source'] == second['_diagnostic_source']
+    store.augment_snapshot(second, 'zh')
+    assert second['revision_spans'][0][-1] == 'zh'
+
+    store.refresh = lambda: store.update(0, 0, 2, 'ab', 2, closed=True)
+    store.augment_snapshot(second, 'zh')
+    assert second['stable_end'] == 2 and second['closed_ends'] == [2]
 
 
 @pytest.mark.p1
