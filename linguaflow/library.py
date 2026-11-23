@@ -5,15 +5,17 @@ import os
 import re
 import shutil
 import stat
-from dataclasses import asdict
+from dataclasses import fields
 from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
-from .core import export_srt, export_txt
+from .core import Caption, export_srt, export_txt
 from .recording_document import read_recording_document
 from .storage_io import Directory, atomic_write, file_digest
+
+_CAPTION_FIELDS = tuple(field.name for field in fields(Caption))
 
 
 def default_recording_name(now: datetime | None = None) -> str:
@@ -258,7 +260,8 @@ class Library:
         directory = self.directory(item["id"])
         data = self._read(directory / "session.json")
         ordered = sorted(captions, key=lambda c: (c.start, c.id))
-        data["captions"] = [asdict(c) for c in ordered]
+        data["captions"] = [{name: getattr(caption, name) for name in _CAPTION_FIELDS}
+                            for caption in ordered]
         data["session"].update(state=state or data["session"]["state"],
                                name=data['session'].get('pending_name', directory.name))
         self._write(directory / "session.json", data)
