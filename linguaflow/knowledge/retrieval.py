@@ -11,11 +11,15 @@ def tokens(text):
 
 def rank_sources(query, sources):
     wanted = tokens(query)
-    def score(identifier):
-        source = sources[identifier]
+    if not wanted:
+        return []
+    scores = {}
+    for identifier, source in sources.items():
         found = tokens(source.get('title', '') + ' ' + source['text'])
-        return sum(min(weight, found.get(word, 0)) for word, weight in wanted.items())
-    return sorted((identifier for identifier in sources if score(identifier)), key=score, reverse=True)
+        score = sum(min(weight, found.get(word, 0)) for word, weight in wanted.items())
+        if score:
+            scores[identifier] = score
+    return sorted(scores, key=scores.__getitem__, reverse=True)
 
 
 def visual_excerpt(source, query='', quotes=()):

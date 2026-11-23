@@ -6,6 +6,7 @@ from zipfile import ZipFile
 import pytest
 
 from linguaflow.core import Caption
+from linguaflow.knowledge import retrieval
 from linguaflow.knowledge.files import write_json
 from linguaflow.knowledge.glossary import compile_context, context_text
 from linguaflow.knowledge.materials import (
@@ -20,6 +21,29 @@ from linguaflow.knowledge.schemas import DocumentBlock, Term
 from linguaflow.knowledge.session import read_manifest, session_context, write_manifest
 from linguaflow.knowledge.storage import KnowledgeStore
 from linguaflow.library import Library
+
+
+@pytest.mark.p2
+def test_rank_sources_scores_once_and_keeps_tied_sources_in_input_order(monkeypatch):
+    sources = {
+        'z': {'title': '梯度', 'text': 'x'},
+        'a': {'text': '梯度'},
+        'best': {'text': '梯度 MODEL model'},
+        'other': {'text': 'noise'},
+    }
+    calls = []
+    tokenize = retrieval.tokens
+
+    def counted(text):
+        calls.append(text)
+        return tokenize(text)
+
+    monkeypatch.setattr(retrieval, 'tokens', counted)
+    assert retrieval.rank_sources('梯度 model model', sources) == ['best', 'z', 'a']
+    assert len(calls) == 1 + len(sources)
+    calls.clear()
+    assert retrieval.rank_sources('?!', sources) == []
+    assert calls == ['?!']
 
 
 @pytest.fixture
