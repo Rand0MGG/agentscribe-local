@@ -1,10 +1,23 @@
 """Original PCM routing and advisory VAD labels for full-window Qwen."""
 from bisect import bisect_left, bisect_right
+from functools import partial
 from threading import RLock
 
 import numpy as np
 
 from . import diagnostic_log as diag
+
+
+def _source_time(rate, starts, ends, sources, source_end, seconds, *, end=False):
+    if seconds is None:
+        return None
+    if not starts:
+        return source_end / rate
+    sample = seconds * rate
+    index = (min(bisect_left(ends, sample), len(ends)-1) if end else
+             max(0, bisect_right(starts, sample)-1))
+    offset = min(max(0, sample - starts[index]), ends[index] - starts[index])
+    return (sources[index] + offset) / rate
 
 
 class KeptAudioClock:
@@ -31,16 +44,18 @@ class KeptAudioClock:
             return start / self.rate
 
     def source_time(self, seconds, *, end=False):
-        if seconds is None:
-            return None
         with self.lock:
-            if not self.starts:
-                return self.source_end / self.rate
-            sample = seconds * self.rate
-            index = (min(bisect_left(self.ends, sample), len(self.ends)-1) if end else
-                     max(0, bisect_right(self.starts, sample)-1))
-            offset = min(max(0, sample - self.starts[index]), self.ends[index] - self.starts[index])
-            return (self.sources[index] + offset) / self.rate
+            return _source_time(self.rate, self.starts, self.ends, self.sources,
+                                self.source_end, seconds, end=end)
+
+    def snapshot_mapper(self, previous_state):
+        """Freeze one recording-time mapping without holding capture's lock during projection."""
+        with self.lock:
+            state = (self, self.count, self.source_end)
+            if state == previous_state:
+                return state, None
+            return state, partial(_source_time, self.rate, tuple(self.starts), tuple(self.ends),
+                                  tuple(self.sources), self.source_end)
 
     def model_time(self, seconds):
         with self.lock:

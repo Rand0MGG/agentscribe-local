@@ -20,6 +20,9 @@ class RevisionStore:
         self.source_version = 0
         self.audio_clock = None
         self.refresh = None
+        self._snapshot_version = None
+        self._snapshot_clock = None
+        self._snapshot = {}
 
     def _time(self, value, *, end=False):
         return self.audio_clock.source_time(value, end=end) if self.audio_clock else value
@@ -85,29 +88,46 @@ class RevisionStore:
         if self.refresh:
             self.refresh()
         with self.lock:
-            text, spans, ranges = '', [], []
-            closed_ends = []
-            for _, row in sorted(self.rows.items()):
-                value = row['text']
-                if not value:
-                    continue
-                if text and not text[-1].isspace() and not value[0].isspace():
-                    text += ' '
-                lo = len(text)
-                text += value
-                if row['closed']:
-                    closed_ends.append(len(text))
-                spans.extend((lo+i, lo+i+1, self._time(a), self._time(b, end=True), language)
-                             for i, (a, b) in enumerate(self.times[row['interval_id']]))
-                ranges.extend((lo + a, lo + b) for a, b in
-                              row.get('stable_ranges', [(0, row['stable_end'])]) if b > a)
-            ranges = confirmation_ranges(text, ranges)
+            version = (self.source_version, language)
+            clock_state, mapper = None, None
+            if self.audio_clock is not None:
+                previous = self._snapshot_clock if version == self._snapshot_version else None
+                clock_state, mapper = self.audio_clock.snapshot_mapper(previous)
+            if version != self._snapshot_version or clock_state != self._snapshot_clock:
+                self._snapshot = self._build_snapshot(language, mapper)
+                self._snapshot_version = version
+                self._snapshot_clock = clock_state
             snapshot.clear()
-            snapshot.update(revision_text=text, stable_end=confirmed_until(text, ranges),
-                            stable_ranges=ranges, revision_spans=spans,
-                            closed_ends=closed_ends,
-                            _diagnostic_source=dict(source_stream=self.session_id,
-                                                    source_version=self.source_version))
+            snapshot.update(self._snapshot)
+            # The large character timeline is immutable and shared by preview and segmentation.
+            # Keep the smaller mutable fields owned by each caller as before.
+            snapshot['stable_ranges'] = list(snapshot['stable_ranges'])
+            snapshot['closed_ends'] = list(snapshot['closed_ends'])
+            snapshot['_diagnostic_source'] = dict(source_stream=self.session_id,
+                                                  source_version=self.source_version)
+
+    def _build_snapshot(self, language, mapper):
+        text, spans, ranges = '', [], []
+        closed_ends = []
+        for _, row in sorted(self.rows.items()):
+            value = row['text']
+            if not value:
+                continue
+            if text and not text[-1].isspace() and not value[0].isspace():
+                text += ' '
+            lo = len(text)
+            text += value
+            if row['closed']:
+                closed_ends.append(len(text))
+            times = self.times[row['interval_id']]
+            if mapper is not None:
+                times = ((mapper(a), mapper(b, end=True)) for a, b in times)
+            spans.extend((lo+i, lo+i+1, a, b, language) for i, (a, b) in enumerate(times))
+            ranges.extend((lo + a, lo + b) for a, b in
+                          row.get('stable_ranges', [(0, row['stable_end'])]) if b > a)
+        ranges = confirmation_ranges(text, ranges)
+        return dict(revision_text=text, stable_end=confirmed_until(text, ranges), stable_ranges=ranges,
+                    revision_spans=tuple(spans), closed_ends=closed_ends)
 
 
 def install_revision_bridge(online, emit=None):

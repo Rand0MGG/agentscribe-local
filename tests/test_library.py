@@ -7,6 +7,30 @@ from linguaflow.library import Library
 
 
 @pytest.mark.p1
+def test_resaving_legacy_draft_preserves_caption_schema_and_exports(tmp_path):
+    import json
+
+    library = Library(tmp_path)
+    item = library.create('inbox', {})
+    directory = library.directory(item['id'])
+    path = directory / 'session.json'
+    document = json.loads(path.read_text(encoding='utf-8-sig'))
+    document['captions'] = [dict(id=1, start=0, end=2, source='原文', language='zh')]
+    path.write_text(json.dumps(document), encoding='utf-8')
+    _, (old,) = library.load(item)
+    draft = replace(old, id=2, start=2, end=4, source='实时草稿', final=False, ready=True,
+                    translation='draft', translation_phase='initial', revision=2)
+    draft.display_only = '临时显示状态'
+    library.save(item, [draft, old])
+    saved, loaded = library.load(item)
+    assert saved['captions'] == [asdict(old), asdict(draft)]
+    assert loaded == [old, draft]
+    for filename in ('定稿.srt', '定稿.txt'):
+        exported = (directory / filename).read_text(encoding='utf-8-sig')
+        assert old.source in exported and draft.source not in exported
+
+
+@pytest.mark.p1
 def test_unchanged_exports_are_not_replaced_and_partial_exports_are_repaired(tmp_path, monkeypatch):
     from pathlib import Path
     library = Library(tmp_path)

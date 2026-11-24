@@ -3,9 +3,11 @@ import re
 from bisect import bisect_right
 from difflib import SequenceMatcher
 
+UNIT_PATTERN = re.compile(r'[\u3400-\u9fff]|[^\s\u3400-\u9fff]+')
+
 
 def units(text):
-    return list(re.finditer(r'[\u3400-\u9fff]|[^\s\u3400-\u9fff]+', text))
+    return list(UNIT_PATTERN.finditer(text))
 
 
 def confirmation_ranges(text, ranges):

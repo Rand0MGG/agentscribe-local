@@ -6,7 +6,7 @@ from dataclasses import replace
 from difflib import SequenceMatcher
 
 from . import diagnostic_log as diag
-from .asr_stability import confirmation_ranges, confirmed_until, units
+from .asr_stability import UNIT_PATTERN, confirmation_ranges, confirmed_until
 from .core import Caption
 
 DIFF_CONTEXT_ROWS = 10
@@ -300,6 +300,7 @@ class CaptionMapper:
         candidates = [(cid, mapped(self.ranges[cid][0]), mapped(self.ranges[cid][1]))
                       for cid in self.active if cid in self.ranges]
         new_ranges = {cid: span for cid, span in self.ranges.items() if cid in fixed_ids}
+        unit_limit, unit_ends = None, []
         for relative_end, reason in boundaries:
             end = offset + relative_end
             source = text[start:end].strip()
@@ -313,7 +314,14 @@ class CaptionMapper:
                 self.next_id += 1
             local_stable_end = confirmed_until(text, ranges, start)
             stable = end <= local_stable_end or not text[local_stable_end:end].strip()
-            following_stable_units = len(units(text[end:local_stable_end])) if stable else 0
+            following_stable_units = 0
+            if stable and end < local_stable_end:
+                # Sentence ends advance within a confirmed range. Count even a partial
+                # word after a cut, exactly as tokenizing each individual suffix would.
+                if local_stable_end != unit_limit:
+                    unit_limit = local_stable_end
+                    unit_ends = [m.end() for m in UNIT_PATTERN.finditer(text, end, unit_limit)]
+                following_stable_units = len(unit_ends) - bisect_right(unit_ends, end)
             key = (start, end, source, stable)
             since, count = self.observed.get(key, (now, 0))
             new_observed[key] = (since, count + 1)
