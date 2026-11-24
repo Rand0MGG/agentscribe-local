@@ -896,6 +896,51 @@ os._exit(0)
     lock.unlock()
 
 
+@pytest.mark.p1
+@pytest.mark.parametrize('reconnect_fails', [False, True])
+def test_failed_beta_disable_restores_course_reads_or_reports_reconnect_failure(desktop, monkeypatch, reconnect_fails):
+    folder = desktop.library.ensure_default_folder()
+    item = desktop.library.create(folder['id'], {}, 'R45')
+    desktop.open_recording(item['id'])
+    desktop.set_settings({'beta_features': True})
+    desktop.open_knowledge()
+    client = desktop.knowledge
+    views = []
+    client.changed.connect(lambda event: views.append(event) if event['type'] == 'view' else None)
+
+    def read_view():
+        views.clear()
+        assert desktop.knowledge_command('view')
+        deadline = time.monotonic() + 10
+        while not views:
+            QCoreApplication.instance().process()
+            assert client.connected and time.monotonic() < deadline
+            time.sleep(.01)
+
+    def disk_full(*args, **kwargs):
+        raise OSError('disk full')
+
+    try:
+        read_view()
+        original = desktop.prefs.path.read_bytes()
+        with monkeypatch.context() as patch:
+            patch.setattr('linguaflow.storage_io.atomic_write', disk_full)
+            if reconnect_fails:
+                patch.setattr('linguaflow.knowledge.client.start_worker', disk_full)
+            with pytest.raises(OSError, match='写入失败.*重新打开课程资料' if reconnect_fails else '写入失败'):
+                desktop.set_settings({'beta_features': False})
+        assert desktop.prefs.path.read_bytes() == original and desktop.values['beta_features']
+        if reconnect_fails:
+            assert not client.connected
+        else:
+            read_view()
+        desktop.set_settings({'beta_features': False})
+        assert not client.connected and not desktop.values['beta_features']
+        assert QSettings(desktop.prefs.fileName(), 1).value('beta_features') is False
+    finally:
+        assert client.close()
+
+
 @pytest.mark.p0
 def test_failed_settings_cannot_leak_into_later_overlay_save(desktop, monkeypatch):
     prefs = desktop.prefs
