@@ -430,9 +430,25 @@ class DesktopService(DesktopModels, DesktopLibrary, DesktopKnowledge, Owner):
 
     def set_settings(self, values):
         candidate = validated_preferences(self.values, values)
-        if self.knowledge is not None and not candidate['beta_features'] and not self.knowledge.close():
-            raise ValueError('课程后台尚未退出，设置未保存。')
-        write_preferences(self.prefs, candidate)
+        reconnect_generation = None
+        if self.knowledge is not None and not candidate['beta_features']:
+            if (self.values['beta_features'] and self.item and self.knowledge.connected
+                    and self.knowledge.identifier == self.item['id']):
+                reconnect_generation = self.generation
+            if not self.knowledge.close():
+                raise ValueError('课程后台尚未退出，设置未保存。')
+        try:
+            write_preferences(self.prefs, candidate)
+        except OSError as save_error:
+            # close() pumps events. Only restore the previously connected recording.
+            if reconnect_generation == self.generation and self.values['beta_features']:
+                try:
+                    self.open_knowledge()
+                except (OSError, ValueError, RuntimeError) as reconnect_error:
+                    raise OSError(f'{save_error} 课程重连失败，请重新打开课程资料：{reconnect_error}') from reconnect_error
+                if not self.knowledge.connected:
+                    raise OSError(f'{save_error} 课程后台未连接，请重新打开课程资料。') from save_error
+            raise
         selection_changed = any(candidate[key] != self.values[key] for key in (
             'backend', 'asr', 'qwen_model', 'translation_engine', 'translation', 'llama_model', 'translation_device', 'translate'))
         self.values = candidate
